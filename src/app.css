@@ -1,0 +1,391 @@
+@import "tailwindcss";
+
+/* ─────────────────────────────────────────────
+   OmniPlot DESIGN SYSTEM
+   Tokens · Typography · Components · Utilities
+───────────────────────────────────────────── */
+
+@theme {
+	/* Fonts */
+	--font-display: "Syne", sans-serif;
+	--font-body: "Instrument Sans", sans-serif;
+	--font-mono: "DM Mono", monospace;
+
+	/* Brand palette */
+	--color-brand: #00e5ff;
+	--color-brand-dim: #0070ff;
+	--color-brand-muted: rgba(0, 229, 255, 0.15);
+
+	/* Semantic */
+	--color-success: #00d68f;
+	--color-warning: #ffb547;
+	--color-danger: #ff4d6d;
+
+	/* Radii */
+	--radius-sm: 4px;
+	--radius-md: 8px;
+	--radius-lg: 12px;
+	--radius-xl: 16px;
+	--radius-2xl: 24px;
+
+	/* Shadows */
+	--shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.08);
+	--shadow-md: 0 4px 12px rgba(0, 0, 0, 0.15), 0 2px 4px rgba(0, 0, 0, 0.1);
+	--shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.2), 0 4px 8px rgba(0, 0, 0, 0.12);
+	--shadow-glow: 0 0 20px rgba(0, 229, 255, 0.15);
+
+	/* Transitions */
+	--ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
+	--ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+	--ease-out: cubic-bezier(0, 0, 0.2, 1);
+}
+
+/* ─── CSS Custom Properties (Light / Dark) ─── */
+:root {
+	color-scheme: light;
+
+	/* Backgrounds */
+	--bg-base: #f5f5f0;
+	--bg-surface: #ffffff;
+	--bg-surface-2: #f8f8f4;
+	--bg-surface-3: #efefea;
+	--bg-overlay: rgba(0, 0, 0, 0.04);
+	--bg-inverse: #0e1118;
+
+	/* Text */
+	--text-primary: #0a0a0a;
+	--text-secondary: #4a4a4a;
+	--text-tertiary: #8a8a8a;
+	--text-disabled: #c0c0c0;
+	--text-inverse: #f0f2f7;
+	--text-brand: #0070ff;
+
+	/* Borders */
+	--border-subtle: rgba(0, 0, 0, 0.06);
+	--border-default: rgba(0, 0, 0, 0.1);
+	--border-strong: rgba(0, 0, 0, 0.18);
+	--border-brand: rgba(0, 112, 255, 0.4);
+
+	/* Interactive */
+	--interactive-hover: rgba(0, 0, 0, 0.04);
+	--interactive-active: rgba(0, 0, 0, 0.08);
+
+	/* Canvas-specific */
+	--canvas-bg: #e8e8e2;
+	--canvas-grid: rgba(0, 0, 0, 0.06);
+	--canvas-grid-major: rgba(0, 0, 0, 0.1);
+	--cut-path-primary: #0070ff;
+	--cut-path-secondary: #7b5ea7;
+	--cut-path-accent: #00d68f;
+}
+
+[data-theme="dark"] {
+	color-scheme: dark;
+
+	--bg-base: #080a0f;
+	--bg-surface: #0e1118;
+	--bg-surface-2: #141820;
+	--bg-surface-3: #1c2130;
+	--bg-overlay: rgba(255, 255, 255, 0.04);
+	--bg-inverse: #f5f5f0;
+
+	--text-primary: #f0f2f7;
+	--text-secondary: rgba(240, 242, 247, 0.65);
+	--text-tertiary: rgba(240, 242, 247, 0.35);
+	--text-disabled: rgba(240, 242, 247, 0.2);
+	--text-inverse: #0a0a0a;
+	--text-brand: #00e5ff;
+
+	--border-subtle: rgba(255, 255, 255, 0.05);
+	--border-default: rgba(255, 255, 255, 0.08);
+	--border-strong: rgba(255, 255, 255, 0.14);
+	--border-brand: rgba(0, 229, 255, 0.3);
+
+	--interactive-hover: rgba(255, 255, 255, 0.04);
+	--interactive-active: rgba(255, 255, 255, 0.08);
+
+	--canvas-bg: #060810;
+	--canvas-grid: rgba(255, 255, 255, 0.03);
+	--canvas-grid-major: rgba(255, 255, 255, 0.06);
+	--cut-path-primary: #00e5ff;
+	--cut-path-secondary: #a78bfa;
+	--cut-path-accent: #00d68f;
+}
+
+/* ─── Base Reset & Defaults ─────────────────── */
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+	margin: 0;
+	padding: 0;
+}
+
+html {
+	font-size: 16px;
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+	text-rendering: optimizeLegibility;
+	scroll-behavior: smooth;
+}
+
+body {
+	font-family: var(--font-body);
+	background: var(--bg-base);
+	color: var(--text-primary);
+	line-height: 1.5;
+	transition:
+		background 0.2s var(--ease-smooth),
+		color 0.2s var(--ease-smooth);
+	overflow-x: hidden;
+}
+
+/* ─── Typography ─────────────────────────────── */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+	font-family: var(--font-display);
+	font-weight: 700;
+	line-height: 1.2;
+	letter-spacing: -0.02em;
+	color: var(--text-primary);
+}
+
+h1 {
+	font-size: clamp(1.75rem, 3vw, 2.5rem);
+	font-weight: 800;
+}
+h2 {
+	font-size: clamp(1.35rem, 2.5vw, 1.875rem);
+}
+h3 {
+	font-size: clamp(1.1rem, 2vw, 1.375rem);
+}
+h4 {
+	font-size: 1.125rem;
+}
+h5 {
+	font-size: 1rem;
+}
+h6 {
+	font-size: 0.875rem;
+}
+
+p {
+	color: var(--text-secondary);
+	line-height: 1.7;
+}
+
+code,
+kbd,
+pre {
+	font-family: var(--font-mono);
+	font-size: 0.875em;
+}
+
+/* ─── Scrollbars ─────────────────────────────── */
+::-webkit-scrollbar {
+	width: 5px;
+	height: 5px;
+}
+::-webkit-scrollbar-track {
+	background: transparent;
+}
+::-webkit-scrollbar-thumb {
+	background: var(--border-strong);
+	border-radius: 99px;
+}
+::-webkit-scrollbar-thumb:hover {
+	background: var(--text-tertiary);
+}
+
+/* ─── Focus ──────────────────────────────────── */
+:focus-visible {
+	outline: 2px solid var(--color-brand-dim);
+	outline-offset: 2px;
+	border-radius: var(--radius-sm);
+}
+
+/* ─── Selection ──────────────────────────────── */
+::selection {
+	background: rgba(0, 112, 255, 0.2);
+	color: var(--text-primary);
+}
+
+/* ─── Animations ─────────────────────────────── */
+@keyframes fadeIn {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
+}
+
+@keyframes slideUp {
+	from {
+		opacity: 0;
+		transform: translateY(12px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+@keyframes slideDown {
+	from {
+		opacity: 0;
+		transform: translateY(-8px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+@keyframes scaleIn {
+	from {
+		opacity: 0;
+		transform: scale(0.96);
+	}
+	to {
+		opacity: 1;
+		transform: scale(1);
+	}
+}
+
+@keyframes pulse {
+	0%,
+	100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0.5;
+	}
+}
+
+@keyframes spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+@keyframes marchingAnts {
+	to {
+		stroke-dashoffset: -20;
+	}
+}
+
+@keyframes shimmer {
+	0% {
+		background-position: -200% 0;
+	}
+	100% {
+		background-position: 200% 0;
+	}
+}
+
+/* ─── Utility Classes ────────────────────────── */
+.font-display {
+	font-family: var(--font-display);
+}
+.font-body {
+	font-family: var(--font-body);
+}
+.font-mono {
+	font-family: var(--font-mono);
+}
+
+.text-primary {
+	color: var(--text-primary);
+}
+.text-secondary {
+	color: var(--text-secondary);
+}
+.text-tertiary {
+	color: var(--text-tertiary);
+}
+.text-brand {
+	color: var(--text-brand);
+}
+.text-success {
+	color: var(--color-success);
+}
+.text-warning {
+	color: var(--color-warning);
+}
+.text-danger {
+	color: var(--color-danger);
+}
+
+.bg-surface {
+	background: var(--bg-surface);
+}
+.bg-surface-2 {
+	background: var(--bg-surface-2);
+}
+.bg-surface-3 {
+	background: var(--bg-surface-3);
+}
+
+.border-subtle {
+	border-color: var(--border-subtle);
+}
+.border-default {
+	border-color: var(--border-default);
+}
+.border-strong {
+	border-color: var(--border-strong);
+}
+
+/* Skeleton loading */
+.skeleton {
+	background: linear-gradient(
+		90deg,
+		var(--bg-surface-2) 25%,
+		var(--bg-surface-3) 50%,
+		var(--bg-surface-2) 75%
+	);
+	background-size: 200% 100%;
+	animation: shimmer 1.5s infinite;
+	border-radius: var(--radius-md);
+}
+
+/* No scrollbar */
+.no-scrollbar::-webkit-scrollbar {
+	display: none;
+}
+.no-scrollbar {
+	-ms-overflow-style: none;
+	scrollbar-width: none;
+}
+
+/* Marching ants SVG animation */
+.marching-ants {
+	stroke-dasharray: 6 4;
+	animation: marchingAnts 0.5s linear infinite;
+}
+
+/* Fade animations */
+.animate-fade-in {
+	animation: fadeIn 0.2s var(--ease-out) forwards;
+}
+.animate-slide-up {
+	animation: slideUp 0.25s var(--ease-out) forwards;
+}
+.animate-slide-down {
+	animation: slideDown 0.2s var(--ease-out) forwards;
+}
+.animate-scale-in {
+	animation: scaleIn 0.2s var(--ease-spring) forwards;
+}
+.animate-spin {
+	animation: spin 1s linear infinite;
+}
+.animate-pulse {
+	animation: pulse 2s ease-in-out infinite;
+}
