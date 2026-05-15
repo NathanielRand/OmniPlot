@@ -64,7 +64,10 @@ export interface Vehicle {
 	tags: string[];
 }
 
+export type PatternCategory = "ppf" | "window-tint";
+
 export type PatternZone =
+	// ── PPF zones ─────────────────────────────
 	| "hood"
 	| "hood-edge-left"
 	| "hood-edge-right"
@@ -90,6 +93,20 @@ export type PatternZone =
 	| "headlight-right"
 	| "foglight-left"
 	| "foglight-right"
+	// ── Window tint zones ──────────────────────
+	| "windshield"
+	| "windshield-strip"
+	| "rear-windshield"
+	| "sunroof"
+	| "moonroof"
+	| "window-front-left"
+	| "window-front-right"
+	| "window-rear-left"
+	| "window-rear-right"
+	| "quarter-window-left"
+	| "quarter-window-right"
+	| "vent-window-left"
+	| "vent-window-right"
 	| "custom";
 
 export type PatternCoverage = "full" | "partial" | "edge-only";
@@ -97,6 +114,7 @@ export type PatternCoverage = "full" | "partial" | "edge-only";
 export interface Pattern {
 	id: string;
 	vehicleId: string;
+	category: PatternCategory;
 	zone: PatternZone;
 	name: string;
 	coverage: PatternCoverage;
@@ -109,6 +127,19 @@ export interface Pattern {
 	isPublished: boolean;
 	createdAt: Date;
 	updatedAt: Date;
+}
+
+// ─── Tint Film ────────────────────────────────
+export interface TintFilm {
+	id: string;
+	name: string;
+	manufacturer: string;
+	sku: string;
+	widthInches: number;
+	heightInches: number;
+	vlt: number; // Visible Light Transmission %, e.g. 35 = 35% VLT
+	series: string; // e.g. "Ceramic", "Carbon", "Dyed"
+	irRejection?: number; // % infrared rejection
 }
 
 // ─── Canvas / Editor ─────────────────────────
@@ -129,6 +160,7 @@ export interface CanvasItem {
 	locked: boolean;
 	color: string; // Display color for this item
 	label?: string;
+	outOfBounds?: boolean; // True when item doesn't fit within the material sheet
 }
 
 export interface MaterialSheet {

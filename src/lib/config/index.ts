@@ -1,12 +1,12 @@
 // ─────────────────────────────────────────────
 // OmniPlot — APP CONFIGURATION
 // ─────────────────────────────────────────────
-import type { PricingPlan, MaterialSheet, PlotterConfig } from "$lib/types";
+import type { PricingPlan, MaterialSheet, TintFilm, PlotterConfig } from "$lib/types";
 
 // ─── App constants ────────────────────────────
 export const APP_NAME = "OmniPlot";
 export const APP_TAGLINE =
-	"Professional PPF cutting software. No install required.";
+	"Professional PPF & window tint cutting software. No install required.";
 export const APP_URL = "https://omniplot.app";
 export const SUPPORT_EMAIL = "support@omniplot.app";
 
@@ -103,60 +103,103 @@ export const PRICING_PLANS: PricingPlan[] = [
 ];
 
 // ─── Default materials ────────────────────────
+// Roll height = 1200" (100 feet). Displayed area auto-fits to placed items.
 export const DEFAULT_MATERIALS: MaterialSheet[] = [
+	// ── PPF rolls (60" wide) ──────────────────────
 	{
 		id: "stek-dynoshield-60",
-		name: "STEK DYNOShield",
+		name: "STEK DYNOShield 60\"",
 		widthInches: 60,
-		heightInches: 300,
+		heightInches: 1200,
 		manufacturer: "STEK",
 		sku: "DSH-60",
 	},
 	{
 		id: "xpel-ultimate-60",
-		name: "XPEL Ultimate Plus",
+		name: "XPEL Ultimate Plus 60\"",
 		widthInches: 60,
-		heightInches: 300,
+		heightInches: 1200,
 		manufacturer: "XPEL",
 		sku: "ULT+-60",
 	},
 	{
 		id: "llumar-platinum-60",
-		name: "LLumar Platinum PPF",
+		name: "LLumar Platinum PPF 60\"",
 		widthInches: 60,
-		heightInches: 300,
+		heightInches: 1200,
 		manufacturer: "LLumar",
 		sku: "PT-60",
 	},
 	{
 		id: "3m-scotchgard-60",
-		name: "3M Scotchgard Pro",
+		name: "3M Scotchgard Pro 60\"",
 		widthInches: 60,
-		heightInches: 300,
+		heightInches: 1200,
 		manufacturer: "3M",
 		sku: "SGP-60",
 	},
 	{
 		id: "suntek-ultra-60",
-		name: "SunTek Ultra PPF",
+		name: "SunTek Ultra PPF 60\"",
 		widthInches: 60,
-		heightInches: 300,
+		heightInches: 1200,
 		manufacturer: "SunTek",
 		sku: "UPF-60",
 	},
 	{
 		id: "kavaca-ceramic-60",
-		name: "KAVACA Ceramic-Coated",
+		name: "KAVACA Ceramic-Coated 60\"",
 		widthInches: 60,
-		heightInches: 300,
+		heightInches: 1200,
 		manufacturer: "KAVACA",
 		sku: "CC-60",
+	},
+	// ── Window tint rolls ─────────────────────────
+	{
+		id: "tint-20",
+		name: "Tint Roll 20\" × 100ft",
+		widthInches: 20,
+		heightInches: 1200,
+		manufacturer: "Generic",
+		sku: "TINT-20",
+	},
+	{
+		id: "tint-24",
+		name: "Tint Roll 24\" × 100ft",
+		widthInches: 24,
+		heightInches: 1200,
+		manufacturer: "Generic",
+		sku: "TINT-24",
+	},
+	{
+		id: "tint-36",
+		name: "Tint Roll 36\" × 100ft",
+		widthInches: 36,
+		heightInches: 1200,
+		manufacturer: "Generic",
+		sku: "TINT-36",
+	},
+	{
+		id: "tint-40",
+		name: "Tint Roll 40\" × 100ft",
+		widthInches: 40,
+		heightInches: 1200,
+		manufacturer: "Generic",
+		sku: "TINT-40",
+	},
+	{
+		id: "tint-60",
+		name: "Tint Roll 60\" × 100ft",
+		widthInches: 60,
+		heightInches: 1200,
+		manufacturer: "Generic",
+		sku: "TINT-60",
 	},
 	{
 		id: "custom",
 		name: "Custom / Other",
 		widthInches: 60,
-		heightInches: 300,
+		heightInches: 1200,
 		manufacturer: "Custom",
 		sku: "",
 	},
@@ -256,6 +299,107 @@ export const PLOTTER_PRESETS: Partial<PlotterConfig>[] = [
 	},
 ];
 
+// ─── Default tint films ───────────────────────
+export const DEFAULT_TINT_FILMS: TintFilm[] = [
+	{
+		id: "llumar-atr-35",
+		name: "LLumar ATR Ceramic",
+		manufacturer: "LLumar",
+		sku: "ATR-35-60",
+		widthInches: 60,
+		heightInches: 300,
+		vlt: 35,
+		series: "Ceramic",
+		irRejection: 98,
+	},
+	{
+		id: "3m-crystalline-35",
+		name: "3M Crystalline 40",
+		manufacturer: "3M",
+		sku: "CR-40-60",
+		widthInches: 60,
+		heightInches: 300,
+		vlt: 40,
+		series: "Ceramic",
+		irRejection: 97,
+	},
+	{
+		id: "xpel-xr-plus-35",
+		name: "XPEL XR Plus Ceramic",
+		manufacturer: "XPEL",
+		sku: "XR+-35-60",
+		widthInches: 60,
+		heightInches: 300,
+		vlt: 35,
+		series: "Ceramic",
+		irRejection: 98,
+	},
+	{
+		id: "formula-one-pinnacle-35",
+		name: "FormulaOne Pinnacle",
+		manufacturer: "FormulaOne",
+		sku: "PIN-35-60",
+		widthInches: 60,
+		heightInches: 300,
+		vlt: 35,
+		series: "Ceramic",
+		irRejection: 95,
+	},
+	{
+		id: "suntek-cir-35",
+		name: "SunTek CIR Ceramic",
+		manufacturer: "SunTek",
+		sku: "CIR-35-60",
+		widthInches: 60,
+		heightInches: 300,
+		vlt: 35,
+		series: "Ceramic",
+		irRejection: 96,
+	},
+	{
+		id: "llumar-atr-20",
+		name: "LLumar ATR Ceramic 20%",
+		manufacturer: "LLumar",
+		sku: "ATR-20-60",
+		widthInches: 60,
+		heightInches: 300,
+		vlt: 20,
+		series: "Ceramic",
+		irRejection: 98,
+	},
+	{
+		id: "3m-fx-premium-15",
+		name: "3M FX Premium 15%",
+		manufacturer: "3M",
+		sku: "FXP-15-60",
+		widthInches: 60,
+		heightInches: 300,
+		vlt: 15,
+		series: "Carbon",
+		irRejection: 60,
+	},
+	{
+		id: "custom-tint",
+		name: "Custom / Other",
+		manufacturer: "Custom",
+		sku: "",
+		widthInches: 60,
+		heightInches: 300,
+		vlt: 35,
+		series: "Custom",
+	},
+];
+
+// ─── Window tint zone groups (for library sidebar) ──
+export const TINT_ZONE_GROUPS = [
+	{ label: "All zones",  value: "all" },
+	{ label: "Windshield", value: "windshield" },
+	{ label: "Side Windows", value: "side" },
+	{ label: "Rear Window", value: "rear" },
+	{ label: "Sunroof / Moonroof", value: "sunroof" },
+	{ label: "Quarter / Vent", value: "quarter" },
+] as const;
+
 // ─── Canvas defaults ──────────────────────────
 export const DEFAULT_CANVAS_STATE = {
 	zoom: 100,
@@ -331,7 +475,7 @@ export const FAQ_ITEMS = [
 			},
 			{
 				q: "Are patterns available for window tint as well as PPF?",
-				a: "PPF is our primary focus at launch. Window tint patterns are on our roadmap for Q3.",
+				a: "Yes. OmniPlot supports both PPF and window tint workflows. Switch between modes in the Pattern Library. Window tint patterns cover windshield, rear window, all side windows, sunroof/moonroof, and quarter/vent windows — with accurate shapes for every vehicle in the library. Tint film materials (LLumar, 3M, XPEL, SunTek, FormulaOne, and more) are available alongside PPF rolls in the material selector.",
 			},
 			{
 				q: "How accurate are the patterns?",

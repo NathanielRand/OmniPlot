@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from "svelte";
 	import {
 		canvasStore,
 		plotterStore,
@@ -6,7 +7,7 @@
 		uiStore,
 		userStore,
 	} from "$lib/stores";
-	import { autoNest } from "$lib/utils/nesting";
+	import { autoNest, findNextPosition, type PlacementResult } from "$lib/utils/nesting";
 	import {
 		downloadHpgl,
 		downloadSvg,
@@ -27,13 +28,75 @@
 	import type { CanvasItem } from "$lib/types";
 
 	// ─── Derived metrics ──────────────────────────
-	const efficiency = $derived(
-		calcEfficiency(canvasStore.items, canvasStore.sheet),
+	const outOfBoundsCount = $derived(
+		canvasStore.items.filter((i) => i.outOfBounds).length,
 	);
+	const cutCount = $derived(
+		canvasStore.items.filter((i) => !i.outOfBounds).length,
+	);
+	// Efficiency = pattern area / (roll_width × roll_length_used)
+	const efficiency = $derived.by(() => {
+		const inBounds = canvasStore.items.filter((i) => !i.outOfBounds);
+		if (!inBounds.length) return 0;
+		const usedLength = Math.max(...inBounds.map((i) => i.x + i.width), 0);
+		if (usedLength === 0) return 0;
+		const patternArea = inBounds.reduce((s, i) => s + i.width * i.height, 0);
+		return Math.min(1, patternArea / (canvasStore.sheet.widthInches * usedLength));
+	});
 	const cutTimeSecs = $derived(
 		estimateCutTime(canvasStore.items, plotterStore.config.cuttingSpeed),
 	);
-	const overlaps = $derived(canvasStore.items.length); // simplified
+
+	// ─── Horizontal roll canvas dimensions ─────────
+	// Roll width = fixed HEIGHT of canvas (Y axis = cross-cut dimension).
+	// Roll length used = dynamic WIDTH of canvas (X axis = direction feed).
+	// This matches how real cutting software displays material rolls.
+	const displaySheetW = $derived(
+		Math.max(
+			canvasStore.sheet.widthInches * 2, // minimum: 2× roll width of visible length
+			...canvasStore.items
+				.filter((i) => !i.outOfBounds)
+				.map((i) => i.x + i.width),
+			0,
+		) + 12,
+	);
+	// Fixed roll-width height + small staging strip below if OOB items exist
+	const displaySheetH = $derived(
+		canvasStore.sheet.widthInches + (outOfBoundsCount > 0 ? 20 : 0),
+	);
+
+	// ─── Transposed sheet for nesting ─────────────
+	// Swap width/height so nesting treats roll_length as X (large, unconstrained)
+	// and roll_width as Y (the true cutting constraint).
+	function transposedSheet(sheet = canvasStore.sheet) {
+		return {
+			...sheet,
+			widthInches: sheet.heightInches,
+			heightInches: sheet.widthInches,
+		};
+	}
+
+	// ─── Re-nest items on new sheet ───────────────
+	function renestOnSheet(sheet: typeof canvasStore.sheet) {
+		canvasStore.setSheet(sheet);
+		if (canvasStore.items.length > 0) {
+			const nested = autoNest(canvasStore.items, transposedSheet(sheet));
+			canvasStore.setItems(nested);
+			const oob = nested.filter((i) => i.outOfBounds).length;
+			if (oob > 0) {
+				toastStore.warning(
+					`${sheet.widthInches}" roll`,
+					`${oob} pieces exceed roll width — won't cut`,
+				);
+			} else if (canvasStore.items.length > 0) {
+				toastStore.success(
+					`${sheet.widthInches}" roll`,
+					"All pieces re-nested",
+				);
+			}
+		}
+		fitToView();
+	}
 
 	// ─── Active panel tab ─────────────────────────
 	let panelTab = $state<"properties" | "patterns" | "plotter">("properties");
@@ -46,20 +109,9 @@
 	function onCanvasMouseMove(e: MouseEvent) {
 		if (!canvasEl) return;
 		const rect = canvasEl.getBoundingClientRect();
-		const sheetPxW =
-			canvasStore.sheet.widthInches * 48 * (canvasStore.zoom / 100);
-		const sheetPxH =
-			canvasStore.sheet.heightInches * 48 * (canvasStore.zoom / 100);
-		const ox = (rect.width - sheetPxW) / 2;
-		const oy = (rect.height - sheetPxH) / 2;
-		cursorX = Math.max(
-			0,
-			(e.clientX - rect.left - ox) / (canvasStore.zoom / 100) / 48,
-		);
-		cursorY = Math.max(
-			0,
-			(e.clientY - rect.top - oy) / (canvasStore.zoom / 100) / 48,
-		);
+		const scale = canvasStore.zoom / 100;
+		cursorX = Math.max(0, (e.clientX - rect.left + canvasEl.scrollLeft - 48) / scale / 48);
+		cursorY = Math.max(0, (e.clientY - rect.top + canvasEl.scrollTop - 48) / scale / 48);
 	}
 
 	function onCanvasClick(e: MouseEvent) {
@@ -69,12 +121,23 @@
 
 	// ─── Actions ──────────────────────────────────
 	function handleAutoNest() {
-		const nested = autoNest(canvasStore.items, canvasStore.sheet);
+		const nested = autoNest(canvasStore.items, transposedSheet());
 		canvasStore.setItems(nested);
-		toastStore.success(
-			"Auto-nested",
-			`${nested.length} pieces · ${formatEfficiency(calcEfficiency(nested, canvasStore.sheet))} efficiency`,
-		);
+		const oob = nested.filter((i) => i.outOfBounds).length;
+		const fit = nested.length - oob;
+		const eff = formatEfficiency(calcEfficiency(nested, canvasStore.sheet));
+		if (oob > 0) {
+			toastStore.warning(
+				"Auto-nested",
+				`${fit} pieces fit · ${eff} efficiency · ${oob} won't cut (exceed sheet)`,
+			);
+		} else {
+			toastStore.success(
+				"Auto-nested",
+				`${fit} pieces · ${eff} efficiency`,
+			);
+		}
+		fitToView();
 	}
 
 	function handleCut() {
@@ -119,6 +182,10 @@
 	function addSampleItem() {
 		const colors = ["#00E5FF", "#A78BFA", "#00D68F", "#FFB547"];
 		const idx = canvasStore.items.length;
+		const w = 18 - (idx % 4) * 2;
+		const h = 12 - (idx % 4);
+		const demoPath = "M10,90 Q15,20 50,5 Q85,20 90,90";
+		const pos = findNextPosition(canvasStore.items, transposedSheet(), w, h, demoPath);
 		const item: CanvasItem = {
 			id: uid("item_"),
 			patternId: `demo_${idx}`,
@@ -131,18 +198,19 @@
 				],
 				coverage: "full",
 				svgPath: "M10,90 Q15,20 50,5 Q85,20 90,90",
-				widthInches: 18 - idx * 2,
-				heightInches: 12 - idx,
+				widthInches: w,
+				heightInches: h,
 				revision: "2024-11",
 				isPublished: true,
 				createdAt: new Date(),
 				updatedAt: new Date(),
 			},
-			x: idx * 3 + 0.5,
-			y: idx * 1.5 + 0.5,
-			width: 18 - idx * 2,
-			height: 12 - idx,
-			rotation: 0,
+			x: pos.x,
+			y: pos.y,
+			width: pos.width,
+			height: pos.height,
+			rotation: pos.rotation,
+			outOfBounds: pos.outOfBounds,
 			flippedH: false,
 			flippedV: false,
 			scale: 1,
@@ -167,6 +235,25 @@
 
 	// ─── Zoom shortcuts ───────────────────────────
 	let showExport = $state(false);
+
+	// ─── Fit to view ─────────────────────────────
+	// Calculates zoom so the roll height (widthInches) fills the canvas viewport.
+	function fitToView() {
+		if (!canvasEl) return;
+		const viewW = canvasEl.clientWidth;
+		const viewH = canvasEl.clientHeight;
+		const rollPxH = canvasStore.sheet.widthInches * 48;
+		const rollPxW = displaySheetW * 48;
+		if (viewH > 0 && viewW > 0 && rollPxH > 0 && rollPxW > 0) {
+			const zoomH = (viewH * 0.88) / rollPxH * 100;
+			const zoomW = (viewW * 0.88) / rollPxW * 100;
+			canvasStore.setZoom(Math.max(3, Math.min(150, Math.min(zoomH, zoomW))));
+		}
+		canvasEl.scrollLeft = 0;
+		canvasEl.scrollTop = 0;
+	}
+
+	onMount(fitToView);
 </script>
 
 <svelte:head>
@@ -339,6 +426,34 @@
 			</button>
 		</div>
 
+		<!-- Fit to view -->
+		<button
+			class="tool-btn"
+			title="Fit roll to view (F)"
+			onclick={fitToView}
+			aria-label="Fit roll to view"
+		>
+			<svg
+				width="14"
+				height="14"
+				viewBox="0 0 24 24"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="2"
+				stroke-linecap="round"
+				stroke-linejoin="round"
+				aria-hidden="true"
+				><polyline points="15 3 21 3 21 9" /><polyline
+					points="9 21 3 21 3 15"
+				/><line x1="21" y1="3" x2="14" y2="10" /><line
+					x1="3"
+					y1="21"
+					x2="10"
+					y2="14"
+				/></svg
+			>
+		</button>
+
 		<!-- View toggles -->
 		<button
 			class="tool-btn"
@@ -452,6 +567,7 @@
 		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 		<div
 			class="canvas-area"
+			class:show-grid={canvasStore.state.showGrid}
 			bind:this={canvasEl}
 			onmousemove={onCanvasMouseMove}
 			onclick={onCanvasClick}
@@ -465,41 +581,43 @@
 
 			<div
 				class="canvas-content"
-				style="transform: scale({canvasStore.zoom / 100})"
 			>
 				<!-- Material sheet -->
 				<div
 					class="material-sheet"
 					style="
-            width: {canvasStore.sheet.widthInches * 48}px;
-            height: {Math.min(canvasStore.sheet.heightInches, 24) * 48}px;
+            width: {displaySheetW * 48 * canvasStore.zoom / 100}px;
+            height: {displaySheetH * 48 * canvasStore.zoom / 100}px;
           "
 				>
 					<span class="sheet-label"
 						>{canvasStore.sheet.name} · {canvasStore.sheet
-							.widthInches}" roll</span
+							.widthInches}" wide</span
 					>
 					<span class="sheet-dim"
-						>{canvasStore.sheet.widthInches}" × {Math.min(
-							canvasStore.sheet.heightInches,
-							24,
-						)}" working area</span
+						>{canvasStore.sheet.widthInches}" roll · {displaySheetW.toFixed(0)}" used</span
 					>
+					<!-- Roll-width boundary line: shows the edge of the cut zone -->
+					{#if outOfBoundsCount > 0}
+						<div
+							class="roll-boundary"
+							style="top: {canvasStore.sheet.widthInches * 48 * canvasStore.zoom / 100}px"
+							aria-hidden="true"
+						></div>
+					{/if}
 
 					<!-- Cut items -->
 					{#each canvasStore.items as item (item.id)}
 						<!-- svelte-ignore a11y_click_events_have_key_events -->
 						<div
 							class="cut-item"
-							class:selected={canvasStore.selected.includes(
-								item.id,
-							)}
+							class:selected={canvasStore.selected.includes(item.id)}
+							class:cut-item--oob={item.outOfBounds}
 							style="
-                left: {item.x * 48}px;
-                top: {item.y * 48}px;
-                width: {item.width * 48}px;
-                height: {item.height * 48}px;
-                transform: rotate({item.rotation}deg);
+                left: {item.x * 48 * canvasStore.zoom / 100}px;
+                top: {item.y * 48 * canvasStore.zoom / 100}px;
+                width: {item.width * 48 * canvasStore.zoom / 100}px;
+                height: {item.height * 48 * canvasStore.zoom / 100}px;
               "
 							role="button"
 							tabindex="0"
@@ -522,28 +640,30 @@
 								preserveAspectRatio="none"
 								aria-hidden="true"
 							>
-								<path
-									d={item.pattern.svgPath}
-									fill="{item.color}0D"
-									stroke={item.color}
-									stroke-width="1.5"
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									vector-effect="non-scaling-stroke"
-									class:marching-ants={canvasStore.selected.includes(
-										item.id,
-									)}
-								/>
-								<text
-									x="50"
-									y="55"
-									text-anchor="middle"
-									fill={item.color}
-									opacity="0.5"
-									font-size="8"
-									font-family="monospace"
-									>{item.label ?? item.pattern.zone}</text
-								>
+								<g transform="rotate({item.rotation} 50 50)">
+									<path
+										d={item.pattern.svgPath}
+										fill="{item.color}0D"
+										stroke={item.color}
+										stroke-width="1.5"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										vector-effect="non-scaling-stroke"
+										class:marching-ants={canvasStore.selected.includes(
+											item.id,
+										)}
+									/>
+									<text
+										x="50"
+										y="55"
+										text-anchor="middle"
+										fill={item.color}
+										opacity="0.5"
+										font-size="8"
+										font-family="monospace"
+										>{item.label ?? item.pattern.zone}</text
+									>
+								</g>
 							</svg>
 							{#if canvasStore.selected.includes(item.id)}
 								<div
@@ -559,6 +679,12 @@
 										style="background: {item.color}"
 									></div>
 								{/each}
+							{/if}
+							{#if item.outOfBounds}
+								<div class="cut-item__oob-badge" aria-label="Won't cut — outside material zone">
+									<svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>
+									Won't cut
+								</div>
 							{/if}
 							<span
 								class="cut-item__label"
@@ -730,7 +856,7 @@
 										m.id ===
 										(e.target as HTMLSelectElement).value,
 								);
-								if (mat) canvasStore.setSheet(mat);
+								if (mat) renestOnSheet(mat);
 							}}
 						>
 							{#each DEFAULT_MATERIALS as mat}
@@ -741,6 +867,32 @@
 								>
 							{/each}
 						</select>
+					</div>
+
+					<div class="prop-section">
+						<div class="prop-label">Roll Width</div>
+						<div class="roll-width-pills">
+							{#each [20, 24, 36, 40, 48, 60] as w}
+								<button
+									class="roll-pill"
+									class:active={canvasStore.sheet.widthInches === w}
+									onclick={() => {
+										const mat =
+											DEFAULT_MATERIALS.find(
+												(m) => m.widthInches === w,
+											) ?? {
+												...canvasStore.sheet,
+												id: `roll-${w}`,
+												name: `Roll ${w}" × 100ft`,
+												widthInches: w,
+												heightInches: 1200,
+											};
+										renestOnSheet(mat);
+									}}
+								>{w}"</button
+								>
+							{/each}
+						</div>
 					</div>
 
 					<div class="prop-section">
@@ -948,7 +1100,7 @@
 
 	<!-- ─── Status bar ─── -->
 	<div class="studio__statusbar" role="status" aria-label="Job metrics">
-		{#each [["Material Usage", formatEfficiency(efficiency), efficiency > 0.65 ? "good" : "warn"], ["Cut Paths", `${canvasStore.items.length}`, ""], ["Est. Cut Time", formatCutTime(cutTimeSecs), ""], ["Sheet", `${canvasStore.sheet.widthInches}" × ${Math.min(canvasStore.sheet.heightInches, 24)}"`, ""], ["Cursor", `${cursorX.toFixed(1)}" , ${cursorY.toFixed(1)}"`, ""]] as const as [label, value, cls]}
+		{#each [["Material Usage", formatEfficiency(efficiency), efficiency > 0.65 ? "good" : "warn"], ["Cut Paths", `${cutCount}`, ""], ["Est. Cut Time", formatCutTime(cutTimeSecs), ""], ["Roll", `${canvasStore.sheet.widthInches}" × ${displaySheetW.toFixed(0)}"`, ""], ["Excluded", `${outOfBoundsCount}`, outOfBoundsCount > 0 ? "warn" : ""], ["Cursor", `${cursorX.toFixed(1)}" , ${cursorY.toFixed(1)}"`, ""]] as const as [label, value, cls]}
 			<div class="status-metric">
 				<span class="status-metric__label">{label}</span>
 				<span
@@ -1168,19 +1320,21 @@
 	/* ─── Canvas ────── */
 	.canvas-area {
 		position: relative;
-		overflow: hidden;
+		overflow: auto;
 		background: var(--canvas-bg);
 		cursor: crosshair;
 	}
 
-	.canvas-grid {
-		position: absolute;
-		inset: 0;
+	/* Minor grid lines live directly on canvas-area so they scroll naturally */
+	.canvas-area.show-grid {
 		background-image:
 			linear-gradient(var(--canvas-grid) 1px, transparent 1px),
 			linear-gradient(90deg, var(--canvas-grid) 1px, transparent 1px);
 		background-size: 24px 24px;
-		pointer-events: none;
+	}
+
+	.canvas-grid {
+		display: none; /* replaced by canvas-area.show-grid background */
 	}
 
 	.canvas-grid-major {
@@ -1195,16 +1349,13 @@
 			);
 		background-size: 120px 120px;
 		pointer-events: none;
+		z-index: 0;
 	}
 
 	.canvas-content {
-		position: absolute;
-		inset: 0;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		transform-origin: center center;
-		transition: transform 0.15s var(--ease-smooth);
+		position: relative;
+		display: inline-block;
+		padding: 48px;
 	}
 
 	.material-sheet {
@@ -1247,6 +1398,46 @@
 	}
 	.cut-item.selected {
 		z-index: 5;
+	}
+
+	/* Out-of-bounds items — won't be cut */
+	.cut-item--oob {
+		opacity: 0.45;
+	}
+	.cut-item--oob::after {
+		content: "";
+		position: absolute;
+		inset: 0;
+		background: repeating-linear-gradient(
+			-45deg,
+			rgba(255, 60, 60, 0.12) 0px,
+			rgba(255, 60, 60, 0.12) 4px,
+			transparent 4px,
+			transparent 10px
+		);
+		pointer-events: none;
+		border-radius: 2px;
+	}
+
+	.cut-item__oob-badge {
+		position: absolute;
+		top: 50%;
+		left: 50%;
+		transform: translate(-50%, -50%);
+		display: flex;
+		align-items: center;
+		gap: 3px;
+		padding: 2px 6px;
+		background: rgba(220, 40, 40, 0.85);
+		color: #fff;
+		font-family: var(--font-mono);
+		font-size: 0.5rem;
+		font-weight: 600;
+		letter-spacing: 0.05em;
+		border-radius: 3px;
+		white-space: nowrap;
+		pointer-events: none;
+		text-transform: uppercase;
 	}
 
 	.cut-item__ring {
@@ -1649,6 +1840,50 @@
 		.cut-btn span {
 			display: none;
 		}
+	}
+
+	/* Roll-width boundary — dashed line between cut zone and staging area */
+	.roll-boundary {
+		position: absolute;
+		left: 0;
+		right: 0;
+		height: 0;
+		border-top: 1.5px dashed rgba(255, 80, 80, 0.45);
+		pointer-events: none;
+		z-index: 2;
+	}
+
+	/* Roll width quick-select pills */
+	.roll-width-pills {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px;
+	}
+
+	.roll-pill {
+		padding: 4px 10px;
+		border-radius: 99px;
+		border: 1px solid var(--border-default);
+		background: var(--bg-surface-2);
+		color: var(--text-secondary);
+		font-family: var(--font-mono);
+		font-size: 0.625rem;
+		cursor: pointer;
+		transition:
+			background 0.12s,
+			color 0.12s,
+			border-color 0.12s;
+	}
+
+	.roll-pill:hover {
+		background: var(--bg-surface-3);
+		color: var(--text-primary);
+	}
+
+	.roll-pill.active {
+		background: var(--color-brand-dim);
+		border-color: var(--color-brand-dim);
+		color: #000;
 	}
 
 	:global(.mt-3) {

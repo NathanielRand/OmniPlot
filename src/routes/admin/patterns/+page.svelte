@@ -4,6 +4,7 @@
 
 	type PatternStatus = "published" | "draft" | "review";
 	type RequestStatus = "queued" | "in-progress" | "done";
+	type PatternCategory = "ppf" | "tint" | "both";
 
 	interface VehicleRow {
 		id: string;
@@ -12,6 +13,8 @@
 		year: number;
 		patterns: number;
 		published: number;
+		tintZones: number;
+		tintPublished: number;
 		status: PatternStatus;
 		updatedAt: string;
 	}
@@ -25,16 +28,16 @@
 	}
 
 	const VEHICLES: VehicleRow[] = [
-		{ id: "v1", make: "BMW", model: "M4", year: 2024, patterns: 18, published: 18, status: "published", updatedAt: "2024-11-12" },
-		{ id: "v2", make: "Tesla", model: "Model 3", year: 2024, patterns: 14, published: 14, status: "published", updatedAt: "2024-11-08" },
-		{ id: "v3", make: "Porsche", model: "911 GT3", year: 2024, patterns: 22, published: 20, status: "published", updatedAt: "2024-10-31" },
-		{ id: "v4", make: "Mercedes", model: "G63 AMG", year: 2024, patterns: 16, published: 12, status: "review", updatedAt: "2024-12-02" },
-		{ id: "v5", make: "Ford", model: "F-150", year: 2024, patterns: 10, published: 10, status: "published", updatedAt: "2024-10-14" },
-		{ id: "v6", make: "Lamborghini", model: "Urus", year: 2024, patterns: 8, published: 0, status: "draft", updatedAt: "2024-12-10" },
-		{ id: "v7", make: "Toyota", model: "GR86", year: 2024, patterns: 12, published: 12, status: "published", updatedAt: "2024-09-22" },
-		{ id: "v8", make: "BMW", model: "M5", year: 2025, patterns: 4, published: 0, status: "draft", updatedAt: "2024-12-14" },
-		{ id: "v9", make: "Audi", model: "RS6", year: 2024, patterns: 15, published: 15, status: "published", updatedAt: "2024-11-01" },
-		{ id: "v10", make: "Chevrolet", model: "Corvette Z06", year: 2024, patterns: 11, published: 11, status: "published", updatedAt: "2024-10-05" },
+		{ id: "v1",  make: "BMW",          model: "M4",          year: 2024, patterns: 18, published: 18, tintZones: 13, tintPublished: 13, status: "published", updatedAt: "2024-11-12" },
+		{ id: "v2",  make: "Tesla",        model: "Model 3",     year: 2024, patterns: 14, published: 14, tintZones: 11, tintPublished: 11, status: "published", updatedAt: "2024-11-08" },
+		{ id: "v3",  make: "Porsche",      model: "911 GT3",     year: 2024, patterns: 22, published: 20, tintZones: 10, tintPublished: 10, status: "published", updatedAt: "2024-10-31" },
+		{ id: "v4",  make: "Mercedes",     model: "G63 AMG",     year: 2024, patterns: 16, published: 12, tintZones: 13, tintPublished: 8,  status: "review",    updatedAt: "2024-12-02" },
+		{ id: "v5",  make: "Ford",         model: "F-150",       year: 2024, patterns: 10, published: 10, tintZones: 11, tintPublished: 11, status: "published", updatedAt: "2024-10-14" },
+		{ id: "v6",  make: "Lamborghini",  model: "Urus",        year: 2024, patterns: 8,  published: 0,  tintZones: 13, tintPublished: 0,  status: "draft",     updatedAt: "2024-12-10" },
+		{ id: "v7",  make: "Toyota",       model: "GR86",        year: 2024, patterns: 12, published: 12, tintZones: 9,  tintPublished: 9,  status: "published", updatedAt: "2024-09-22" },
+		{ id: "v8",  make: "BMW",          model: "M5",          year: 2025, patterns: 4,  published: 0,  tintZones: 13, tintPublished: 0,  status: "draft",     updatedAt: "2024-12-14" },
+		{ id: "v9",  make: "Audi",         model: "RS6",         year: 2024, patterns: 15, published: 15, tintZones: 12, tintPublished: 12, status: "published", updatedAt: "2024-11-01" },
+		{ id: "v10", make: "Chevrolet",    model: "Corvette Z06",year: 2024, patterns: 11, published: 11, tintZones: 10, tintPublished: 10, status: "published", updatedAt: "2024-10-05" },
 	];
 
 	const REQUESTS: PatternRequest[] = [
@@ -48,6 +51,7 @@
 
 	let search = $state("");
 	let filterStatus = $state<"all" | PatternStatus>("all");
+	let filterCategory = $state<PatternCategory>("both");
 	let requests = $state(REQUESTS);
 
 	const filtered = $derived(
@@ -61,8 +65,10 @@
 
 	const totals = $derived({
 		vehicles: VEHICLES.length,
-		patterns: VEHICLES.reduce((s, v) => s + v.patterns, 0),
-		published: VEHICLES.reduce((s, v) => s + v.published, 0),
+		ppfPatterns: VEHICLES.reduce((s, v) => s + v.patterns, 0),
+		ppfPublished: VEHICLES.reduce((s, v) => s + v.published, 0),
+		tintZones: VEHICLES.reduce((s, v) => s + v.tintZones, 0),
+		tintPublished: VEHICLES.reduce((s, v) => s + v.tintPublished, 0),
 		drafts: VEHICLES.filter((v) => v.status === "draft").length,
 	});
 
@@ -93,14 +99,15 @@
 	<!-- Summary cards -->
 	<div class="summary-row">
 		{#each [
-			{ label: "Total vehicles", value: totals.vehicles },
-			{ label: "Total patterns", value: totals.patterns },
-			{ label: "Published", value: totals.published },
-			{ label: "Drafts / review", value: totals.drafts },
+			{ label: "Total vehicles",   value: totals.vehicles },
+			{ label: "PPF patterns",     value: totals.ppfPatterns, sub: `${totals.ppfPublished} published` },
+			{ label: "Window tint zones",value: totals.tintZones,   sub: `${totals.tintPublished} published` },
+			{ label: "Drafts / review",  value: totals.drafts },
 		] as s}
 			<div class="summary-card">
 				<div class="summary-card__label">{s.label}</div>
 				<div class="summary-card__value">{s.value}</div>
+				{#if s.sub}<div class="summary-card__sub">{s.sub}</div>{/if}
 			</div>
 		{/each}
 	</div>
@@ -111,6 +118,16 @@
 			<h2 class="section-title">Vehicles</h2>
 
 			<div class="toolbar">
+				<div class="category-tabs" role="group" aria-label="Category">
+					{#each ([["both","All"], ["ppf","PPF"], ["tint","Tint"]] as [PatternCategory, string][]) as [val, label]}
+						<button
+							class="status-tab"
+							class:active={filterCategory === val}
+							onclick={() => (filterCategory = val)}
+							aria-pressed={filterCategory === val}
+						>{label}</button>
+					{/each}
+				</div>
 				<div class="status-tabs" role="tablist">
 					{#each (["all", "published", "review", "draft"] as const) as t}
 						<button
@@ -142,9 +159,14 @@
 				<thead>
 					<tr>
 						<th>Vehicle</th>
-						<th>Patterns</th>
-						<th>Published</th>
-						<th>Coverage</th>
+						{#if filterCategory !== "tint"}
+							<th>PPF patterns</th>
+							<th>PPF coverage</th>
+						{/if}
+						{#if filterCategory !== "ppf"}
+							<th>Tint zones</th>
+							<th>Tint coverage</th>
+						{/if}
 						<th>Status</th>
 						<th>Updated</th>
 						<th class="th-actions"></th>
@@ -163,14 +185,24 @@
 									</div>
 								</div>
 							</td>
-							<td class="td-mono">{v.patterns}</td>
-							<td class="td-mono">{v.published}</td>
-							<td>
-								<div class="coverage-bar" role="meter" aria-valuenow={v.published} aria-valuemax={v.patterns} aria-label="Coverage">
-									<div class="coverage-bar__fill" style="width: {v.patterns > 0 ? Math.round((v.published / v.patterns) * 100) : 0}%"></div>
-								</div>
-								<span class="coverage-pct">{v.patterns > 0 ? Math.round((v.published / v.patterns) * 100) : 0}%</span>
-							</td>
+							{#if filterCategory !== "tint"}
+								<td class="td-mono">{v.published} / {v.patterns}</td>
+								<td>
+									<div class="coverage-bar" role="meter" aria-valuenow={v.published} aria-valuemax={v.patterns} aria-label="PPF coverage">
+										<div class="coverage-bar__fill" style="width: {v.patterns > 0 ? Math.round((v.published / v.patterns) * 100) : 0}%"></div>
+									</div>
+									<span class="coverage-pct">{v.patterns > 0 ? Math.round((v.published / v.patterns) * 100) : 0}%</span>
+								</td>
+							{/if}
+							{#if filterCategory !== "ppf"}
+								<td class="td-mono">{v.tintPublished} / {v.tintZones}</td>
+								<td>
+									<div class="coverage-bar coverage-bar--tint" role="meter" aria-valuenow={v.tintPublished} aria-valuemax={v.tintZones} aria-label="Tint coverage">
+										<div class="coverage-bar__fill" style="width: {v.tintZones > 0 ? Math.round((v.tintPublished / v.tintZones) * 100) : 0}%"></div>
+									</div>
+									<span class="coverage-pct">{v.tintZones > 0 ? Math.round((v.tintPublished / v.tintZones) * 100) : 0}%</span>
+								</td>
+							{/if}
 							<td>
 								<Badge
 									variant={v.status === "published" ? "success" : v.status === "review" ? "warning" : "default"}
@@ -194,7 +226,7 @@
 						</tr>
 					{/each}
 					{#if filtered.length === 0}
-						<tr><td colspan="7" class="td-empty">No vehicles match your search.</td></tr>
+						<tr><td colspan="9" class="td-empty">No vehicles match your search.</td></tr>
 					{/if}
 				</tbody>
 			</table>
@@ -302,6 +334,13 @@
 		color: var(--text-primary);
 	}
 
+	.summary-card__sub {
+		font-size: 0.75rem;
+		color: var(--text-tertiary);
+		font-family: var(--font-mono);
+		margin-top: 2px;
+	}
+
 	.section {
 		background: var(--bg-surface);
 		border: 1px solid var(--border-subtle);
@@ -335,6 +374,15 @@
 		align-items: center;
 		gap: 10px;
 		flex-wrap: wrap;
+	}
+
+	.category-tabs {
+		display: flex;
+		gap: 2px;
+		background: var(--bg-surface-2);
+		border: 1px solid var(--border-subtle);
+		border-radius: var(--radius-lg);
+		padding: 2px;
 	}
 
 	.status-tabs {
@@ -465,6 +513,10 @@
 		background: var(--color-success);
 		border-radius: 2px;
 		transition: width 0.3s;
+	}
+
+	.coverage-bar--tint .coverage-bar__fill {
+		background: var(--color-brand-dim);
 	}
 	.coverage-pct {
 		font-family: var(--font-mono);

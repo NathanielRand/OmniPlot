@@ -170,8 +170,10 @@ export function generateHpgl(
 		"",
 	];
 
-	// Sort items by layer, then by y position (top-to-bottom) for efficient cutting
-	const sorted = [...items].sort((a, b) => a.layer - b.layer || a.y - b.y);
+	// Only cut items within the material sheet bounds
+	const sorted = [...items]
+		.filter((i) => !i.outOfBounds)
+		.sort((a, b) => a.layer - b.layer || a.y - b.y);
 
 	for (const item of sorted) {
 		lines.push(`; --- ${item.label ?? item.pattern.name} ---`);
@@ -194,6 +196,7 @@ export function generateSvg(state: CanvasState): string {
 	const H = sheet.heightInches * 96;
 
 	const paths = items
+		.filter((i) => !i.outOfBounds)
 		.map((item) => {
 			const scaleX = item.width / 1;
 			const scaleY = item.height / 1;
@@ -256,9 +259,10 @@ export function calcEfficiency(
 	items: CanvasItem[],
 	sheet: MaterialSheet,
 ): number {
-	if (!items.length) return 0;
+	const inBounds = items.filter((i) => !i.outOfBounds);
+	if (!inBounds.length) return 0;
 	const sheetArea = sheet.widthInches * sheet.heightInches;
-	const usedArea = items.reduce(
+	const usedArea = inBounds.reduce(
 		(sum, item) => sum + item.width * item.height,
 		0,
 	);
@@ -272,7 +276,7 @@ export function estimateCutTime(
 ): number {
 	// Approximate path length as perimeter of bounding box × 1.4 (fudge for curves)
 	const MM_PER_INCH = 25.4;
-	const totalLengthMm = items.reduce((sum, item) => {
+	const totalLengthMm = items.filter((i) => !i.outOfBounds).reduce((sum, item) => {
 		const perim = 2 * (item.width + item.height) * MM_PER_INCH;
 		return sum + perim * 1.4;
 	}, 0);
