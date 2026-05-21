@@ -1,6 +1,7 @@
 <script lang="ts">
 	import Badge from "$lib/components/ui/Badge.svelte";
 	import { formatRelativeTime } from "$lib/utils";
+	import { patternStore } from "$lib/stores/patternStore.svelte";
 
 	// Mock metrics
 	const METRICS = [
@@ -133,12 +134,11 @@
 		},
 	];
 
-	const PATTERN_REQUESTS = [
-		{ vehicle: "2025 BMW M5", votes: 34, status: "in-progress" },
-		{ vehicle: "2025 Mercedes CLE", votes: 28, status: "queued" },
-		{ vehicle: "2025 Tesla Model Y", votes: 22, status: "queued" },
-		{ vehicle: "2024 Lamborghini Urus", votes: 18, status: "queued" },
-	];
+	const PATTERN_REQUESTS = $derived(
+		patternStore.requests
+			.filter((r) => r.status !== "done")
+			.slice(0, 4),
+	);
 
 	// Sparkline data (fake weekly cuts)
 	const SPARKLINE = [120, 145, 132, 178, 201, 189, 347];
@@ -334,7 +334,7 @@
 					>
 						{r.status}
 					</Badge>
-					<button class="request-action">
+					<button class="request-action" onclick={() => patternStore.advanceRequest(r.id)}>
 						{r.status === "in-progress" ? "Mark done" : "Start"}
 					</button>
 				</div>

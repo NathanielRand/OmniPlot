@@ -381,7 +381,7 @@
 					<span class="lib-stat__label">Vehicles</span>
 				</div>
 				<div class="lib-stat">
-					<span class="lib-stat__val">13</span>
+					<span class="lib-stat__val">11</span>
 					<span class="lib-stat__label">Zones/Vehicle</span>
 				</div>
 			{/if}
@@ -465,7 +465,7 @@
 										{storeCount} {mode === "tint" ? "windows" : "patterns"}
 									</Badge>
 								{:else}
-									<Badge variant="default" size="sm">Patterns pending</Badge>
+									<Badge variant="default" size="sm">{ZONE_PATTERNS.length} zones</Badge>
 								{/if}
 								{#if vehicle.popular}
 									<Badge variant="brand" size="sm">Popular</Badge>

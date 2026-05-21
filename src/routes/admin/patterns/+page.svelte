@@ -43,7 +43,7 @@
 		ppfPublished: patternStore.vehicles.reduce((s, v) => s + patternStore.getPatterns(v.id, "ppf").filter((p) => p.isPublished).length, 0),
 		tintZones:    patternStore.vehicles.reduce((s, v) => s + patternStore.getPatterns(v.id, "window-tint").length, 0),
 		tintPublished:patternStore.vehicles.reduce((s, v) => s + patternStore.getPatterns(v.id, "window-tint").filter((p) => p.isPublished).length, 0),
-		drafts:       patternStore.vehicles.filter((v) => v.status === "draft").length,
+		drafts:       patternStore.vehicles.filter((v) => v.status === "draft" || v.status === "review").length,
 	});
 
 	// ─── Add Vehicle modal ────────────────────────
