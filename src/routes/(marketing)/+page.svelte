@@ -12,7 +12,7 @@
 		{
 			icon: "M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5",
 			title: "12,400+ vehicle patterns",
-			desc: "Professionally measured templates for every major make and model. New vehicles added weekly on request.",
+			desc: "Professionally measured templates for every major make and model — PPF zones and window tint zones. New vehicles added weekly on request.",
 		},
 		{
 			icon: "M13 2L3 14h9l-1 8 10-12h-9l1-8z",
@@ -57,7 +57,7 @@
 			name: "Sarah K.",
 			shop: "ClearShield PDX",
 			tier: "Lite",
-			text: "Auto-nesting alone paid for itself in the first week. We went from 68% to 81% material efficiency on average.",
+			text: "We do full PPF and window tint from the same browser tab. Switching between pattern modes is instant — I can't imagine going back to two separate tools.",
 		},
 		{
 			name: "James R.",
@@ -72,6 +72,7 @@
 		["Web-based (no install)", "✓", "✗", "✗"],
 		["Any device / tablet", "✓", "✗", "✗"],
 		["Any plotter brand", "✓", "Partial", "Partial"],
+		["PPF + window tint patterns", "✓", "✗", "✗"],
 		["Auto-nesting", "✓", "✓", "✓"],
 		["Free tier", "✓", "✗", "✗"],
 		["Starting price", "$0", "$49/mo", "$39/mo"],
@@ -83,11 +84,11 @@
 
 <svelte:head>
 	<title
-		>OmniPlot — Professional PPF Cutting Software. No Install Required.</title
+		>OmniPlot — Professional PPF & Window Tint Cutting Software. No Install Required.</title
 	>
 	<meta
 		name="description"
-		content="Web-based paint protection film cutting software. Works with any plotter. 12,400+ vehicle patterns. No download, no install, any device."
+		content="Web-based PPF & window tint cutting software. Works with any plotter. 12,400+ vehicle patterns for PPF and tint. No download, no install, any device."
 	/>
 </svelte:head>
 
@@ -99,14 +100,14 @@
 		</Badge>
 
 		<h1 class="hero__headline">
-			PPF cutting software<br />
+			PPF & window tint software<br />
 			<span class="hero__headline-accent"
 				>that lives in your browser.</span
 			>
 		</h1>
 
 		<p class="hero__sub">
-			Professional paint protection film cutting — no install, no drivers,
+			Professional PPF and window tint cutting — no install, no drivers,
 			any device. Works with every plotter that speaks HPGL.
 		</p>
 
@@ -134,7 +135,7 @@
 			<span class="hero__proof-sep" aria-hidden="true">·</span>
 			<span class="hero__proof-item">✓ Works with any plotter</span>
 			<span class="hero__proof-sep" aria-hidden="true">·</span>
-			<span class="hero__proof-item">✓ 12,400+ vehicle patterns</span>
+			<span class="hero__proof-item">✓ 12,400+ PPF & tint patterns</span>
 		</div>
 	</div>
 
@@ -283,8 +284,9 @@
 				Everything you need.<br />Nothing you don't.
 			</h2>
 			<p class="section-sub">
-				OmniPlot is built by installers for installers. Every feature
-				solves a real shop problem.
+				OmniPlot is built by installers for installers — PPF shops, tint
+				studios, and everyone in between. Every feature solves a real shop
+				problem.
 			</p>
 		</div>
 
@@ -322,7 +324,7 @@
 		</div>
 
 		<div class="steps">
-			{#each [["1", "Pick your vehicle", "Search 12,400+ patterns by make, model, and year. Select the zones you need — hood, bumpers, fenders, doors."], ["2", "Arrange & optimize", "Drag patterns onto your material sheet. Hit auto-nest to maximize efficiency automatically."], ["3", "Send to plotter", "Export as HPGL (.plt) or connect directly via Web Serial. Job complete."]] as [num, title, desc]}
+			{#each [["1", "Pick your vehicle", "Search 12,400+ patterns by make, model, and year. Select the zones you need — PPF panels or window tint zones."], ["2", "Arrange & optimize", "Drag patterns onto your material sheet. Hit auto-nest to maximize efficiency automatically."], ["3", "Send to plotter", "Export as HPGL (.plt) or connect directly via Web Serial. Job complete."]] as [num, title, desc]}
 				<div class="step">
 					<div class="step__num" aria-hidden="true">{num}</div>
 					<div class="step__content">

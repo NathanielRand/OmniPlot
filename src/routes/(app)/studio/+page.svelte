@@ -7,7 +7,7 @@
 		uiStore,
 		userStore,
 	} from "$lib/stores";
-	import { autoNest, findNextPosition, type PlacementResult } from "$lib/utils/nesting";
+	import { autoNest, findNextPosition, samplePolygonArea, type PlacementResult } from "$lib/utils/nesting";
 	import {
 		downloadHpgl,
 		downloadSvg,
@@ -34,13 +34,24 @@
 	const cutCount = $derived(
 		canvasStore.items.filter((i) => !i.outOfBounds).length,
 	);
-	// Efficiency = pattern area / (roll_width × roll_length_used)
+	// Material utilization = actual polygon area / (roll_width × roll_length_used).
+	// Uses the shoelace formula on sampled SVG path points (cached after first call),
+	// not bounding-box area, so arch/dome shapes don't overstate efficiency.
 	const efficiency = $derived.by(() => {
 		const inBounds = canvasStore.items.filter((i) => !i.outOfBounds);
 		if (!inBounds.length) return 0;
 		const usedLength = Math.max(...inBounds.map((i) => i.x + i.width), 0);
 		if (usedLength === 0) return 0;
-		const patternArea = inBounds.reduce((s, i) => s + i.width * i.height, 0);
+		const patternArea = inBounds.reduce(
+			(s, i) =>
+				s +
+				samplePolygonArea(
+					i.pattern.svgPath,
+					i.pattern.widthInches,
+					i.pattern.heightInches,
+				),
+			0,
+		);
 		return Math.min(1, patternArea / (canvasStore.sheet.widthInches * usedLength));
 	});
 	const cutTimeSecs = $derived(
@@ -53,12 +64,12 @@
 	// This matches how real cutting software displays material rolls.
 	const displaySheetW = $derived(
 		Math.max(
-			canvasStore.sheet.widthInches * 2, // minimum: 2× roll width of visible length
+			canvasStore.sheet.widthInches, // minimum: show at least 1× roll width
 			...canvasStore.items
 				.filter((i) => !i.outOfBounds)
 				.map((i) => i.x + i.width),
 			0,
-		) + 12,
+		) + 8, // small right margin
 	);
 	// Fixed roll-width height + small staging strip below if OOB items exist
 	const displaySheetH = $derived(
@@ -224,6 +235,7 @@
 		canvasStore.setItems([...canvasStore.items, item]);
 		canvasStore.select(item.id);
 		toastStore.info("Pattern added", item.label);
+		requestAnimationFrame(fitToView);
 	}
 
 	// ─── Selected item ────────────────────────────
@@ -237,23 +249,32 @@
 	let showExport = $state(false);
 
 	// ─── Fit to view ─────────────────────────────
-	// Calculates zoom so the roll height (widthInches) fills the canvas viewport.
+	// Calculates zoom so all placed content fits the canvas viewport.
+	// canvas-content has 48px padding on each side → 96px total in each axis.
 	function fitToView() {
 		if (!canvasEl) return;
 		const viewW = canvasEl.clientWidth;
 		const viewH = canvasEl.clientHeight;
-		const rollPxH = canvasStore.sheet.widthInches * 48;
-		const rollPxW = displaySheetW * 48;
-		if (viewH > 0 && viewW > 0 && rollPxH > 0 && rollPxW > 0) {
-			const zoomH = (viewH * 0.88) / rollPxH * 100;
-			const zoomW = (viewW * 0.88) / rollPxW * 100;
-			canvasStore.setZoom(Math.max(3, Math.min(150, Math.min(zoomH, zoomW))));
+		const PAD = 96; // 48px canvas-content padding × 2
+		// Content bounds: roll width (Y axis) and actual items extent (X axis)
+		const inBounds = canvasStore.items.filter((i) => !i.outOfBounds);
+		const maxItemX = inBounds.length
+			? Math.max(...inBounds.map((i) => i.x + i.width))
+			: 0;
+		const contentW = Math.max(maxItemX, canvasStore.sheet.widthInches) + 4;
+		const contentH = canvasStore.sheet.widthInches;
+		const rollPxH = contentH * 48;
+		const rollPxW = contentW * 48;
+		if (viewH > PAD && viewW > PAD && rollPxH > 0 && rollPxW > 0) {
+			const zoomH = ((viewH - PAD) / rollPxH) * 100;
+			const zoomW = ((viewW - PAD) / rollPxW) * 100;
+			canvasStore.setZoom(Math.max(3, Math.min(200, Math.min(zoomH, zoomW))));
 		}
 		canvasEl.scrollLeft = 0;
 		canvasEl.scrollTop = 0;
 	}
 
-	onMount(fitToView);
+	onMount(() => requestAnimationFrame(fitToView));
 </script>
 
 <svelte:head>
