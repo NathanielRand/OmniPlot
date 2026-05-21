@@ -203,6 +203,7 @@
 			pattern: {
 				id: `demo_${idx}`,
 				vehicleId: "bmw-m4-2024",
+				category: "ppf",
 				zone: "hood",
 				name: ["Hood Main", "Fender L", "Bumper Front", "Rocker L"][
 					idx % 4

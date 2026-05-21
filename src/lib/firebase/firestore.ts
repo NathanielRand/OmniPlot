@@ -104,6 +104,7 @@ export function toPattern(id: string, data: DocumentData): Pattern {
 	return {
 		id,
 		vehicleId: data.vehicleId ?? "",
+		category: data.category ?? "ppf",
 		zone: data.zone,
 		name: data.name ?? "",
 		coverage: data.coverage ?? "full",
