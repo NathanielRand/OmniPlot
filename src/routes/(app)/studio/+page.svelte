@@ -358,7 +358,7 @@
 		if (viewH > PAD && viewW > PAD && rollPxH > 0 && rollPxW > 0) {
 			const zoomH = ((viewH - PAD) / rollPxH) * 100;
 			const zoomW = ((viewW - PAD) / rollPxW) * 100;
-			canvasStore.setZoom(Math.max(3, Math.min(200, Math.min(zoomH, zoomW))));
+			canvasStore.setZoom(Math.max(3, Math.min(100, Math.min(zoomH, zoomW))));
 		}
 		canvasEl.scrollLeft = 0;
 		canvasEl.scrollTop = 0;

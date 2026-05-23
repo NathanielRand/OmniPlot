@@ -244,7 +244,7 @@ function createCanvasStore() {
 	}
 
 	function setZoom(z: number) {
-		state.zoom = Math.max(25, Math.min(400, z));
+		state.zoom = Math.max(5, Math.min(100, z));
 	}
 
 	function select(id: string, additive = false) {
