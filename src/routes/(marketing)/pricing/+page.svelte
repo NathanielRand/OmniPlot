@@ -175,7 +175,7 @@
 
 		<p class="team-note">
 			Need more than 25 seats?
-			<a href="mailto:support@omniplot.app" class="team-note__link">Contact us for enterprise pricing →</a>
+			<a href="/support" class="team-note__link">Contact us for enterprise pricing →</a>
 		</p>
 	</div>
 

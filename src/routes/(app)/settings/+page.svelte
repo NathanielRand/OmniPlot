@@ -13,6 +13,7 @@
 		removeShopMember,
 		updateShopMemberRole,
 		revokeShopInvite,
+		updateUserProfile,
 	} from "$lib/firebase/firestore";
 	import { auth } from "$lib/firebase/client";
 	import type { Shop, ShopMember, ShopInvite, ShopRole, ShopPlan } from "$lib/types";
@@ -22,16 +23,22 @@
 	>("profile");
 
 	// Profile form
-	let displayName = $state("Nick Radford");
-	let email = $state("nick@omniplot.app");
-	let shopName = $state("Radford Auto Wraps");
+	let displayName = $state(userStore.user?.displayName ?? "");
+	const email = $derived(userStore.user?.email ?? "");
 	let saving = $state(false);
 
 	async function saveProfile() {
+		const uid = userStore.user?.uid;
+		if (!uid) return;
 		saving = true;
-		await new Promise((r) => setTimeout(r, 800));
-		saving = false;
-		toastStore.success("Profile saved", "Your changes have been applied.");
+		try {
+			await updateUserProfile(uid, { displayName });
+			toastStore.success("Profile saved", "Your changes have been applied.");
+		} catch (err) {
+			toastStore.error("Save failed", err instanceof Error ? err.message : "");
+		} finally {
+			saving = false;
+		}
 	}
 
 	// Notification prefs
@@ -348,18 +355,9 @@
 							id="email"
 							class="form-input"
 							type="email"
-							bind:value={email}
-						/>
-					</div>
-					<div class="form-field form-field--full">
-						<label for="shopName" class="form-label"
-							>Shop / Business name</label
-						>
-						<input
-							id="shopName"
-							class="form-input"
-							type="text"
-							bind:value={shopName}
+							value={email}
+							readonly
+							title="Email cannot be changed here"
 						/>
 					</div>
 				</div>

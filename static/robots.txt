@@ -1,3 +1,10 @@
-# allow crawling everything by default
 User-agent: *
-Disallow:
+Disallow: /admin
+Disallow: /studio
+Disallow: /settings
+Disallow: /jobs
+Disallow: /library
+Disallow: /api
+Disallow: /join
+
+Sitemap: https://omniplot.app/sitemap.xml

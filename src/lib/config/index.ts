@@ -514,6 +514,7 @@ export const MARKETING_NAV = [
 	{ label: "FAQ",       href: "/faq" },
 	{ label: "Changelog", href: "/changelog" },
 	{ label: "About",     href: "/about" },
+	{ label: "Support",   href: "/support" },
 ] as const;
 
 export const ADMIN_NAV = [

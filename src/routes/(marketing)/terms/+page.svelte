@@ -28,7 +28,7 @@
 			<h2>2. Accounts and Security</h2>
 			<p>You may sign in with Google, a passwordless email link, or a phone number verified by SMS. No password is stored by OmniPlot. You are responsible for maintaining the security of the authentication methods linked to your account (your email inbox, phone number, or Google account).</p>
 			<p><strong>One active session per account.</strong> OmniPlot enforces a single active session at a time. If your account is opened on a second device, the prior session is immediately invalidated and signed out. This is a security feature, not a bug — do not share your sign-in credentials with others. Shop members each have their own account; the single-session limit applies per account, not per shop.</p>
-			<p>You agree to notify us immediately at <a href="mailto:support@omniplot.app">support@omniplot.app</a> if you suspect unauthorized access to your account.</p>
+			<p>You agree to notify us immediately via our <a href="/support">support page</a> if you suspect unauthorized access to your account.</p>
 		</section>
 
 		<section class="legal-section">
@@ -103,7 +103,7 @@
 
 		<section class="legal-section">
 			<h2>14. Contact</h2>
-			<p>Questions about these Terms? Email us at <a href="mailto:support@omniplot.app">support@omniplot.app</a>.</p>
+			<p>Questions about these Terms? <a href="/support">Contact us via our support page</a>.</p>
 		</section>
 
 	</div>

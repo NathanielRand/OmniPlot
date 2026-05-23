@@ -83,13 +83,21 @@
 </script>
 
 <svelte:head>
-	<title
-		>OmniPlot — Professional PPF & Window Tint Cutting Software. No Install Required.</title
-	>
-	<meta
-		name="description"
-		content="Web-based PPF & window tint cutting software. Works with any plotter. 12,400+ vehicle patterns for PPF and tint. No download, no install, any device."
-	/>
+	<title>OmniPlot — Professional PPF & Window Tint Cutting Software. No Install Required.</title>
+	<meta name="description" content="Web-based PPF & window tint cutting software. Works with any plotter. 12,400+ vehicle patterns for PPF and tint. No download, no install, any device." />
+
+	<!-- Open Graph -->
+	<meta property="og:type" content="website" />
+	<meta property="og:url" content="https://omniplot.app/" />
+	<meta property="og:title" content="OmniPlot — PPF & Window Tint Cutting Software" />
+	<meta property="og:description" content="Web-based cutting software for any plotter. 12,400+ vehicle patterns for PPF and window tint. No download required." />
+	<meta property="og:image" content="https://omniplot.app/og-image.png" />
+
+	<!-- Twitter Card -->
+	<meta name="twitter:card" content="summary_large_image" />
+	<meta name="twitter:title" content="OmniPlot — PPF & Window Tint Cutting Software" />
+	<meta name="twitter:description" content="Web-based cutting software for any plotter. 12,400+ vehicle patterns for PPF and window tint. No download required." />
+	<meta name="twitter:image" content="https://omniplot.app/og-image.png" />
 </svelte:head>
 
 <!-- ─── Hero ─── -->

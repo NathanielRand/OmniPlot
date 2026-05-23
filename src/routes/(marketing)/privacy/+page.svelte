@@ -100,7 +100,7 @@
 				<li>Object to or restrict certain processing</li>
 				<li>Data portability (export your job files via the studio at any time)</li>
 			</ul>
-			<p>To exercise any of these rights, email <a href="mailto:support@omniplot.app">support@omniplot.app</a>. We will respond within 30 days.</p>
+			<p>To exercise any of these rights, <a href="/support">contact us via our support page</a>. We will respond within 30 days.</p>
 			<p><strong>California residents (CCPA):</strong> OmniPlot does not sell personal information. You have the right to know what data we collect and to request deletion.</p>
 			<p><strong>EEA/UK residents (GDPR):</strong> Our legal basis for processing is performance of a contract (operating the Service you signed up for) and, for analytics, legitimate interest. You may withdraw consent at any time by closing your account.</p>
 		</section>
@@ -117,7 +117,7 @@
 
 		<section class="legal-section">
 			<h2>9. Contact</h2>
-			<p>Questions about this Privacy Policy or your data? Email us at <a href="mailto:support@omniplot.app">support@omniplot.app</a>.</p>
+			<p>Questions about this Privacy Policy or your data? <a href="/support">Contact us via our support page</a>.</p>
 		</section>
 
 	</div>

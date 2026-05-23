@@ -1,6 +1,13 @@
 <svelte:head>
 	<title>About — OmniPlot</title>
 	<meta name="description" content="OmniPlot is professional PPF and window tint cutting software built for the modern shop. No install. Any plotter. Any device." />
+	<meta property="og:type" content="website" />
+	<meta property="og:url" content="https://omniplot.app/about" />
+	<meta property="og:title" content="About — OmniPlot" />
+	<meta property="og:description" content="OmniPlot is professional PPF and window tint cutting software built for the modern shop. No install. Any plotter. Any device." />
+	<meta property="og:image" content="https://omniplot.app/og-image.png" />
+	<meta name="twitter:card" content="summary_large_image" />
+	<meta name="twitter:image" content="https://omniplot.app/og-image.png" />
 </svelte:head>
 
 <div class="about-page">
@@ -136,7 +143,7 @@
 			<a href="/pricing" class="cta-btn cta-btn--secondary">See pricing</a>
 		</div>
 		<p class="about-cta__contact">
-			Questions? <a href="mailto:support@omniplot.app" class="about-cta__link">support@omniplot.app</a>
+			Questions? <a href="/support" class="about-cta__link">Contact support →</a>
 		</p>
 	</section>
 

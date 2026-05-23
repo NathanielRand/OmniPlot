@@ -41,8 +41,8 @@
 		<h1 class="faq-title">Frequently asked questions</h1>
 		<p class="faq-sub">
 			Can't find what you're looking for? <a
-				href="mailto:support@omniplot.app"
-				class="faq-link">Email support →</a
+				href="/support"
+				class="faq-link">Contact support →</a
 			>
 		</p>
 
@@ -125,7 +125,7 @@
 				<p class="faq-empty__title">No results for "{search}"</p>
 				<p class="faq-empty__sub">
 					Try a different search or <a
-						href="mailto:support@omniplot.app"
+						href="/support"
 						class="faq-link">contact support</a
 					>.
 				</p>
