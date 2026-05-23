@@ -4,36 +4,33 @@
 // ─────────────────────────────────────────────
 
 import { uid } from "$lib/utils";
-import type { Pattern, PatternCategory, PatternCoverage, PatternZone } from "$lib/types";
+import type {
+	Pattern,
+	PatternCategory,
+	PatternCoverage,
+	PatternZone,
+	VehicleEntry,
+	PatternRequest,
+	PatternStatus,
+	RequestStatus,
+} from "$lib/types";
+import {
+	subscribeVehicles,
+	subscribePatterns,
+	subscribeRequests,
+	setVehicleDoc,
+	updateVehicleDoc,
+	deleteVehicleDoc,
+	setPatternDoc,
+	updatePatternDoc,
+	deletePatternDoc,
+	setRequestDoc,
+	updateRequestDoc,
+	batchSeedData,
+} from "$lib/firebase/firestore";
+import { toastStore } from "./stores.svelte";
 
-// ─── Types ────────────────────────────────────
-
-export type PatternStatus = "published" | "draft" | "review";
-export type RequestStatus = "queued" | "in-progress" | "done";
-
-export interface VehicleEntry {
-	id: string;
-	make: string;
-	model: string;
-	year: number;
-	bodyStyle: "sedan" | "coupe" | "suv" | "truck" | "convertible" | "wagon" | "hatchback";
-	tags: string[];
-	popular?: boolean;
-	status: PatternStatus;
-	updatedAt: string;
-}
-
-export interface PatternRequest {
-	id: string;
-	vehicle: string;
-	make: string;
-	model: string;
-	year: number;
-	notes: string;
-	votes: number;
-	status: RequestStatus;
-	requestedAt: string;
-}
+export type { PatternStatus, RequestStatus, VehicleEntry, PatternRequest };
 
 // ─── Seed: Vehicles ───────────────────────────
 
@@ -861,34 +858,135 @@ const CORVETTE_Z06_2024_PPF: Pattern[] = [
 	{ id: "cz6-ppf-rkr", vehicleId: "corvette-z06-2024", category: "ppf", zone: "rocker-right",       name: "Rocker Right",       coverage: "full", svgPath: "M2,8 Q6,2 94,2 Q98,8 98,92 Q94,98 6,98 Q2,92 2,8 Z",       widthInches: 72.0, heightInches:  8.0, revision: "2024-10", isPublished: true, createdAt: new Date("2024-10-05"), updatedAt: new Date("2024-10-05") },
 ];
 
+// ─── Seed map (used as fallback and for seeding Firestore) ───
+const SEED_PATTERNS: Record<string, Pattern[]> = {
+	"tesla-model3-2024":     [...TM3_2024_TINT,             ...TM3_2024_PPF],
+	"bmw-m4-2024":           [...BMW_M4_2024_TINT,          ...BMW_M4_2024_PPF],
+	"bmw-m3-2024":           [...BMW_M3_2024_TINT,          ...BMW_M3_2024_PPF],
+	"bmw-x5-2024":           [...BMW_X5_2024_TINT,          ...BMW_X5_2024_PPF],
+	"bmw-m5-2025":           [...BMW_M5_2025_TINT,          ...BMW_M5_2025_PPF],
+	"tesla-models-2024":     [...TESLA_MS_2024_TINT,        ...TESLA_MS_2024_PPF],
+	"tesla-modelx-2024":     [...TESLA_MX_2024_TINT,        ...TESLA_MX_2024_PPF],
+	"porsche-911-2024":      [...PORSCHE_911_2024_TINT,     ...PORSCHE_911_2024_PPF],
+	"porsche-cayenne-24":    [...PORSCHE_CAYENNE_2024_TINT, ...PORSCHE_CAYENNE_2024_PPF],
+	"ford-f150-2024":        [...FORD_F150_2024_TINT,       ...FORD_F150_2024_PPF],
+	"ford-mustang-2024":     [...FORD_MUSTANG_2024_TINT,    ...FORD_MUSTANG_2024_PPF],
+	"mercedes-c300-2024":    [...MERC_C300_2024_TINT,       ...MERC_C300_2024_PPF],
+	"mercedes-g63-2024":     [...MERC_G63_2024_TINT,        ...MERC_G63_2024_PPF],
+	"audi-rs6-2024":         [...AUDI_RS6_2024_TINT,        ...AUDI_RS6_2024_PPF],
+	"toyota-supra-2024":     [...TOYOTA_SUPRA_2024_TINT,    ...TOYOTA_SUPRA_2024_PPF],
+	"toyota-gr86-2024":      [...TOYOTA_GR86_2024_TINT,     ...TOYOTA_GR86_2024_PPF],
+	"dodge-hellcat-2024":    [...DODGE_HELLCAT_2024_TINT,   ...DODGE_HELLCAT_2024_PPF],
+	"honda-civic-2024":      [...HONDA_CIVIC_2024_TINT,     ...HONDA_CIVIC_2024_PPF],
+	"lamborghini-urus-2024": [...LAMBO_URUS_2024_TINT,      ...LAMBO_URUS_2024_PPF],
+	"corvette-z06-2024":     [...CORVETTE_Z06_2024_TINT,    ...CORVETTE_Z06_2024_PPF],
+};
+
 // ─── Store Factory ────────────────────────────
 
 function createPatternStore() {
-	let vehicles = $state<VehicleEntry[]>(INITIAL_VEHICLES);
-	let patterns = $state<Record<string, Pattern[]>>({
-		"tesla-model3-2024":     [...TM3_2024_TINT,             ...TM3_2024_PPF],
-		"bmw-m4-2024":           [...BMW_M4_2024_TINT,          ...BMW_M4_2024_PPF],
-		"bmw-m3-2024":           [...BMW_M3_2024_TINT,          ...BMW_M3_2024_PPF],
-		"bmw-x5-2024":           [...BMW_X5_2024_TINT,          ...BMW_X5_2024_PPF],
-		"bmw-m5-2025":           [...BMW_M5_2025_TINT,          ...BMW_M5_2025_PPF],
-		"tesla-models-2024":     [...TESLA_MS_2024_TINT,        ...TESLA_MS_2024_PPF],
-		"tesla-modelx-2024":     [...TESLA_MX_2024_TINT,        ...TESLA_MX_2024_PPF],
-		"porsche-911-2024":      [...PORSCHE_911_2024_TINT,     ...PORSCHE_911_2024_PPF],
-		"porsche-cayenne-24":    [...PORSCHE_CAYENNE_2024_TINT, ...PORSCHE_CAYENNE_2024_PPF],
-		"ford-f150-2024":        [...FORD_F150_2024_TINT,       ...FORD_F150_2024_PPF],
-		"ford-mustang-2024":     [...FORD_MUSTANG_2024_TINT,    ...FORD_MUSTANG_2024_PPF],
-		"mercedes-c300-2024":    [...MERC_C300_2024_TINT,       ...MERC_C300_2024_PPF],
-		"mercedes-g63-2024":     [...MERC_G63_2024_TINT,        ...MERC_G63_2024_PPF],
-		"audi-rs6-2024":         [...AUDI_RS6_2024_TINT,        ...AUDI_RS6_2024_PPF],
-		"toyota-supra-2024":     [...TOYOTA_SUPRA_2024_TINT,    ...TOYOTA_SUPRA_2024_PPF],
-		"toyota-gr86-2024":      [...TOYOTA_GR86_2024_TINT,     ...TOYOTA_GR86_2024_PPF],
-		"dodge-hellcat-2024":    [...DODGE_HELLCAT_2024_TINT,   ...DODGE_HELLCAT_2024_PPF],
-		"honda-civic-2024":      [...HONDA_CIVIC_2024_TINT,     ...HONDA_CIVIC_2024_PPF],
-		"lamborghini-urus-2024": [...LAMBO_URUS_2024_TINT,      ...LAMBO_URUS_2024_PPF],
-		"corvette-z06-2024":     [...CORVETTE_Z06_2024_TINT,    ...CORVETTE_Z06_2024_PPF],
-	});
-	let requests = $state<PatternRequest[]>(INITIAL_REQUESTS);
+	let vehicles  = $state<VehicleEntry[]>(INITIAL_VEHICLES);
+	let patterns  = $state<Record<string, Pattern[]>>(SEED_PATTERNS);
+	let requests  = $state<PatternRequest[]>(INITIAL_REQUESTS);
+	let loading   = $state(false);
+	let firestoreReady = false;
 
+	// ─ Internal: rebuild pattern map from flat Firestore array ─
+	function mapPatterns(flat: Pattern[]): Record<string, Pattern[]> {
+		const m: Record<string, Pattern[]> = {};
+		for (const p of flat) {
+			m[p.vehicleId] = [...(m[p.vehicleId] ?? []), p];
+		}
+		return m;
+	}
+
+	// ─ Firestore write helpers ─────────────────────────────────
+	function syncVehicle(v: VehicleEntry) {
+		if (!firestoreReady) return;
+		setVehicleDoc(v).catch(() => toastStore.error("Sync error", "Could not save vehicle"));
+	}
+	function syncVehicleUpdate(id: string, patch: Partial<VehicleEntry>) {
+		if (!firestoreReady) return;
+		updateVehicleDoc(id, patch).catch(() => toastStore.error("Sync error", "Could not update vehicle"));
+	}
+	function syncVehicleDelete(id: string) {
+		if (!firestoreReady) return;
+		deleteVehicleDoc(id).catch(() => toastStore.error("Sync error", "Could not delete vehicle"));
+	}
+	function syncPattern(p: Pattern) {
+		if (!firestoreReady) return;
+		setPatternDoc(p).catch(() => toastStore.error("Sync error", "Could not save pattern"));
+	}
+	function syncPatternUpdate(id: string, patch: Partial<Pattern>) {
+		if (!firestoreReady) return;
+		updatePatternDoc(id, patch).catch(() => toastStore.error("Sync error", "Could not update pattern"));
+	}
+	function syncPatternDelete(id: string) {
+		if (!firestoreReady) return;
+		deletePatternDoc(id).catch(() => toastStore.error("Sync error", "Could not delete pattern"));
+	}
+	function syncRequest(r: PatternRequest) {
+		if (!firestoreReady) return;
+		setRequestDoc(r).catch(() => toastStore.error("Sync error", "Could not save request"));
+	}
+	function syncRequestUpdate(id: string, patch: Partial<PatternRequest>) {
+		if (!firestoreReady) return;
+		updateRequestDoc(id, patch).catch(() => toastStore.error("Sync error", "Could not update request"));
+	}
+
+	// ─ Lifecycle ───────────────────────────────────────────────
+	function init(): () => void {
+		if (firestoreReady) return () => {};
+		loading = true;
+
+		let vReady = false, pReady = false, rReady = false;
+		function checkReady() {
+			if (vReady && pReady && rReady) {
+				loading = false;
+				firestoreReady = true;
+			}
+		}
+
+		const unsubV = subscribeVehicles(
+			(entries) => {
+				if (entries.length > 0) vehicles = entries;
+				vReady = true;
+				checkReady();
+			},
+			() => { vReady = true; checkReady(); }, // keep seed on error
+		);
+
+		const unsubP = subscribePatterns(
+			(flat) => {
+				if (flat.length > 0) patterns = mapPatterns(flat);
+				pReady = true;
+				checkReady();
+			},
+			() => { pReady = true; checkReady(); },
+		);
+
+		const unsubR = subscribeRequests(
+			(reqs) => {
+				requests = reqs;
+				rReady = true;
+				checkReady();
+			},
+			() => { rReady = true; checkReady(); },
+		);
+
+		return () => { unsubV(); unsubP(); unsubR(); firestoreReady = false; };
+	}
+
+	async function seedFirestore(): Promise<void> {
+		try {
+			await batchSeedData(INITIAL_VEHICLES, SEED_PATTERNS, INITIAL_REQUESTS);
+			toastStore.success("Seeded", "All vehicles, patterns, and requests written to Firestore");
+		} catch (e) {
+			toastStore.error("Seed failed", String(e));
+		}
+	}
+
+	// ─ Queries ─────────────────────────────────────────────────
 	function getPatterns(vehicleId: string, category?: PatternCategory): Pattern[] {
 		const all = patterns[vehicleId] ?? [];
 		return category ? all.filter((p) => p.category === category) : all;
@@ -898,14 +996,17 @@ function createPatternStore() {
 		return getPatterns(vehicleId, category).length > 0;
 	}
 
+	// ─ Mutations ────────────────────────────────────────────────
 	function addVehicle(entry: Omit<VehicleEntry, "id">): VehicleEntry {
 		const v: VehicleEntry = { ...entry, id: uid("v_") };
 		vehicles = [...vehicles, v];
+		syncVehicle(v);
 		return v;
 	}
 
 	function updateVehicle(id: string, patch: Partial<VehicleEntry>) {
 		vehicles = vehicles.map((v) => (v.id === id ? { ...v, ...patch } : v));
+		syncVehicleUpdate(id, patch);
 	}
 
 	function deleteVehicle(id: string) {
@@ -913,6 +1014,7 @@ function createPatternStore() {
 		const next = { ...patterns };
 		delete next[id];
 		patterns = next;
+		syncVehicleDelete(id);
 	}
 
 	function addPattern(p: Omit<Pattern, "id" | "createdAt" | "updatedAt">): Pattern {
@@ -920,6 +1022,7 @@ function createPatternStore() {
 		const pattern: Pattern = { ...p, id: uid("pat_"), createdAt: now, updatedAt: now };
 		patterns = { ...patterns, [p.vehicleId]: [...(patterns[p.vehicleId] ?? []), pattern] };
 		updateVehicle(p.vehicleId, { updatedAt: now.toISOString().split("T")[0] });
+		syncPattern(pattern);
 		return pattern;
 	}
 
@@ -931,6 +1034,7 @@ function createPatternStore() {
 			);
 		}
 		patterns = next;
+		syncPatternUpdate(id, { ...patch, updatedAt: new Date() });
 	}
 
 	function deletePattern(id: string) {
@@ -939,6 +1043,7 @@ function createPatternStore() {
 			next[vid] = pats.filter((p) => p.id !== id);
 		}
 		patterns = next;
+		syncPatternDelete(id);
 	}
 
 	function addRequest(r: { make: string; model: string; year: number; notes: string }): PatternRequest {
@@ -954,6 +1059,7 @@ function createPatternStore() {
 			requestedAt: new Date().toISOString().split("T")[0],
 		};
 		requests = [...requests, req];
+		syncRequest(req);
 		return req;
 	}
 
@@ -964,17 +1070,24 @@ function createPatternStore() {
 			if (r.status === "in-progress") return { ...r, status: "done" as RequestStatus };
 			return r;
 		});
+		const updated = requests.find((r) => r.id === id);
+		if (updated) syncRequestUpdate(id, { status: updated.status });
 	}
 
 	function voteRequest(id: string) {
 		requests = requests.map((r) => (r.id === id ? { ...r, votes: r.votes + 1 } : r));
+		const updated = requests.find((r) => r.id === id);
+		if (updated) syncRequestUpdate(id, { votes: updated.votes });
 	}
 
 	return {
 		get vehicles() { return vehicles; },
 		get requests() { return requests; },
+		get loading() { return loading; },
 		getPatterns,
 		hasPatterns,
+		init,
+		seedFirestore,
 		addVehicle,
 		updateVehicle,
 		deleteVehicle,

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import Badge from "$lib/components/ui/Badge.svelte";
 	import Button from "$lib/components/ui/Button.svelte";
-	import { PRICING_PLANS, FAQ_ITEMS } from "$lib/config";
+	import { PRICING_PLANS, SHOP_PRICING_PLANS, FAQ_ITEMS } from "$lib/config";
 
 	let billing = $state<"monthly" | "yearly">("monthly");
 
@@ -41,6 +41,7 @@
 		</div>
 	</div>
 
+	<div class="plans-label">Individual plans — 1 seat per account</div>
 	<div class="plans-row">
 		{#each PRICING_PLANS as plan}
 			<div class="plan-card" class:plan-card--featured={plan.popular}>
@@ -80,7 +81,7 @@
 					class="plan-card__cta"
 				>
 					{#if plan.price === 0}Get started free
-					{:else if plan.id === "pro"}Start 14-day trial
+					{:else if plan.id === "pro"}Get Pro
 					{:else}Get {plan.name}
 					{/if}
 				</Button>
@@ -110,9 +111,73 @@
 	</div>
 
 	<p class="pricing-note">
-		No credit card required for Free or Pro trial · Prices in USD · All
-		plans include HPGL export
+		Start free, no credit card required · Prices in USD · All plans include HPGL export
 	</p>
+
+	<!-- Shop / Team plans -->
+	<div class="team-section">
+		<div class="team-section__header">
+			<h2 class="team-section__title">Built for shops with multiple techs</h2>
+			<p class="team-section__sub">
+				One subscription covers your whole crew. Every tech gets their own login — no sharing passwords, no sharing sessions.
+			</p>
+		</div>
+
+		<div class="shop-plans-row">
+			{#each SHOP_PRICING_PLANS as plan}
+				<div class="shop-plan-card" class:shop-plan-card--featured={plan.popular}>
+					{#if plan.popular}
+						<div class="shop-plan-card__badge">Most popular</div>
+					{/if}
+
+					<div class="shop-plan-card__top">
+						<span class="shop-plan-card__name">{plan.name}</span>
+						<span class="shop-plan-card__seats">{plan.seats} seats</span>
+					</div>
+
+					<div class="shop-plan-card__price">
+						<span class="shop-plan-card__amount">
+							${billing === "yearly" ? plan.yearlyPrice : plan.price}
+						</span>
+						<span class="shop-plan-card__period">/mo</span>
+					</div>
+
+					{#if billing === "yearly"}
+						<p class="shop-plan-card__billing">Billed ${plan.yearlyPrice * 12}/year</p>
+					{:else}
+						<p class="shop-plan-card__billing">Billed monthly, cancel anytime</p>
+					{/if}
+
+					<p class="shop-plan-card__desc">{plan.description}</p>
+
+					<Button
+						variant={plan.popular ? "primary" : "secondary"}
+						size="md"
+						href="/settings?tab=team"
+						class="shop-plan-card__cta"
+					>
+						Get {plan.name}
+					</Button>
+
+					<ul class="shop-plan-card__features">
+						{#each plan.features as feat}
+							<li class="shop-plan-card__feature">
+								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+									<path d={CHECK} />
+								</svg>
+								{feat}
+							</li>
+						{/each}
+					</ul>
+				</div>
+			{/each}
+		</div>
+
+		<p class="team-note">
+			Need more than 25 seats?
+			<a href="mailto:support@omniplot.app" class="team-note__link">Contact us for enterprise pricing →</a>
+		</p>
+	</div>
 
 	<!-- Feature comparison table -->
 	<div class="compare-section">
@@ -128,7 +193,7 @@
 					</tr>
 				</thead>
 				<tbody>
-					{#each [["Cuts per day", "1 / 30 days", "1 / day", "Unlimited"], ["Seats", "1", "1", "3"], ["Pattern library", "✓", "✓", "✓"], ["HPGL / SVG export", "✓", "✓", "✓"], ["DXF export", "—", "✓", "✓"], ["PDF export", "—", "—", "✓"], ["Auto-nesting", "Preview only", "✓", "✓"], ["Web Serial control", "—", "✓", "✓"], ["Job history", "—", "90 days", "Unlimited"], ["Custom pattern upload", "—", "—", "✓"], ["AI pattern assist", "—", "—", "✓"], ["Priority support", "—", "—", "✓"]] as row}
+					{#each [["Cuts per day", "1 / 30 days", "1 / day", "Unlimited"], ["Seats", "1", "1", "1"], ["Pattern library", "✓", "✓", "✓"], ["HPGL / SVG export", "✓", "✓", "✓"], ["DXF export", "—", "✓", "✓"], ["PDF export", "—", "—", "✓"], ["Auto-nesting", "Preview only", "✓", "✓"], ["Web Serial control", "—", "✓", "✓"], ["Job history", "—", "90 days", "Unlimited"], ["Custom pattern upload", "—", "—", "✓"], ["AI pattern assist", "—", "—", "✓"], ["Priority support", "—", "—", "✓"]] as row}
 						<tr>
 							<td class="td-feature">{row[0]}</td>
 							<td
@@ -229,6 +294,15 @@
 		background: var(--bg-surface);
 		color: var(--text-primary);
 		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+	}
+
+	.plans-label {
+		font-size: 0.8125rem;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.07em;
+		color: var(--text-tertiary);
+		align-self: flex-start;
 	}
 
 	.plans-row {
@@ -473,8 +547,167 @@
 		text-decoration: underline;
 	}
 
+	/* ─── Team / Shop plans ─── */
+	.team-section {
+		width: 100%;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 32px;
+	}
+
+	.team-section__header {
+		text-align: center;
+		max-width: 560px;
+	}
+	.team-section__title {
+		font-size: clamp(1.5rem, 3vw, 2rem);
+		letter-spacing: -0.025em;
+		margin: 0 0 10px;
+	}
+	.team-section__sub {
+		font-size: 0.9375rem;
+		color: var(--text-secondary);
+		line-height: 1.6;
+		margin: 0;
+	}
+
+	.shop-plans-row {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		gap: 16px;
+		width: 100%;
+	}
+
+	.shop-plan-card {
+		position: relative;
+		display: flex;
+		flex-direction: column;
+		padding: 24px;
+		background: var(--bg-surface-2);
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-xl);
+		gap: 0;
+	}
+
+	.shop-plan-card--featured {
+		border-color: var(--color-brand-dim);
+		background: linear-gradient(
+			135deg,
+			rgba(var(--color-brand-rgb, 99, 102, 241), 0.06) 0%,
+			var(--bg-surface-2) 60%
+		);
+	}
+
+	.shop-plan-card__badge {
+		position: absolute;
+		top: -11px;
+		left: 50%;
+		transform: translateX(-50%);
+		background: var(--color-brand-dim);
+		color: #fff;
+		font-size: 0.6875rem;
+		font-weight: 700;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		padding: 3px 12px;
+		border-radius: 999px;
+		white-space: nowrap;
+	}
+
+	.shop-plan-card__top {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		margin-bottom: 12px;
+	}
+	.shop-plan-card__name {
+		font-size: 1.0625rem;
+		font-weight: 700;
+	}
+	.shop-plan-card__seats {
+		font-size: 0.8125rem;
+		font-weight: 600;
+		color: var(--color-brand);
+		background: rgba(var(--color-brand-rgb, 99, 102, 241), 0.1);
+		padding: 2px 9px;
+		border-radius: 999px;
+	}
+
+	.shop-plan-card__price {
+		display: flex;
+		align-items: baseline;
+		gap: 2px;
+		margin-bottom: 4px;
+	}
+	.shop-plan-card__amount {
+		font-size: 2rem;
+		font-weight: 800;
+		letter-spacing: -0.03em;
+	}
+	.shop-plan-card__period {
+		font-size: 0.9375rem;
+		color: var(--text-tertiary);
+	}
+
+	.shop-plan-card__billing {
+		font-size: 0.8125rem;
+		color: var(--text-tertiary);
+		margin: 0 0 8px;
+	}
+
+	.shop-plan-card__desc {
+		font-size: 0.875rem;
+		color: var(--text-secondary);
+		margin: 0 0 18px;
+		line-height: 1.5;
+	}
+
+	:global(.shop-plan-card__cta) {
+		width: 100% !important;
+		justify-content: center;
+		margin-bottom: 20px;
+	}
+
+	.shop-plan-card__features {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 9px;
+	}
+	.shop-plan-card__feature {
+		display: flex;
+		align-items: flex-start;
+		gap: 8px;
+		font-size: 0.875rem;
+		color: var(--text-secondary);
+	}
+	.shop-plan-card__feature svg {
+		flex-shrink: 0;
+		margin-top: 2px;
+		color: var(--color-success);
+	}
+
+	.team-note {
+		font-size: 0.875rem;
+		color: var(--text-tertiary);
+		text-align: center;
+		margin: 0;
+	}
+	.team-note__link {
+		color: var(--text-brand);
+		text-decoration: none;
+		font-weight: 500;
+	}
+	.team-note__link:hover { text-decoration: underline; }
+
 	@media (max-width: 768px) {
 		.plans-row {
+			grid-template-columns: 1fr;
+		}
+		.shop-plans-row {
 			grid-template-columns: 1fr;
 		}
 		.faq-grid {

@@ -6,14 +6,17 @@
 		toastStore,
 		uiStore,
 		userStore,
+		shopStore,
 	} from "$lib/stores";
 	import { autoNest, findNextPosition, samplePolygonArea, type PlacementResult } from "$lib/utils/nesting";
 	import {
 		downloadHpgl,
 		downloadSvg,
+		downloadDxf,
 		calcEfficiency,
 		estimateCutTime,
 	} from "$lib/utils/hpgl";
+	import { saveJob } from "$lib/firebase/firestore";
 	import {
 		canCut,
 		formatDimensions,
@@ -154,7 +157,7 @@
 	function handleCut() {
 		const user = userStore.user;
 		if (user) {
-			const check = canCut(user);
+			const check = canCut(user, shopStore.shop);
 			if (!check.allowed) {
 				toastStore.warning("Cut limit reached", check.reason);
 				uiStore.openPricing();
@@ -168,20 +171,64 @@
 			);
 			return;
 		}
-		downloadHpgl(canvasStore.state, plotterStore.config, "omniplot-job");
+
+		const inBounds = canvasStore.items.filter((i) => !i.outOfBounds);
+		const usedLength = inBounds.length
+			? Math.max(...inBounds.map((i) => i.x + i.width))
+			: 0;
+		const patternArea = inBounds.reduce(
+			(s, i) => s + samplePolygonArea(i.pattern.svgPath, i.pattern.widthInches, i.pattern.heightInches),
+			0,
+		);
+		const sheetArea = canvasStore.sheet.widthInches * usedLength;
+		const eff = sheetArea > 0 ? Math.min(1, patternArea / sheetArea) : 0;
+		const jobName = `Job ${new Date().toLocaleDateString()}`;
+
+		downloadHpgl(canvasStore.state, plotterStore.config, jobName);
+
+		// Persist job to Firestore for job history
+		if (user) {
+			const job = {
+				id: uid("job_"),
+				userId: user.uid,
+				vehicleId: canvasStore.items[0]?.pattern.vehicleId ?? "",
+				name: jobName,
+				status: "complete" as const,
+				canvasState: canvasStore.state,
+				plotterConfig: plotterStore.config,
+				materialSheet: canvasStore.sheet,
+				exportFormat: "hpgl" as const,
+				metrics: {
+					materialEfficiency: eff,
+					totalPathLengthMm: 0,
+					estimatedCutSeconds: estimateCutTime(inBounds, plotterStore.config.cuttingSpeed),
+					itemCount: inBounds.length,
+					sheetArea,
+					usedArea: patternArea,
+				},
+				createdAt: new Date(),
+				updatedAt: new Date(),
+				completedAt: new Date(),
+				exportUrl: null,
+			};
+			saveJob(job).catch(() => {}); // best-effort — don't block the cut
+		}
+
 		toastStore.success(
 			"Cutting!",
-			`Sent ${canvasStore.items.length} paths to plotter.`,
+			`Sent ${inBounds.length} paths to plotter.`,
 		);
 	}
 
-	function handleExport(format: "hpgl" | "svg") {
+	function handleExport(format: "hpgl" | "svg" | "dxf") {
 		if (!canvasStore.items.length) {
 			toastStore.warning("Nothing to export", "Add patterns first.");
 			return;
 		}
 		if (format === "hpgl") {
 			downloadHpgl(canvasStore.state, plotterStore.config);
+		} else if (format === "dxf") {
+			downloadDxf(canvasStore.state);
 		} else {
 			downloadSvg(canvasStore.state);
 		}
@@ -275,7 +322,22 @@
 		canvasEl.scrollTop = 0;
 	}
 
-	onMount(() => requestAnimationFrame(fitToView));
+	// ─── Canvas persistence ───────────────────────
+	let _mounted = false;
+	onMount(() => {
+		canvasStore.restoreFromStorage();
+		_mounted = true;
+		requestAnimationFrame(fitToView);
+	});
+
+	$effect(() => {
+		// Explicitly track both so the effect re-runs on any change.
+		// eslint-disable-next-line @typescript-eslint/no-unused-expressions
+		canvasStore.items; canvasStore.sheet;
+		// Skip first run — onMount hasn't restored yet, and saving here would
+		// overwrite any items that were added from the library before navigating here.
+		if (_mounted) canvasStore.saveToStorage();
+	});
 </script>
 
 <svelte:head>
@@ -571,7 +633,7 @@
 			onclick={() => (showExport = false)}
 		></div>
 		<div class="export-dropdown animate-slide-down">
-			{#each [["hpgl", "PLT", "Universal plotter format. Works with any cutter."], ["svg", "SVG", "For FlexiSIGN, Inkscape, Illustrator."]] as const as [fmt, label, desc]}
+			{#each [["hpgl", "PLT", "Universal plotter format. Works with any cutter."], ["svg", "SVG", "For FlexiSIGN, Inkscape, Illustrator."], ["dxf", "DXF", "For AutoCAD-compatible tools and CNC software."]] as const as [fmt, label, desc]}
 				<button class="export-option" onclick={() => handleExport(fmt)}>
 					<div class="export-option__icon">{label}</div>
 					<div>

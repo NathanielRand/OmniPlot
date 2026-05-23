@@ -93,14 +93,19 @@ export function deepClone<T>(obj: T): T {
 }
 
 // ─── Check tier limits ────────────────────────
-import type { UserProfile } from "$lib/types";
+import type { UserProfile, Shop } from "$lib/types";
 
-export function canCut(user: UserProfile): {
-	allowed: boolean;
-	reason?: string;
-} {
+export function canCut(
+	user: UserProfile,
+	shop?: Shop | null,
+): { allowed: boolean; reason?: string } {
 	const { tier, usage } = user;
 	const now = new Date();
+
+	// Shop subscription overrides individual tier — all seats get unlimited cuts
+	if (shop && (shop.subscriptionStatus === "active" || shop.subscriptionStatus === "trialing")) {
+		return { allowed: true };
+	}
 
 	if (tier === "pro" || tier === "admin") return { allowed: true };
 

@@ -10,6 +10,7 @@ export interface UserProfile {
 	email: string;
 	displayName: string;
 	photoURL: string | null;
+	phone: string | null;
 	tier: UserTier;
 	createdAt: Date;
 	updatedAt: Date;
@@ -39,6 +40,54 @@ export interface UserProfile {
 		units: "inches" | "mm";
 		autoNest: boolean;
 	};
+
+	// Session tracking — used for concurrent-session enforcement
+	activeSessionId: string | null;
+
+	// Shop membership
+	shopId: string | null;
+	shopRole: ShopRole | null;
+}
+
+// ─── Shop / Org hierarchy ─────────────────────
+export type ShopPlan = "starter" | "team" | "studio";
+export type ShopRole = "owner" | "manager" | "tech";
+export type InviteStatus = "pending" | "accepted" | "revoked";
+
+export interface Shop {
+	id: string;
+	name: string;
+	plan: ShopPlan;
+	seats: number; // max active members
+	ownerId: string;
+	// Stripe billing lives on the shop, not individual users
+	stripeCustomerId: string | null;
+	stripePriceId: string | null;
+	subscriptionStatus: "active" | "canceled" | "past_due" | "trialing" | null;
+	currentPeriodEnd: Date | null;
+	createdAt: Date;
+	updatedAt: Date;
+}
+
+export interface ShopMember {
+	uid: string;
+	shopId: string;
+	role: ShopRole;
+	displayName: string;
+	email: string;
+	joinedAt: Date;
+}
+
+export interface ShopInvite {
+	id: string; // doc ID is the token
+	shopId: string;
+	shopName: string;
+	role: ShopRole;
+	email: string | null; // null = open link (anyone with the token can join)
+	createdBy: string; // uid of inviter
+	status: InviteStatus;
+	createdAt: Date;
+	expiresAt: Date;
 }
 
 // ─── Vehicle & Patterns ───────────────────────
@@ -281,6 +330,34 @@ export interface AdminUser extends UserProfile {
 	lastSeen?: Date;
 	flagged?: boolean;
 	notes?: string;
+}
+
+// ─── Pattern Library Admin ────────────────────
+export type PatternStatus = "published" | "draft" | "review";
+export type RequestStatus = "queued" | "in-progress" | "done";
+
+export interface VehicleEntry {
+	id: string;
+	make: string;
+	model: string;
+	year: number;
+	bodyStyle: "sedan" | "coupe" | "suv" | "truck" | "convertible" | "wagon" | "hatchback";
+	tags: string[];
+	popular?: boolean;
+	status: PatternStatus;
+	updatedAt: string;
+}
+
+export interface PatternRequest {
+	id: string;
+	vehicle: string;
+	make: string;
+	model: string;
+	year: number;
+	notes: string;
+	votes: number;
+	status: RequestStatus;
+	requestedAt: string;
 }
 
 // ─── UI State ─────────────────────────────────

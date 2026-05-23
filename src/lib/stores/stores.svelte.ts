@@ -132,6 +132,24 @@ function createUserStore() {
 
 export const userStore = createUserStore();
 
+// ─── Shop ─────────────────────────────────────
+import type { Shop } from "$lib/types";
+
+function createShopStore() {
+	let shop = $state<Shop | null>(null);
+
+	return {
+		get shop() { return shop; },
+		get isActive() {
+			return shop?.subscriptionStatus === "active" ||
+			       shop?.subscriptionStatus === "trialing";
+		},
+		set(s: Shop | null) { shop = s; },
+	};
+}
+
+export const shopStore = createShopStore();
+
 // ─── Sidebar / Nav ────────────────────────────
 function createUiStore() {
 	let sidebarOpen = $state(true);
@@ -333,6 +351,38 @@ function createCanvasStore() {
 		},
 		toggleSnap() {
 			state.snapToGrid = !state.snapToGrid;
+		},
+
+		saveToStorage() {
+			if (typeof localStorage === "undefined") return;
+			try {
+				localStorage.setItem("cc-canvas-state", JSON.stringify(state));
+			} catch {
+				// quota exceeded — silently skip
+			}
+		},
+
+		restoreFromStorage() {
+			if (typeof localStorage === "undefined") return;
+			// Never overwrite items already in memory (e.g. added from library)
+			if (state.items.length > 0) return;
+			const raw = localStorage.getItem("cc-canvas-state");
+			if (!raw) return;
+			try {
+				const parsed = JSON.parse(raw) as CanvasState;
+				// Patch individual properties so the $state proxy stays intact
+				state.items = parsed.items.map((item) => ({
+					...item,
+					pattern: {
+						...item.pattern,
+						createdAt: new Date(item.pattern.createdAt),
+						updatedAt: new Date(item.pattern.updatedAt),
+					},
+				}));
+				if (parsed.sheet) state.sheet = parsed.sheet;
+			} catch {
+				localStorage.removeItem("cc-canvas-state");
+			}
 		},
 	};
 }

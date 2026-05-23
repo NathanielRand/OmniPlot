@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────
 // OmniPlot — APP CONFIGURATION
 // ─────────────────────────────────────────────
-import type { PricingPlan, MaterialSheet, TintFilm, PlotterConfig } from "$lib/types";
+import type { PricingPlan, MaterialSheet, TintFilm, PlotterConfig, ShopPlan } from "$lib/types";
 
 // ─── App constants ────────────────────────────
 export const APP_NAME = "OmniPlot";
@@ -14,8 +14,94 @@ export const SUPPORT_EMAIL = "support@omniplot.app";
 export const TIER_LIMITS = {
 	free: { cutsPerMonth: 1, cutsPerDay: null, seats: 1 },
 	lite: { cutsPerMonth: null, cutsPerDay: 1, seats: 1 },
-	pro: { cutsPerMonth: null, cutsPerDay: null, seats: 3 },
+	pro:  { cutsPerMonth: null, cutsPerDay: null, seats: 1 },
 } as const;
+
+// ─── Shop plan limits ─────────────────────────
+export const SHOP_PLAN_LIMITS: Record<ShopPlan, {
+	seats: number;
+	cutsPerDay: null;
+	cutsPerMonth: null;
+	customPatterns: boolean;
+	aiAssist: boolean;
+	prioritySupport: boolean;
+}> = {
+	starter: { seats: 3,  cutsPerDay: null, cutsPerMonth: null, customPatterns: false, aiAssist: false, prioritySupport: false },
+	team:    { seats: 10, cutsPerDay: null, cutsPerMonth: null, customPatterns: true,  aiAssist: false, prioritySupport: true  },
+	studio:  { seats: 25, cutsPerDay: null, cutsPerMonth: null, customPatterns: true,  aiAssist: true,  prioritySupport: true  },
+};
+
+// ─── Shop pricing plans ───────────────────────
+export interface ShopPricingPlan {
+	id: ShopPlan;
+	name: string;
+	price: number;
+	yearlyPrice: number;
+	seats: number;
+	description: string;
+	features: string[];
+	stripePriceId: string;
+	stripeYearlyPriceId: string;
+	popular?: boolean;
+}
+
+export const SHOP_PRICING_PLANS: ShopPricingPlan[] = [
+	{
+		id: "starter",
+		name: "Starter",
+		price: 149,
+		yearlyPrice: 124,
+		seats: 3,
+		description: "One subscription for a small crew.",
+		features: [
+			"3 tech logins",
+			"Unlimited cuts for all seats",
+			"Full pattern library",
+			"HPGL / SVG / DXF export",
+			"Auto-nesting optimizer",
+			"Shared job history",
+		],
+		stripePriceId: import.meta.env.VITE_STRIPE_SHOP_STARTER_MONTHLY ?? "",
+		stripeYearlyPriceId: import.meta.env.VITE_STRIPE_SHOP_STARTER_YEARLY ?? "",
+	},
+	{
+		id: "team",
+		name: "Team",
+		price: 299,
+		yearlyPrice: 249,
+		seats: 10,
+		description: "For growing shops with multiple bays.",
+		features: [
+			"10 tech logins",
+			"Unlimited cuts for all seats",
+			"Everything in Starter",
+			"Custom pattern uploads",
+			"Priority support",
+			"PDF export",
+		],
+		stripePriceId: import.meta.env.VITE_STRIPE_SHOP_TEAM_MONTHLY ?? "",
+		stripeYearlyPriceId: import.meta.env.VITE_STRIPE_SHOP_TEAM_YEARLY ?? "",
+		popular: true,
+	},
+	{
+		id: "studio",
+		name: "Studio",
+		price: 499,
+		yearlyPrice: 416,
+		seats: 25,
+		description: "High-volume shops and franchises.",
+		features: [
+			"25 tech logins",
+			"Unlimited cuts for all seats",
+			"Everything in Team",
+			"AI pattern fit assist",
+			"Dedicated account manager",
+			"Volume discounts on patterns",
+		],
+		stripePriceId: import.meta.env.VITE_STRIPE_SHOP_STUDIO_MONTHLY ?? "",
+		stripeYearlyPriceId: import.meta.env.VITE_STRIPE_SHOP_STUDIO_YEARLY ?? "",
+	},
+];
 
 // ─── Pricing plans ────────────────────────────
 export const PRICING_PLANS: PricingPlan[] = [
@@ -84,14 +170,12 @@ export const PRICING_PLANS: PricingPlan[] = [
 			"AI pattern fit assist",
 			"Custom pattern uploads",
 			"Full job history",
-			"3 seats + team sharing",
 			"Priority support",
-			"14-day free trial",
 		],
 		limits: {
 			cutsPerDay: null,
 			cutsPerMonth: null,
-			seats: 3,
+			seats: 1,
 			customPatterns: true,
 			aiAssist: true,
 			prioritySupport: true,
@@ -495,8 +579,8 @@ export const FAQ_ITEMS = [
 				a: "Yes. Cancel in Settings → Billing with one click. Your plan stays active until the end of the current billing period, then reverts to Free.",
 			},
 			{
-				q: "Is there a free trial for Pro?",
-				a: "Yes — Pro includes a 14-day free trial, no credit card required at signup.",
+				q: "Is there a free trial?",
+				a: "Yes — the Free plan is your trial. Use the full pattern library, export files, and cut once per 30 days with no credit card required. Upgrade to Lite or Pro when you're ready to cut more.",
 			},
 			{
 				q: "Do you offer annual billing?",

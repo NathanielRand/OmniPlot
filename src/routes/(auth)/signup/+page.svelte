@@ -1,46 +1,135 @@
 <script lang="ts">
+	import { goto } from "$app/navigation";
+	import { page } from "$app/state";
 	import Button from "$lib/components/ui/Button.svelte";
 	import Badge from "$lib/components/ui/Badge.svelte";
-	import { toastStore } from "$lib/stores";
-	import { page } from "$app/state";
+	import PhoneInput from "$lib/components/ui/PhoneInput.svelte";
+	import { toastStore, userStore } from "$lib/stores";
+	import {
+		signInWithGoogle,
+		sendMagicLink,
+		sendPhoneOTP,
+		createRecaptchaVerifier,
+		applyDisplayName,
+	} from "$lib/firebase/auth";
+	import type { ConfirmationResult, RecaptchaVerifier } from "firebase/auth";
 
-	let name = $state("");
-	let email = $state("");
-	let password = $state("");
-	let showPass = $state(false);
-	let loading = $state(false);
-	let agreed = $state(false);
-
-	// pre-fill plan from query param
-	const plan = $derived(page.url.searchParams.get("plan") ?? "free");
+	// ─── Plan from query params ────────────────
+	const plan    = $derived(page.url.searchParams.get("plan") ?? "free");
 	const billing = $derived(page.url.searchParams.get("billing") ?? "monthly");
 
 	const PLAN_LABELS: Record<string, string> = {
 		free: "Free",
 		lite: "Lite — $29/mo",
-		pro: "Pro — 14-day free trial",
+		pro:  "Pro",
 	};
 
-	async function handleSignup(e: Event) {
-		e.preventDefault();
-		if (!agreed) {
-			toastStore.warning(
-				"Terms required",
-				"Please agree to the terms of service.",
-			);
-			return;
-		}
+	// ─── UI state ─────────────────────────────
+	type Tab = "link" | "phone";
+	let tab     = $state<Tab>("link");
+	let loading = $state(false);
+	let agreed  = $state(false);
+
+	// Shared
+	let name    = $state("");
+
+	// Magic link
+	let email    = $state("");
+	let linkSent = $state(false);
+
+	// Phone
+	let phone              = $state("");   // E.164 from PhoneInput
+	let otp                = $state("");
+	let otpSent            = $state(false);
+	let confirmationResult = $state<ConfirmationResult | null>(null);
+	let recaptchaEl        = $state<HTMLElement | null>(null);
+	let recaptchaVerifier  = $state<RecaptchaVerifier | null>(null);
+
+	// Redirect once signed in
+	$effect(() => {
+		if (userStore.isAuth) goto("/studio", { replaceState: true });
+	});
+
+	// ─── Google ───────────────────────────────
+	async function handleGoogle() {
+		if (!agreed) { toastStore.warning("Terms required", "Please agree to the Terms and Privacy Policy."); return; }
 		loading = true;
-		await new Promise((r) => setTimeout(r, 1100));
-		loading = false;
-		toastStore.success("Account created!", "Welcome to OmniPlot.");
+		try {
+			await signInWithGoogle();
+			// Google provides its own displayName; only override if user typed one
+			// and Google returned nothing (rare but possible for some accounts)
+		} catch (err: unknown) {
+			const msg = err instanceof Error ? err.message : "Google sign-in failed.";
+			if (!msg.includes("popup-closed")) toastStore.error("Google sign-in failed", msg);
+		} finally {
+			loading = false;
+		}
 	}
 
-	async function googleSignup() {
+	// ─── Magic link ───────────────────────────
+	async function handleSendLink(e: Event) {
+		e.preventDefault();
+		if (!agreed) { toastStore.warning("Terms required", "Please agree to the Terms and Privacy Policy."); return; }
+		if (!email) return;
 		loading = true;
-		await new Promise((r) => setTimeout(r, 800));
+		try {
+			await sendMagicLink(email, name || undefined);
+			linkSent = true;
+		} catch (err: unknown) {
+			toastStore.error("Couldn't send link", err instanceof Error ? err.message : "");
+		} finally {
+			loading = false;
+		}
+	}
+
+	function resetRecaptcha() {
+		try { recaptchaVerifier?.clear(); } catch {}
+		recaptchaVerifier = null;
+		if (recaptchaEl) recaptchaEl.innerHTML = "";
+	}
+
+	// ─── Phone: send OTP ──────────────────────
+	async function handleSendOTP(e: Event) {
+		e.preventDefault();
+		if (!agreed) { toastStore.warning("Terms required", "Please agree to the Terms and Privacy Policy."); return; }
+		if (!phone || !recaptchaEl) return;
+		loading = true;
+		try {
+			resetRecaptcha();
+			recaptchaVerifier  = createRecaptchaVerifier(recaptchaEl);
+			confirmationResult = await sendPhoneOTP(phone, recaptchaVerifier);
+			otpSent = true;
+		} catch (err: unknown) {
+			resetRecaptcha();
+			const code = (err as { code?: string }).code ?? "";
+			console.error("[phone-otp]", code, err);
+			const hint =
+				code === "auth/operation-not-allowed" ? "Phone sign-in is not enabled — check Firebase Console → Authentication → Sign-in method." :
+				code === "auth/invalid-app-credential" ? "reCAPTCHA failed — add localhost to Firebase Console → Authentication → Settings → Authorized domains." :
+				code === "auth/too-many-requests" ? "Too many attempts. Try again later." : "";
+			toastStore.error("Couldn't send code", hint || (err instanceof Error ? err.message : ""));
+		} finally {
+			loading = false;
+		}
+	}
+
+	// ─── Phone: verify OTP ────────────────────
+	async function handleVerifyOTP(e: Event) {
+		e.preventDefault();
+		if (!otp || !confirmationResult) return;
+		loading = true;
+		try {
+			await confirmationResult.confirm(otp);
+		} catch {
+			toastStore.error("Invalid code", "Please check the code and try again.");
+			loading = false;
+			return;
+		}
+		// confirm() succeeded — apply name separately so a Firestore hiccup
+		// doesn't falsely show "Invalid code"
+		if (name) await applyDisplayName(name).catch(() => {});
 		loading = false;
-		toastStore.success("Signed up with Google", "Welcome to OmniPlot!");
+		// redirect handled by $effect above
 	}
 </script>
 
@@ -57,359 +146,214 @@
 	</div>
 	<p class="auth-sub">Start cutting for free. No credit card required.</p>
 
-	<button class="oauth-btn" onclick={googleSignup} type="button">
+	<!-- Name (shared across all methods) -->
+	<div class="field">
+		<label for="name" class="field-label">Your name</label>
+		<input
+			id="name"
+			type="text"
+			class="field-input"
+			placeholder="Jane Smith"
+			bind:value={name}
+			autocomplete="name"
+		/>
+	</div>
+
+	<!-- Terms -->
+	<label class="terms-row">
+		<input type="checkbox" class="terms-check" bind:checked={agreed} />
+		<span class="terms-text">
+			I agree to the <a href="/terms" class="field-link">Terms of Service</a>
+			and <a href="/privacy" class="field-link">Privacy Policy</a>.
+		</span>
+	</label>
+
+	<!-- Google -->
+	<button class="oauth-btn" onclick={handleGoogle} disabled={loading} type="button">
 		<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
-			<path
-				fill="#4285F4"
-				d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-			/>
-			<path
-				fill="#34A853"
-				d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-			/>
-			<path
-				fill="#FBBC05"
-				d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
-			/>
-			<path
-				fill="#EA4335"
-				d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
-			/>
+			<path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+			<path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+			<path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+			<path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
 		</svg>
 		Continue with Google
 	</button>
 
 	<div class="divider" aria-hidden="true"><span>or</span></div>
 
-	<form onsubmit={handleSignup}>
-		<div class="fields">
-			<div class="field">
-				<label for="name" class="field-label">Your name</label>
-				<input
-					id="name"
-					type="text"
-					class="field-input"
-					placeholder="Jane Smith"
-					bind:value={name}
-					autocomplete="name"
-					required
-				/>
-			</div>
+	<!-- Tabs -->
+	<div class="tabs" role="tablist">
+		<button role="tab" class="tab" class:active={tab === "link"}  onclick={() => tab = "link"}  aria-selected={tab === "link"}>
+			Email link
+		</button>
+		<button role="tab" class="tab" class:active={tab === "phone"} onclick={() => tab = "phone"} aria-selected={tab === "phone"}>
+			Phone
+		</button>
+	</div>
 
-			<div class="field">
-				<label for="email" class="field-label">Work email</label>
-				<input
-					id="email"
-					type="email"
-					class="field-input"
-					placeholder="jane@yourshop.com"
-					bind:value={email}
-					autocomplete="email"
-					required
-				/>
+	<!-- Magic link panel -->
+	{#if tab === "link"}
+		{#if linkSent}
+			<div class="sent-msg">
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+				<div>
+					<strong>Check your inbox</strong>
+					<span>We sent a sign-in link to <em>{email}</em>. Click it to finish creating your account.</span>
+				</div>
 			</div>
-
-			<div class="field">
-				<label for="password" class="field-label">Password</label>
-				<div class="field-input-wrap">
+			<button class="resend-btn" onclick={() => { linkSent = false; email = ""; }}>
+				Use a different email
+			</button>
+		{:else}
+			<form onsubmit={handleSendLink}>
+				<div class="field">
+					<label for="email" class="field-label">Work email</label>
 					<input
-						id="password"
-						type={showPass ? "text" : "password"}
+						id="email"
+						type="email"
 						class="field-input"
-						placeholder="Min 8 characters"
-						bind:value={password}
-						autocomplete="new-password"
-						minlength="8"
+						placeholder="jane@yourshop.com"
+						bind:value={email}
+						autocomplete="email"
 						required
 					/>
-					<button
-						type="button"
-						class="show-pass"
-						onclick={() => (showPass = !showPass)}
-						aria-label={showPass
-							? "Hide password"
-							: "Show password"}
-					>
-						{#if showPass}
-							<svg
-								width="15"
-								height="15"
-								viewBox="0 0 24 24"
-								fill="none"
-								stroke="currentColor"
-								stroke-width="2"
-								stroke-linecap="round"
-								aria-hidden="true"
-								><path
-									d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24M1 1l22 22"
-								/></svg
-							>
-						{:else}
-							<svg
-								width="15"
-								height="15"
-								viewBox="0 0 24 24"
-								fill="none"
-								stroke="currentColor"
-								stroke-width="2"
-								stroke-linecap="round"
-								aria-hidden="true"
-								><path
-									d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"
-								/><circle cx="12" cy="12" r="3" /></svg
-							>
-						{/if}
-					</button>
 				</div>
-				<!-- Password strength -->
-				{#if password.length > 0}
-					<div class="pass-strength">
-						<div
-							class="pass-bar"
-							style="background: {password.length >= 8
-								? password.length >= 12
-									? 'var(--color-success)'
-									: 'var(--color-warning)'
-								: 'var(--color-danger)'}"
-						></div>
-						<div
-							class="pass-bar"
-							style="background: {password.length >= 8
-								? password.length >= 12
-									? 'var(--color-success)'
-									: 'var(--color-warning)'
-								: 'var(--bg-surface-3)'}"
-						></div>
-						<div
-							class="pass-bar"
-							style="background: {password.length >= 12
-								? 'var(--color-success)'
-								: 'var(--bg-surface-3)'}"
-						></div>
-						<span class="pass-label">
-							{password.length >= 12
-								? "Strong"
-								: password.length >= 8
-									? "Good"
-									: "Weak"}
-						</span>
-					</div>
-				{/if}
-			</div>
-		</div>
+				<Button variant="primary" size="lg" type="submit" {loading} class="submit-btn">
+					Create free account
+				</Button>
+			</form>
+		{/if}
+	{/if}
 
-		<label class="terms-row">
-			<input type="checkbox" class="terms-check" bind:checked={agreed} />
-			<span class="terms-text">
-				I agree to the <a href="/terms" class="field-link"
-					>Terms of Service</a
-				>
-				and <a href="/privacy" class="field-link">Privacy Policy</a>.
-			</span>
-		</label>
+	<!-- Phone panel -->
+	{#if tab === "phone"}
+		{#if !otpSent}
+			<form onsubmit={handleSendOTP}>
+				<div class="field">
+					<label for="phone" class="field-label">Phone number</label>
+					<PhoneInput id="phone" bind:value={phone} required />
+				</div>
+				<Button variant="primary" size="lg" type="submit" {loading} class="submit-btn">
+					Send verification code
+				</Button>
+			</form>
+		{:else}
+			<form onsubmit={handleVerifyOTP}>
+				<div class="field">
+					<label for="otp" class="field-label">Verification code</label>
+					<p class="field-hint top">Sent to {phone}</p>
+					<input
+						id="otp"
+						type="text"
+						inputmode="numeric"
+						class="field-input otp-input"
+						placeholder="000000"
+						maxlength="6"
+						bind:value={otp}
+						autocomplete="one-time-code"
+						required
+					/>
+				</div>
+				<Button variant="primary" size="lg" type="submit" {loading} class="submit-btn">
+					Verify & create account
+				</Button>
+				<button class="resend-btn" type="button" onclick={() => { otpSent = false; otp = ""; confirmationResult = null; }}>
+					Use a different number
+				</button>
+			</form>
+		{/if}
 
-		<Button
-			variant="primary"
-			size="lg"
-			type="submit"
-			{loading}
-			class="submit-btn"
-		>
-			{plan === "pro" ? "Start free trial" : "Create free account"}
-		</Button>
-	</form>
+		<!-- Invisible reCAPTCHA mount point -->
+		<div bind:this={recaptchaEl} aria-hidden="true"></div>
+	{/if}
 
 	<p class="auth-switch">
-		Already have an account? <a href="/login" class="auth-switch-link"
-			>Sign in →</a
-		>
+		Already have an account? <a href="/login" class="auth-switch-link">Sign in →</a>
 	</p>
 </div>
 
 <style>
-	.auth-form {
-		display: flex;
-		flex-direction: column;
-		gap: 14px;
-	}
-	.auth-form__head {
-		display: flex;
-		align-items: center;
-		gap: 10px;
-		flex-wrap: wrap;
-	}
+	.auth-form { display: flex; flex-direction: column; gap: 14px; }
+	.auth-form__head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
-	.auth-title {
-		font-size: 1.5rem;
-		letter-spacing: -0.02em;
-		margin: 0;
-	}
-	.auth-sub {
-		font-size: 0.875rem;
-		color: var(--text-secondary);
-		margin: 0;
-	}
+	.auth-title { font-size: 1.5rem; letter-spacing: -0.02em; margin: 0; }
+	.auth-sub { font-size: 0.875rem; color: var(--text-secondary); margin: 0; }
 
 	.oauth-btn {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		gap: 10px;
-		width: 100%;
-		padding: 10px;
-		background: var(--bg-surface-2);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
-		font-size: 0.9375rem;
-		font-weight: 500;
-		font-family: var(--font-body);
-		color: var(--text-primary);
-		cursor: pointer;
-		transition:
-			background 0.12s,
-			border-color 0.12s;
+		display: flex; align-items: center; justify-content: center; gap: 10px;
+		width: 100%; padding: 10px;
+		background: var(--bg-surface-2); border: 1px solid var(--border-default);
+		border-radius: var(--radius-md); font-size: 0.9375rem; font-weight: 500;
+		font-family: var(--font-body); color: var(--text-primary); cursor: pointer;
+		transition: background 0.12s, border-color 0.12s;
 	}
-	.oauth-btn:hover {
-		background: var(--bg-surface-3);
-		border-color: var(--border-strong);
-	}
+	.oauth-btn:hover:not(:disabled) { background: var(--bg-surface-3); border-color: var(--border-strong); }
+	.oauth-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
 	.divider {
-		display: flex;
-		align-items: center;
-		gap: 12px;
-		color: var(--text-tertiary);
-		font-size: 0.8125rem;
+		display: flex; align-items: center; gap: 12px;
+		color: var(--text-tertiary); font-size: 0.8125rem;
 	}
-	.divider::before,
-	.divider::after {
-		content: "";
-		flex: 1;
-		height: 1px;
-		background: var(--border-subtle);
-	}
+	.divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: var(--border-subtle); }
 
-	.fields {
-		display: flex;
-		flex-direction: column;
-		gap: 12px;
+	.tabs {
+		display: flex; gap: 2px; background: var(--bg-surface-2);
+		border: 1px solid var(--border-default); border-radius: var(--radius-md); padding: 3px;
 	}
-	.field {
-		display: flex;
-		flex-direction: column;
-		gap: 6px;
+	.tab {
+		flex: 1; padding: 7px 12px; border: none;
+		border-radius: calc(var(--radius-md) - 2px); background: transparent;
+		font-size: 0.875rem; font-weight: 500; font-family: var(--font-body);
+		color: var(--text-tertiary); cursor: pointer; transition: background 0.12s, color 0.12s;
 	}
+	.tab.active { background: var(--bg-surface); color: var(--text-primary); }
+	.tab:hover:not(.active) { color: var(--text-secondary); }
 
-	.field-label {
-		font-size: 0.875rem;
-		font-weight: 500;
-		color: var(--text-secondary);
-	}
-
-	.field-input-wrap {
-		position: relative;
-	}
+	.field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
+	.field-label { font-size: 0.875rem; font-weight: 500; color: var(--text-secondary); }
+	.field-hint { font-size: 0.8125rem; color: var(--text-tertiary); margin: 0; }
+	.field-hint.top { margin-bottom: 4px; }
 
 	.field-input {
-		width: 100%;
-		padding: 9px 12px;
-		background: var(--bg-surface-2);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
-		font-size: 0.9375rem;
-		font-family: var(--font-body);
-		color: var(--text-primary);
-		outline: none;
-		transition: border-color 0.12s;
+		width: 100%; padding: 9px 12px; background: var(--bg-surface-2);
+		border: 1px solid var(--border-default); border-radius: var(--radius-md);
+		font-size: 0.9375rem; font-family: var(--font-body); color: var(--text-primary);
+		outline: none; transition: border-color 0.12s;
 	}
-	.field-input:focus {
-		border-color: var(--color-brand-dim);
-	}
-	.field-input::placeholder {
-		color: var(--text-tertiary);
-	}
+	.field-input:focus { border-color: var(--color-brand-dim); }
+	.field-input::placeholder { color: var(--text-tertiary); }
 
-	.show-pass {
-		position: absolute;
-		right: 10px;
-		top: 50%;
-		transform: translateY(-50%);
-		background: none;
-		border: none;
-		color: var(--text-tertiary);
-		cursor: pointer;
-		display: flex;
-		align-items: center;
-		transition: color 0.12s;
-	}
-	.show-pass:hover {
-		color: var(--text-primary);
-	}
-
-	.pass-strength {
-		display: flex;
-		align-items: center;
-		gap: 4px;
-		margin-top: 4px;
-	}
-
-	.pass-bar {
-		height: 3px;
-		flex: 1;
-		border-radius: 2px;
-		transition: background 0.2s;
-	}
-
-	.pass-label {
-		font-size: 0.6875rem;
-		color: var(--text-tertiary);
-		margin-left: 4px;
-		white-space: nowrap;
-	}
+	.otp-input { letter-spacing: 0.25em; font-size: 1.125rem; text-align: center; }
 
 	.terms-row {
-		display: flex;
-		align-items: flex-start;
-		gap: 8px;
-		cursor: pointer;
-		font-size: 0.8125rem;
-		color: var(--text-secondary);
+		display: flex; align-items: flex-start; gap: 8px;
+		cursor: pointer; font-size: 0.8125rem; color: var(--text-secondary);
 	}
+	.terms-check { accent-color: var(--color-brand-dim); margin-top: 2px; flex-shrink: 0; }
+	.terms-text { line-height: 1.5; }
+	.field-link { color: var(--text-brand); text-decoration: none; }
+	.field-link:hover { text-decoration: underline; }
 
-	.terms-check {
-		accent-color: var(--color-brand-dim);
-		margin-top: 2px;
-		flex-shrink: 0;
+	.sent-msg {
+		display: flex; align-items: flex-start; gap: 12px; padding: 14px;
+		background: var(--bg-surface-2); border: 1px solid var(--border-default);
+		border-radius: var(--radius-md); color: var(--text-secondary);
 	}
-	.terms-text {
-		line-height: 1.5;
-	}
+	.sent-msg svg { flex-shrink: 0; margin-top: 2px; color: var(--color-brand); }
+	.sent-msg div { display: flex; flex-direction: column; gap: 2px; font-size: 0.875rem; }
+	.sent-msg strong { color: var(--text-primary); }
+	.sent-msg em { color: var(--text-primary); font-style: normal; font-weight: 500; }
 
-	.field-link {
-		color: var(--text-brand);
-		text-decoration: none;
+	.resend-btn {
+		background: none; border: none; font-size: 0.8125rem;
+		color: var(--text-brand); cursor: pointer; padding: 0;
+		font-family: var(--font-body); text-align: left;
 	}
-	.field-link:hover {
-		text-decoration: underline;
-	}
+	.resend-btn:hover { text-decoration: underline; }
 
-	:global(.submit-btn) {
-		width: 100% !important;
-		justify-content: center;
-	}
+	:global(.submit-btn) { width: 100% !important; justify-content: center; }
 
-	.auth-switch {
-		text-align: center;
-		font-size: 0.875rem;
-		color: var(--text-secondary);
-		margin: 0;
-	}
-	.auth-switch-link {
-		color: var(--text-brand);
-		text-decoration: none;
-		font-weight: 500;
-	}
-	.auth-switch-link:hover {
-		text-decoration: underline;
-	}
+	.auth-switch { text-align: center; font-size: 0.875rem; color: var(--text-secondary); margin: 0; }
+	.auth-switch-link { color: var(--text-brand); text-decoration: none; font-weight: 500; }
+	.auth-switch-link:hover { text-decoration: underline; }
 </style>

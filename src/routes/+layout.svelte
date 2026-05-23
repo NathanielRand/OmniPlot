@@ -2,9 +2,11 @@
 	import "../app.css";
 	import { onMount } from "svelte";
 	import type { Snippet } from "svelte";
-	import { themeStore } from "$lib/stores";
+	import { themeStore, patternStore, userStore, shopStore } from "$lib/stores";
 	import Toast from "$lib/components/ui/Toast.svelte";
 	import PricingModal from "$lib/components/ui/PricingModal.svelte";
+	import { initAuth } from "$lib/firebase/auth";
+	import { subscribeToShop } from "$lib/firebase/firestore";
 
 	interface Props {
 		children: Snippet;
@@ -13,6 +15,20 @@
 
 	onMount(() => {
 		themeStore.init();
+		const unsubPatterns = patternStore.init();
+		const unsubAuth = initAuth();
+		return () => { unsubAuth(); unsubPatterns(); };
+	});
+
+	// Keep shopStore in sync with the signed-in user's shop
+	$effect(() => {
+		const shopId = userStore.user?.shopId;
+		if (!shopId) {
+			shopStore.set(null);
+			return;
+		}
+		const unsub = subscribeToShop(shopId, (s) => shopStore.set(s));
+		return unsub;
 	});
 </script>
 

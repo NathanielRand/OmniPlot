@@ -1,15 +1,23 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import { page } from '$app/state';
+  import { goto } from '$app/navigation';
   import Logo from '$lib/components/ui/Logo.svelte';
   import ThemeToggle from '$lib/components/ui/ThemeToggle.svelte';
   import Badge from '$lib/components/ui/Badge.svelte';
   import { ADMIN_NAV } from '$lib/config';
+  import { userStore } from '$lib/stores';
 
   interface Props { children: Snippet; }
   let { children }: Props = $props();
 
   const currentPath = $derived(page.url.pathname);
+
+  $effect(() => {
+    if (!userStore.loading && !userStore.isAdmin) {
+      goto('/studio', { replaceState: true });
+    }
+  });
 
   const NAV_ICONS: Record<string, string> = {
     'layout-dashboard': 'M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z',
@@ -20,6 +28,11 @@
   };
 </script>
 
+{#if userStore.loading}
+  <div class="auth-gate" aria-label="Loading">
+    <span class="auth-gate__spinner"></span>
+  </div>
+{:else if userStore.isAdmin}
 <div class="admin-shell">
   <!-- Sidebar -->
   <aside class="admin-sidebar">
@@ -62,7 +75,9 @@
       </div>
       <div class="admin-topbar__right">
         <ThemeToggle />
-        <div class="admin-avatar" aria-label="Admin user">A</div>
+        <div class="admin-avatar" aria-label="Admin user">
+          {userStore.user?.displayName?.slice(0, 1).toUpperCase() ?? "A"}
+        </div>
       </div>
     </header>
 
@@ -71,8 +86,26 @@
     </div>
   </div>
 </div>
+{/if}
 
 <style>
+  .auth-gate {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    background: var(--bg-base);
+  }
+  .auth-gate__spinner {
+    width: 28px;
+    height: 28px;
+    border: 2px solid var(--border-default);
+    border-top-color: var(--color-brand);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
   .admin-shell {
     display: grid;
     grid-template-columns: 220px 1fr;

@@ -163,10 +163,21 @@
 			<h1 class="page-title">Patterns</h1>
 			<p class="page-sub">Manage vehicle templates and pattern requests.</p>
 		</div>
-		<Button variant="primary" size="sm" onclick={() => (showAddModal = true)}>
-			<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-			Add vehicle
-		</Button>
+		<div class="page-header__actions">
+			<Button
+				variant="ghost"
+				size="sm"
+				onclick={async () => { await patternStore.seedFirestore(); }}
+				title="Write all in-memory seed data to Firestore (one-time)"
+			>
+				<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7v10c0 2.2 3.6 4 8 4s8-1.8 8-4V7"/><ellipse cx="12" cy="7" rx="8" ry="3"/><path d="M4 12c0 2.2 3.6 4 8 4s8-1.8 8-4"/></svg>
+				Seed Firestore
+			</Button>
+			<Button variant="primary" size="sm" onclick={() => (showAddModal = true)}>
+				<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+				Add vehicle
+			</Button>
+		</div>
 	</div>
 
 	<!-- Summary cards -->
@@ -613,6 +624,7 @@
 	}
 	.page-title { font-size: 1.375rem; margin-bottom: 3px; }
 	.page-sub   { font-size: 0.875rem; color: var(--text-secondary); }
+	.page-header__actions { display: flex; align-items: center; gap: 8px; }
 
 	.summary-row {
 		display: grid;

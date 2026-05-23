@@ -1,13 +1,42 @@
 <script lang="ts">
-	import { uiStore } from "$lib/stores";
+	import { uiStore, userStore, toastStore } from "$lib/stores";
 	import { PRICING_PLANS } from "$lib/config";
+	import type { PricingPlan } from "$lib/types";
 	import Button from "$lib/components/ui/Button.svelte";
 	import Badge from "$lib/components/ui/Badge.svelte";
+	import { auth } from "$lib/firebase/client";
 
-	let billing = $state<"monthly" | "yearly">("monthly");
+	let billing       = $state<"monthly" | "yearly">("monthly");
+	let checkoutPlan  = $state<string | null>(null); // plan.id being loaded
 
 	function closeOnBackdrop(e: MouseEvent) {
 		if (e.target === e.currentTarget) uiStore.closePricing();
+	}
+
+	async function startCheckout(plan: PricingPlan) {
+		const priceId = billing === "yearly" ? plan.stripeYearlyPriceId : plan.stripePriceId;
+		if (!priceId) {
+			toastStore.error("Not configured", "Price ID missing — contact support.");
+			return;
+		}
+		checkoutPlan = plan.id;
+		try {
+			const token = await auth.currentUser?.getIdToken();
+			const res = await fetch("/api/billing/checkout", {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					...(token ? { Authorization: `Bearer ${token}` } : {}),
+				},
+				body: JSON.stringify({ priceId, type: "individual", tier: plan.id }),
+			});
+			if (!res.ok) throw new Error((await res.json()).error ?? "Checkout failed");
+			const { url } = await res.json();
+			window.location.href = url;
+		} catch (err) {
+			toastStore.error("Checkout failed", err instanceof Error ? err.message : "");
+			checkoutPlan = null;
+		}
 	}
 
 	const CHECK = "M5 13l4 4L19 7";
@@ -122,29 +151,45 @@
 							{/each}
 						</ul>
 
-						<Button
-							variant={plan.popular ? "primary" : "secondary"}
-							size="md"
-							class="plan__cta"
-							href={plan.price === 0
-								? "/signup"
-								: `/signup?plan=${plan.id}&billing=${billing}`}
-						>
-							{#if plan.price === 0}
+						{#if plan.price === 0}
+							<Button variant="secondary" size="md" class="plan__cta" href="/signup">
 								Get started free
-							{:else if plan.id === "pro"}
-								Start 14-day trial
-							{:else}
-								Get {plan.name}
-							{/if}
-						</Button>
+							</Button>
+						{:else if userStore.isAuth}
+							<Button
+								variant={plan.popular ? "primary" : "secondary"}
+								size="md"
+								class="plan__cta"
+								loading={checkoutPlan === plan.id}
+								onclick={() => startCheckout(plan)}
+							>
+								{plan.id === "pro" ? "Get Pro" : `Get ${plan.name}`}
+							</Button>
+						{:else}
+							<Button
+								variant={plan.popular ? "primary" : "secondary"}
+								size="md"
+								class="plan__cta"
+								href="/signup?plan={plan.id}&billing={billing}"
+							>
+								{plan.id === "pro" ? "Get Pro" : `Get ${plan.name}`}
+							</Button>
+						{/if}
 					</div>
 				{/each}
 			</div>
 
 			<p class="modal__note">
-				No credit card required for Free or Pro trial. Cancel anytime.
+				Start free, no credit card required. Cancel anytime.
 			</p>
+
+			<div class="modal__team-nudge">
+				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
+				Running a shop?
+				<a href="/pricing#team" class="modal__team-link" onclick={uiStore.closePricing}>
+					See team plans from $149/mo →
+				</a>
+			</div>
 		</div>
 	</div>
 {/if}
@@ -359,6 +404,27 @@
 		color: var(--text-tertiary);
 		margin-top: 20px;
 	}
+
+	.modal__team-nudge {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 6px;
+		font-size: 0.8125rem;
+		color: var(--text-secondary);
+		padding: 12px 16px;
+		background: var(--bg-surface-2);
+		border: 1px solid var(--border-subtle);
+		border-radius: var(--radius-md);
+		margin-top: 10px;
+	}
+	.modal__team-nudge svg { flex-shrink: 0; color: var(--color-brand); }
+	.modal__team-link {
+		color: var(--text-brand);
+		text-decoration: none;
+		font-weight: 500;
+	}
+	.modal__team-link:hover { text-decoration: underline; }
 
 	@media (max-width: 640px) {
 		.modal {
