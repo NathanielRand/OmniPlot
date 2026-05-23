@@ -8,7 +8,7 @@
 		userStore,
 		shopStore,
 	} from "$lib/stores";
-	import { autoNest, findNextPosition, samplePolygonArea, type PlacementResult } from "$lib/utils/nesting";
+	import { autoNest, smartNest, findNextPosition, samplePolygonArea, type PlacementResult } from "$lib/utils/nesting";
 	import {
 		downloadHpgl,
 		downloadSvg,
@@ -137,6 +137,7 @@
 	function handleAutoNest() {
 		const nested = autoNest(canvasStore.items, transposedSheet());
 		canvasStore.setItems(nested);
+		smartNestGain = null;
 		const oob = nested.filter((i) => i.outOfBounds).length;
 		const fit = nested.length - oob;
 		const eff = formatEfficiency(calcEfficiency(nested, canvasStore.sheet));
@@ -152,6 +153,47 @@
 			);
 		}
 		fitToView();
+	}
+
+	let smartNesting = $state(false);
+	let smartNestGain = $state<number | null>(null);
+
+	function handleSmartNest() {
+		if (!canvasStore.items.length) {
+			toastStore.warning("No patterns", "Add patterns to the sheet first.");
+			return;
+		}
+		smartNesting = true;
+		// Yield to the browser to paint the loading state before the heavy work
+		setTimeout(() => {
+			try {
+				const result = smartNest(canvasStore.items, transposedSheet());
+				canvasStore.setItems(result.items);
+				smartNestGain = result.improvementPct;
+				const oob = result.items.filter((i) => i.outOfBounds).length;
+				const fit = result.items.length - oob;
+				const eff = formatEfficiency(calcEfficiency(result.items, canvasStore.sheet));
+				const gainStr = result.improvementPct >= 0.5
+					? ` · ↑${result.improvementPct.toFixed(0)}% vs baseline`
+					: "";
+				if (oob > 0) {
+					toastStore.warning(
+						"AI Nest complete",
+						`${fit} pieces fit · ${eff} efficiency${gainStr} · ${oob} won't cut`,
+					);
+				} else {
+					toastStore.success(
+						"AI Nest complete",
+						`${fit} pieces · ${eff} efficiency${gainStr}`,
+					);
+				}
+				fitToView();
+			} catch {
+				toastStore.error("Smart Nest failed", "Could not optimize layout.");
+			} finally {
+				smartNesting = false;
+			}
+		}, 16);
 	}
 
 	function handleCut() {
@@ -422,6 +464,32 @@
 						rx="1"
 					/></svg
 				>
+			</button>
+			<button
+				class="tool-btn tool-btn--ai"
+				class:loading={smartNesting}
+				title="AI Nest — deep optimization with multiple strategies and improvement passes"
+				onclick={handleSmartNest}
+				disabled={smartNesting}
+				aria-label="AI-assisted smart nest"
+			>
+				{#if smartNesting}
+					<span class="ai-spinner" aria-hidden="true"></span>
+				{:else}
+					<svg
+						width="14"
+						height="14"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						aria-hidden="true"
+					>
+						<path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+					</svg>
+				{/if}
 			</button>
 			<button
 				class="tool-btn"
@@ -1184,12 +1252,24 @@
 
 	<!-- ─── Status bar ─── -->
 	<div class="studio__statusbar" role="status" aria-label="Job metrics">
-		{#each [["Material Usage", formatEfficiency(efficiency), efficiency > 0.65 ? "good" : "warn"], ["Cut Paths", `${cutCount}`, ""], ["Est. Cut Time", formatCutTime(cutTimeSecs), ""], ["Roll", `${canvasStore.sheet.widthInches}" × ${displaySheetW.toFixed(0)}"`, ""], ["Excluded", `${outOfBoundsCount}`, outOfBoundsCount > 0 ? "warn" : ""], ["Cursor", `${cursorX.toFixed(1)}" , ${cursorY.toFixed(1)}"`, ""]] as const as [label, value, cls]}
+		<div class="status-metric">
+			<span class="status-metric__label">Material Usage</span>
+			<span class="status-metric__value-row">
+				<span
+					class="status-metric__value"
+					class:good={efficiency > 0.65}
+					class:warn={efficiency <= 0.65 && efficiency > 0}
+				>{formatEfficiency(efficiency)}</span>
+				{#if smartNestGain !== null && smartNestGain >= 0.5}
+					<span class="ai-badge" title="AI-optimized layout — ↑{smartNestGain.toFixed(0)}% vs baseline">AI ↑{smartNestGain.toFixed(0)}%</span>
+				{/if}
+			</span>
+		</div>
+		{#each [["Cut Paths", `${cutCount}`, ""], ["Est. Cut Time", formatCutTime(cutTimeSecs), ""], ["Roll", `${canvasStore.sheet.widthInches}" × ${displaySheetW.toFixed(0)}"`, ""], ["Excluded", `${outOfBoundsCount}`, outOfBoundsCount > 0 ? "warn" : ""], ["Cursor", `${cursorX.toFixed(1)}" , ${cursorY.toFixed(1)}"`, ""]] as [label, value, cls]}
 			<div class="status-metric">
 				<span class="status-metric__label">{label}</span>
 				<span
 					class="status-metric__value"
-					class:good={cls === "good"}
 					class:warn={cls === "warn"}>{value}</span
 				>
 			</div>
@@ -1257,6 +1337,31 @@
 		opacity: 0.35;
 		cursor: not-allowed;
 	}
+
+	/* AI Nest button — star icon with brand accent */
+	.tool-btn--ai {
+		color: var(--color-brand-dim);
+		position: relative;
+	}
+	.tool-btn--ai:hover:not(:disabled) {
+		background: rgba(0, 112, 255, 0.1);
+		color: var(--color-brand-dim);
+	}
+	.tool-btn--ai.loading {
+		opacity: 1;
+		cursor: wait;
+	}
+
+	.ai-spinner {
+		display: block;
+		width: 12px;
+		height: 12px;
+		border: 2px solid rgba(0, 112, 255, 0.25);
+		border-top-color: var(--color-brand-dim);
+		border-radius: 50%;
+		animation: ai-spin 0.7s linear infinite;
+	}
+	@keyframes ai-spin { to { transform: rotate(360deg); } }
 
 	.toolbar-sep {
 		width: 1px;
@@ -1905,6 +2010,27 @@
 	}
 	.status-metric__value.warn {
 		color: var(--color-warning);
+	}
+
+	.status-metric__value-row {
+		display: flex;
+		align-items: center;
+		gap: 5px;
+	}
+
+	/* Shown when smartNestGain is set — shows efficiency gain vs baseline */
+	.ai-badge {
+		font-family: var(--font-mono);
+		font-size: 0.625rem;
+		font-weight: 700;
+		letter-spacing: 0.03em;
+		padding: 1px 5px;
+		border-radius: 3px;
+		background: rgba(0, 112, 255, 0.12);
+		color: var(--color-brand-dim);
+		border: 1px solid rgba(0, 112, 255, 0.25);
+		white-space: nowrap;
+		cursor: default;
 	}
 
 	/* ─── Responsive ────── */
