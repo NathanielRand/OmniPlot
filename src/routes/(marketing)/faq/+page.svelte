@@ -125,7 +125,7 @@
 				<p class="faq-empty__title">No results for "{search}"</p>
 				<p class="faq-empty__sub">
 					Try a different search or <a
-						href="mailto:support@clearcut.app"
+						href="mailto:support@omniplot.app"
 						class="faq-link">contact support</a
 					>.
 				</p>

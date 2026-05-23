@@ -509,10 +509,11 @@ export const APP_NAV = [
 ] as const;
 
 export const MARKETING_NAV = [
-	{ label: "Features", href: "/#features" },
-	{ label: "Pricing", href: "/pricing" },
-	{ label: "FAQ", href: "/faq" },
+	{ label: "Features",  href: "/#features" },
+	{ label: "Pricing",   href: "/pricing" },
+	{ label: "FAQ",       href: "/faq" },
 	{ label: "Changelog", href: "/changelog" },
+	{ label: "About",     href: "/about" },
 ] as const;
 
 export const ADMIN_NAV = [
@@ -530,11 +531,15 @@ export const FAQ_ITEMS = [
 		items: [
 			{
 				q: "Do I need to install anything?",
-				a: "No. OmniPlot is fully web-based and runs in any modern browser on any device — desktop, tablet, or your shop iPad. No drivers, no software installs.",
+				a: "No. OmniPlot is fully web-based and runs in any modern browser on any device — desktop, tablet, or your shop iPad. No drivers, no software installs, ever.",
+			},
+			{
+				q: "How do I create an account?",
+				a: "Three ways: sign in with Google, receive a one-click magic link to your email, or verify via SMS code to your phone number. No password is ever created or stored — all three methods are passwordless.",
 			},
 			{
 				q: "Which plotters does OmniPlot work with?",
-				a: "Any plotter that accepts HPGL commands — which is virtually all of them. Roland, Graphtec, Mimaki, USCutter, Summa, VEVOR, and hundreds of others. You export a standard .plt file and send it via your existing plotter software, or connect directly via Web Serial (Chrome/Edge) or our lightweight Cut Agent.",
+				a: "Any plotter that accepts HPGL commands — Roland, Graphtec, Mimaki, USCutter, Summa, VEVOR, and hundreds of others. Export a standard .plt file and send it via your existing plotter software, connect directly via Web Serial (Chrome/Edge), or use our lightweight Cut Agent.",
 			},
 			{
 				q: "How do I send a cut file to my plotter?",
@@ -542,7 +547,7 @@ export const FAQ_ITEMS = [
 			},
 			{
 				q: "Can I use OmniPlot on my shop tablet or phone?",
-				a: "Yes. The studio is fully responsive and works on tablets and phones. For cutting, you'll need a device connected to (or on the same network as) your plotter, but you can design on any device and send from another.",
+				a: "Yes. The studio is fully responsive and works on tablets and phones. For cutting, you'll need a device connected to (or on the same network as) your plotter — but you can design on any device and send from another.",
 			},
 		],
 	},
@@ -551,19 +556,44 @@ export const FAQ_ITEMS = [
 		items: [
 			{
 				q: "How many vehicle patterns do you have?",
-				a: "We're actively growing the library. Launch includes patterns for the most popular 200+ vehicles. We add new vehicles weekly and take requests — most requested models are turned around within 72 hours.",
+				a: "We're actively growing the library. The most popular 200+ vehicles are available at launch. We add new vehicles weekly and prioritize requests — most requested models are turned around within 72 hours.",
 			},
 			{
 				q: "What if my vehicle isn't in the library?",
-				a: "Request it via the Library page and we'll add it. Pro tier users can also upload their own custom SVG patterns directly.",
+				a: "Submit a request from the Library page. Pro and Shop plan users can also upload their own custom SVG patterns directly for vehicles or zones we don't yet cover.",
 			},
 			{
 				q: "Are patterns available for window tint as well as PPF?",
-				a: "Yes. OmniPlot supports both PPF and window tint workflows. Switch between modes in the Pattern Library. Window tint patterns cover windshield, rear window, all side windows, sunroof/moonroof, and quarter/vent windows — with accurate shapes for every vehicle in the library. Tint film materials (LLumar, 3M, XPEL, SunTek, FormulaOne, and more) are available alongside PPF rolls in the material selector.",
+				a: "Yes. OmniPlot covers both PPF and window tint in the same studio. Window tint patterns include windshield, rear window, all side windows, sunroof/moonroof, and quarter/vent windows. Tint film materials (LLumar, 3M, XPEL, SunTek, FormulaOne, and more) are available in the material selector alongside PPF rolls.",
 			},
 			{
 				q: "How accurate are the patterns?",
-				a: "All patterns are digitized from OEM vehicle measurements and installer-verified. They include recommended offsets and wrap-edge allowances. Each pattern is versioned so you always know what revision you're working with.",
+				a: "All patterns are digitized from OEM vehicle measurements and installer-verified. They include recommended offsets and wrap-edge allowances, and each pattern is versioned so you always know exactly what revision you're cutting.",
+			},
+		],
+	},
+	{
+		category: "Teams & Shops",
+		items: [
+			{
+				q: "What is a Shop plan?",
+				a: "Shop plans (Starter, Team, Studio) let multiple technicians share one subscription. Each tech gets their own login. Billing is consolidated under the shop owner's account. Shop plans include unlimited cuts for all seats and start at $149/mo for 3 seats.",
+			},
+			{
+				q: "How do seats work?",
+				a: "Each active member in your shop counts as one seat. Starter supports 3, Team supports 10, and Studio supports 25. You can invite or remove members at any time from Settings → Team. Usage resets at the seat level, not the shop level.",
+			},
+			{
+				q: "How do I invite team members?",
+				a: "Go to Settings → Team → Invite a team member. Generate a shareable link (valid for 7 days) and send it to your tech. They'll sign up with their own account and be added to your shop automatically. You can assign them a Technician or Manager role.",
+			},
+			{
+				q: "Can managers invite people or only owners?",
+				a: "Owners and Managers can both generate invite links and change member roles (except they can't elevate someone to Owner). Only the Owner can change the shop's subscription plan.",
+			},
+			{
+				q: "What happens if someone opens my account on another device?",
+				a: "OmniPlot enforces one active session per account. If your account is opened on a second device, the first session is immediately signed out. This applies to individual accounts. Shop members each have their own account, so this limit applies per-person, not per-shop.",
 			},
 		],
 	},
@@ -575,16 +605,24 @@ export const FAQ_ITEMS = [
 				a: "A cut is counted each time you send a job to your plotter or export a PLT/cut file. Saving a job, editing, previewing, or downloading SVGs for reference does not count.",
 			},
 			{
-				q: "Can I cancel anytime?",
-				a: "Yes. Cancel in Settings → Billing with one click. Your plan stays active until the end of the current billing period, then reverts to Free.",
+				q: "What are the individual plans?",
+				a: "Free: 1 cut per 30 days, no credit card required. Lite ($29/mo): 1 cut per day, full export formats. Pro ($79/mo): unlimited cuts, AI pattern assist, custom pattern uploads, priority support. Annual billing saves ~20% on Lite and Pro.",
 			},
 			{
 				q: "Is there a free trial?",
-				a: "Yes — the Free plan is your trial. Use the full pattern library, export files, and cut once per 30 days with no credit card required. Upgrade to Lite or Pro when you're ready to cut more.",
+				a: "The Free plan is your trial — use the full pattern library, export files, and cut once per 30 days with no credit card required. Upgrade to Lite or Pro whenever you're ready for more volume.",
+			},
+			{
+				q: "How do I manage or cancel my subscription?",
+				a: "Go to Settings → Billing → Manage billing. This opens the Stripe billing portal where you can change your plan, update your payment method, download invoices, or cancel. Cancellations take effect at the end of the current billing period.",
 			},
 			{
 				q: "Do you offer annual billing?",
-				a: "Yes. Annual billing saves ~20% (Lite: $24/mo billed annually; Pro: $66/mo). Switch anytime in Settings → Billing.",
+				a: "Yes. Annual billing saves ~20% on all individual and shop plans. Switch to annual at any time from Settings → Billing.",
+			},
+			{
+				q: "How does billing work for shops?",
+				a: "When you create a shop, you're taken to Stripe Checkout to subscribe to the Starter, Team, or Studio plan. The shop owner's payment method is charged. Individual techs in the shop have no billing relationship — their access flows through the shop subscription.",
 			},
 		],
 	},
@@ -593,19 +631,23 @@ export const FAQ_ITEMS = [
 		items: [
 			{
 				q: "What export formats are supported?",
-				a: "HPGL (.plt) — works with all cutters. SVG — for Inkscape, FlexiSIGN, Illustrator. DXF — for AutoCAD-compatible tools. PDF (Pro) — for archival.",
+				a: "HPGL (.plt) — universal plotter format. SVG — for Inkscape, FlexiSIGN, Illustrator. DXF — for AutoCAD-compatible tools. PDF (Pro and Shop plans) — for archival and sharing.",
 			},
 			{
 				q: "Does OmniPlot work offline?",
-				a: "Not currently — an internet connection is required for the pattern library and account features. Local/offline mode is on our roadmap.",
+				a: "Not currently — an internet connection is required for the pattern library and account sync. Local/offline mode is on the roadmap.",
 			},
 			{
 				q: "How is my data stored?",
-				a: "Jobs and settings are stored securely in Firebase (Google Cloud). Pattern SVGs are served from Cloud Storage. We never share your data with third parties.",
+				a: "Accounts are managed through Firebase Authentication (Google Cloud). Job history and settings are stored in Firestore. Pattern files are served from Google Cloud Storage. Billing is handled by Stripe. We never sell your data or share it with third parties outside of these infrastructure providers.",
 			},
 			{
 				q: "What browsers are supported?",
-				a: "Chrome and Edge are recommended (required for Web Serial plotter control). Firefox and Safari work for design and file export, but direct plotter connection via Web Serial is Chrome/Edge only.",
+				a: "Chrome and Edge are recommended and required for Web Serial plotter control. Firefox and Safari work for design and file export, but direct plotter connection via Web Serial is Chrome/Edge only.",
+			},
+			{
+				q: "Can I use OmniPlot on multiple devices at the same time?",
+				a: "Each individual account supports one active session at a time. Opening your account on a second device automatically signs out the first. Shop team members each have their own account, so multiple techs can be active simultaneously — each one counts as a separate seat.",
 			},
 		],
 	},
