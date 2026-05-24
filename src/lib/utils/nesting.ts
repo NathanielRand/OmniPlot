@@ -17,13 +17,28 @@
 //   • Module-level caches survive across calls in a session
 // ─────────────────────────────────────────────
 import type { CanvasItem, MaterialSheet } from "$lib/types";
+import {
+	type Point,
+	type Polygon,
+	polygonBounds,
+	translatePolygon,
+	rotatePoints,
+	normalizeToBBox,
+	inflatePolygon,
+	nfpGeneral,
+	innerFitBounds,
+	nfpCandidates,
+	pointInPolygon,
+	ensureCCW,
+} from "./polygon";
 
-const PADDING_INCHES = 0.25;
+const PADDING_INCHES = 0.05;
 
 // ─── Module-level caches ──────────────────────
-const _sampleCache = new Map<string, Array<{ x: number; y: number }>>();
-const _bboxCache   = new Map<string, { w: number; h: number }>();
-const _areaCache   = new Map<string, number>();
+const _sampleCache  = new Map<string, Array<{ x: number; y: number }>>();
+const _bboxCache    = new Map<string, { w: number; h: number }>();
+const _areaCache    = new Map<string, number>();
+const _svgBBoxCache = new Map<string, { x: number; y: number; w: number; h: number }>();
 
 // ─── Skyline helpers ──────────────────────────
 
@@ -187,6 +202,38 @@ export function samplePolygonArea(
 	const result = Math.abs(area) / 2;
 	_areaCache.set(cacheKey, result);
 	return result;
+}
+
+// ─── Raw SVG bounding box (in path's own coordinate system) ──────────────────
+// Returns the natural bbox of the SVG path string — what the browser computes
+// via getBBox(). Cached by path string. Used to set per-item SVG viewBox so the
+// path fills its rendered div exactly (no phantom whitespace from 0-0-100-100).
+export function getSvgPathBBox(
+	svgPath: string,
+): { x: number; y: number; w: number; h: number } {
+	if (_svgBBoxCache.has(svgPath)) return _svgBBoxCache.get(svgPath)!;
+
+	const fallback = { x: 0, y: 0, w: 100, h: 100 };
+	if (typeof document === "undefined") {
+		_svgBBoxCache.set(svgPath, fallback);
+		return fallback;
+	}
+	try {
+		const ns  = "http://www.w3.org/2000/svg";
+		const svg = document.createElementNS(ns, "svg");
+		const el  = document.createElementNS(ns, "path") as SVGPathElement;
+		el.setAttribute("d", svgPath);
+		svg.appendChild(el);
+		document.body.appendChild(svg);
+		const b = el.getBBox();
+		document.body.removeChild(svg);
+		const result = { x: b.x, y: b.y, w: b.width, h: b.height };
+		_svgBBoxCache.set(svgPath, result);
+		return result;
+	} catch {
+		_svgBBoxCache.set(svgPath, fallback);
+		return fallback;
+	}
 }
 
 // ─── Orientation candidates ───────────────────
@@ -455,6 +502,111 @@ function getSortHeuristics(): SortFn[] {
 	];
 }
 
+// ─── Complementary pair detection ────────────
+// A left/right pair: two items sharing the same vehicleId and nominal
+// dimensions whose zone names differ only in the "-left" / "-right" suffix.
+// Covers all PPF and window-tint zone pairs in PatternZone.
+export function detectComplementaryPairs(
+	items: CanvasItem[],
+): Array<[CanvasItem, CanvasItem]> {
+	const pairs: Array<[CanvasItem, CanvasItem]> = [];
+	const usedIds = new Set<string>();
+
+	for (const a of items) {
+		if (usedIds.has(a.id)) continue;
+		const zoneA = a.pattern.zone as string;
+		if (!zoneA.endsWith("-left")) continue;
+		const rightZone = zoneA.slice(0, -5) + "-right";
+
+		const b = items.find(
+			(it) =>
+				!usedIds.has(it.id) &&
+				(it.pattern.zone as string) === rightZone &&
+				it.pattern.vehicleId === a.pattern.vehicleId &&
+				Math.abs(it.pattern.widthInches  - a.pattern.widthInches)  < 0.01 &&
+				Math.abs(it.pattern.heightInches - a.pattern.heightInches) < 0.01,
+		);
+
+		if (b) {
+			pairs.push([a, b]);
+			usedIds.add(a.id);
+			usedIds.add(b.id);
+		}
+	}
+
+	return pairs;
+}
+
+// ─── Pair-adjacent orderings ──────────────────
+// Produces orderings where each detected pair appears consecutively.
+// This nudges the skyline packer to keep partners in the same height band,
+// reducing fragmentation compared to packing them independently.
+function buildPairedOrderings(
+	items: CanvasItem[],
+	pairs: Array<[CanvasItem, CanvasItem]>,
+): CanvasItem[][] {
+	if (pairs.length === 0) return [];
+
+	const pairedIds = new Set<string>(pairs.flatMap(([a, b]) => [a.id, b.id]));
+	const singles = items.filter((i) => !pairedIds.has(i.id));
+	const sortFns = getSortHeuristics();
+	const orderings: CanvasItem[][] = [];
+
+	for (const sortFn of sortFns.slice(0, 4)) {
+		const sortedSingles = [...singles].sort(sortFn);
+		// Pairs first (left→right), then singles
+		orderings.push([...pairs.flatMap(([l, r]) => [l, r]), ...sortedSingles]);
+		// Pairs first (right→left variant)
+		orderings.push([...pairs.flatMap(([l, r]) => [r, l]), ...sortedSingles]);
+		// Singles first, pairs last (lets corners anchor before pairs fill in)
+		orderings.push([...sortedSingles, ...pairs.flatMap(([l, r]) => [l, r])]);
+	}
+
+	return orderings;
+}
+
+// ─── Pair rotation-combination pass ──────────
+// For each detected left/right pair, tries all 4×4=16 rotation combinations
+// simultaneously and repacks. Complements the single-item rotation pass:
+// catches cases where the globally optimal layout requires one piece to be
+// in a rotation that looks worse in isolation but works better when its
+// mirror companion is also rotated.
+function pairRotationCombinationPass(
+	placed: CanvasItem[],
+	sheet: MaterialSheet,
+	pairs: Array<[CanvasItem, CanvasItem]>,
+): CanvasItem[] {
+	if (pairs.length === 0) return placed;
+
+	let current = [...placed];
+	let curLen  = layoutLen(current);
+	const ROTS  = [0, 90, 180, 270] as const;
+
+	for (const [leftItem, rightItem] of pairs) {
+		const curA = current.find((i) => i.id === leftItem.id)?.rotation  ?? 0;
+		const curB = current.find((i) => i.id === rightItem.id)?.rotation ?? 0;
+
+		for (const rotA of ROTS) {
+			for (const rotB of ROTS) {
+				if (rotA === curA && rotB === curB) continue;
+				const trial = current.map((item) => {
+					if (item.id === leftItem.id)  return { ...item, rotation: rotA };
+					if (item.id === rightItem.id) return { ...item, rotation: rotB };
+					return item;
+				});
+				const repacked = bestFitPack(trial, sheet, true, "left");
+				const len = layoutLen(repacked);
+				if (len < curLen - 0.01) {
+					current = repacked;
+					curLen  = len;
+				}
+			}
+		}
+	}
+
+	return current;
+}
+
 // ─── Random ordering helper ───────────────────
 function shuffled<T>(arr: T[], seed: number): T[] {
 	const out = [...arr];
@@ -492,8 +644,8 @@ function bestOverOrderings(
 }
 
 // ─── autoNest ────────────────────────────────
-// Fast path: 10 sort heuristics × 2 scoring modes = 20 packing trials,
-// followed by rotation and swap improvement passes.
+// Fast path: 10 sort heuristics + pair-adjacent orderings, ×2 scoring modes,
+// followed by rotation, pair-rotation-combination, and swap improvement passes.
 // Typical runtime: < 50ms for ≤ 30 items (all bboxes cached after first call).
 export function autoNest(
 	items: CanvasItem[],
@@ -502,12 +654,22 @@ export function autoNest(
 ): CanvasItem[] {
 	if (!items.length) return items;
 
+	const pairs    = detectComplementaryPairs(items);
 	const sortFns  = getSortHeuristics();
-	const orderings = sortFns.map((fn) => [...items].sort(fn));
+	const orderings = [
+		...sortFns.map((fn) => [...items].sort(fn)),
+		...buildPairedOrderings(items, pairs),
+	];
 	let best = bestOverOrderings(orderings, sheet, allowRotation);
 
 	// Rotation improvement: tries flipping each piece to all other orientations.
 	best = rotationImprovementPass(best, sheet, allowRotation);
+
+	// Pair rotation-combination: tries all 16 rotation combos for each pair.
+	if (pairs.length > 0) {
+		const pairOpt = pairRotationCombinationPass(best, sheet, pairs);
+		if (layoutLen(pairOpt) < layoutLen(best)) best = pairOpt;
+	}
 
 	// Swap improvement: O(n²) pairwise repack, keeps improvements.
 	if (items.length < 30) {
@@ -527,8 +689,9 @@ export interface SmartNestResult {
 }
 
 // ─── smartNest ───────────────────────────────
-// Thorough optimization: everything autoNest does plus 20 random-restart trials
-// and an insertion improvement pass. User-triggered; budget ~200–800ms.
+// Thorough optimization: everything autoNest does plus 50 random-restart trials,
+// pair-adjacent orderings, pair rotation-combination pass, and an insertion
+// improvement pass. User-triggered; budget ~200–800ms.
 //
 // Reports improvementPct relative to a naive first-fit baseline so the UI can
 // show "↑ 18% efficiency improvement" after the optimization completes.
@@ -545,12 +708,18 @@ export function smartNest(
 	const baselinePacked = bestFitPack(items, sheet, allowRotation, "left");
 	const baselineLen    = layoutLen(baselinePacked);
 
-	// Phase 1: all 10 sort heuristics × 2 scoring modes
-	const sortFns  = getSortHeuristics();
-	const orderings: CanvasItem[][] = sortFns.map((fn) => [...items].sort(fn));
+	// Detect complementary left/right pairs once.
+	const pairs = detectComplementaryPairs(items);
 
-	// Phase 2: 20 random restart trials (seeded for reproducibility)
-	const RANDOM_TRIALS = 20;
+	// Phase 1: 10 sort heuristics + pair-adjacent orderings × 2 scoring modes
+	const sortFns  = getSortHeuristics();
+	const orderings: CanvasItem[][] = [
+		...sortFns.map((fn) => [...items].sort(fn)),
+		...buildPairedOrderings(items, pairs),
+	];
+
+	// Phase 2: 50 random restart trials (seeded for reproducibility)
+	const RANDOM_TRIALS = 50;
 	for (let seed = 0; seed < RANDOM_TRIALS; seed++) {
 		orderings.push(shuffled(items, seed * 7919 + 1));
 	}
@@ -561,15 +730,36 @@ export function smartNest(
 	// Phase 3: rotation improvement pass
 	best = rotationImprovementPass(best, sheet, allowRotation);
 
-	// Phase 4: swap improvement pass
+	// Phase 4: pair rotation-combination pass (all 16 combos per pair)
+	if (pairs.length > 0) {
+		const pairOpt = pairRotationCombinationPass(best, sheet, pairs);
+		if (layoutLen(pairOpt) < layoutLen(best)) best = pairOpt;
+	}
+
+	// Phase 5: swap improvement pass
 	const swapped = swapImprovementPass(best, sheet, allowRotation);
 	if (layoutLen(swapped) < layoutLen(best)) best = swapped;
 
-	// Phase 5: insertion improvement pass (most thorough, O(n²) repacks)
+	// Phase 6: insertion improvement pass (most thorough, O(n²) repacks)
 	if (items.length <= 40) {
 		const inserted = insertionImprovementPass(best, sheet, allowRotation);
 		if (layoutLen(inserted) < layoutLen(best)) best = inserted;
 	}
+
+	// Phase 7: NFP nesting pass — true polygon-based packing.
+	// Run as a competing trial; keep whichever result uses less roll.
+	try {
+		const nfpResult = nfpNest(items, sheet, allowRotation);
+		const nfpInBounds = nfpResult.filter(i => !i.outOfBounds);
+		const skyInBounds = best.filter(i => !i.outOfBounds);
+		// Only prefer NFP result if it fits all pieces and uses less roll.
+		if (
+			nfpInBounds.length >= skyInBounds.length &&
+			layoutLen(nfpResult) < layoutLen(best) - 0.01
+		) {
+			best = nfpResult;
+		}
+	} catch { /* NFP failure is non-fatal; skyline result is kept */ }
 
 	const finalLen = layoutLen(best);
 
@@ -585,6 +775,178 @@ export function smartNest(
 		improvementPct,
 		trialsRun,
 	};
+}
+
+// ─── NFP nesting ─────────────────────────────────────────────────────────────
+//
+// True polygon-based nesting using No-Fit Polygons (NFP).
+// Each piece is represented as its actual sampled polygon, not a bounding box.
+// This allows non-rectangular shapes to interlock, recovering waste that the
+// skyline packer cannot address.
+//
+// Algorithm:
+//   1. Sort items largest-area-first.
+//   2. For each item, try 4 rotations.
+//   3. Per rotation: compute IFP (valid anchor region inside roll) and NFP
+//      (forbidden zones from each already-placed piece) using convex decomposition.
+//   4. Candidate anchor positions = NFP vertices + NFP×NFP intersections + IFP corners.
+//   5. Best valid candidate = leftmost-then-bottommost (minimises roll consumption).
+//   6. Place item; store its absolute polygon for subsequent NFP computations.
+//
+// NFPs are cached by (shapeA × rotA × shapeB × rotB) and reused across items.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Build the local polygon for a CanvasItem at a given rotation.
+// Rotates around the nominal centre, then normalises so bbox starts at (0,0).
+function itemPolygon(item: CanvasItem, rotDeg: number): Polygon {
+	const raw = samplePathInchPoints(
+		item.pattern.svgPath,
+		item.pattern.widthInches,
+		item.pattern.heightInches,
+	) as Point[];
+
+	if (rotDeg === 0) return normalizeToBBox(raw);
+
+	const cx = item.pattern.widthInches  / 2;
+	const cy = item.pattern.heightInches / 2;
+	const centred = raw.map(p => ({ x: p.x - cx, y: p.y - cy }));
+	return normalizeToBBox(rotatePoints(centred, rotDeg));
+}
+
+// Check whether anchor (ax, ay) is inside any of the NFP polygon groups.
+function inAnyNFP(ax: number, ay: number, nfpGroups: Polygon[][]): boolean {
+	const p: Point = { x: ax, y: ay };
+	for (const group of nfpGroups) {
+		for (const nfp of group) {
+			if (pointInPolygon(p, nfp)) return true;
+		}
+	}
+	return false;
+}
+
+// NFP cache: keyed by (shapeA_id, rotA, shapeB_id, rotB) → polygon array.
+// Module-level so it survives between autoNest/smartNest calls in a session.
+const _nfpCache = new Map<string, Polygon[]>();
+
+export function nfpNest(
+	items:         CanvasItem[],
+	sheet:         MaterialSheet,  // already transposed: widthInches=max-length, heightInches=roll-width
+	allowRotation  = true,
+): CanvasItem[] {
+	if (!items.length) return items;
+
+	const PAD        = PADDING_INCHES;
+	const maxLength  = sheet.widthInches;   // X: roll feed direction (unconstrained)
+	const rollWidth  = sheet.heightInches;  // Y: cross-roll direction (bounded)
+	const ROTS       = allowRotation ? ([0, 90, 180, 270] as const) : ([0] as const);
+
+	// Sort largest nominal area first — generally best for NFP.
+	const sorted = [...items].sort(
+		(a, b) =>
+			b.pattern.widthInches * b.pattern.heightInches -
+			a.pattern.widthInches * a.pattern.heightInches,
+	);
+
+	const placedItems:    CanvasItem[] = [];
+	const placedPolygons: Polygon[]    = []; // in absolute (roll) coordinates
+
+	for (const item of sorted) {
+		let bestX   = -1, bestY = -1, bestW = 0, bestH = 0, bestRot = 0;
+		let bestScore = Infinity;
+
+		for (const rot of ROTS) {
+			// Local polygon (bbox starts at 0,0).  Inflate by PAD so placed pieces
+			// stay PAD inches apart — equivalent to Minkowski-summing B with a small disk.
+			const localRaw  = itemPolygon(item, rot);
+			const localPoly = inflatePolygon(ensureCCW(localRaw), PAD * 0.5);
+			const bounds    = polygonBounds(localPoly);
+			const bw = bounds.maxX - bounds.minX;
+			const bh = bounds.maxY - bounds.minY;
+
+			// Inner Fit Bounds: valid X,Y range for this piece's anchor.
+			const ifp = innerFitBounds(maxLength, rollWidth, localPoly);
+			if (!ifp) continue;
+
+			// Compute NFP for every already-placed piece, caching by shape pair.
+			const nfpGroups: Polygon[][] = [];
+
+			for (let pi = 0; pi < placedItems.length; pi++) {
+				const placed = placedItems[pi];
+				const key = `${placed.pattern.id}|${placed.rotation}|${item.pattern.id}|${rot}`;
+
+				let nfpLocal = _nfpCache.get(key);
+				if (!nfpLocal) {
+					const polyA = inflatePolygon(ensureCCW(itemPolygon(placed, placed.rotation)), PAD * 0.5);
+					nfpLocal    = nfpGeneral(polyA, localPoly);
+					_nfpCache.set(key, nfpLocal);
+				}
+
+				// Translate NFP from A-local to absolute coords (A is at placed.x, placed.y).
+				const absNFP = nfpLocal.map(nfp => translatePolygon(nfp, placed.x, placed.y));
+				nfpGroups.push(absNFP);
+			}
+
+			// Collect candidate anchor positions.
+			const candidates = nfpCandidates(nfpGroups, ifp);
+
+			// Add a lightweight grid as a safety net for cases where no NFP vertex
+			// is in the valid region (e.g. first piece, or fully enclosed free zone).
+			const GRID = 6;
+			const stepX = (ifp.maxX - ifp.minX) / GRID;
+			const stepY = Math.max((ifp.maxY - ifp.minY) / GRID, 0.001);
+			for (let gx = 0; gx <= GRID; gx++) {
+				for (let gy = 0; gy <= GRID; gy++) {
+					candidates.push({
+						x: ifp.minX + gx * stepX,
+						y: ifp.minY + gy * stepY,
+					});
+				}
+			}
+
+			// Evaluate candidates.
+			for (const { x: ax, y: ay } of candidates) {
+				// Clamp to IFP.
+				const cx = Math.max(ifp.minX, Math.min(ifp.maxX, ax));
+				const cy = Math.max(ifp.minY, Math.min(ifp.maxY, ay));
+
+				if (inAnyNFP(cx, cy, nfpGroups)) continue;
+
+				// Score: minimise roll consumption (rightmost edge of this piece),
+				// then minimise cross-roll position for a tidy layout.
+				const score = (cx + bw) * 1e6 + cy;
+				if (score < bestScore) {
+					bestScore = score;
+					bestX = cx; bestY = cy;
+					bestW = bw; bestH = bh;
+					bestRot = rot;
+				}
+			}
+		}
+
+		if (bestX >= 0) {
+			// Store the UNPADDED absolute polygon for subsequent NFP computations
+			// (the padding is built into the NFP itself — we don't want the visual
+			// placement to show inflated bounds).
+			const rawLocal = itemPolygon(item, bestRot);
+			placedPolygons.push(translatePolygon(rawLocal, bestX, bestY));
+			placedItems.push({
+				...item,
+				x:          bestX,
+				y:          bestY,
+				width:      bestW,
+				height:     bestH,
+				rotation:   bestRot,
+				outOfBounds: false,
+			});
+		} else {
+			// Couldn't fit — mark out-of-bounds with a sensible fallback position.
+			placedItems.push({ ...item, x: maxLength + PAD, y: PAD, outOfBounds: true });
+		}
+	}
+
+	// Return in the original item order.
+	const byId = new Map(placedItems.map(r => [r.id, r]));
+	return items.map(i => byId.get(i.id) ?? i);
 }
 
 // ─── Placement result ─────────────────────────

@@ -8,7 +8,7 @@
 		userStore,
 		shopStore,
 	} from "$lib/stores";
-	import { autoNest, smartNest, findNextPosition, samplePolygonArea, type PlacementResult } from "$lib/utils/nesting";
+	import { autoNest, smartNest, findNextPosition, samplePolygonArea, getSvgPathBBox, type PlacementResult } from "$lib/utils/nesting";
 	import {
 		downloadHpgl,
 		downloadSvg,
@@ -72,7 +72,7 @@
 				.filter((i) => !i.outOfBounds)
 				.map((i) => i.x + i.width),
 			0,
-		) + 8, // small right margin
+		) + 1, // 1" right buffer past the furthest pattern
 	);
 	// Fixed roll-width height + small staging strip below if OOB items exist
 	const displaySheetH = $derived(
@@ -338,6 +338,25 @@
 	// ─── Zoom shortcuts ───────────────────────────
 	let showExport = $state(false);
 
+	// ─── SVG viewBox for a pattern at its current rotation ───────────────────
+	// Computes the minimal viewBox in SVG coordinate space that fully contains
+	// the rotated path, so the pattern fills its canvas div with no phantom
+	// whitespace from the 0-100 authoring coordinate system.
+	function itemViewBox(svgPath: string, rotation: number): string {
+		const bb = getSvgPathBBox(svgPath);
+		const cx = bb.x + bb.w / 2;
+		const cy = bb.y + bb.h / 2;
+		const hw = bb.w / 2;
+		const hh = bb.h / 2;
+		const rad = (rotation * Math.PI) / 180;
+		const cos = Math.abs(Math.cos(rad));
+		const sin = Math.abs(Math.sin(rad));
+		const rHW = hw * cos + hh * sin;
+		const rHH = hw * sin + hh * cos;
+		const PAD = 0.5; // sub-unit float safety margin
+		return `${cx - rHW - PAD} ${cy - rHH - PAD} ${(rHW + PAD) * 2} ${(rHH + PAD) * 2}`;
+	}
+
 	// ─── Fit to view ─────────────────────────────
 	// Calculates zoom so all placed content fits the canvas viewport.
 	// canvas-content has 48px padding on each side → 96px total in each axis.
@@ -351,7 +370,7 @@
 		const maxItemX = inBounds.length
 			? Math.max(...inBounds.map((i) => i.x + i.width))
 			: 0;
-		const contentW = Math.max(maxItemX, canvasStore.sheet.widthInches) + 4;
+		const contentW = Math.max(maxItemX, canvasStore.sheet.widthInches) + 1;
 		const contentH = canvasStore.sheet.widthInches;
 		const rollPxH = contentH * 48;
 		const rollPxW = contentW * 48;
@@ -466,7 +485,7 @@
 				>
 			</button>
 			<button
-				class="tool-btn tool-btn--ai"
+				class="tool-btn tool-btn--ai tool-btn--ai-labeled"
 				class:loading={smartNesting}
 				title="AI Nest — deep optimization with multiple strategies and improvement passes"
 				onclick={handleSmartNest}
@@ -475,6 +494,7 @@
 			>
 				{#if smartNesting}
 					<span class="ai-spinner" aria-hidden="true"></span>
+					<span class="ai-label">Nesting…</span>
 				{:else}
 					<svg
 						width="14"
@@ -489,6 +509,7 @@
 					>
 						<path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
 					</svg>
+					<span class="ai-label">AI Nest</span>
 				{/if}
 			</button>
 			<button
@@ -760,6 +781,7 @@
 
 					<!-- Cut items -->
 					{#each canvasStore.items as item (item.id)}
+						{@const _bb = getSvgPathBBox(item.pattern.svgPath)}
 						<!-- svelte-ignore a11y_click_events_have_key_events -->
 						<div
 							class="cut-item"
@@ -788,11 +810,11 @@
 							<svg
 								width="100%"
 								height="100%"
-								viewBox="0 0 100 100"
+								viewBox={itemViewBox(item.pattern.svgPath, item.rotation)}
 								preserveAspectRatio="none"
 								aria-hidden="true"
 							>
-								<g transform="rotate({item.rotation} 50 50)">
+								<g transform="rotate({item.rotation} {_bb.x + _bb.w / 2} {_bb.y + _bb.h / 2})">
 									<path
 										d={item.pattern.svgPath}
 										fill="{item.color}0D"
@@ -1343,6 +1365,17 @@
 		color: var(--color-brand-dim);
 		position: relative;
 	}
+	.tool-btn--ai-labeled {
+		width: auto;
+		padding: 0 10px;
+		gap: 5px;
+	}
+	.ai-label {
+		font-size: 0.75rem;
+		font-weight: 600;
+		font-family: var(--font-body);
+		letter-spacing: 0.01em;
+	}
 	.tool-btn--ai:hover:not(:disabled) {
 		background: rgba(0, 112, 255, 0.1);
 		color: var(--color-brand-dim);
@@ -1502,7 +1535,7 @@
 	/* ─── Body ────── */
 	.studio__body {
 		display: grid;
-		grid-template-columns: 1fr 280px;
+		grid-template-columns: 1fr 340px;
 		overflow: hidden;
 	}
 
@@ -2036,7 +2069,7 @@
 	/* ─── Responsive ────── */
 	@media (max-width: 1024px) {
 		.studio__body {
-			grid-template-columns: 1fr 240px;
+			grid-template-columns: 1fr 300px;
 		}
 	}
 
