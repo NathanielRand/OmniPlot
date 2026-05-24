@@ -511,6 +511,7 @@ export const APP_NAV = [
 export const MARKETING_NAV = [
 	{ label: "Features",  href: "/#features" },
 	{ label: "Pricing",   href: "/pricing" },
+	{ label: "Agent",     href: "/agent" },
 	{ label: "FAQ",       href: "/faq" },
 	{ label: "Changelog", href: "/changelog" },
 	{ label: "About",     href: "/about" },
@@ -657,30 +658,170 @@ export const FAQ_ITEMS = [
 // ─── Changelog ────────────────────────────────
 export const CHANGELOG = [
 	{
+		version: "1.5.0",
+		date: "2026-05-24",
+		label: "Cut Agent",
+		changes: [
+			{
+				type: "feature",
+				text: "OmniPlot Cut Agent v1.0.0 — lightweight Go daemon (9 MB) that bridges any browser to your USB/serial cutter. Works in Firefox, Safari, and every other browser, no Chrome required.",
+			},
+			{
+				type: "feature",
+				text: "No-Fit Polygon (NFP) nesting — true polygon-based collision detection replaces bounding-box estimates, yielding tighter fits and less wasted film.",
+			},
+			{
+				type: "feature",
+				text: "Agent download page at /agent with auto platform detection (Windows, macOS Apple Silicon, macOS Intel, Linux) and a full connection-method comparison.",
+			},
+			{
+				type: "feature",
+				text: "Network TCP connection — OmniPlot now proxies HPGL to ethernet plotters (HP JetDirect port 9100, Graphtec network models) server-side.",
+			},
+			{
+				type: "improvement",
+				text: "Protocol-aware HPGL output: speed command emits VS in mm/s for Roland and cm/s for Graphtec/GPGL; force command uses FC (0–38) for HPGL/2 and FS for generic HPGL.",
+			},
+			{
+				type: "improvement",
+				text: "Canvas now renders each pattern at its actual SVG bounding box — 1:1 scale with the roll, computed via getBBox() and cached per path.",
+			},
+			{
+				type: "improvement",
+				text: "Inter-pattern spacing reduced from 0.1\" to 0.05\", and right-side roll buffer trimmed to 1\" past the last piece.",
+			},
+			{
+				type: "fix",
+				text: "Overcut now walks the actual path geometry instead of jumping to the third vertex, giving accurate overcut distance on all pattern shapes.",
+			},
+		],
+	},
+	{
+		version: "1.3.0",
+		date: "2026-05-23",
+		label: "AI Nesting",
+		changes: [
+			{
+				type: "feature",
+				text: "AI Nesting — 7-pass skyline optimizer: sort heuristics, random restarts, per-piece rotation, pair-rotation combinations, swap, insertion, and NFP-seeded placement. Waste % displayed live on canvas.",
+			},
+			{
+				type: "feature",
+				text: "Support center page with contact form and categorized FAQ routing.",
+			},
+			{
+				type: "feature",
+				text: "Error page with contextual messaging and navigation recovery.",
+			},
+			{
+				type: "improvement",
+				text: "Admin dashboard, analytics, users, and settings panels fully redesigned for clarity and density.",
+			},
+			{
+				type: "improvement",
+				text: "Jobs page redesigned with cleaner status indicators and job detail layout.",
+			},
+			{
+				type: "improvement",
+				text: "Sitemap and robots.txt added for SEO.",
+			},
+		],
+	},
+	{
+		version: "1.2.0",
+		date: "2026-05-22",
+		label: "Auth & Billing",
+		changes: [
+			{
+				type: "feature",
+				text: "Firebase Authentication — email/password sign-up, email verification, and session management.",
+			},
+			{
+				type: "feature",
+				text: "Stripe billing — checkout sessions, customer portal, and webhook handling for subscription lifecycle events.",
+			},
+			{
+				type: "feature",
+				text: "Team invitations — owners can invite members via shareable join links with role assignment.",
+			},
+			{
+				type: "feature",
+				text: "Settings page overhauled: profile editing, team member management, and direct billing portal access.",
+			},
+			{
+				type: "feature",
+				text: "About, Privacy, and Terms pages with full content.",
+			},
+			{
+				type: "improvement",
+				text: "Pricing page redesigned with plan comparison table and upgrade modal.",
+			},
+		],
+	},
+	{
+		version: "1.1.0",
+		date: "2026-05-21",
+		label: "Pattern Library",
+		changes: [
+			{
+				type: "feature",
+				text: "Vehicle pattern store with accurate OEM dimensions for all supported makes and models — PPF zones covering hood, fenders, bumpers, doors, rockers, mirrors, A-pillars, and headlights.",
+			},
+			{
+				type: "feature",
+				text: "PPF pattern library expanded to full PP4 format coverage.",
+			},
+			{
+				type: "feature",
+				text: "Library page redesigned: dimension display, zone filtering, and live search.",
+			},
+			{
+				type: "feature",
+				text: "Admin patterns panel with full pattern CRUD, dimension editing, and publish controls.",
+			},
+			{
+				type: "improvement",
+				text: "Nesting algorithm rewritten with result caching and swap-improvement passes, reducing layout time on large jobs.",
+			},
+		],
+	},
+	{
 		version: "1.0.0",
-		date: "2025-01-15",
+		date: "2026-05-14",
 		label: "Launch",
 		changes: [
 			{
 				type: "feature",
-				text: "Web-based PPF cutting studio — no install required",
+				text: "Web-based PPF and window tint cutting studio — no install, no drivers, works in any modern browser.",
 			},
 			{
 				type: "feature",
-				text: "Pattern library with 200+ vehicle templates",
-			},
-			{ type: "feature", text: "HPGL / SVG / DXF export" },
-			{
-				type: "feature",
-				text: "Auto-nesting optimizer for material efficiency",
+				text: "HPGL output with configurable speed, force, overcut, and protocol (HPGL / HPGL-2 / GPGL).",
 			},
 			{
 				type: "feature",
-				text: "Web Serial API direct plotter connection (Chrome/Edge)",
+				text: "Skyline bin-packing nesting with rotation support.",
 			},
-			{ type: "feature", text: "Dark and light mode" },
-			{ type: "feature", text: "Mobile-responsive studio and library" },
-			{ type: "feature", text: "Free, Lite, and Pro subscription tiers" },
+			{
+				type: "feature",
+				text: "Pattern library with vehicle template support and zone selection.",
+			},
+			{
+				type: "feature",
+				text: "Jobs history — every cut job saved with full HPGL payload and metadata.",
+			},
+			{
+				type: "feature",
+				text: "App shell with collapsible sidebar, light/dark mode, and responsive layout.",
+			},
+			{
+				type: "feature",
+				text: "Marketing site: landing page, pricing, FAQ, and changelog.",
+			},
+			{
+				type: "feature",
+				text: "Free, Lite, and Pro subscription tiers.",
+			},
 		],
 	},
 ] as const;

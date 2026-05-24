@@ -65,7 +65,14 @@
 		<div class="roadmap">
 			<h2 class="roadmap__title">On the roadmap</h2>
 			<div class="roadmap-items">
-				{#each [["Window tint pattern library", "Q3 2025"], ["Offline mode", "Q3 2025"], ["AI pattern adjustment", "Q2 2025"], ["Multi-plotter queue", "Q4 2025"], ["Team collaboration", "Q4 2025"], ["Mobile cut agent app", "2026"]] as [item, eta]}
+				{#each [
+					["Cut Agent: port auto-detection UI in studio", "Q2 2026"],
+					["Window tint pattern library expansion", "Q2 2026"],
+					["Multi-plotter queue — send to multiple cutters in parallel", "Q3 2026"],
+					["Agent status ping in studio — live connected/disconnected indicator", "Q3 2026"],
+					["Mobile cut agent companion app", "Q3 2026"],
+					["Offline mode — studio works without internet", "Q4 2026"],
+				] as [item, eta]}
 					<div class="roadmap-item">
 						<div class="roadmap-item__dot" aria-hidden="true"></div>
 						<div class="roadmap-item__body">

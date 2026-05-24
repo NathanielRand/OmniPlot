@@ -120,6 +120,56 @@ function transformPoints(
 // HPGL / PLT
 // ═══════════════════════════════════════════════
 
+// ─── Protocol-aware speed command ────────────
+// Roland (hpgl): VS in mm/s.
+// Graphtec (hpgl2) and Silhouette (gpgl): VS in cm/s per HPGL spec.
+function speedCommand(config: PlotterConfig): string {
+	const speed =
+		config.protocol === "hpgl"
+			? config.cuttingSpeed
+			: Math.max(1, Math.round(config.cuttingSpeed / 10));
+	return `VS${speed};`;
+}
+
+// ─── Protocol-aware force command ────────────
+// Generic HPGL: FS (grams) — supported by budget cutters, ignored by most pro models.
+// HPGL/2 (Graphtec, Summa): FC 0–38 units; ~15.8 g/unit, min ~10 g.
+// GPGL (Silhouette): force is device-only, no command.
+function forceCommand(config: PlotterConfig): string {
+	switch (config.protocol) {
+		case "hpgl2": {
+			const fc = Math.max(0, Math.min(38, Math.round((config.bladeForce - 10) / 15.8)));
+			return `FC${fc};`;
+		}
+		case "gpgl":
+			return "";
+		default:
+			return `FS${config.bladeForce};`;
+	}
+}
+
+// ─── Overcut point ────────────────────────────
+// Returns the position that is `overcutInches` along the path from pts[0],
+// used to advance the blade past the seam and prevent a lift gap.
+function overcutPoint(
+	pts: Array<{ x: number; y: number }>,
+	overcutInches: number,
+): { x: number; y: number } | null {
+	if (overcutInches <= 0 || pts.length < 2) return null;
+	let remaining = overcutInches;
+	for (let i = 0; i < pts.length - 1; i++) {
+		const dx = pts[i + 1].x - pts[i].x;
+		const dy = pts[i + 1].y - pts[i].y;
+		const segLen = Math.sqrt(dx * dx + dy * dy);
+		if (segLen >= remaining) {
+			const t = remaining / segLen;
+			return { x: pts[i].x + t * dx, y: pts[i].y + t * dy };
+		}
+		remaining -= segLen;
+	}
+	return pts[pts.length - 1];
+}
+
 function itemToHpgl(item: CanvasItem, config: PlotterConfig): string {
 	const pts = sampleSvgPath(item.pattern.svgPath, item.width, item.height);
 	const transformed = transformPoints(item, pts);
@@ -127,6 +177,7 @@ function itemToHpgl(item: CanvasItem, config: PlotterConfig): string {
 
 	const toU = (v: number) => Math.round(v * HPGL_UNITS_PER_INCH);
 	const lines: string[] = [];
+	const overcutInches = config.overcut / MM_PER_INCH;
 
 	// Lift blade and move to path start
 	lines.push(`PU${toU(transformed[0].x)},${toU(transformed[0].y)};`);
@@ -140,9 +191,10 @@ function itemToHpgl(item: CanvasItem, config: PlotterConfig): string {
 		if (rest.length > 0) {
 			lines.push(`PD${rest.map((p) => `${toU(p.x)},${toU(p.y)}`).join(",")};`);
 		}
-		// Overcut: advance a small distance past the closing point to prevent lift gap
-		if (config.overcut > 0 && transformed.length > 3) {
-			const oc = transformed[2]; // a point just past the start
+		// Overcut: advance the configured distance past the seam to prevent a lift gap.
+		// Walk along the path from the start until overcutInches is consumed.
+		const oc = overcutPoint(transformed, overcutInches);
+		if (oc) {
 			lines.push(`PD${toU(oc.x)},${toU(oc.y)};`);
 		}
 	}
@@ -154,12 +206,13 @@ function itemToHpgl(item: CanvasItem, config: PlotterConfig): string {
 export function generateHpgl(state: CanvasState, config: PlotterConfig): string {
 	const { items, sheet } = state;
 
+	const forceCmd = forceCommand(config);
 	const lines: string[] = [
-		"IN;",                        // Initialize plotter
-		`VS${config.cuttingSpeed};`,  // Velocity (mm/s)
-		`FS${config.bladeForce};`,    // Force (grams)
-		"SP1;",                       // Select tool/pen 1
-		"PA;",                        // Plot absolute coordinates
+		"IN;",            // Initialize plotter
+		speedCommand(config),
+		...(forceCmd ? [forceCmd] : []),
+		"SP1;",           // Select tool/pen 1
+		"PA;",            // Plot absolute coordinates
 	];
 
 	// Origin offset: IP sets P1 (lower-left) and P2 (upper-right) reference points

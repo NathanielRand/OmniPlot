@@ -409,6 +409,10 @@ function createPlotterStore() {
 		originY: 0,
 		flipH: false,
 		flipV: false,
+		agentUrl: "http://localhost:7878",
+		baudRate: 9600,
+		ipAddress: "192.168.1.100",
+		port: 9100,
 	});
 
 	return {

@@ -304,6 +304,7 @@ export interface PlotterConfig {
 	port?: number;
 	baudRate?: number;
 	serialPort?: string;
+	agentUrl?: string;  // Cut-Agent URL, default "http://localhost:7878"
 }
 
 // ─── Admin ────────────────────────────────────

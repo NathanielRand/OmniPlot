@@ -15,7 +15,9 @@
 		downloadDxf,
 		calcEfficiency,
 		estimateCutTime,
+		generateHpgl,
 	} from "$lib/utils/hpgl";
+	import { sendToPlotter, connectSerialPort, disconnectSerialPort, isSerialConnected, type SerialPortInfo } from "$lib/utils/plotter-connection";
 	import { saveJob } from "$lib/firebase/firestore";
 	import {
 		canCut,
@@ -157,6 +159,8 @@
 
 	let smartNesting = $state(false);
 	let smartNestGain = $state<number | null>(null);
+	let cutting          = $state(false);
+	let serialPortInfo   = $state<SerialPortInfo | null>(null);
 
 	function handleSmartNest() {
 		if (!canvasStore.items.length) {
@@ -196,7 +200,29 @@
 		}, 16);
 	}
 
-	function handleCut() {
+	async function handleConnectSerial() {
+		if (!("serial" in navigator)) {
+			toastStore.warning("Not supported", "USB direct connect requires Chrome or Edge. Use Download or Cut Agent for other browsers.");
+			return;
+		}
+		try {
+			serialPortInfo = await connectSerialPort(plotterStore.config.baudRate ?? 9600);
+			toastStore.success("Port connected", serialPortInfo.label);
+		} catch (err: any) {
+			if (err?.name !== "NotAllowedError") {
+				toastStore.error("Connection failed", err?.message ?? "Could not open serial port.");
+			}
+			serialPortInfo = null;
+		}
+	}
+
+	function handleDisconnectSerial() {
+		disconnectSerialPort();
+		serialPortInfo = null;
+		toastStore.info("Disconnected", "Serial port closed.");
+	}
+
+	async function handleCut() {
 		const user = userStore.user;
 		if (user) {
 			const check = canCut(user, shopStore.shop);
@@ -207,59 +233,84 @@
 			}
 		}
 		if (!canvasStore.items.length) {
-			toastStore.warning(
-				"No patterns",
-				"Add patterns to the sheet before cutting.",
-			);
+			toastStore.warning("No patterns", "Add patterns to the sheet before cutting.");
 			return;
 		}
 
 		const inBounds = canvasStore.items.filter((i) => !i.outOfBounds);
-		const usedLength = inBounds.length
-			? Math.max(...inBounds.map((i) => i.x + i.width))
-			: 0;
+		if (!inBounds.length) {
+			toastStore.warning("Nothing in bounds", "All patterns are outside the roll — adjust sheet width.");
+			return;
+		}
+
+		const usedLength = Math.max(...inBounds.map((i) => i.x + i.width));
 		const patternArea = inBounds.reduce(
 			(s, i) => s + samplePolygonArea(i.pattern.svgPath, i.pattern.widthInches, i.pattern.heightInches),
 			0,
 		);
 		const sheetArea = canvasStore.sheet.widthInches * usedLength;
-		const eff = sheetArea > 0 ? Math.min(1, patternArea / sheetArea) : 0;
-		const jobName = `Job ${new Date().toLocaleDateString()}`;
+		const eff       = sheetArea > 0 ? Math.min(1, patternArea / sheetArea) : 0;
+		const jobName   = `Job ${new Date().toLocaleDateString()}`;
 
-		downloadHpgl(canvasStore.state, plotterStore.config, jobName);
-
-		// Persist job to Firestore for job history
-		if (user) {
-			const job = {
-				id: uid("job_"),
-				userId: user.uid,
-				vehicleId: canvasStore.items[0]?.pattern.vehicleId ?? "",
-				name: jobName,
-				status: "complete" as const,
-				canvasState: canvasStore.state,
-				plotterConfig: plotterStore.config,
-				materialSheet: canvasStore.sheet,
-				exportFormat: "hpgl" as const,
-				metrics: {
-					materialEfficiency: eff,
-					totalPathLengthMm: 0,
-					estimatedCutSeconds: estimateCutTime(inBounds, plotterStore.config.cuttingSpeed),
-					itemCount: inBounds.length,
-					sheetArea,
-					usedArea: patternArea,
-				},
-				createdAt: new Date(),
-				updatedAt: new Date(),
-				completedAt: new Date(),
-				exportUrl: null,
-			};
-			saveJob(job).catch(() => {}); // best-effort — don't block the cut
+		// ── Download mode: synchronous, no loading state needed ──────────
+		if (plotterStore.config.connection === "download") {
+			downloadHpgl(canvasStore.state, plotterStore.config, jobName);
+			const connLabel = `PLT file downloaded (${inBounds.length} paths)`;
+			toastStore.success("Cut job ready", connLabel);
+			persistJob({ user, inBounds, eff, usedLength, patternArea, sheetArea, jobName });
+			return;
 		}
 
-		toastStore.success(
-			"Cutting!",
-			`Sent ${inBounds.length} paths to plotter.`,
-		);
+		// ── Live connection: async send ───────────────────────────────────
+		cutting = true;
+		const hpgl = generateHpgl(canvasStore.state, plotterStore.config);
+		try {
+			const result = await sendToPlotter(hpgl, plotterStore.config);
+			if (result.ok) {
+				toastStore.success("Sent to plotter", `${inBounds.length} paths sent successfully.`);
+				persistJob({ user, inBounds, eff, usedLength, patternArea, sheetArea, jobName });
+			} else {
+				toastStore.error("Send failed", result.error);
+			}
+		} finally {
+			cutting = false;
+		}
+	}
+
+	function persistJob(opts: {
+		user: typeof userStore.user;
+		inBounds: typeof canvasStore.items;
+		eff: number;
+		usedLength: number;
+		patternArea: number;
+		sheetArea: number;
+		jobName: string;
+	}) {
+		if (!opts.user) return;
+		const job = {
+			id: uid("job_"),
+			userId: opts.user.uid,
+			vehicleId: canvasStore.items[0]?.pattern.vehicleId ?? "",
+			name: opts.jobName,
+			status: "complete" as const,
+			canvasState: canvasStore.state,
+			plotterConfig: plotterStore.config,
+			materialSheet: canvasStore.sheet,
+			exportFormat: "hpgl" as const,
+			metrics: {
+				materialEfficiency: opts.eff,
+				totalPathLengthMm: 0,
+				estimatedCutSeconds: estimateCutTime(opts.inBounds, plotterStore.config.cuttingSpeed),
+				itemCount: opts.inBounds.length,
+				sheetArea: opts.sheetArea,
+				usedArea: opts.patternArea,
+			},
+			createdAt: new Date(),
+			updatedAt: new Date(),
+			completedAt: new Date(),
+			exportUrl: null,
+		};
+		saveJob(job).catch(() => {});
 	}
 
 	function handleExport(format: "hpgl" | "svg" | "dxf") {
@@ -691,26 +742,31 @@
 		</button>
 
 		<!-- Cut button -->
-		<button class="cut-btn" onclick={handleCut}>
-			<svg
-				width="14"
-				height="14"
-				viewBox="0 0 24 24"
-				fill="none"
-				stroke="currentColor"
-				stroke-width="2"
-				stroke-linecap="round"
-				stroke-linejoin="round"
-				aria-hidden="true"
-				><circle cx="6" cy="6" r="3" /><circle
-					cx="6"
-					cy="18"
-					r="3"
-				/><path
-					d="M20 4L8.12 15.88M14.47 14.48L20 20M8.12 8.12L12 12"
-				/></svg
-			>
-			Send to Plotter
+		<button class="cut-btn" onclick={handleCut} disabled={cutting}>
+			{#if cutting}
+				<span class="ai-spinner" aria-hidden="true"></span>
+				<span class="ai-label">Sending…</span>
+			{:else}
+				<svg
+					width="14"
+					height="14"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					aria-hidden="true"
+					><circle cx="6" cy="6" r="3" /><circle
+						cx="6"
+						cy="18"
+						r="3"
+					/><path
+						d="M20 4L8.12 15.88M14.47 14.48L20 20M8.12 8.12L12 12"
+					/></svg
+				>
+				Send to Plotter
+			{/if}
 		</button>
 	</div>
 
@@ -1231,17 +1287,101 @@
 						</select>
 					</div>
 
+					<!-- USB-Serial connection fields -->
+					{#if plotterStore.config.connection === "usb-serial"}
+						<div class="prop-section">
+							<div class="prop-label">Baud Rate</div>
+							<select
+								class="prop-select"
+								aria-label="Baud rate"
+								onchange={(e) => plotterStore.update({ baudRate: parseInt((e.target as HTMLSelectElement).value) })}
+							>
+								{#each [9600, 19200, 38400, 57600, 115200] as rate}
+									<option value={rate} selected={plotterStore.config.baudRate === rate}>{rate}</option>
+								{/each}
+							</select>
+						</div>
+						<div class="prop-section">
+							{#if serialPortInfo}
+								<div class="conn-status conn-status--ok">
+									<span class="conn-dot"></span>
+									{serialPortInfo.label}
+								</div>
+								<button class="prop-btn prop-btn--ghost" onclick={handleDisconnectSerial}>Disconnect</button>
+							{:else}
+								<button class="prop-btn" onclick={handleConnectSerial}>Select USB Port…</button>
+								<p class="prop-note">Chrome or Edge required for USB direct connect.</p>
+							{/if}
+						</div>
+					{:else if plotterStore.config.connection === "network"}
+						<div class="prop-section">
+							<div class="prop-label">Plotter IP Address</div>
+							<input
+								class="prop-input prop-input--full"
+								type="text"
+								placeholder="192.168.1.100"
+								value={plotterStore.config.ipAddress ?? "192.168.1.100"}
+								oninput={(e) => plotterStore.update({ ipAddress: (e.target as HTMLInputElement).value })}
+							/>
+						</div>
+						<div class="prop-section">
+							<div class="prop-label">TCP Port</div>
+							<input
+								class="prop-input prop-input--full"
+								type="number"
+								placeholder="9100"
+								min="1"
+								max="65535"
+								value={plotterStore.config.port ?? 9100}
+								oninput={(e) => plotterStore.update({ port: parseInt((e.target as HTMLInputElement).value) || 9100 })}
+							/>
+							<p class="prop-note">Most network plotters use port 9100 (HP JetDirect).</p>
+						</div>
+					{:else if plotterStore.config.connection === "cut-agent"}
+						<div class="prop-section">
+							<div class="prop-label">Agent URL</div>
+							<input
+								class="prop-input prop-input--full"
+								type="text"
+								placeholder="http://localhost:7878"
+								value={plotterStore.config.agentUrl ?? "http://localhost:7878"}
+								oninput={(e) => plotterStore.update({ agentUrl: (e.target as HTMLInputElement).value })}
+							/>
+							<p class="prop-note">Run the OmniPlot Cut Agent on this machine to send over USB without browser limitations.</p>
+						</div>
+						<div class="prop-section">
+							<div class="prop-label">Baud Rate</div>
+							<select
+								class="prop-select"
+								aria-label="Baud rate"
+								onchange={(e) => plotterStore.update({ baudRate: parseInt((e.target as HTMLSelectElement).value) })}
+							>
+								{#each [9600, 19200, 38400, 57600, 115200] as rate}
+									<option value={rate} selected={plotterStore.config.baudRate === rate}>{rate}</option>
+								{/each}
+							</select>
+						</div>
+					{/if}
+
 					<div class="prop-section">
 						<div class="prop-label">Output Format</div>
-						<select class="prop-select" aria-label="Output format">
-							<option>HPGL (.plt)</option>
-							<option>HPGL/2 (.plt)</option>
-							<option>SVG vector</option>
-							<option>DXF (AutoCAD)</option>
+						<select
+							class="prop-select"
+							aria-label="Output format"
+							onchange={(e) => {
+								const v = (e.target as HTMLSelectElement).value;
+								if (v === "hpgl" || v === "hpgl2") {
+									plotterStore.update({ protocol: v });
+								}
+							}}
+						>
+							{#each [["hpgl", "HPGL (.plt) — universal"], ["hpgl2", "HPGL/2 (.plt) — Graphtec / Summa"]] as const as [val, label]}
+								<option value={val} selected={plotterStore.config.protocol === val}>{label}</option>
+							{/each}
 						</select>
 					</div>
 
-					{#each [["Scale %", "mediaWidthMm", 90, 110, 0.5], ["Origin X", "originX", 0, 200, 1], ["Origin Y", "originY", 0, 200, 1]] as const as [label, key, min, max, step]}
+					{#each [["Origin X (in)", "originX", 0, 200, 1], ["Origin Y (in)", "originY", 0, 200, 1]] as const as [label, key, min, max, step]}
 						<div class="prop-section">
 							<div class="prop-slider-row">
 								<span class="prop-slider-name">{label}</span>
@@ -1853,6 +1993,57 @@
 		color: var(--text-primary);
 		outline: none;
 		cursor: pointer;
+	}
+
+	.prop-input--full {
+		flex: none;
+		width: 100%;
+		box-sizing: border-box;
+	}
+
+	.prop-btn {
+		width: 100%;
+		padding: 7px 12px;
+		background: var(--color-brand);
+		color: #000;
+		border: none;
+		border-radius: var(--radius-md);
+		font-size: 0.8rem;
+		font-weight: 600;
+		cursor: pointer;
+		text-align: center;
+		font-family: var(--font-body);
+	}
+	.prop-btn:hover { opacity: 0.88; }
+	.prop-btn--ghost {
+		background: transparent;
+		color: var(--text-secondary);
+		border: 1px solid var(--border-default);
+		margin-top: 4px;
+	}
+
+	.prop-note {
+		font-size: 0.72rem;
+		color: var(--text-tertiary);
+		margin-top: 4px;
+		line-height: 1.4;
+	}
+
+	.conn-status {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 0.8rem;
+		color: var(--text-primary);
+		margin-bottom: 4px;
+	}
+	.conn-status--ok { color: var(--color-success, #00D68F); }
+	.conn-dot {
+		width: 7px;
+		height: 7px;
+		border-radius: 50%;
+		background: currentColor;
+		flex-shrink: 0;
 	}
 
 	.prop-slider-row {
