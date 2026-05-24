@@ -32,9 +32,12 @@ func main() {
 	flag.Parse()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/status", withCORS(handleStatus))
-	mux.HandleFunc("/api/ports",  withCORS(handlePorts))
-	mux.HandleFunc("/api/cut",    withCORS(handleCut))
+	mux.HandleFunc("/api/status",   withCORS(handleStatus))
+	mux.HandleFunc("/api/ports",    withCORS(handlePorts))
+	mux.HandleFunc("/api/cut",      withCORS(handleCut))
+	mux.HandleFunc("/api/events",   withCORS(handleEvents))
+	mux.HandleFunc("/api/stats",    withCORS(handleStats))
+	mux.HandleFunc("/api/shutdown", withCORS(handleShutdown))
 	// Catch-all: handle CORS preflight for any path
 	mux.HandleFunc("/", withCORS(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodOptions {
@@ -47,7 +50,7 @@ func main() {
 	addr := fmt.Sprintf("127.0.0.1:%d", *port)
 	srv  := &http.Server{
 		Addr:         addr,
-		Handler:      logMiddleware(mux, *verbose),
+		Handler:      observeMiddleware(logMiddleware(mux, *verbose)),
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 40 * time.Second, // must exceed serial write timeout
 	}
@@ -68,9 +71,18 @@ func main() {
 	_ = json.NewEncoder(os.Stdout).Encode(startup)
 	log.Printf("OmniPlot Cut Agent v%s listening on http://%s", agentVersion, addr)
 
+	bus.emit(AgentEvent{
+		Type:    EvtInfo,
+		Message: fmt.Sprintf("OmniPlot Cut Agent v%s started on http://%s", agentVersion, addr),
+	})
+
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
-	<-stop
+
+	select {
+	case <-stop:
+	case <-shutdownCh:
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

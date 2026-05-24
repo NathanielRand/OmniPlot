@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"go.bug.st/serial"
 	"go.bug.st/serial/enumerator"
@@ -80,10 +81,14 @@ func handleCut(w http.ResponseWriter, r *http.Request) {
 
 	var req cutRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		globalStats.recordError()
+		bus.emit(AgentEvent{Type: EvtError, Method: "POST", Path: "/api/cut", Status: 400, Message: "invalid JSON: " + err.Error()})
 		jsonError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
 	if req.HPGL == "" {
+		globalStats.recordError()
+		bus.emit(AgentEvent{Type: EvtError, Method: "POST", Path: "/api/cut", Status: 400, Message: "hpgl field is required"})
 		jsonError(w, http.StatusBadRequest, "hpgl field is required")
 		return
 	}
@@ -96,17 +101,43 @@ func handleCut(w http.ResponseWriter, r *http.Request) {
 		req.Config.SerialPort = "auto"
 	}
 
+	start := time.Now()
+
 	portName, err := resolvePort(req.Config.SerialPort)
 	if err != nil {
+		globalStats.recordError()
+		bus.emit(AgentEvent{Type: EvtError, Method: "POST", Path: "/api/cut", Status: 422, Message: err.Error()})
 		jsonError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 
 	n, err := sendHPGL(portName, req.Config.BaudRate, req.HPGL)
+	dur := time.Since(start)
 	if err != nil {
+		globalStats.recordError()
+		bus.emit(AgentEvent{
+			Type:       EvtError,
+			Method:     "POST",
+			Path:       "/api/cut",
+			Status:     500,
+			DurationMs: float64(dur.Milliseconds()),
+			Port:       portName,
+			Message:    err.Error(),
+		})
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
+	globalStats.recordCut(portName, n)
+	bus.emit(AgentEvent{
+		Type:       EvtCut,
+		Method:     "POST",
+		Path:       "/api/cut",
+		Status:     200,
+		DurationMs: float64(dur.Milliseconds()),
+		Bytes:      n,
+		Port:       portName,
+	})
 
 	jsonOK(w, cutResponse{OK: true, BytesWritten: n, Port: portName})
 }

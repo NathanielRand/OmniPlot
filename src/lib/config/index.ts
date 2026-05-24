@@ -7,7 +7,7 @@ import type { PricingPlan, MaterialSheet, TintFilm, PlotterConfig, ShopPlan } fr
 export const APP_NAME = "OmniPlot";
 export const APP_TAGLINE =
 	"Professional PPF & window tint cutting software. No install required.";
-export const APP_URL = "https://omniplot.app";
+export const APP_URL = import.meta.env.VITE_APP_URL ?? "https://omniplot.app";
 export const SUPPORT_EMAIL = "support@omniplot.app";
 
 // ─── Tier limits ──────────────────────────────
@@ -505,6 +505,7 @@ export const APP_NAV = [
 	{ label: "Studio", href: "/studio", icon: "scissors" },
 	{ label: "Library", href: "/library", icon: "library" },
 	{ label: "Jobs", href: "/jobs", icon: "briefcase" },
+	{ label: "Agent", href: "/studio/agent", icon: "terminal" },
 	{ label: "Settings", href: "/settings", icon: "settings" },
 ] as const;
 

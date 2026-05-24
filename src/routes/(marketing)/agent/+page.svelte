@@ -16,7 +16,8 @@
 	type Platform = "windows" | "mac-arm" | "mac-intel" | "linux" | "unknown";
 
 	const AGENT_VERSION = "1.0.0";
-	const BASE = `https://omniplot.app/downloads/agent/v${AGENT_VERSION}`;
+	const APP_URL = import.meta.env.VITE_APP_URL ?? "https://omniplot.app";
+	const BASE = `${APP_URL}/downloads/agent/v${AGENT_VERSION}`;
 
 	const downloads: Record<Exclude<Platform, "unknown">, { label: string; file: string; badge: string }> = {
 		"windows":   { label: "Windows",       file: `omniplot-agent-windows-amd64.exe`, badge: "x64" },

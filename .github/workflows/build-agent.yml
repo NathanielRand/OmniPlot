@@ -1,0 +1,88 @@
+name: Build Cut Agent
+
+on:
+  push:
+    paths:
+      - 'agent/**'
+    branches: [main, dev]
+  workflow_dispatch:
+
+jobs:
+  build-linux-windows:
+    name: Build Linux + Windows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: agent/go.mod
+          cache-dependency-path: agent/go.sum
+
+      - name: Build Linux amd64
+        working-directory: agent
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ../static/downloads/agent/v1.0.0/omniplot-agent-linux-amd64 .
+
+      - name: Build Windows amd64
+        working-directory: agent
+        run: CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o ../static/downloads/agent/v1.0.0/omniplot-agent-windows-amd64.exe .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent-linux-windows
+          path: static/downloads/
+
+  build-macos:
+    name: Build macOS (arm64 + amd64)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: agent/go.mod
+          cache-dependency-path: agent/go.sum
+
+      - name: Build macOS Apple Silicon (arm64)
+        working-directory: agent
+        run: CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o ../static/downloads/agent/v1.0.0/omniplot-agent-darwin-arm64 .
+
+      - name: Build macOS Intel (amd64)
+        working-directory: agent
+        run: CGO_ENABLED=1 GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o ../static/downloads/agent/v1.0.0/omniplot-agent-darwin-amd64 .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent-macos
+          path: static/downloads/
+
+  commit:
+    name: Commit binaries to repo
+    needs: [build-linux-windows, build-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: agent-linux-windows
+          path: static/downloads/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: agent-macos
+          path: static/downloads/
+
+      - name: Mark macOS binaries executable
+        run: chmod +x static/downloads/agent/v1.0.0/omniplot-agent-darwin-*
+
+      - name: Commit binaries
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add static/downloads/
+          git diff --staged --quiet && echo "no changes" && exit 0
+          git commit -m "chore: update cut agent binaries v1.0.0"
+          git push
