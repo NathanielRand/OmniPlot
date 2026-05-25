@@ -1,6 +1,5 @@
 {
   "buildCommand": "npm run build",
-  "outputDirectory": ".svelte-kit/output",
   "installCommand": "npm install",
   "framework": "sveltekit",
   "regions": ["iad1"],
