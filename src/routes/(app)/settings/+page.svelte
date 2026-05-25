@@ -16,6 +16,7 @@
 		updateUserProfile,
 	} from "$lib/firebase/firestore";
 	import { auth } from "$lib/firebase/client";
+	import AddCardModal from "$lib/components/ui/AddCardModal.svelte";
 	import type { Shop, ShopMember, ShopInvite, ShopRole, ShopPlan } from "$lib/types";
 
 	let activeTab = $state<
@@ -77,6 +78,36 @@
 	// ─── Billing state ────────────────────────────
 	let portalLoading    = $state(false);
 	let checkoutLoading  = $state(false);
+	let addCardOpen      = $state(false);
+	let addCardReturnTo  = $state('');
+
+	interface PaymentMethod {
+		id: string; brand: string; last4: string;
+		expMonth: number; expYear: number; isDefault: boolean;
+	}
+	let paymentMethods = $state<PaymentMethod[]>([]);
+	let pmLoading      = $state(false);
+
+	async function loadPaymentMethods() {
+		pmLoading = true;
+		try {
+			const token = await auth.currentUser?.getIdToken();
+			const res = await fetch('/api/billing/payment-methods', {
+				headers: token ? { Authorization: `Bearer ${token}` } : {},
+			});
+			if (res.ok) paymentMethods = (await res.json()).methods ?? [];
+		} catch { /* non-fatal */ } finally {
+			pmLoading = false;
+		}
+	}
+
+	function fmtBrand(brand: string) {
+		const map: Record<string, string> = {
+			visa: 'Visa', mastercard: 'Mastercard', amex: 'Amex',
+			discover: 'Discover', unionpay: 'UnionPay', jcb: 'JCB',
+		};
+		return map[brand.toLowerCase()] ?? brand.charAt(0).toUpperCase() + brand.slice(1);
+	}
 
 	async function handlePortal(type: "individual" | "shop" = "individual") {
 		if (!userStore.user) return;
@@ -104,10 +135,7 @@
 		}
 	}
 
-	async function redirectToShopCheckout(shopId: string, plan: ShopPlan) {
-		const shopPlan = SHOP_PRICING_PLANS.find((p) => p.id === plan);
-		const priceId  = shopPlan?.stripePriceId;
-		if (!priceId) return; // no price configured yet — skip checkout
+	async function redirectToShopCheckout(shopId: string, plan: ShopPlan, interval: 'month' | 'year' = 'month') {
 		checkoutLoading = true;
 		try {
 			const token = await auth.currentUser?.getIdToken();
@@ -117,7 +145,7 @@
 					"Content-Type": "application/json",
 					...(token ? { Authorization: `Bearer ${token}` } : {}),
 				},
-				body: JSON.stringify({ priceId, type: "shop", shopId, plan }),
+				body: JSON.stringify({ type: "shop", shopId, plan, interval }),
 			});
 			if (!res.ok) throw new Error((await res.json()).error ?? "Checkout failed");
 			const { url } = await res.json();
@@ -129,6 +157,10 @@
 		}
 	}
 
+	$effect(() => {
+		if (activeTab === "billing") loadPaymentMethods();
+	});
+
 	onMount(() => {
 		// Sync tab and checkout-success from URL params
 		const params   = new URLSearchParams(window.location.search);
@@ -139,6 +171,11 @@
 		}
 		if (params.get("checkout") === "success") {
 			toastStore.success("Subscription activated!", "Your new plan is now active.");
+		}
+		const returnTo = params.get("returnTo");
+		if (params.get("addCard") === "true") {
+			addCardOpen     = true;
+			addCardReturnTo = returnTo ?? "";
 		}
 		loadShopData();
 	});
@@ -623,6 +660,42 @@
 					</div>
 				{/if}
 
+				<!-- Payment methods -->
+				<div class="settings-section pm-section">
+					<h3 class="settings-section-title">Payment methods</h3>
+					{#if pmLoading}
+						<div class="team-loading">
+							<span class="spinner-sm" aria-label="Loading…"></span>
+							<span>Loading cards…</span>
+						</div>
+					{:else if paymentMethods.length === 0}
+						<div class="billing-empty">No saved payment methods.</div>
+					{:else}
+						<div class="pm-list">
+							{#each paymentMethods as pm (pm.id)}
+								<div class="pm-row">
+									<div class="pm-brand-icon" aria-hidden="true">
+										<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+									</div>
+									<div class="pm-info">
+										<span class="pm-brand">{fmtBrand(pm.brand)}</span>
+										<span class="pm-last4">•••• {pm.last4}</span>
+										<span class="pm-exp">Exp {pm.expMonth.toString().padStart(2, "0")}/{String(pm.expYear).slice(-2)}</span>
+									</div>
+									{#if pm.isDefault}
+										<Badge variant="success" size="sm">Default</Badge>
+									{/if}
+								</div>
+							{/each}
+						</div>
+					{/if}
+					<div class="pm-actions">
+						<Button variant="secondary" size="sm" onclick={() => (addCardOpen = true)}>
+							Add card
+						</Button>
+					</div>
+				</div>
+
 				<!-- Billing history note -->
 				<div class="settings-section" style="margin-top:24px">
 					<h3 class="settings-section-title">Billing history</h3>
@@ -943,6 +1016,22 @@
 		{/if}
 	</div>
 </div>
+
+{#if addCardOpen}
+	<AddCardModal
+		onclose={() => (addCardOpen = false)}
+		onsuccess={() => {
+			addCardOpen = false;
+			if (addCardReturnTo) {
+				// Came from upgrade flow — signal layout to reopen pricing modal on return
+				sessionStorage.setItem("omniplot_open_upgrade", "1");
+				window.location.href = addCardReturnTo;
+			} else {
+				loadPaymentMethods();
+			}
+		}}
+	/>
+{/if}
 
 <style>
 	.settings-page {
@@ -1659,6 +1748,71 @@
 	.btn-link-sm:hover { text-decoration: underline; }
 	.btn-link-sm.danger { color: var(--color-danger); }
 	.btn-link-sm.danger:hover { text-decoration: underline; }
+
+	/* Payment methods */
+	.pm-section {
+		margin-top: 24px;
+	}
+
+	.pm-list {
+		display: flex;
+		flex-direction: column;
+		border: 1px solid var(--border-subtle);
+		border-radius: var(--radius-md);
+		overflow: hidden;
+		margin-bottom: 12px;
+	}
+
+	.pm-row {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		padding: 11px 14px;
+		background: var(--bg-surface-2);
+		border-bottom: 1px solid var(--border-subtle);
+	}
+	.pm-row:last-child { border-bottom: none; }
+
+	.pm-brand-icon {
+		width: 32px;
+		height: 22px;
+		background: var(--bg-surface-3);
+		border: 1px solid var(--border-default);
+		border-radius: 4px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		color: var(--text-secondary);
+		flex-shrink: 0;
+	}
+
+	.pm-info {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		flex: 1;
+	}
+
+	.pm-brand {
+		font-size: 0.875rem;
+		font-weight: 600;
+		color: var(--text-primary);
+	}
+
+	.pm-last4 {
+		font-family: var(--font-mono);
+		font-size: 0.8125rem;
+		color: var(--text-secondary);
+	}
+
+	.pm-exp {
+		font-size: 0.75rem;
+		color: var(--text-tertiary);
+	}
+
+	.pm-actions {
+		margin-top: 4px;
+	}
 
 	/* Responsive */
 	@media (max-width: 768px) {

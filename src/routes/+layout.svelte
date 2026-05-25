@@ -2,7 +2,7 @@
 	import "../app.css";
 	import { onMount } from "svelte";
 	import type { Snippet } from "svelte";
-	import { themeStore, patternStore, userStore, shopStore } from "$lib/stores";
+	import { themeStore, patternStore, userStore, shopStore, uiStore } from "$lib/stores";
 	import Toast from "$lib/components/ui/Toast.svelte";
 	import PricingModal from "$lib/components/ui/PricingModal.svelte";
 	import UpdateBanner from "$lib/components/ui/UpdateBanner.svelte";
@@ -18,6 +18,12 @@
 		themeStore.init();
 		const unsubPatterns = patternStore.init();
 		const unsubAuth = initAuth();
+
+		if (sessionStorage.getItem("omniplot_open_upgrade") === "1") {
+			sessionStorage.removeItem("omniplot_open_upgrade");
+			uiStore.openPricing();
+		}
+
 		return () => { unsubAuth(); unsubPatterns(); };
 	});
 

@@ -1,0 +1,102 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ─── Helpers ──────────────────────────────────────────────────────────
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function uid() {
+      return request.auth.uid;
+    }
+
+    // Reads the calling user's own doc to check tier — safe, no recursion
+    function isAdmin() {
+      return signedIn()
+        && get(/databases/$(database)/documents/users/$(uid())).data.get('tier', '') == 'admin';
+    }
+
+    function isMember(shopId) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/shops/$(shopId)/members/$(uid()));
+    }
+
+    function shopMemberRole(shopId) {
+      return get(/databases/$(database)/documents/shops/$(shopId)/members/$(uid())).data.get('role', '');
+    }
+
+    function isOwnerOrManager(shopId) {
+      return isMember(shopId) && shopMemberRole(shopId) in ['owner', 'manager'];
+    }
+
+    // ─── Users ────────────────────────────────────────────────────────────
+    // Users may only read/write their own document.
+    // Admin reads happen server-side via the Admin SDK (bypasses these rules).
+    match /users/{userId} {
+      allow read, write: if signedIn() && uid() == userId;
+    }
+
+    // ─── Vehicles (public catalog) ────────────────────────────────────────
+    match /vehicles/{vehicleId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // ─── Patterns (public catalog) ────────────────────────────────────────
+    match /patterns/{patternId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // ─── Pattern requests ─────────────────────────────────────────────────
+    match /requests/{requestId} {
+      allow read:          if true;          // public — shows vote counts
+      allow create:        if signedIn();
+      allow update, delete: if isAdmin();
+    }
+
+    // ─── Cut jobs ─────────────────────────────────────────────────────────
+    match /jobs/{jobId} {
+      allow read:   if signedIn() && (resource.data.userId == uid() || isAdmin());
+      allow create: if signedIn() && request.resource.data.userId == uid();
+      allow update: if signedIn() && resource.data.userId == uid();
+      allow delete: if signedIn() && (resource.data.userId == uid() || isAdmin());
+    }
+
+    // ─── Stats ────────────────────────────────────────────────────────────
+    // Computed and written server-side via Admin SDK only; deny all client access.
+    match /stats/{statId} {
+      allow read, write: if false;
+    }
+
+    // ─── Plotters ─────────────────────────────────────────────────────────
+    match /plotters/{plotterId} {
+      allow read:          if signedIn() && resource.data.userId == uid();
+      allow create:        if signedIn() && request.resource.data.userId == uid();
+      allow update, delete: if signedIn() && resource.data.userId == uid();
+    }
+
+    // ─── Shops ────────────────────────────────────────────────────────────
+    match /shops/{shopId} {
+      allow read:   if isMember(shopId);
+      allow create: if signedIn();           // owner creates shop on setup
+      allow update: if isOwnerOrManager(shopId);
+      allow delete: if false;               // Admin SDK only
+
+      match /members/{memberId} {
+        allow read:                if isMember(shopId);
+        allow create, update, delete: if isOwnerOrManager(shopId);
+      }
+    }
+
+    // ─── Shop invites ─────────────────────────────────────────────────────
+    // Invites are accessed via a secret token URL — anyone with the link can read.
+    match /shopInvites/{inviteId} {
+      allow read:   if true;
+      allow create: if isOwnerOrManager(request.resource.data.shopId);
+      allow update: if signedIn();           // any signed-in user can accept
+      allow delete: if isOwnerOrManager(resource.data.shopId);
+    }
+  }
+}

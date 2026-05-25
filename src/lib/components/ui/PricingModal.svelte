@@ -14,21 +14,32 @@
 	}
 
 	async function startCheckout(plan: PricingPlan) {
-		const priceId = billing === "yearly" ? plan.stripeYearlyPriceId : plan.stripePriceId;
-		if (!priceId) {
-			toastStore.error("Not configured", "Price ID missing — contact support.");
-			return;
-		}
 		checkoutPlan = plan.id;
 		try {
 			const token = await auth.currentUser?.getIdToken();
+			const authHeader = token ? { Authorization: `Bearer ${token}` } : {};
+
+			// Check for a saved payment method before hitting checkout
+			const pmRes = await fetch("/api/billing/payment-methods", { headers: authHeader });
+			if (pmRes.ok) {
+				const { methods } = await pmRes.json();
+				if (!methods?.length) {
+					// No card on file — send to settings to add one first, then come back
+					uiStore.closePricing();
+					const returnTo = encodeURIComponent(window.location.pathname);
+					window.location.href = `/settings?tab=billing&addCard=true&returnTo=${returnTo}`;
+					return;
+				}
+			}
+
 			const res = await fetch("/api/billing/checkout", {
 				method: "POST",
-				headers: {
-					"Content-Type": "application/json",
-					...(token ? { Authorization: `Bearer ${token}` } : {}),
-				},
-				body: JSON.stringify({ priceId, type: "individual", tier: plan.id }),
+				headers: { "Content-Type": "application/json", ...authHeader },
+				body: JSON.stringify({
+					type:     "individual",
+					tier:     plan.id,
+					interval: billing === "yearly" ? "year" : "month",
+				}),
 			});
 			if (!res.ok) throw new Error((await res.json()).error ?? "Checkout failed");
 			const { url } = await res.json();
