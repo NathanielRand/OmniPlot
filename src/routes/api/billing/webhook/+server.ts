@@ -1,6 +1,6 @@
 import type { RequestHandler } from './$types';
 import type Stripe from 'stripe';
-import { stripe } from '$lib/server/stripe';
+import { stripe, connectedAccount } from '$lib/server/stripe';
 import { getAdminDb } from '$lib/server/firebase-admin';
 import { STRIPE_WEBHOOK_SECRET } from '$env/static/private';
 import { FieldValue } from 'firebase-admin/firestore';
@@ -56,7 +56,7 @@ async function onCheckoutComplete(session: Stripe.Checkout.Session) {
 
 	const customerId   = session.customer as string;
 	const subId        = session.subscription as string;
-	const sub          = await stripe.subscriptions.retrieve(subId);
+	const sub          = await stripe.subscriptions.retrieve(subId, {}, connectedAccount);
 	const priceId      = sub.items.data[0]?.price.id ?? '';
 	const periodEnd    = new Date(sub.current_period_end * 1000);
 	const trialEnd     = sub.trial_end ? new Date(sub.trial_end * 1000) : null;
@@ -132,7 +132,7 @@ async function onSubscriptionDeleted(sub: Stripe.Subscription) {
 // ─── invoice.payment_failed ───────────────────────────────────────────────────
 async function onPaymentFailed(invoice: Stripe.Invoice) {
 	if (!invoice.subscription) return;
-	const sub = await stripe.subscriptions.retrieve(invoice.subscription as string);
+	const sub = await stripe.subscriptions.retrieve(invoice.subscription as string, {}, connectedAccount);
 
 	const { uid, type, shopId } = sub.metadata ?? {};
 	if (!uid) return;

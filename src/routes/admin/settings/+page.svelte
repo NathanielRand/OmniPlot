@@ -1,9 +1,13 @@
 <script lang="ts">
+	import type { PageData } from './$types';
 	import Badge from "$lib/components/ui/Badge.svelte";
 	import Button from "$lib/components/ui/Button.svelte";
 	import { auth } from "$lib/firebase/client";
 	import { onMount } from "svelte";
 	import { toastStore } from "$lib/stores";
+
+	interface Props { data: PageData; }
+	let { data }: Props = $props();
 
 	// ── State ──────────────────────────────────────
 	let loading = $state(true);
@@ -210,6 +214,28 @@
 			<Badge variant="default" size="sm">Configured via environment variables</Badge>
 		</div>
 		<div class="info-body">
+			<!-- Connected account identity -->
+			<div class="stripe-account-card">
+				<div class="stripe-account-icon" aria-hidden="true">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2"/><path d="M1 10h22"/></svg>
+				</div>
+				<div class="stripe-account-details">
+					{#if data.stripeAccountName}
+						<span class="stripe-account-name">{data.stripeAccountName}</span>
+					{:else}
+						<span class="stripe-account-name stripe-account-name--unknown">Account name unavailable</span>
+					{/if}
+					<div class="stripe-account-meta">
+						{#if data.stripeAccountEmail}
+							<span class="stripe-account-email">{data.stripeAccountEmail}</span>
+							<span class="stripe-account-sep" aria-hidden="true">·</span>
+						{/if}
+						<code class="stripe-account-id">{data.stripeConnectedAccountId}</code>
+					</div>
+				</div>
+				<Badge variant="success" size="sm" dot={true}>Connected</Badge>
+			</div>
+
 			<p class="info-text">
 				Stripe keys and price IDs are set in your <code>.env</code> file and are not editable here.
 				To update them, modify the environment variables and redeploy.
@@ -227,7 +253,7 @@
 					</div>
 				{/each}
 			</div>
-			<a href="https://dashboard.stripe.com" target="_blank" rel="noopener noreferrer" class="stripe-link">
+			<a href="https://dashboard.stripe.com/{data.stripeConnectedAccountId}" target="_blank" rel="noopener noreferrer" class="stripe-link">
 				Open Stripe Dashboard ↗
 			</a>
 		</div>
@@ -397,6 +423,30 @@
 	.env-status { font-size: 0.75rem; color: var(--text-tertiary); }
 	.stripe-link { font-size: 0.875rem; color: var(--text-brand); text-decoration: none; }
 	.stripe-link:hover { text-decoration: underline; }
+
+	.stripe-account-card {
+		display: flex; align-items: center; gap: 12px;
+		padding: 12px 14px;
+		background: var(--bg-surface-2); border: 1px solid var(--border-default);
+		border-radius: var(--radius-lg);
+	}
+	.stripe-account-icon {
+		width: 32px; height: 32px; border-radius: var(--radius-md); flex-shrink: 0;
+		background: color-mix(in srgb, var(--color-success) 12%, transparent);
+		border: 1px solid color-mix(in srgb, var(--color-success) 25%, transparent);
+		display: flex; align-items: center; justify-content: center;
+		color: var(--color-success);
+	}
+	.stripe-account-details { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+	.stripe-account-name {
+		font-size: 0.9375rem; font-weight: 600; color: var(--text-primary);
+		white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+	}
+	.stripe-account-name--unknown { color: var(--text-tertiary); font-style: italic; font-weight: 400; }
+	.stripe-account-meta { display: flex; align-items: center; gap: 6px; }
+	.stripe-account-email { font-size: 0.8125rem; color: var(--text-secondary); }
+	.stripe-account-sep   { font-size: 0.8125rem; color: var(--text-tertiary); }
+	.stripe-account-id    { font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-tertiary); }
 
 	/* Admin users table */
 	.data-table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }

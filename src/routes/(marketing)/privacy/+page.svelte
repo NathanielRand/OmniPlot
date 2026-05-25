@@ -66,7 +66,7 @@
 			<p>Firebase Authentication manages sign-in for Google, email, and phone methods. Firestore stores account profiles, job history, and shop data. Cloud Storage serves pattern SVG files. All data is processed under Google Cloud's infrastructure in accordance with the Google Cloud Privacy Notice.</p>
 
 			<h3>Stripe, Inc.</h3>
-			<p>Stripe processes all subscription billing. OmniPlot is a connected account under a Stripe platform account. Stripe receives your email address, payment card information, and billing-related events. Stripe's use of your data is governed by the <a href="https://stripe.com/privacy" target="_blank" rel="noopener noreferrer">Stripe Privacy Policy</a>. Your full card details are never transmitted to or stored by OmniPlot servers.</p>
+			<p>Stripe processes all subscription billing. Stripe receives your email address, payment card information, and billing-related events. Stripe's use of your data is governed by the <a href="https://stripe.com/privacy" target="_blank" rel="noopener noreferrer">Stripe Privacy Policy</a>. Your full card details are never transmitted to or stored by OmniPlot servers.</p>
 
 			<h3>Firebase reCAPTCHA (Google LLC)</h3>
 			<p>Phone number sign-in uses Firebase's reCAPTCHA verification to prevent abuse. This involves Google's reCAPTCHA service loading on sign-in pages, which may set cookies and send signals to Google as described in the Google Privacy Policy.</p>

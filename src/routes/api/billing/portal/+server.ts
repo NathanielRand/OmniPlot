@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { stripe } from '$lib/server/stripe';
+import { stripe, connectedAccount } from '$lib/server/stripe';
 import { getAdminDb, verifyIdToken } from '$lib/server/firebase-admin';
 
 export const POST: RequestHandler = async ({ request, url }) => {
@@ -31,7 +31,7 @@ export const POST: RequestHandler = async ({ request, url }) => {
 	const session = await stripe.billingPortal.sessions.create({
 		customer: customerId,
 		return_url: `${url.origin}${returnPath}`,
-	});
+	}, connectedAccount);
 
 	return json({ url: session.url });
 };
