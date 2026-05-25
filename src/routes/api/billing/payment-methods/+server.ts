@@ -44,3 +44,55 @@ export const GET: RequestHandler = async ({ request }) => {
 		return json({ error: 'Could not load payment methods.' }, { status: 500 });
 	}
 };
+
+// PATCH — set a card as the default payment method
+export const PATCH: RequestHandler = async ({ request }) => {
+	try {
+		const uid = await verifyIdToken(request.headers.get('authorization'));
+		if (!uid) return json({ error: 'Unauthorized' }, { status: 401 });
+
+		const { methodId } = await request.json();
+		if (!methodId) return json({ error: 'methodId required' }, { status: 400 });
+
+		const snap = await getAdminDb().doc(`users/${uid}`).get();
+		const customerId: string = snap.data()?.subscription?.stripeCustomerId ?? '';
+		if (!customerId) return json({ error: 'No billing account found.' }, { status: 404 });
+
+		await stripe.customers.update(
+			customerId,
+			{ invoice_settings: { default_payment_method: methodId } },
+			connectedAccount,
+		);
+
+		return json({ ok: true });
+
+	} catch (err) {
+		if (err instanceof Stripe.errors.StripeError) {
+			return json({ error: err.message }, { status: err.statusCode ?? 500 });
+		}
+		console.error('[payment-methods PATCH]', err);
+		return json({ error: 'Could not update default payment method.' }, { status: 500 });
+	}
+};
+
+// DELETE — detach / remove a saved card
+export const DELETE: RequestHandler = async ({ request }) => {
+	try {
+		const uid = await verifyIdToken(request.headers.get('authorization'));
+		if (!uid) return json({ error: 'Unauthorized' }, { status: 401 });
+
+		const { methodId } = await request.json();
+		if (!methodId) return json({ error: 'methodId required' }, { status: 400 });
+
+		await stripe.paymentMethods.detach(methodId, {}, connectedAccount);
+
+		return json({ ok: true });
+
+	} catch (err) {
+		if (err instanceof Stripe.errors.StripeError) {
+			return json({ error: err.message }, { status: err.statusCode ?? 500 });
+		}
+		console.error('[payment-methods DELETE]', err);
+		return json({ error: 'Could not remove payment method.' }, { status: 500 });
+	}
+};

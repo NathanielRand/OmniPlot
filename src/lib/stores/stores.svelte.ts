@@ -157,6 +157,7 @@ function createUiStore() {
 	let pricingModalOpen = $state(false);
 	let exportModalOpen = $state(false);
 	let commandPaletteOpen = $state(false);
+	let reportModalOpen = $state(false);
 
 	return {
 		get sidebarOpen() {
@@ -173,6 +174,9 @@ function createUiStore() {
 		},
 		get commandPaletteOpen() {
 			return commandPaletteOpen;
+		},
+		get reportModalOpen() {
+			return reportModalOpen;
 		},
 
 		toggleSidebar() {
@@ -201,6 +205,12 @@ function createUiStore() {
 		},
 		closeCommandPalette() {
 			commandPaletteOpen = false;
+		},
+		openReport() {
+			reportModalOpen = true;
+		},
+		closeReport() {
+			reportModalOpen = false;
 		},
 	};
 }

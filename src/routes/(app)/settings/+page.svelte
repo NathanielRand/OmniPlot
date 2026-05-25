@@ -20,7 +20,7 @@
 	import type { Shop, ShopMember, ShopInvite, ShopRole, ShopPlan } from "$lib/types";
 
 	let activeTab = $state<
-		"profile" | "plotter" | "billing" | "notifications" | "team" | "danger"
+		"profile" | "plotter" | "billing" | "notifications" | "team" | "security" | "danger"
 	>("profile");
 
 	// Profile form
@@ -109,6 +109,118 @@
 		return map[brand.toLowerCase()] ?? brand.charAt(0).toUpperCase() + brand.slice(1);
 	}
 
+	async function handleSetDefault(methodId: string) {
+		settingDefaultId = methodId;
+		try {
+			const token = await auth.currentUser?.getIdToken();
+			const res = await fetch('/api/billing/payment-methods', {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+				body: JSON.stringify({ methodId }),
+			});
+			if (!res.ok) throw new Error((await res.json()).error ?? 'Failed');
+			await loadPaymentMethods();
+			toastStore.success('Default card updated');
+		} catch (err) {
+			toastStore.error('Could not update default', err instanceof Error ? err.message : '');
+		} finally {
+			settingDefaultId = null;
+		}
+	}
+
+	async function handleRemoveCard(methodId: string) {
+		removingMethodId = methodId;
+		try {
+			const token = await auth.currentUser?.getIdToken();
+			const res = await fetch('/api/billing/payment-methods', {
+				method: 'DELETE',
+				headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+				body: JSON.stringify({ methodId }),
+			});
+			if (!res.ok) throw new Error((await res.json()).error ?? 'Failed');
+			paymentMethods = paymentMethods.filter(m => m.id !== methodId);
+			confirmRemoveId = null;
+			toastStore.success('Card removed');
+		} catch (err) {
+			toastStore.error('Could not remove card', err instanceof Error ? err.message : '');
+		} finally {
+			removingMethodId = null;
+		}
+	}
+
+	// ─── Invoices ─────────────────────────────────
+	interface Invoice {
+		id: string; number: string;
+		amount: number; currency: string;
+		status: string; date: number;
+		pdfUrl: string | null; description: string | null;
+	}
+	let invoices        = $state<Invoice[]>([]);
+	let invoicesLoading = $state(false);
+
+	async function loadInvoices() {
+		invoicesLoading = true;
+		try {
+			const token = await auth.currentUser?.getIdToken();
+			const res = await fetch('/api/billing/invoices', {
+				headers: token ? { Authorization: `Bearer ${token}` } : {},
+			});
+			if (res.ok) invoices = (await res.json()).invoices ?? [];
+		} catch { /* non-fatal */ } finally {
+			invoicesLoading = false;
+		}
+	}
+
+	function fmtAmount(amount: number, currency: string): string {
+		return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(amount);
+	}
+
+	function fmtInvoiceDate(ms: number): string {
+		return new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+	}
+
+	// ─── Cancel / Reactivate ──────────────────────
+	let cancelLoading      = $state(false);
+	let confirmCancelOpen  = $state(false);
+	let confirmRemoveId    = $state<string | null>(null);
+	let settingDefaultId   = $state<string | null>(null);
+	let removingMethodId   = $state<string | null>(null);
+
+	async function handleCancel() {
+		cancelLoading = true;
+		try {
+			const token = await auth.currentUser?.getIdToken();
+			const res = await fetch('/api/billing/cancel', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+			});
+			if (!res.ok) throw new Error((await res.json()).error ?? 'Failed');
+			confirmCancelOpen = false;
+			toastStore.success('Subscription cancelled', 'Your access continues until the end of the billing period.');
+		} catch (err) {
+			toastStore.error('Could not cancel', err instanceof Error ? err.message : '');
+		} finally {
+			cancelLoading = false;
+		}
+	}
+
+	async function handleReactivate() {
+		cancelLoading = true;
+		try {
+			const token = await auth.currentUser?.getIdToken();
+			const res = await fetch('/api/billing/cancel', {
+				method: 'DELETE',
+				headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+			});
+			if (!res.ok) throw new Error((await res.json()).error ?? 'Failed');
+			toastStore.success('Subscription reactivated', 'Your plan will continue as normal.');
+		} catch (err) {
+			toastStore.error('Could not reactivate', err instanceof Error ? err.message : '');
+		} finally {
+			cancelLoading = false;
+		}
+	}
+
 	async function handlePortal(type: "individual" | "shop" = "individual") {
 		if (!userStore.user) return;
 		portalLoading = true;
@@ -158,14 +270,17 @@
 	}
 
 	$effect(() => {
-		if (activeTab === "billing") loadPaymentMethods();
+		if (activeTab === "billing") {
+			loadPaymentMethods();
+			loadInvoices();
+		}
 	});
 
 	onMount(() => {
 		// Sync tab and checkout-success from URL params
 		const params   = new URLSearchParams(window.location.search);
 		const urlTab   = params.get("tab");
-		const validTab = ["profile","plotter","billing","notifications","team","danger"] as const;
+		const validTab = ["profile","plotter","billing","notifications","team","security","danger"] as const;
 		if (urlTab && validTab.includes(urlTab as typeof validTab[number])) {
 			activeTab = urlTab as typeof activeTab;
 		}
@@ -177,6 +292,7 @@
 			addCardOpen     = true;
 			addCardReturnTo = returnTo ?? "";
 		}
+		currentSessionId = localStorage.getItem("omniplot_session_id") ?? "";
 		loadShopData();
 	});
 
@@ -319,6 +435,11 @@
 			icon: "M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75",
 		},
 		{
+			id: "security",
+			label: "Security",
+			icon: "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z",
+		},
+		{
 			id: "danger",
 			label: "Danger Zone",
 			icon: "M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z",
@@ -330,6 +451,56 @@
 	function fmtDate(d: Date | null | undefined) {
 		if (!d) return "—";
 		return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+	}
+
+	// ─── Security / Sessions ──────────────────────
+	interface SessionEntry {
+		id: string; sessionId: string;
+		ip: string; city: string; region: string; country: string; countryCode: string;
+		browser: string; browserVersion: string;
+		os: string; osVersion: string;
+		device: 'mobile' | 'tablet' | 'desktop';
+		createdAt: number;
+	}
+
+	let sessions        = $state<SessionEntry[]>([]);
+	let sessionsLoading = $state(false);
+	let currentSessionId = $state('');
+
+	$effect(() => {
+		if (activeTab === 'security') loadSessions();
+	});
+
+	async function loadSessions() {
+		sessionsLoading = true;
+		try {
+			const token = await auth.currentUser?.getIdToken();
+			const res = await fetch('/api/user/sessions', {
+				headers: token ? { Authorization: `Bearer ${token}` } : {},
+			});
+			if (res.ok) sessions = (await res.json()).sessions ?? [];
+		} catch { /* non-fatal */ } finally {
+			sessionsLoading = false;
+		}
+	}
+
+	function timeAgo(ms: number): string {
+		const diff = Date.now() - ms;
+		const mins = Math.floor(diff / 60_000);
+		if (mins < 1)   return 'Just now';
+		if (mins < 60)  return `${mins}m ago`;
+		const hrs = Math.floor(mins / 60);
+		if (hrs < 24)   return `${hrs}h ago`;
+		const days = Math.floor(hrs / 24);
+		if (days < 7)   return `${days}d ago`;
+		return new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+	}
+
+	function countryFlag(code: string): string {
+		if (!code || code.length !== 2) return '';
+		return [...code.toUpperCase()].map(c =>
+			String.fromCodePoint(0x1F1E6 + c.charCodeAt(0) - 65)
+		).join('');
 	}
 </script>
 
@@ -581,95 +752,118 @@
 
 			<!-- ─── Billing ─── -->
 		{:else if activeTab === "billing"}
-			{@const user       = userStore.user}
-			{@const tier       = user?.tier ?? "free"}
-			{@const sub        = user?.subscription}
-			{@const usage      = user?.usage}
-			{@const limit      = tier === "free" ? 1 : tier === "lite" ? null : null}
-			{@const cutCount   = usage?.monthlyCount ?? 0}
-			{@const usagePct   = limit ? Math.min(100, Math.round((cutCount / limit) * 100)) : 0}
+			{@const user     = userStore.user}
+			{@const tier     = user?.tier ?? "free"}
+			{@const sub      = user?.subscription}
+			{@const usage    = user?.usage}
+			{@const limit    = tier === "free" ? 1 : null}
+			{@const cutCount = usage?.monthlyCount ?? 0}
+			{@const usagePct = limit ? Math.min(100, Math.round((cutCount / limit) * 100)) : 0}
 
 			<div class="settings-section">
 				<h2 class="settings-section-title">Plan & Billing</h2>
-				<p class="settings-section-sub">Manage your subscription and usage.</p>
+				<p class="settings-section-sub">Manage your subscription, payment methods, and invoices.</p>
 
-				<!-- Current plan card -->
-				<div class="billing-current">
-					<div class="billing-plan">
-						<div class="billing-plan__header">
-							<div>
-								<div class="billing-plan__name">{PLAN_NAMES[tier] ?? tier} Plan</div>
-								{#if sub?.status === "active" && sub.currentPeriodEnd}
-									<div class="billing-plan__desc">Renews {fmtDate(sub.currentPeriodEnd)}</div>
-								{:else if sub?.status === "trialing" && sub.trialEnd}
-									<div class="billing-plan__desc">Trial ends {fmtDate(sub.trialEnd)}</div>
-								{:else if sub?.status === "past_due"}
-									<div class="billing-plan__desc billing-plan__desc--warn">Payment past due — please update your card</div>
-								{:else if sub?.status === "canceled" && sub.currentPeriodEnd}
-									<div class="billing-plan__desc billing-plan__desc--warn">Access until {fmtDate(sub.currentPeriodEnd)}</div>
-								{:else if tier === "free"}
-									<div class="billing-plan__desc">1 cut per 30 days</div>
-								{/if}
-							</div>
-							<Badge variant={tier === "lite" ? "lite" : tier === "pro" ? "pro" : "free"}>
-								{PLAN_NAMES[tier] ?? tier}
-							</Badge>
+				<!-- ── Current plan card ── -->
+				<div class="billing-plan">
+					<div class="billing-plan__header">
+						<div>
+							<div class="billing-plan__name">{PLAN_NAMES[tier] ?? tier} Plan</div>
+							{#if sub?.cancelAtPeriodEnd && sub.currentPeriodEnd}
+								<div class="billing-plan__desc billing-plan__desc--warn">
+									Cancels on {fmtDate(sub.currentPeriodEnd)} — you keep access until then
+								</div>
+							{:else if sub?.status === "active" && sub.currentPeriodEnd}
+								<div class="billing-plan__desc">Renews {fmtDate(sub.currentPeriodEnd)}</div>
+							{:else if sub?.status === "trialing" && sub.trialEnd}
+								<div class="billing-plan__desc">Trial ends {fmtDate(sub.trialEnd)}</div>
+							{:else if sub?.status === "past_due"}
+								<div class="billing-plan__desc billing-plan__desc--warn">Payment past due — update your card below</div>
+							{:else if sub?.status === "canceled" && sub.currentPeriodEnd}
+								<div class="billing-plan__desc billing-plan__desc--warn">Access until {fmtDate(sub.currentPeriodEnd)}</div>
+							{:else if tier === "free"}
+								<div class="billing-plan__desc">1 cut per 30 days</div>
+							{/if}
 						</div>
+						<Badge variant={tier === "lite" ? "lite" : tier === "pro" ? "pro" : "free"}>
+							{PLAN_NAMES[tier] ?? tier}
+						</Badge>
+					</div>
 
-						{#if tier === "free" && limit}
-							<div class="billing-plan__usage">
-								<div class="usage-row">
-									<span class="usage-label">Cuts this period</span>
-									<span class="usage-val">{cutCount} / {limit}</span>
-								</div>
-								<div class="usage-bar-track" role="progressbar" aria-valuenow={cutCount} aria-valuemax={limit}>
-									<div class="usage-bar-fill" class:usage-bar-fill--warn={usagePct >= 80} style="width:{usagePct}%"></div>
-								</div>
+					{#if tier === "free" && limit}
+						<div class="billing-plan__usage">
+							<div class="usage-row">
+								<span class="usage-label">Cuts this period</span>
+								<span class="usage-val">{cutCount} / {limit}</span>
 							</div>
-						{:else if tier !== "free"}
-							<div class="billing-plan__usage">
-								<div class="usage-row">
-									<span class="usage-label">Cuts this month</span>
-									<span class="usage-val">{cutCount} <span style="color:var(--text-tertiary)">/ unlimited</span></span>
-								</div>
+							<div class="usage-bar-track" role="progressbar" aria-valuenow={cutCount} aria-valuemax={limit}>
+								<div class="usage-bar-fill" class:usage-bar-fill--warn={usagePct >= 80} style="width:{usagePct}%"></div>
 							</div>
+						</div>
+					{:else if tier !== "free"}
+						<div class="billing-plan__usage">
+							<div class="usage-row">
+								<span class="usage-label">Cuts this month</span>
+								<span class="usage-val">{cutCount} <span style="color:var(--text-tertiary)">/ unlimited</span></span>
+							</div>
+						</div>
+					{/if}
+
+					<div class="billing-plan__actions">
+						{#if tier !== "pro" && tier !== "admin"}
+							<Button variant="primary" size="sm" onclick={uiStore.openPricing}>
+								Upgrade plan
+							</Button>
 						{/if}
-
-						<div class="billing-plan__actions">
-							{#if sub?.stripeCustomerId}
-								<Button variant="secondary" size="sm" loading={portalLoading} onclick={() => handlePortal("individual")}>
-									Manage billing
+						{#if sub?.status === "active" || sub?.status === "trialing"}
+							{#if sub.cancelAtPeriodEnd}
+								<Button variant="secondary" size="sm" loading={cancelLoading} onclick={handleReactivate}>
+									Undo cancellation
+								</Button>
+							{:else}
+								<Button variant="ghost" size="sm" onclick={() => (confirmCancelOpen = true)}>
+									Cancel plan
 								</Button>
 							{/if}
-							{#if tier !== "pro" && tier !== "admin"}
-								<Button variant="primary" size="sm" onclick={uiStore.openPricing}>
-									Upgrade plan
-								</Button>
-							{/if}
-						</div>
+						{/if}
 					</div>
 				</div>
 
-				{#if sub?.status === "past_due"}
-					<div class="billing-alert">
-						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
-						Payment failed. Please update your payment method to keep access.
-						<Button variant="danger" size="sm" loading={portalLoading} onclick={() => handlePortal("individual")}>
-							Update card
-						</Button>
+				<!-- Cancel confirmation -->
+				{#if confirmCancelOpen}
+					<div class="cancel-confirm">
+						<div class="cancel-confirm__body">
+							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+							<p>
+								Your access continues until <strong>{fmtDate(sub?.currentPeriodEnd)}</strong>.
+								You won't be charged again after that date.
+							</p>
+						</div>
+						<div class="cancel-confirm__actions">
+							<Button variant="ghost" size="sm" onclick={() => (confirmCancelOpen = false)}>Keep plan</Button>
+							<Button variant="danger" size="sm" loading={cancelLoading} onclick={handleCancel}>Confirm cancellation</Button>
+						</div>
 					</div>
 				{/if}
 
-				<!-- Payment methods -->
-				<div class="settings-section pm-section">
-					<h3 class="settings-section-title">Payment methods</h3>
+				{#if sub?.status === "past_due"}
+					<div class="billing-alert" style="margin-top:12px">
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+						Payment failed. Add or update a card below to restore access.
+					</div>
+				{/if}
+
+				<!-- ── Payment methods ── -->
+				<div class="billing-sub-section">
+					<h3 class="settings-section-title" style="font-size:0.9375rem">Payment methods</h3>
+
 					{#if pmLoading}
 						<div class="team-loading">
 							<span class="spinner-sm" aria-label="Loading…"></span>
 							<span>Loading cards…</span>
 						</div>
 					{:else if paymentMethods.length === 0}
-						<div class="billing-empty">No saved payment methods.</div>
+						<div class="billing-empty">No saved cards.</div>
 					{:else}
 						<div class="pm-list">
 							{#each paymentMethods as pm (pm.id)}
@@ -682,30 +876,82 @@
 										<span class="pm-last4">•••• {pm.last4}</span>
 										<span class="pm-exp">Exp {pm.expMonth.toString().padStart(2, "0")}/{String(pm.expYear).slice(-2)}</span>
 									</div>
-									{#if pm.isDefault}
-										<Badge variant="success" size="sm">Default</Badge>
-									{/if}
+									<div class="pm-card-actions">
+										{#if pm.isDefault}
+											<Badge variant="success" size="sm">Default</Badge>
+										{:else}
+											<button
+												class="btn-link-sm"
+												onclick={() => handleSetDefault(pm.id)}
+												disabled={settingDefaultId === pm.id}
+											>
+												{settingDefaultId === pm.id ? "Saving…" : "Set default"}
+											</button>
+										{/if}
+										{#if confirmRemoveId === pm.id}
+											<span class="pm-remove-confirm">
+												Remove?
+												<button class="btn-link-sm danger" onclick={() => handleRemoveCard(pm.id)} disabled={removingMethodId === pm.id}>
+													{removingMethodId === pm.id ? "Removing…" : "Yes"}
+												</button>
+												<button class="btn-link-sm" onclick={() => (confirmRemoveId = null)}>No</button>
+											</span>
+										{:else}
+											<button class="pm-remove-btn" onclick={() => (confirmRemoveId = pm.id)} aria-label="Remove card">
+												<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+											</button>
+										{/if}
+									</div>
 								</div>
 							{/each}
 						</div>
 					{/if}
-					<div class="pm-actions">
+
+					<div style="margin-top:10px">
 						<Button variant="secondary" size="sm" onclick={() => (addCardOpen = true)}>
 							Add card
 						</Button>
 					</div>
 				</div>
 
-				<!-- Billing history note -->
-				<div class="settings-section" style="margin-top:24px">
-					<h3 class="settings-section-title">Billing history</h3>
-					{#if sub?.stripeCustomerId}
-						<p class="billing-portal-note">
-							View invoices, download receipts, and update your payment method in the
-							<button class="btn-link" onclick={() => handlePortal("individual")}>Stripe billing portal</button>.
-						</p>
-					{:else}
+				<!-- ── Invoice history ── -->
+				<div class="billing-sub-section">
+					<h3 class="settings-section-title" style="font-size:0.9375rem">Invoice history</h3>
+
+					{#if invoicesLoading}
+						<div class="team-loading">
+							<span class="spinner-sm" aria-label="Loading…"></span>
+							<span>Loading invoices…</span>
+						</div>
+					{:else if invoices.length === 0}
 						<div class="billing-empty">No invoices yet.</div>
+					{:else}
+						<div class="invoice-list">
+							<div class="invoice-list__header">
+								<span>Date</span>
+								<span>Invoice</span>
+								<span>Amount</span>
+								<span>Status</span>
+								<span></span>
+							</div>
+							{#each invoices as inv (inv.id)}
+								{@const statusVariant = inv.status === "paid" ? "success" : inv.status === "open" ? "warning" : "default"}
+								<div class="invoice-row">
+									<span class="invoice-date">{fmtInvoiceDate(inv.date)}</span>
+									<span class="invoice-number">{inv.number}</span>
+									<span class="invoice-amount">{fmtAmount(inv.amount, inv.currency)}</span>
+									<span><Badge variant={statusVariant} size="sm">{inv.status}</Badge></span>
+									<span class="invoice-actions">
+										{#if inv.pdfUrl}
+											<a href={inv.pdfUrl} target="_blank" rel="noopener noreferrer" class="btn-link-sm" aria-label="Download PDF">
+												<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+												PDF
+											</a>
+										{/if}
+									</span>
+								</div>
+							{/each}
+						</div>
 					{/if}
 				</div>
 			</div>
@@ -935,6 +1181,70 @@
 							<Button variant="danger" size="sm" onclick={handleLeaveShop}>Leave</Button>
 						</div>
 					{/if}
+				{/if}
+			</div>
+
+			<!-- ─── Security ─── -->
+		{:else if activeTab === "security"}
+			<div class="settings-section">
+				<h2 class="settings-section-title">Security</h2>
+				<p class="settings-section-sub">Recent sign-in activity across your devices and browsers.</p>
+
+				{#if sessionsLoading}
+					<div class="team-loading">
+						<span class="spinner-sm" aria-label="Loading…"></span>
+						<span>Loading activity…</span>
+					</div>
+				{:else if sessions.length === 0}
+					<div class="billing-empty">No session history yet. It will appear after your next sign-in.</div>
+				{:else}
+					<div class="sessions-list">
+						{#each sessions as s (s.id)}
+							{@const isCurrent = !!currentSessionId && s.sessionId === currentSessionId}
+							<div class="session-row" class:session-row--current={isCurrent}>
+								<!-- Device icon -->
+								<div class="session-device" aria-label={s.device}>
+									{#if s.device === "mobile"}
+										<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true">
+											<rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/>
+										</svg>
+									{:else if s.device === "tablet"}
+										<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true">
+											<rect x="4" y="2" width="16" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/>
+										</svg>
+									{:else}
+										<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true">
+											<rect x="2" y="3" width="20" height="14" rx="2"/><polyline points="8 21 12 17 16 21"/><line x1="12" y1="17" x2="12" y2="21"/>
+										</svg>
+									{/if}
+								</div>
+
+								<!-- Info -->
+								<div class="session-info">
+									<div class="session-primary">
+										<span class="session-browser">{s.browser}{s.browserVersion ? ` ${s.browserVersion}` : ""}</span>
+										<span class="session-sep">on</span>
+										<span class="session-os">{s.os}{s.osVersion ? ` ${s.osVersion}` : ""}</span>
+										{#if isCurrent}
+											<Badge variant="success" size="sm">Current session</Badge>
+										{/if}
+									</div>
+									<div class="session-meta">
+										{#if s.city}
+											<span class="session-location">
+												{countryFlag(s.countryCode)}&nbsp;{s.city}{s.country ? `, ${s.country}` : ""}
+											</span>
+											<span class="session-dot" aria-hidden="true">·</span>
+										{/if}
+										<span class="session-ip">{s.ip}</span>
+										<span class="session-dot" aria-hidden="true">·</span>
+										<span class="session-time">{timeAgo(s.createdAt)}</span>
+									</div>
+								</div>
+							</div>
+						{/each}
+					</div>
+					<p class="sessions-note">Showing up to 15 most recent sessions. Each entry represents a browser tab or window.</p>
 				{/if}
 			</div>
 
@@ -1749,6 +2059,109 @@
 	.btn-link-sm.danger { color: var(--color-danger); }
 	.btn-link-sm.danger:hover { text-decoration: underline; }
 
+	/* Billing sub-sections */
+	.billing-sub-section {
+		margin-top: 28px;
+		padding-top: 24px;
+		border-top: 1px solid var(--border-subtle);
+	}
+
+	/* Cancel confirmation */
+	.cancel-confirm {
+		margin-top: 12px;
+		padding: 14px 16px;
+		background: rgba(255, 77, 109, 0.05);
+		border: 1px solid rgba(255, 77, 109, 0.25);
+		border-radius: var(--radius-md);
+	}
+	.cancel-confirm__body {
+		display: flex;
+		align-items: flex-start;
+		gap: 10px;
+		font-size: 0.875rem;
+		color: var(--text-secondary);
+		margin-bottom: 12px;
+	}
+	.cancel-confirm__body svg { color: var(--color-warning); flex-shrink: 0; margin-top: 2px; }
+	.cancel-confirm__body p { margin: 0; line-height: 1.5; }
+	.cancel-confirm__body strong { color: var(--text-primary); }
+	.cancel-confirm__actions {
+		display: flex;
+		gap: 8px;
+		justify-content: flex-end;
+	}
+
+	/* Payment method card actions */
+	.pm-card-actions {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		flex-shrink: 0;
+	}
+	.pm-remove-btn {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 4px;
+		background: none;
+		border: none;
+		color: var(--text-tertiary);
+		cursor: pointer;
+		border-radius: var(--radius-sm);
+		transition: color 0.12s, background 0.12s;
+	}
+	.pm-remove-btn:hover { color: var(--color-danger); background: rgba(255, 77, 109, 0.08); }
+	.pm-remove-confirm {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 0.8125rem;
+		color: var(--text-secondary);
+	}
+
+	/* Invoice list */
+	.invoice-list {
+		border: 1px solid var(--border-subtle);
+		border-radius: var(--radius-md);
+		overflow: hidden;
+	}
+	.invoice-list__header {
+		display: grid;
+		grid-template-columns: 110px 1fr 90px 70px 60px;
+		gap: 8px;
+		padding: 8px 14px;
+		background: var(--bg-surface-3);
+		border-bottom: 1px solid var(--border-subtle);
+		font-size: 0.6875rem;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		color: var(--text-tertiary);
+	}
+	.invoice-row {
+		display: grid;
+		grid-template-columns: 110px 1fr 90px 70px 60px;
+		gap: 8px;
+		align-items: center;
+		padding: 11px 14px;
+		background: var(--bg-surface-2);
+		border-bottom: 1px solid var(--border-subtle);
+		font-size: 0.8125rem;
+	}
+	.invoice-row:last-child { border-bottom: none; }
+	.invoice-date { color: var(--text-secondary); }
+	.invoice-number { font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-tertiary); }
+	.invoice-amount { font-weight: 600; color: var(--text-primary); }
+	.invoice-actions {
+		display: flex;
+		justify-content: flex-end;
+	}
+	.invoice-actions .btn-link-sm {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+	}
+
 	/* Payment methods */
 	.pm-section {
 		margin-top: 24px;
@@ -1812,6 +2225,102 @@
 
 	.pm-actions {
 		margin-top: 4px;
+	}
+
+	/* ─── Sessions / Security ─── */
+	.sessions-list {
+		display: flex;
+		flex-direction: column;
+		border: 1px solid var(--border-subtle);
+		border-radius: var(--radius-md);
+		overflow: hidden;
+		margin-bottom: 12px;
+	}
+
+	.session-row {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		padding: 13px 16px;
+		background: var(--bg-surface-2);
+		border-bottom: 1px solid var(--border-subtle);
+		transition: background 0.1s;
+	}
+	.session-row:last-child { border-bottom: none; }
+	.session-row--current {
+		background: rgba(0, 112, 255, 0.04);
+		border-left: 3px solid var(--color-brand-dim);
+		padding-left: 13px;
+	}
+
+	.session-device {
+		width: 34px;
+		height: 34px;
+		border-radius: var(--radius-md);
+		background: var(--bg-surface-3);
+		border: 1px solid var(--border-default);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		color: var(--text-secondary);
+		flex-shrink: 0;
+	}
+
+	.session-info {
+		display: flex;
+		flex-direction: column;
+		gap: 3px;
+		flex: 1;
+		min-width: 0;
+	}
+
+	.session-primary {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 4px;
+		font-size: 0.875rem;
+	}
+
+	.session-browser {
+		font-weight: 600;
+		color: var(--text-primary);
+	}
+
+	.session-sep {
+		color: var(--text-tertiary);
+		font-size: 0.8125rem;
+	}
+
+	.session-os {
+		color: var(--text-secondary);
+	}
+
+	.session-meta {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 5px;
+		font-size: 0.75rem;
+		color: var(--text-tertiary);
+	}
+
+	.session-dot {
+		opacity: 0.4;
+	}
+
+	.session-location {
+		color: var(--text-secondary);
+	}
+
+	.session-ip {
+		font-family: var(--font-mono);
+	}
+
+	.sessions-note {
+		font-size: 0.75rem;
+		color: var(--text-tertiary);
+		margin: 0;
 	}
 
 	/* Responsive */

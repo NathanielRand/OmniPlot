@@ -1,3 +1,5 @@
 - Create a local plotter emulator/simulator to verify the communication between plotter and agent (or other method) is bidirectional and valid throughout each expected communication event with proper processing and response. we need to test without having the quipment in person.
-- Session activity log with device, location, & meta data.
 - Plotter device compatability pass.
+- verify we are sending proper email notifications for signups, upgrades, billing receipts, cancellations, refunds, and a monthly usage report
+- insights/blog system for seo and lead funneling
+- investors page

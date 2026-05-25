@@ -25,11 +25,13 @@ export interface UserProfile {
 
 	// Subscription
 	subscription: {
-		stripeCustomerId: string | null;
-		stripePriceId: string | null;
+		stripeCustomerId:     string | null;
+		stripePriceId:        string | null;
+		stripeSubscriptionId: string | null;
 		status: "active" | "canceled" | "past_due" | "trialing" | null;
 		currentPeriodEnd: Date | null;
-		trialEnd: Date | null;
+		trialEnd:         Date | null;
+		cancelAtPeriodEnd: boolean;
 	};
 
 	// Preferences

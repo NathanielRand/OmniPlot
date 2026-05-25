@@ -75,9 +75,11 @@ export function toUserProfile(id: string, data: DocumentData): UserProfile {
 			monthResetAt: fromTimestamp(data.usage?.monthResetAt),
 		},
 		subscription: {
-			stripeCustomerId: data.subscription?.stripeCustomerId ?? null,
-			stripePriceId: data.subscription?.stripePriceId ?? null,
-			status: data.subscription?.status ?? null,
+			stripeCustomerId:     data.subscription?.stripeCustomerId     ?? null,
+			stripePriceId:        data.subscription?.stripePriceId        ?? null,
+			stripeSubscriptionId: data.subscription?.stripeSubscriptionId ?? null,
+			status:               data.subscription?.status               ?? null,
+			cancelAtPeriodEnd:    data.subscription?.cancelAtPeriodEnd    ?? false,
 			currentPeriodEnd: data.subscription?.currentPeriodEnd
 				? fromTimestamp(data.subscription.currentPeriodEnd)
 				: null,

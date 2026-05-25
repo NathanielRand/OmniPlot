@@ -3,6 +3,12 @@
   "installCommand": "npm install",
   "framework": "sveltekit",
   "regions": ["iad1"],
+  "crons": [
+    {
+      "path": "/api/cron/monthly-report",
+      "schedule": "0 9 1 * *"
+    }
+  ],
   "headers": [
     {
       "source": "/version.json",

@@ -76,6 +76,14 @@ export function initAuth(): () => void {
 				photoURL:    firebaseUser.photoURL ?? null,
 				phone:       firebaseUser.phoneNumber ?? null,
 			});
+
+			// Fire-and-forget welcome email (non-fatal if it fails)
+			firebaseUser.getIdToken()
+				.then(token => fetch('/api/user/welcome', {
+					method:  'POST',
+					headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+				}))
+				.catch(() => {});
 		} else if (firebaseUser.phoneNumber && !existing.phone) {
 			// Backfill phone for profiles created before this field was added
 			await updateUserProfile(firebaseUser.uid, { phone: firebaseUser.phoneNumber });
@@ -84,6 +92,18 @@ export function initAuth(): () => void {
 		// Claim this session: write our ID to Firestore, kicking any other active session
 		localSessionId = getOrCreateSessionId();
 		await writeSessionId(firebaseUser.uid, localSessionId).catch(() => {});
+
+		// Log session activity once per browser tab (sessionStorage clears on tab close)
+		if (!sessionStorage.getItem('omniplot_session_logged')) {
+			sessionStorage.setItem('omniplot_session_logged', '1');
+			firebaseUser.getIdToken()
+				.then(token => fetch('/api/user/log-session', {
+					method:  'POST',
+					headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+					body:    JSON.stringify({ sessionId: localSessionId }),
+				}))
+				.catch(() => {});
+		}
 
 		// Subscribe to live Firestore updates; detect session kicks
 		unsubProfile = subscribeToUser(firebaseUser.uid, (profile) => {
@@ -101,6 +121,7 @@ export function initAuth(): () => void {
 			) {
 				localSessionId = null;
 				localStorage.removeItem(SESSION_KEY);
+				sessionStorage.removeItem('omniplot_session_logged');
 				unsubProfile?.();
 				unsubProfile = null;
 				userStore.set(null);
@@ -196,6 +217,7 @@ export async function signOutUser(): Promise<void> {
 	unsubProfile = null;
 	localSessionId = null;
 	localStorage.removeItem(SESSION_KEY);
+	sessionStorage.removeItem('omniplot_session_logged');
 	userStore.set(null);
 	await signOut(auth);
 }
