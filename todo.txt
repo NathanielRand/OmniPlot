@@ -3,3 +3,4 @@
 - insights/blog system for seo and lead funneling
 - investors page
 - action to promote a coupon code that reveals a banner for the promotion.
+- update home page hero plot screenshot sample.

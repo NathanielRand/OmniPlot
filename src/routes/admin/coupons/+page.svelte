@@ -5,6 +5,31 @@
 	import { onMount } from 'svelte';
 	import { toastStore } from '$lib/stores';
 
+	// ─── Banner state ───────────────────────────────
+	interface BannerConfig {
+		active:      boolean;
+		code:        string;
+		message:     string;
+		cta:         string;
+		ctaHref:     string;
+		accentColor: string;
+		expiresAt:   number | null;
+	}
+
+	let banner         = $state<BannerConfig | null>(null);
+	let bannerLoading  = $state(true);
+	let promotingCode  = $state<string | null>(null);   // which code row is open
+	let savingBanner   = $state(false);
+	let deactivatingBanner = $state(false);
+
+	let bf = $state({
+		message:     '',
+		cta:         'Claim offer',
+		ctaHref:     '/pricing',
+		accentColor: 'brand',
+		expiresAt:   '',
+	});
+
 	// ─── Types ─────────────────────────────────────
 	interface Coupon {
 		id: string;
@@ -104,7 +129,88 @@
 		}
 	}
 
-	onMount(load);
+	async function loadBanner() {
+		bannerLoading = true;
+		try {
+			const res = await fetch('/api/admin/promo-banner', { headers: await authHeaders() });
+			if (res.ok) banner = (await res.json()).banner ?? null;
+		} catch { /* non-fatal */ } finally {
+			bannerLoading = false;
+		}
+	}
+
+	onMount(() => { load(); loadBanner(); });
+
+	// ─── Promote code as banner ────────────────────
+	function openPromoteForm(code: PromoCode) {
+		// Pre-fill message from the coupon's discount info
+		const discount = fmtDiscount(code.coupon);
+		const duration = fmtDuration(code.coupon);
+		bf = {
+			message:     `Limited time: use ${code.code} for ${discount} ${duration === 'First payment' ? 'on your first month' : duration === 'Forever' ? 'on every payment' : `for ${duration}`}.`,
+			cta:         'Claim offer',
+			ctaHref:     '/pricing',
+			accentColor: 'brand',
+			expiresAt:   '',
+		};
+		promotingCode = code.code;
+	}
+
+	async function saveBanner(code: string) {
+		savingBanner = true;
+		try {
+			const res = await fetch('/api/admin/promo-banner', {
+				method:  'PUT',
+				headers: await authHeaders(),
+				body:    JSON.stringify({
+					code,
+					message:     bf.message,
+					cta:         bf.cta,
+					ctaHref:     bf.ctaHref,
+					accentColor: bf.accentColor,
+					expiresAt:   bf.expiresAt || null,
+				}),
+			});
+			if (!res.ok) throw new Error((await res.json()).error ?? 'Save failed');
+			toastStore.success('Banner live', `"${code}" is now the sitewide promo banner.`);
+			promotingCode = null;
+			await loadBanner();
+		} catch (e) {
+			toastStore.error('Error', e instanceof Error ? e.message : 'Could not save banner');
+		} finally {
+			savingBanner = false;
+		}
+	}
+
+	async function deactivateBanner() {
+		if (!confirm('Remove the sitewide promo banner?')) return;
+		deactivatingBanner = true;
+		try {
+			const res = await fetch('/api/admin/promo-banner', {
+				method:  'DELETE',
+				headers: await authHeaders(),
+			});
+			if (!res.ok) throw new Error((await res.json()).error ?? 'Failed');
+			banner = null;
+			toastStore.success('Banner removed', 'The sitewide promo banner is now hidden.');
+		} catch (e) {
+			toastStore.error('Error', e instanceof Error ? e.message : 'Could not remove banner');
+		} finally {
+			deactivatingBanner = false;
+		}
+	}
+
+	const ACCENT_OPTIONS = [
+		{ value: 'brand',   label: 'Brand blue' },
+		{ value: 'success', label: 'Green' },
+		{ value: 'warning', label: 'Amber' },
+		{ value: 'danger',  label: 'Red' },
+	];
+
+	function fmtBannerExpiry(ms: number | null) {
+		if (!ms) return 'No expiry';
+		return new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+	}
 
 	// ─── Create ────────────────────────────────────
 	async function createCode() {
@@ -197,6 +303,54 @@
 			<span class="stat__value">{totalRedeemed}</span>
 			<span class="stat__label">Total redemptions</span>
 		</div>
+	</div>
+
+	<!-- Sitewide Banner Status -->
+	<div class="banner-section">
+		<div class="banner-section__header">
+			<div class="banner-section__title-row">
+				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M5 3l14 9-14 9V3z"/></svg>
+				<span class="banner-section__title">Sitewide Promo Banner</span>
+				{#if !bannerLoading}
+					{#if banner?.active}
+						<Badge variant="success" size="sm">Live</Badge>
+					{:else}
+						<Badge variant="default" size="sm">Off</Badge>
+					{/if}
+				{/if}
+			</div>
+			<p class="banner-section__sub">Promote a coupon code with a banner on all public pages. Hidden from signed-in users.</p>
+		</div>
+
+		{#if bannerLoading}
+			<div class="banner-loading"><span class="spinner" aria-label="Loading"></span></div>
+		{:else if banner?.active}
+			<div class="banner-preview">
+				<div class="banner-preview__bar" style:background={
+					banner.accentColor === 'success' ? '#00a86b' :
+					banner.accentColor === 'warning' ? '#d97706' :
+					banner.accentColor === 'danger'  ? '#dc2626' : '#0070ff'
+				}>
+					<span class="banner-preview__message">{banner.message}</span>
+					<span class="banner-preview__code">{banner.code}</span>
+					<span class="banner-preview__cta">{banner.cta} →</span>
+				</div>
+				<div class="banner-preview__meta">
+					<span>Code: <strong>{banner.code}</strong></span>
+					<span>CTA: <strong>{banner.cta}</strong> → <code>{banner.ctaHref}</code></span>
+					<span>Expires: <strong>{fmtBannerExpiry(banner.expiresAt)}</strong></span>
+				</div>
+				<button
+					class="deactivate-btn"
+					onclick={deactivateBanner}
+					disabled={deactivatingBanner}
+				>
+					{deactivatingBanner ? '…' : 'Remove banner'}
+				</button>
+			</div>
+		{:else}
+			<p class="banner-empty">No active promo banner. Click <strong>Promote</strong> on any active coupon code below to create one.</p>
+		{/if}
 	</div>
 
 	<!-- Create form -->
@@ -361,9 +515,15 @@
 				</thead>
 				<tbody>
 					{#each codes as c (c.id)}
+						{@const isBannerCode = banner?.active && banner.code === c.code}
 						<tr class:row--inactive={!c.active}>
 							<td>
-								<span class="code-pill">{c.code}</span>
+								<div class="code-cell">
+									<span class="code-pill">{c.code}</span>
+									{#if isBannerCode}
+										<Badge variant="success" size="sm">Promoted</Badge>
+									{/if}
+								</div>
 							</td>
 							<td class="td-discount">{fmtDiscount(c.coupon)}</td>
 							<td class="td-duration">{fmtDuration(c.coupon)}</td>
@@ -378,17 +538,120 @@
 							</td>
 							<td class="td-action">
 								{#if c.active}
-									<button
-										class="deactivate-btn"
-										onclick={() => deactivate(c.id, c.code)}
-										disabled={deactivating === c.id}
-										aria-label="Deactivate {c.code}"
-									>
-										{deactivating === c.id ? '…' : 'Deactivate'}
-									</button>
+									<div class="row-actions">
+										<button
+											class="promote-btn"
+											class:promote-btn--active={isBannerCode}
+											onclick={() => promotingCode === c.code ? (promotingCode = null) : openPromoteForm(c)}
+											aria-label="Promote {c.code} as sitewide banner"
+										>
+											<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M5 3l14 9-14 9V3z"/></svg>
+											{isBannerCode ? 'Promoted' : 'Promote'}
+										</button>
+										<button
+											class="deactivate-btn"
+											onclick={() => deactivate(c.id, c.code)}
+											disabled={deactivating === c.id}
+											aria-label="Deactivate {c.code}"
+										>
+											{deactivating === c.id ? '…' : 'Deactivate'}
+										</button>
+									</div>
 								{/if}
 							</td>
 						</tr>
+
+						<!-- Inline promote form -->
+						{#if promotingCode === c.code}
+							<tr class="promote-row">
+								<td colspan="7">
+									<div class="promote-form">
+										<div class="promote-form__header">
+											<span class="promote-form__title">Configure banner for <strong>{c.code}</strong></span>
+											<button class="promote-form__close" onclick={() => promotingCode = null} aria-label="Close">
+												<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+											</button>
+										</div>
+
+										<div class="promote-form__grid">
+											<div class="field field--full">
+												<label class="field__label" for="bf-message">Banner message</label>
+												<input
+													id="bf-message"
+													class="field__input"
+													type="text"
+													placeholder="Limited time: get 30% off your first month"
+													bind:value={bf.message}
+												/>
+											</div>
+
+											<div class="field">
+												<label class="field__label" for="bf-cta">CTA button text</label>
+												<input
+													id="bf-cta"
+													class="field__input"
+													type="text"
+													placeholder="Claim offer"
+													bind:value={bf.cta}
+												/>
+											</div>
+
+											<div class="field">
+												<label class="field__label" for="bf-href">CTA link</label>
+												<input
+													id="bf-href"
+													class="field__input"
+													type="text"
+													placeholder="/pricing"
+													bind:value={bf.ctaHref}
+												/>
+											</div>
+
+											<div class="field">
+												<label class="field__label" for="bf-color">Accent color</label>
+												<select id="bf-color" class="field__select" bind:value={bf.accentColor}>
+													{#each ACCENT_OPTIONS as opt}
+														<option value={opt.value}>{opt.label}</option>
+													{/each}
+												</select>
+											</div>
+
+											<div class="field">
+												<label class="field__label" for="bf-expires">Banner expires <span class="field__hint">(optional)</span></label>
+												<input
+													id="bf-expires"
+													class="field__input"
+													type="date"
+													bind:value={bf.expiresAt}
+												/>
+											</div>
+										</div>
+
+										<!-- Preview -->
+										{#if bf.message}
+											<div class="promote-preview" style:background={
+												bf.accentColor === 'success' ? '#00a86b' :
+												bf.accentColor === 'warning' ? '#d97706' :
+												bf.accentColor === 'danger'  ? '#dc2626' : '#0070ff'
+											}>
+												<span class="promote-preview__msg">{bf.message}</span>
+												<span class="promote-preview__code">{c.code}</span>
+												<span class="promote-preview__cta">{bf.cta || 'Claim offer'} →</span>
+											</div>
+										{/if}
+
+										<div class="promote-form__actions">
+											<Button onclick={() => saveBanner(c.code)} loading={savingBanner}>
+												Make live
+											</Button>
+											<Button variant="ghost" onclick={() => promotingCode = null}>
+												Cancel
+											</Button>
+										</div>
+									</div>
+								</td>
+							</tr>
+						{/if}
 					{/each}
 				</tbody>
 			</table>
@@ -620,6 +883,156 @@
 		border-color: color-mix(in srgb, var(--color-danger) 30%, transparent);
 	}
 	.deactivate-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+	/* ─── Banner section ─────────────────── */
+	.banner-section {
+		background: var(--bg-surface);
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-lg);
+		padding: 20px 24px;
+		display: flex;
+		flex-direction: column;
+		gap: 14px;
+	}
+	.banner-section__header { display: flex; flex-direction: column; gap: 4px; }
+	.banner-section__title-row {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		color: var(--text-primary);
+	}
+	.banner-section__title { font-size: 0.9375rem; font-weight: 600; }
+	.banner-section__sub { font-size: 0.8125rem; color: var(--text-tertiary); margin: 0; }
+
+	.banner-loading { display: flex; align-items: center; padding: 8px 0; }
+
+	.banner-preview { display: flex; flex-direction: column; gap: 10px; }
+	.banner-preview__bar {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		padding: 8px 14px;
+		border-radius: var(--radius-md);
+		flex-wrap: wrap;
+	}
+	.banner-preview__message { font-size: 0.8125rem; color: #fff; opacity: 0.9; }
+	.banner-preview__code {
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		font-weight: 700;
+		color: #fff;
+		background: rgba(255,255,255,0.2);
+		padding: 2px 8px;
+		border-radius: 99px;
+		letter-spacing: 0.05em;
+	}
+	.banner-preview__cta {
+		font-size: 0.75rem;
+		font-weight: 700;
+		color: #fff;
+		background: rgba(255,255,255,0.15);
+		padding: 3px 10px;
+		border-radius: 5px;
+	}
+	.banner-preview__meta {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 16px;
+		font-size: 0.8125rem;
+		color: var(--text-tertiary);
+	}
+	.banner-preview__meta code {
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		background: var(--bg-surface-3);
+		border: 1px solid var(--border-subtle);
+		padding: 1px 5px;
+		border-radius: 4px;
+		color: var(--text-secondary);
+	}
+	.banner-empty { font-size: 0.875rem; color: var(--text-tertiary); margin: 0; }
+
+	/* ─── Code cell ───────────────────────── */
+	.code-cell { display: flex; align-items: center; gap: 6px; }
+
+	/* ─── Row actions ─────────────────────── */
+	.row-actions { display: flex; align-items: center; gap: 6px; justify-content: flex-end; }
+
+	.promote-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		font-size: 0.75rem;
+		font-weight: 500;
+		color: var(--color-brand-dim);
+		background: rgba(0, 112, 255, 0.06);
+		border: 1px solid rgba(0, 112, 255, 0.2);
+		border-radius: var(--radius-sm);
+		padding: 3px 9px;
+		cursor: pointer;
+		transition: all 0.12s;
+	}
+	.promote-btn:hover { background: rgba(0, 112, 255, 0.12); }
+	.promote-btn--active { background: rgba(0, 214, 143, 0.08); border-color: rgba(0, 214, 143, 0.3); color: var(--color-success); }
+
+	/* ─── Promote inline form ─────────────── */
+	.promote-row td { padding: 0 !important; background: var(--bg-surface-2) !important; border-top: 1px solid var(--border-subtle); }
+	.promote-row:hover td { background: var(--bg-surface-2) !important; }
+
+	.promote-form {
+		padding: 20px 24px;
+		display: flex;
+		flex-direction: column;
+		gap: 16px;
+	}
+	.promote-form__header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+	}
+	.promote-form__title { font-size: 0.875rem; color: var(--text-secondary); }
+	.promote-form__close {
+		background: none; border: none; cursor: pointer;
+		color: var(--text-tertiary); padding: 2px;
+		display: flex; align-items: center;
+		transition: color 0.12s;
+	}
+	.promote-form__close:hover { color: var(--text-primary); }
+
+	.promote-form__grid {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 12px;
+	}
+
+	.promote-preview {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		padding: 8px 14px;
+		border-radius: var(--radius-md);
+		flex-wrap: wrap;
+	}
+	.promote-preview__msg  { font-size: 0.8125rem; color: #fff; opacity: 0.9; }
+	.promote-preview__code {
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		font-weight: 700;
+		color: #fff;
+		background: rgba(255,255,255,0.2);
+		padding: 2px 8px;
+		border-radius: 99px;
+	}
+	.promote-preview__cta {
+		font-size: 0.75rem;
+		font-weight: 700;
+		color: #fff;
+		background: rgba(255,255,255,0.15);
+		padding: 3px 10px;
+		border-radius: 5px;
+	}
+
+	.promote-form__actions { display: flex; gap: 8px; }
 
 	/* ─── Empty / error ──────────────────── */
 	.state-empty {
