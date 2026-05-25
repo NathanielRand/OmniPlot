@@ -43,10 +43,10 @@
 		{ label: "Active Today",      value: stats.users.activeToday.toLocaleString(),    sub: "updated in 24h" },
 		{ label: "Cuts Today",        value: stats.jobs.today.toLocaleString(),           sub: "jobs processed" },
 		{ label: "MRR",               value: "—",                                         sub: "via Stripe" },
-		{ label: "Free Users",        value: stats.users.byTier.free.toLocaleString(),    sub: pct(stats.users.byTier.free, stats.users.total) },
-		{ label: "Lite Subscribers",  value: stats.users.byTier.lite.toLocaleString(),    sub: pct(stats.users.byTier.lite, stats.users.total) },
-		{ label: "Pro Subscribers",   value: stats.users.byTier.pro.toLocaleString(),     sub: pct(stats.users.byTier.pro, stats.users.total) },
-		{ label: "Admin Accounts",    value: stats.users.byTier.admin.toLocaleString(),   sub: "platform staff" },
+		{ label: "Free Users",        value: (stats.users.byTier.free  ?? 0).toLocaleString(), sub: pct(stats.users.byTier.free  ?? 0, stats.users.total) },
+		{ label: "Lite Subscribers",  value: (stats.users.byTier.lite  ?? 0).toLocaleString(), sub: pct(stats.users.byTier.lite  ?? 0, stats.users.total) },
+		{ label: "Pro Subscribers",   value: (stats.users.byTier.pro   ?? 0).toLocaleString(), sub: pct(stats.users.byTier.pro   ?? 0, stats.users.total) },
+		{ label: "Admin Accounts",    value: (stats.users.byTier.admin ?? 0).toLocaleString(), sub: "platform staff" },
 	] : []);
 
 	function pct(n: number, total: number) {

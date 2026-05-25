@@ -23,7 +23,7 @@ export const GET: RequestHandler = async ({ request }) => {
 	const usersSnap = await db.collection('users').orderBy('createdAt', 'desc').limit(500).get();
 
 	const KNOWN_USER_TIERS = new Set(['free', 'lite', 'pro', 'admin']);
-	const byTier: Record<string, number> = {};
+	const byTier: Record<string, number> = { free: 0, lite: 0, pro: 0, admin: 0 };
 	let activeToday = 0;
 
 	for (const doc of usersSnap.docs) {
