@@ -12,8 +12,12 @@
 	let stats = $state<{
 		users: {
 			total: number;
-			byTier: { free: number; lite: number; pro: number; admin: number };
+			byTier: Record<string, number>;
 			activeToday: number;
+		};
+		shops: {
+			total: number;
+			byShopPlan: Record<string, number>;
 		};
 		jobs: {
 			today: number;
@@ -43,23 +47,70 @@
 		"ytd": "Year to date",
 	};
 
-	// Tier distribution — computed from real data
-	const tierRows = $derived(stats ? [
-		{ label: "Free",  count: stats.users.byTier.free,  color: "var(--text-tertiary)" },
-		{ label: "Lite",  count: stats.users.byTier.lite,  color: "#a78bfa" },
-		{ label: "Pro",   count: stats.users.byTier.pro,   color: "#60a5ff" },
-	] : []);
+	// Tier distribution — all individual user tiers
+	const USER_TIER_COLORS: Record<string, string> = {
+		free:    'var(--text-tertiary)',
+		lite:    '#a78bfa',
+		pro:     '#60a5ff',
+		admin:   '#f59e0b',
+		other:   '#94a3b8',
+	};
+	const USER_TIER_ORDER = ['free', 'lite', 'pro', 'admin', 'other'];
+
+	// Shop plan rows
+	const SHOP_PLAN_COLORS: Record<string, string> = {
+		starter: '#34d399',
+		team:    '#06b6d4',
+		studio:  '#f472b6',
+		other:   '#94a3b8',
+	};
+	const SHOP_PLAN_ORDER = ['starter', 'team', 'studio', 'other'];
+	const SHOP_PLAN_LABELS: Record<string, string> = {
+		starter: 'Starter',
+		team:    'Team',
+		studio:  'Studio',
+		other:   'Other',
+	};
+
+	const userTierRows = $derived(() => {
+		if (!stats) return [];
+		const bt = stats.users.byTier;
+		// include any tier present in data, ordered by USER_TIER_ORDER then remainder
+		const keys = [...new Set([...USER_TIER_ORDER, ...Object.keys(bt)])].filter(k => (bt[k] ?? 0) > 0);
+		return keys.map(k => ({
+			label: k.charAt(0).toUpperCase() + k.slice(1),
+			count: bt[k] ?? 0,
+			color: USER_TIER_COLORS[k] ?? '#94a3b8',
+		}));
+	});
+
+	const shopPlanRows = $derived(() => {
+		if (!stats) return [];
+		const bp = stats.shops.byShopPlan;
+		const keys = [...new Set([...SHOP_PLAN_ORDER, ...Object.keys(bp)])].filter(k => (bp[k] ?? 0) > 0);
+		return keys.map(k => ({
+			label: SHOP_PLAN_LABELS[k] ?? k,
+			count: bp[k] ?? 0,
+			color: SHOP_PLAN_COLORS[k] ?? '#94a3b8',
+		}));
+	});
 
 	const totalUsers = $derived(stats?.users.total ?? 0);
+	const totalShops = $derived(stats?.shops.total ?? 0);
 
-	function tierPct(count: number): number {
+	function userPct(count: number): number {
 		return totalUsers ? Math.round((count / totalUsers) * 100) : 0;
 	}
+	function shopPct(count: number): number {
+		return totalShops ? Math.round((count / totalShops) * 100) : 0;
+	}
 
-	// Donut segments (SVG stroke-dasharray on circumference ≈ 100)
-	const donutSegments = $derived(tierRows.map((t, i) => {
-		const pct    = tierPct(t.count);
-		const offset = 25 - tierRows.slice(0, i).reduce((s, r) => s + tierPct(r.count), 0);
+	// Donut combines all rows — users + shops — normalised to 100
+	const donutRows = $derived([...userTierRows(), ...shopPlanRows()]);
+	const donutTotal = $derived(donutRows.reduce((s, r) => s + r.count, 0));
+	const donutSegments = $derived(donutRows.map((t, i) => {
+		const pct    = donutTotal ? Math.round((t.count / donutTotal) * 100) : 0;
+		const offset = 25 - donutRows.slice(0, i).reduce((s, r) => s + (donutTotal ? Math.round((r.count / donutTotal) * 100) : 0), 0);
 		return { ...t, pct, offset };
 	}));
 
@@ -162,34 +213,56 @@
 			<div class="admin-panel__header">
 				<h2 class="admin-panel__title">Tier distribution</h2>
 				{#if stats}
-					<span class="chart-note">{stats.users.total.toLocaleString()} total</span>
+					<span class="chart-note">{stats.users.total.toLocaleString()} users · {stats.shops.total.toLocaleString()} shops</span>
 				{/if}
 			</div>
 			<div class="tier-body">
 				{#if loading}
-					{#each { length: 3 } as _}
+					{#each { length: 6 } as _}
 						<div class="tier-row">
-							<div class="skel" style="width:36px;height:12px"></div>
+							<div class="skel" style="width:44px;height:12px"></div>
 							<div class="skel" style="flex:1;height:6px;border-radius:3px"></div>
-							<div class="skel" style="width:30px;height:10px"></div>
+							<div class="skel" style="width:28px;height:10px"></div>
+							<div class="skel" style="width:28px;height:10px"></div>
 						</div>
 					{/each}
-				{:else if !totalUsers}
+				{:else if !totalUsers && !totalShops}
 					<div class="chart-empty" style="padding:24px 0">
 						<p>No users yet</p>
 					</div>
 				{:else}
-					{#each tierRows as t}
-						<div class="tier-row">
-							<div class="tier-label">{t.label}</div>
-							<div class="tier-bar-wrap">
-								<div class="tier-bar" style="width: {tierPct(t.count)}%; background: {t.color}; opacity: 0.7"></div>
-							</div>
-							<div class="tier-count" style="color: {t.color}">{t.count}</div>
-							<div class="tier-pct">{tierPct(t.count)}%</div>
-						</div>
-					{/each}
+					<!-- Individual users -->
 					{#if totalUsers > 0}
+						<div class="tier-group-label">Individual</div>
+						{#each userTierRows() as t}
+							<div class="tier-row">
+								<div class="tier-label">{t.label}</div>
+								<div class="tier-bar-wrap">
+									<div class="tier-bar" style="width:{userPct(t.count)}%;background:{t.color};opacity:0.75"></div>
+								</div>
+								<div class="tier-count" style="color:{t.color}">{t.count}</div>
+								<div class="tier-pct">{userPct(t.count)}%</div>
+							</div>
+						{/each}
+					{/if}
+
+					<!-- Shop / team plans -->
+					{#if totalShops > 0}
+						<div class="tier-group-label tier-group-label--spaced">Shop plans</div>
+						{#each shopPlanRows() as t}
+							<div class="tier-row">
+								<div class="tier-label">{t.label}</div>
+								<div class="tier-bar-wrap">
+									<div class="tier-bar" style="width:{shopPct(t.count)}%;background:{t.color};opacity:0.75"></div>
+								</div>
+								<div class="tier-count" style="color:{t.color}">{t.count}</div>
+								<div class="tier-pct">{shopPct(t.count)}%</div>
+							</div>
+						{/each}
+					{/if}
+
+					<!-- Donut — all segments combined -->
+					{#if donutTotal > 0}
 						<div class="tier-donut" aria-hidden="true">
 							<svg viewBox="0 0 36 36" width="90" height="90">
 								<circle cx="18" cy="18" r="15.9" fill="transparent" stroke="var(--bg-surface-3)" stroke-width="3.2"/>
@@ -379,14 +452,20 @@
 	.chart-empty span { font-size: 0.8125rem; }
 
 	/* Tier panel */
-	.tier-body { padding: 16px; display: flex; flex-direction: column; gap: 14px; align-items: center; }
-	.tier-row  { display: grid; grid-template-columns: 36px 1fr 44px 36px; align-items: center; gap: 8px; width: 100%; }
+	.tier-body { padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 10px; align-items: center; }
+	.tier-group-label {
+		width: 100%; font-size: 0.625rem; font-weight: 600; font-family: var(--font-mono);
+		text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-tertiary);
+		padding-bottom: 2px; border-bottom: 1px solid var(--border-subtle);
+	}
+	.tier-group-label--spaced { margin-top: 6px; }
+	.tier-row  { display: grid; grid-template-columns: 44px 1fr 36px 34px; align-items: center; gap: 8px; width: 100%; }
 	.tier-label { font-size: 0.8125rem; font-weight: 500; color: var(--text-secondary); }
 	.tier-bar-wrap { height: 6px; background: var(--bg-surface-3); border-radius: 3px; overflow: hidden; }
 	.tier-bar   { height: 100%; border-radius: 3px; transition: width 0.4s var(--ease-smooth); }
 	.tier-count { font-family: var(--font-mono); font-size: 0.75rem; text-align: right; }
 	.tier-pct   { font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-tertiary); text-align: right; }
-	.tier-donut { margin-top: 4px; }
+	.tier-donut { margin-top: 6px; }
 
 	/* Bottom row */
 	.bottom-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }

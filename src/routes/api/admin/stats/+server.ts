@@ -22,15 +22,34 @@ export const GET: RequestHandler = async ({ request }) => {
 	// ── Users ────────────────────────────────────
 	const usersSnap = await db.collection('users').orderBy('createdAt', 'desc').limit(500).get();
 
-	const byTier   = { free: 0, lite: 0, pro: 0, admin: 0 };
+	const KNOWN_USER_TIERS = new Set(['free', 'lite', 'pro', 'admin']);
+	const byTier: Record<string, number> = {};
 	let activeToday = 0;
 
 	for (const doc of usersSnap.docs) {
-		const d = doc.data();
+		const d    = doc.data();
 		const tier = d.tier ?? 'free';
-		if (tier in byTier) byTier[tier as keyof typeof byTier]++;
+		const key  = KNOWN_USER_TIERS.has(tier) ? tier : 'other';
+		byTier[key] = (byTier[key] ?? 0) + 1;
 		const lastActive: Date | null = d.updatedAt?.toDate?.() ?? null;
 		if (lastActive && lastActive >= oneDayAgo) activeToday++;
+	}
+
+	// ── Shops ─────────────────────────────────────
+	const KNOWN_SHOP_PLANS = new Set(['starter', 'team', 'studio']);
+	const byShopPlan: Record<string, number> = {};
+	let totalShops = 0;
+
+	try {
+		const shopsSnap = await db.collection('shops').get();
+		totalShops = shopsSnap.size;
+		for (const doc of shopsSnap.docs) {
+			const plan = doc.data().plan ?? 'starter';
+			const key  = KNOWN_SHOP_PLANS.has(plan) ? plan : 'other';
+			byShopPlan[key] = (byShopPlan[key] ?? 0) + 1;
+		}
+	} catch {
+		// shops collection may not exist yet
 	}
 
 	const recentSignups = usersSnap.docs.slice(0, 5).map((doc) => {
@@ -89,6 +108,10 @@ export const GET: RequestHandler = async ({ request }) => {
 			byTier,
 			activeToday,
 			recentSignups,
+		},
+		shops: {
+			total:      totalShops,
+			byShopPlan,
 		},
 		jobs: {
 			today:  cutsToday,

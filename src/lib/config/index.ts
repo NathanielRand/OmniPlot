@@ -520,12 +520,13 @@ export const MARKETING_NAV = [
 ] as const;
 
 export const ADMIN_NAV = [
-	{ label: "Overview", href: "/admin", icon: "layout-dashboard" },
-	{ label: "Users", href: "/admin/users", icon: "users" },
-	{ label: "Patterns", href: "/admin/patterns", icon: "vector-bezier" },
-	{ label: "Analytics", href: "/admin/analytics", icon: "chart-bar" },
-	{ label: "Billing", href: "/admin/billing", icon: "credit-card" },
-	{ label: "Settings", href: "/admin/settings", icon: "settings" },
+	{ label: "Overview",  href: "/admin",           icon: "layout-dashboard" },
+	{ label: "Users",     href: "/admin/users",      icon: "users" },
+	{ label: "Patterns",  href: "/admin/patterns",   icon: "vector-bezier" },
+	{ label: "Analytics", href: "/admin/analytics",  icon: "chart-bar" },
+	{ label: "Products",  href: "/admin/products",   icon: "package" },
+	{ label: "Billing",   href: "/admin/billing",    icon: "receipt" },
+	{ label: "Settings",  href: "/admin/settings",   icon: "settings" },
 ] as const;
 
 // ─── FAQ content ──────────────────────────────
