@@ -661,6 +661,41 @@ export const FAQ_ITEMS = [
 // ─── Changelog ────────────────────────────────
 export const CHANGELOG = [
 	{
+		version: "1.6.0",
+		date: "2026-05-25",
+		label: "Billing & Admin",
+		changes: [
+			{
+				type: "feature",
+				text: "Admin billing costs page — live view of platform-level Stripe charges, payouts, and connected account fees in one place.",
+			},
+			{
+				type: "feature",
+				text: "\"Refresh for updates\" banner — when a new deployment is detected the app prompts users to reload instead of silently diverging.",
+			},
+			{
+				type: "improvement",
+				text: "Admin billing refactored into a dedicated Products page with cleaner plan management and Stripe metadata sync.",
+			},
+			{
+				type: "improvement",
+				text: "Stripe connected account wiring updated — billing products now sync correctly to the platform's connected account.",
+			},
+			{
+				type: "improvement",
+				text: "OmniPlot logo and favicon updated to the new SG mark; favicon served from /favicon.svg with SVG type hint.",
+			},
+			{
+				type: "fix",
+				text: "Admin dashboard no longer crashes when a subscription tier has zero users — all tier counts are now initialised to 0 before aggregation.",
+			},
+			{
+				type: "fix",
+				text: "Firebase Google Sign-In restored on production: corrected missing VITE_FIREBASE_* environment variables and removed the X-Frame-Options: DENY header that was blocking the Firebase auth iframe.",
+			},
+		],
+	},
+	{
 		version: "1.5.0",
 		date: "2026-05-24",
 		label: "Cut Agent",

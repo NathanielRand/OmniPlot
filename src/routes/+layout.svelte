@@ -5,6 +5,7 @@
 	import { themeStore, patternStore, userStore, shopStore } from "$lib/stores";
 	import Toast from "$lib/components/ui/Toast.svelte";
 	import PricingModal from "$lib/components/ui/PricingModal.svelte";
+	import UpdateBanner from "$lib/components/ui/UpdateBanner.svelte";
 	import { initAuth } from "$lib/firebase/auth";
 	import { subscribeToShop } from "$lib/firebase/firestore";
 
@@ -46,3 +47,4 @@
 
 <Toast />
 <PricingModal />
+<UpdateBanner />
