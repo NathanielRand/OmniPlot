@@ -261,6 +261,7 @@
 				<div class="mkt-footer__col">
 					<h4 class="mkt-footer__col-title">Company</h4>
 					<a href="/about" class="mkt-footer__link">About</a>
+					<a href="/insights" class="mkt-footer__link">Insights</a>
 					<a href="/support" class="mkt-footer__link">Support</a>
 					<a href="/privacy" class="mkt-footer__link">Privacy</a>
 					<a href="/terms" class="mkt-footer__link">Terms</a>

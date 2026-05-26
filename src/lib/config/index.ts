@@ -597,6 +597,7 @@ export const APP_NAV = [
 export const MARKETING_NAV = [
 	{ label: "Features",  href: "/#features" },
 	{ label: "Pricing",   href: "/pricing" },
+	{ label: "Insights",  href: "/insights" },
 	{ label: "Agent",     href: "/agent" },
 	{ label: "FAQ",       href: "/faq" },
 	{ label: "Changelog", href: "/changelog" },
@@ -605,16 +606,25 @@ export const MARKETING_NAV = [
 ] as const;
 
 export const ADMIN_NAV = [
-	{ label: "Overview",  href: "/admin",           icon: "layout-dashboard" },
-	{ label: "Users",     href: "/admin/users",      icon: "users" },
-	{ label: "Patterns",  href: "/admin/patterns",   icon: "vector-bezier" },
-	{ label: "Analytics", href: "/admin/analytics",  icon: "chart-bar" },
-	{ label: "Products",  href: "/admin/products",   icon: "package" },
-	{ label: "Coupons",   href: "/admin/coupons",    icon: "tag" },
-	{ label: "Reports",   href: "/admin/reports",    icon: "flag" },
-	{ label: "Emails",    href: "/admin/emails",     icon: "mail" },
-	{ label: "Billing",   href: "/admin/billing",    icon: "receipt" },
-	{ label: "Settings",  href: "/admin/settings",   icon: "settings" },
+	{ label: "Overview",  href: "/admin",            icon: "layout-dashboard" },
+	{ label: "Users",     href: "/admin/users",       icon: "users" },
+	{ label: "Patterns",  href: "/admin/patterns",    icon: "vector-bezier" },
+	{ label: "Insights",  href: "/admin/insights",    icon: "book-open" },
+	{ label: "Analytics", href: "/admin/analytics",   icon: "chart-bar" },
+	{ label: "Products",  href: "/admin/products",    icon: "package" },
+	{ label: "Coupons",   href: "/admin/coupons",     icon: "tag" },
+	{ label: "Reports",   href: "/admin/reports",     icon: "flag" },
+	{ label: "Emails",    href: "/admin/emails",      icon: "mail" },
+	{ label: "Billing",   href: "/admin/billing",     icon: "receipt" },
+	{ label: "Settings",  href: "/admin/settings",    icon: "settings" },
+] as const;
+
+// ─── Insight categories ───────────────────────
+export const INSIGHT_CATEGORIES = [
+	{ value: "ppf",         label: "PPF",           badge: "brand"   },
+	{ value: "window-tint", label: "Window Tint",   badge: "lite"    },
+	{ value: "guides",      label: "Guides",        badge: "success" },
+	{ value: "vehicles",    label: "Vehicles",      badge: "warning" },
 ] as const;
 
 // ─── FAQ content ──────────────────────────────

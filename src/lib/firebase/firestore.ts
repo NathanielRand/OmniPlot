@@ -35,6 +35,7 @@ import type {
 	ShopInvite,
 	ShopRole,
 	PlotterDevice,
+	InsightPost,
 } from "$lib/types";
 
 // ─── Collection refs ──────────────────────────
@@ -48,6 +49,7 @@ export const Collections = {
 	PLOTTERS: "plotters",
 	SHOPS: "shops",
 	SHOP_INVITES: "shopInvites",
+	INSIGHTS: "insights",
 } as const;
 
 // ─── Converters ───────────────────────────────
@@ -835,4 +837,94 @@ export function subscribeToPlotters(
 	return onSnapshot(q, (snap) => {
 		callback(snap.docs.map((d) => toPlotterDevice(d.id, d.data())));
 	});
+}
+
+// ─── Insight converters ───────────────────────
+export function toInsightPost(id: string, data: DocumentData): InsightPost {
+	return {
+		id,
+		slug:             data.slug             ?? "",
+		title:            data.title            ?? "",
+		excerpt:          data.excerpt          ?? "",
+		content:          data.content          ?? "",
+		category:         data.category         ?? "guides",
+		tags:             data.tags             ?? [],
+		status:           data.status           ?? "draft",
+		coverImageUrl:    data.coverImageUrl    ?? null,
+		author:           data.author           ?? "OmniPlot",
+		readTimeMinutes:  data.readTimeMinutes  ?? 1,
+		viewCount:        data.viewCount        ?? 0,
+		metaTitle:        data.metaTitle        ?? null,
+		metaDescription:  data.metaDescription  ?? null,
+		publishedAt:      data.publishedAt ? fromTimestamp(data.publishedAt) : null,
+		createdAt:        fromTimestamp(data.createdAt),
+		updatedAt:        fromTimestamp(data.updatedAt),
+	};
+}
+
+// ─── Insight CRUD ─────────────────────────────
+export async function getPublishedInsights(): Promise<InsightPost[]> {
+	const q = query(
+		collection(db, Collections.INSIGHTS),
+		where("status", "==", "published"),
+		orderBy("publishedAt", "desc"),
+		limit(100),
+	);
+	const snap = await getDocs(q);
+	return snap.docs.map((d) => toInsightPost(d.id, d.data()));
+}
+
+export async function getInsightBySlug(slug: string): Promise<InsightPost | null> {
+	const q = query(
+		collection(db, Collections.INSIGHTS),
+		where("slug", "==", slug),
+		where("status", "==", "published"),
+		limit(1),
+	);
+	const snap = await getDocs(q);
+	if (snap.empty) return null;
+	return toInsightPost(snap.docs[0].id, snap.docs[0].data());
+}
+
+export async function getAllInsights(): Promise<InsightPost[]> {
+	// No orderBy — avoids composite index requirement. Sort client-side.
+	const q = query(
+		collection(db, Collections.INSIGHTS),
+		limit(200),
+	);
+	const snap = await getDocs(q);
+	return snap.docs
+		.map((d) => toInsightPost(d.id, d.data()))
+		.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+}
+
+export async function createInsightPost(
+	data: Omit<InsightPost, "id" | "createdAt" | "updatedAt">,
+): Promise<string> {
+	const ref = doc(collection(db, Collections.INSIGHTS));
+	await setDoc(ref, {
+		...data,
+		publishedAt: data.publishedAt ? Timestamp.fromDate(data.publishedAt) : null,
+		createdAt: serverTimestamp(),
+		updatedAt: serverTimestamp(),
+	});
+	return ref.id;
+}
+
+export async function updateInsightPost(
+	id: string,
+	patch: Partial<Omit<InsightPost, "id" | "createdAt">>,
+): Promise<void> {
+	const { publishedAt, ...rest } = patch;
+	await updateDoc(doc(db, Collections.INSIGHTS, id), {
+		...rest,
+		...(publishedAt !== undefined
+			? { publishedAt: publishedAt ? Timestamp.fromDate(publishedAt) : null }
+			: {}),
+		updatedAt: serverTimestamp(),
+	});
+}
+
+export async function deleteInsightPost(id: string): Promise<void> {
+	await deleteDoc(doc(db, Collections.INSIGHTS, id));
 }

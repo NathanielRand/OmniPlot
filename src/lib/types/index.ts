@@ -390,6 +390,30 @@ export interface PatternRequest {
 	requestedAt: string;
 }
 
+// ─── Insights / Blog ─────────────────────────
+export type InsightCategory = 'ppf' | 'window-tint' | 'guides' | 'vehicles';
+export type InsightStatus   = 'draft' | 'published';
+
+export interface InsightPost {
+	id: string;
+	slug: string;
+	title: string;
+	excerpt: string;
+	content: string;          // HTML
+	category: InsightCategory;
+	tags: string[];
+	status: InsightStatus;
+	coverImageUrl: string | null;
+	author: string;
+	readTimeMinutes: number;
+	viewCount: number;
+	metaTitle: string | null;
+	metaDescription: string | null;
+	publishedAt: Date | null;
+	createdAt: Date;
+	updatedAt: Date;
+}
+
 // ─── UI State ─────────────────────────────────
 export interface Toast {
 	id: string;
