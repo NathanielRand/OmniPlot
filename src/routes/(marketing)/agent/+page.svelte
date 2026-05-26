@@ -17,7 +17,10 @@
 
 	const AGENT_VERSION = "1.0.0";
 	const APP_URL = import.meta.env.VITE_APP_URL ?? "https://omniplot.app";
-	const BASE = `${APP_URL}/downloads/agent/v${AGENT_VERSION}`;
+
+	function dlUrl(file: string, platform: string) {
+		return `/api/agent/download?file=${encodeURIComponent(file)}&platform=${encodeURIComponent(platform)}&version=${AGENT_VERSION}`;
+	}
 
 	const downloads: Record<Exclude<Platform, "unknown">, { label: string; file: string; badge: string }> = {
 		"windows":   { label: "Windows",       file: `omniplot-agent-windows-amd64.exe`, badge: "x64" },
@@ -61,7 +64,7 @@
 			<div class="agent-hero__actions">
 				{#if detected !== "unknown"}
 					{@const d = downloads[detected]}
-					<a href="{BASE}/{d.file}" class="cta-btn cta-btn--primary" download>
+					<a href={dlUrl(d.file, detected)} class="cta-btn cta-btn--primary">
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
 						Download for {d.label}
 					</a>
@@ -255,10 +258,9 @@
 				{#each platformOrder as pid}
 					{@const d = downloads[pid]}
 					<a
-						href="{BASE}/{d.file}"
+						href={dlUrl(d.file, pid)}
 						class="download-card"
 						class:download-card--detected={detected === pid}
-						download
 					>
 						<div class="download-card__icon">
 							{#if pid === "windows"}
@@ -323,7 +325,7 @@
 		<div class="agent-cta__btns">
 			{#if detected !== "unknown"}
 				{@const d = downloads[detected]}
-				<a href="{BASE}/{d.file}" class="cta-btn cta-btn--primary" download>Download for {d.label}</a>
+				<a href={dlUrl(d.file, detected)} class="cta-btn cta-btn--primary">Download for {d.label}</a>
 			{:else}
 				<a href="#downloads" class="cta-btn cta-btn--primary">Download</a>
 			{/if}

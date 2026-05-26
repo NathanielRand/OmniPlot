@@ -244,16 +244,31 @@ export async function getPatternsByVehicle(
 // ─── Job queries ──────────────────────────────
 export async function getUserJobs(
 	uid: string,
-	limitCount = 20,
+	limitCount = 100,
 ): Promise<CutJob[]> {
+	// Avoid orderBy(updatedAt) + where(userId) — that combination requires a
+	// composite index which may not exist and causes the SDK to hang instead of
+	// rejecting cleanly. Sort client-side after fetching instead.
 	const q = query(
 		collection(db, Collections.JOBS),
 		where("userId", "==", uid),
-		orderBy("updatedAt", "desc"),
 		limit(limitCount),
 	);
 	const snap = await getDocs(q);
-	return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as CutJob);
+	return snap.docs
+		.map((d) => {
+			const data = d.data();
+			// Firestore returns Timestamp objects; coerce to JS Date so callers
+			// that type CutJob.createdAt as Date don't crash at runtime.
+			return {
+				id: d.id,
+				...data,
+				createdAt:   data.createdAt?.toDate?.()   ?? data.createdAt   ?? new Date(),
+				updatedAt:   data.updatedAt?.toDate?.()   ?? data.updatedAt   ?? new Date(),
+				completedAt: data.completedAt?.toDate?.() ?? data.completedAt ?? null,
+			} as CutJob;
+		})
+		.sort((a, b) => (b.updatedAt as Date).getTime() - (a.updatedAt as Date).getTime());
 }
 
 export async function saveJob(job: CutJob): Promise<void> {

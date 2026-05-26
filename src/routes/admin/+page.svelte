@@ -16,6 +16,12 @@
 			activeToday: number;
 			recentSignups: { uid: string; displayName: string; email: string; tier: string; createdAt: string | null }[];
 		};
+		shops: {
+			total: number;
+			byShopPlan: { starter: number; team: number; studio: number };
+		};
+		plotters: { total: number };
+		agent: { downloads: number };
 		jobs: {
 			today: number;
 			recent: { id: string; userId: string; userEmail: string; vehicleName: string; status: string; pieces: number; createdAt: string | null }[];
@@ -37,16 +43,42 @@
 		}
 	});
 
-	// ── Derived metrics ─────────────────────────────
-	const metrics = $derived(stats ? [
-		{ label: "Total Users",       value: stats.users.total.toLocaleString(),          sub: "all accounts" },
-		{ label: "Active Today",      value: stats.users.activeToday.toLocaleString(),    sub: "updated in 24h" },
-		{ label: "Cuts Today",        value: stats.jobs.today.toLocaleString(),           sub: "jobs processed" },
-		{ label: "MRR",               value: "—",                                         sub: "via Stripe" },
-		{ label: "Free Users",        value: (stats.users.byTier.free  ?? 0).toLocaleString(), sub: pct(stats.users.byTier.free  ?? 0, stats.users.total) },
-		{ label: "Lite Subscribers",  value: (stats.users.byTier.lite  ?? 0).toLocaleString(), sub: pct(stats.users.byTier.lite  ?? 0, stats.users.total) },
-		{ label: "Pro Subscribers",   value: (stats.users.byTier.pro   ?? 0).toLocaleString(), sub: pct(stats.users.byTier.pro   ?? 0, stats.users.total) },
-		{ label: "Admin Accounts",    value: (stats.users.byTier.admin ?? 0).toLocaleString(), sub: "platform staff" },
+	// ── Derived metric sections ──────────────────────
+	const metricSections = $derived(stats ? [
+		{
+			title: "Platform",
+			cards: [
+				{ label: "Total Users",      value: stats.users.total.toLocaleString(),       sub: "all accounts" },
+				{ label: "Active Today",     value: stats.users.activeToday.toLocaleString(), sub: "updated in 24h" },
+				{ label: "Cuts Today",       value: stats.jobs.today.toLocaleString(),        sub: "jobs processed" },
+				{ label: "MRR",              value: "—",                                      sub: "via Stripe" },
+			],
+		},
+		{
+			title: "Individual Accounts",
+			cards: [
+				{ label: "Free",  value: (stats.users.byTier.free  ?? 0).toLocaleString(), sub: pct(stats.users.byTier.free  ?? 0, stats.users.total) },
+				{ label: "Lite",  value: (stats.users.byTier.lite  ?? 0).toLocaleString(), sub: pct(stats.users.byTier.lite  ?? 0, stats.users.total) },
+				{ label: "Pro",   value: (stats.users.byTier.pro   ?? 0).toLocaleString(), sub: pct(stats.users.byTier.pro   ?? 0, stats.users.total) },
+				{ label: "Admin", value: (stats.users.byTier.admin ?? 0).toLocaleString(), sub: "platform staff" },
+			],
+		},
+		{
+			title: "Shop Accounts",
+			cards: [
+				{ label: "Starter Shops", value: (stats.shops?.byShopPlan?.starter ?? 0).toLocaleString(), sub: pct(stats.shops?.byShopPlan?.starter ?? 0, stats.shops?.total ?? 0) },
+				{ label: "Team Shops",    value: (stats.shops?.byShopPlan?.team    ?? 0).toLocaleString(), sub: pct(stats.shops?.byShopPlan?.team    ?? 0, stats.shops?.total ?? 0) },
+				{ label: "Studio Shops",  value: (stats.shops?.byShopPlan?.studio  ?? 0).toLocaleString(), sub: pct(stats.shops?.byShopPlan?.studio  ?? 0, stats.shops?.total ?? 0) },
+				{ label: "Total Shops",   value: (stats.shops?.total ?? 0).toLocaleString(),               sub: "all shop accounts" },
+			],
+		},
+		{
+			title: "Infrastructure",
+			cards: [
+				{ label: "Registered Plotters", value: (stats.plotters?.total ?? 0).toLocaleString(), sub: "across all users" },
+				{ label: "Agent Downloads",     value: (stats.agent?.downloads ?? 0).toLocaleString(), sub: "total binary downloads" },
+			],
+		},
 	] : []);
 
 	function pct(n: number, total: number) {
@@ -70,32 +102,41 @@
 		<Badge variant="success" dot>All systems operational</Badge>
 	</div>
 
-	<!-- Metrics grid -->
+	<!-- Metrics sections -->
 	{#if loading}
-		<div class="metrics-grid">
-			{#each { length: 8 } as _}
-				<div class="metric-card metric-card--skeleton">
-					<div class="skel skel--label"></div>
-					<div class="skel skel--value"></div>
-					<div class="skel skel--sub"></div>
+		{#each [8, 4, 4, 2] as count}
+			<div class="metrics-section">
+				<div class="metrics-grid">
+					{#each { length: count } as _}
+						<div class="metric-card metric-card--skeleton">
+							<div class="skel skel--label"></div>
+							<div class="skel skel--value"></div>
+							<div class="skel skel--sub"></div>
+						</div>
+					{/each}
 				</div>
-			{/each}
-		</div>
+			</div>
+		{/each}
 	{:else if error}
 		<div class="load-error">
 			<p>{error}</p>
 			<button class="retry-btn" onclick={() => location.reload()}>Retry</button>
 		</div>
 	{:else}
-		<div class="metrics-grid">
-			{#each metrics as m}
-				<div class="metric-card">
-					<div class="metric-card__label">{m.label}</div>
-					<div class="metric-card__value">{m.value}</div>
-					<div class="metric-card__sub">{m.sub}</div>
+		{#each metricSections as section}
+			<div class="metrics-section">
+				<h2 class="metrics-section__title">{section.title}</h2>
+				<div class="metrics-grid">
+					{#each section.cards as m}
+						<div class="metric-card">
+							<div class="metric-card__label">{m.label}</div>
+							<div class="metric-card__value">{m.value}</div>
+							<div class="metric-card__sub">{m.sub}</div>
+						</div>
+					{/each}
 				</div>
-			{/each}
-		</div>
+			</div>
+		{/each}
 	{/if}
 
 	<!-- Two-column panels -->
@@ -248,6 +289,20 @@
 	.overview-sub   { font-size: 0.875rem; color: var(--text-secondary); }
 
 	/* Metrics */
+	.metrics-section {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+	.metrics-section__title {
+		font-size: 0.6875rem;
+		font-weight: 600;
+		font-family: var(--font-mono);
+		text-transform: uppercase;
+		letter-spacing: 0.1em;
+		color: var(--text-tertiary);
+		padding-left: 2px;
+	}
 	.metrics-grid {
 		display: grid;
 		grid-template-columns: repeat(4, 1fr);
