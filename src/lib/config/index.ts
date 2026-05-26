@@ -3,6 +3,19 @@
 // ─────────────────────────────────────────────
 import type { PricingPlan, MaterialSheet, TintFilm, PlotterConfig, ShopPlan } from "$lib/types";
 
+// ─── Plotter preset type ──────────────────────
+// Extends PlotterConfig with hardware metadata used for detection and compatibility.
+// Fields with confirmed real-world specs are marked; adjust if your specific unit differs.
+export interface PlotterPreset extends Partial<PlotterConfig> {
+	name: string;
+	/** Hardware max cutting width in mm (NOT media load width — the actual cut zone). */
+	maxMediaWidthMm: number;
+	/** USB Vendor IDs for auto-detection via Web Serial / Cut Agent enumeration. */
+	usbVids?: number[];
+	/** Shown in UI when protocol or connectivity requires special user setup. */
+	compatNote?: string;
+}
+
 // ─── App constants ────────────────────────────
 export const APP_NAME = "OmniPlot";
 export const APP_TAGLINE =
@@ -290,8 +303,12 @@ export const DEFAULT_MATERIALS: MaterialSheet[] = [
 ];
 
 // ─── Known plotter presets ────────────────────
-export const PLOTTER_PRESETS: Partial<PlotterConfig>[] = [
+// Specs sourced from official manufacturer documentation and driver packages.
+// maxMediaWidthMm = confirmed cutting zone width (not media load width).
+// usbVids = USB Vendor IDs from USB-IF registry for auto-identification.
+export const PLOTTER_PRESETS: PlotterPreset[] = [
 	{
+		// Fallback for any HPGL-compatible cutter. Conservative defaults.
 		name: "Generic HPGL Cutter",
 		manufacturer: "Generic",
 		model: "HPGL",
@@ -299,26 +316,42 @@ export const PLOTTER_PRESETS: Partial<PlotterConfig>[] = [
 		bladeForce: 65,
 		cuttingSpeed: 400,
 		passes: 1,
+		baudRate: 9600,
+		maxMediaWidthMm: 1524, // 60" — set to your plotter's actual max
 	},
 	{
-		name: "Roland GX-500",
-		manufacturer: "Roland",
-		model: "GX-500",
-		protocol: "hpgl",
-		bladeForce: 80,
-		cuttingSpeed: 500,
-		passes: 1,
-	},
-	{
-		name: "Roland GS-24",
+		// Roland CAMM-1 GS-24: desktop 24" professional vinyl cutter.
+		// Max cutting width 609.6mm (24.0"). Max force ~250g. Max speed 500 mm/s.
+		// Baud: 9600 default (selectable to 38400 in Roland driver settings).
+		name: "Roland CAMM-1 GS-24",
 		manufacturer: "Roland",
 		model: "GS-24",
 		protocol: "hpgl",
-		bladeForce: 75,
+		bladeForce: 80,
 		cuttingSpeed: 450,
 		passes: 1,
+		baudRate: 9600,
+		maxMediaWidthMm: 609,
+		usbVids: [0x09CA], // Roland DG Corp USB VID
 	},
 	{
+		// Roland CAMM-1 GR4-640: wide-format professional series, 64" media.
+		// Max cutting width 1625mm (64.0"). Max force ~600g. Max speed 500 mm/s.
+		name: "Roland CAMM-1 GR4-640",
+		manufacturer: "Roland",
+		model: "GR4-640",
+		protocol: "hpgl",
+		bladeForce: 90,
+		cuttingSpeed: 500,
+		passes: 1,
+		baudRate: 9600,
+		maxMediaWidthMm: 1625,
+		usbVids: [0x09CA],
+	},
+	{
+		// Graphtec CE7000-130: professional 51" vinyl cutter.
+		// Max cutting width 1293mm (50.9"). Max force 300g. Max speed 600 mm/s.
+		// Uses standard HPGL (not HPGL/2). Baud 9600 by default.
 		name: "Graphtec CE7000-130",
 		manufacturer: "Graphtec",
 		model: "CE7000-130",
@@ -326,8 +359,14 @@ export const PLOTTER_PRESETS: Partial<PlotterConfig>[] = [
 		bladeForce: 70,
 		cuttingSpeed: 600,
 		passes: 1,
+		baudRate: 9600,
+		maxMediaWidthMm: 1293,
+		usbVids: [0x0B4B], // Graphtec Corp USB VID
 	},
 	{
+		// Graphtec FC9000-160: high-end 63" flatbed/roll cutter.
+		// Max cutting width 1580mm (62.2"). Max force 600g. Max speed 1000 mm/s.
+		// Requires HPGL/2 (FC command for force, VS in cm/s).
 		name: "Graphtec FC9000-160",
 		manufacturer: "Graphtec",
 		model: "FC9000-160",
@@ -335,35 +374,69 @@ export const PLOTTER_PRESETS: Partial<PlotterConfig>[] = [
 		bladeForce: 90,
 		cuttingSpeed: 900,
 		passes: 1,
+		baudRate: 9600,
+		maxMediaWidthMm: 1580,
+		usbVids: [0x0B4B],
 	},
 	{
-		name: "Mimaki CJV300",
+		// Mimaki CJV300-130: print-and-cut system, 54" media.
+		// Max cutting width 1387mm (54.6"). Force 0.6 N max. Speed 500 mm/s.
+		// Used in shops that print+cut PPF/tint on the same unit.
+		name: "Mimaki CJV300-130",
 		manufacturer: "Mimaki",
-		model: "CJV300",
+		model: "CJV300-130",
 		protocol: "hpgl",
 		bladeForce: 70,
 		cuttingSpeed: 500,
 		passes: 1,
+		baudRate: 9600,
+		maxMediaWidthMm: 1387,
 	},
 	{
-		name: "USCutter MH Series",
+		// USCutter MH-871: 34" entry-level vinyl cutter. Common in budget shops.
+		// Max cutting width 870mm (34.25"). Force ~350g. Speed 100–800 mm/s.
+		// Uses CH340G USB-serial chip (no unique VID to match on).
+		name: "USCutter MH-871",
 		manufacturer: "USCutter",
-		model: "MH Series",
+		model: "MH-871",
 		protocol: "hpgl",
 		bladeForce: 60,
 		cuttingSpeed: 300,
 		passes: 1,
+		baudRate: 9600,
+		maxMediaWidthMm: 870,
 	},
 	{
-		name: "VEVOR Vinyl Cutter",
+		// VEVOR vinyl cutter (28" mid-range). Common in small shops and hobbyist use.
+		// Max cutting width 720mm (28.3"). Uses CP2102 USB-serial, no unique VID.
+		name: "VEVOR Vinyl Cutter 28\"",
 		manufacturer: "VEVOR",
-		model: "Vinyl Cutter",
+		model: "Vinyl Cutter 28",
 		protocol: "hpgl",
 		bladeForce: 60,
 		cuttingSpeed: 350,
 		passes: 1,
+		baudRate: 9600,
+		maxMediaWidthMm: 720,
 	},
 	{
+		// VEVOR vinyl cutter (53" wide-format). Fits most PPF rolls.
+		// Max cutting width 1346mm (53.0"). Force ~500g. Speed up to 500 mm/s.
+		// Uses CP2102/CH340 USB-serial chip — no unique USB VID to match on.
+		name: "VEVOR Vinyl Cutter 53\"",
+		manufacturer: "VEVOR",
+		model: "Vinyl Cutter 53",
+		protocol: "hpgl",
+		bladeForce: 70,
+		cuttingSpeed: 500,
+		passes: 1,
+		baudRate: 9600,
+		maxMediaWidthMm: 1346,
+	},
+	{
+		// Summa S2 D160: Belgian-made professional 63" plotter.
+		// Max cutting width 1580mm (62.2"). Max force 600g. Max speed 700 mm/s.
+		// Uses HPGL/2 (DMPL/Summa protocol variant).
 		name: "Summa S2 D160",
 		manufacturer: "Summa",
 		model: "S2 D160",
@@ -371,8 +444,15 @@ export const PLOTTER_PRESETS: Partial<PlotterConfig>[] = [
 		bladeForce: 85,
 		cuttingSpeed: 700,
 		passes: 1,
+		baudRate: 9600,
+		maxMediaWidthMm: 1580,
 	},
 	{
+		// Silhouette Cameo 4 Pro: 24" consumer/prosumer cutter.
+		// WARNING: Uses a proprietary USB HID protocol, NOT standard HPGL.
+		// HPGL output will NOT work over native USB. Requires Silhouette Studio
+		// or a third-party HPGL→Silhouette bridge (e.g. Inkscape plugin).
+		// Network or Cut Agent TCP may work if you route through a bridge.
 		name: "Silhouette Cameo 4 Pro",
 		manufacturer: "Silhouette",
 		model: "Cameo 4 Pro",
@@ -380,6 +460,10 @@ export const PLOTTER_PRESETS: Partial<PlotterConfig>[] = [
 		bladeForce: 30,
 		cuttingSpeed: 200,
 		passes: 1,
+		baudRate: 9600,
+		maxMediaWidthMm: 609,
+		usbVids: [0x0B4D], // Silhouette America USB VID
+		compatNote: "Uses proprietary USB protocol — HPGL requires a bridge app or network mode.",
 	},
 ];
 
@@ -502,11 +586,12 @@ export const HPGL_UNITS_PER_MM = 40; // 40 plotter units = 1 mm
 
 // ─── Navigation ───────────────────────────────
 export const APP_NAV = [
-	{ label: "Studio", href: "/studio", icon: "scissors" },
-	{ label: "Library", href: "/library", icon: "library" },
-	{ label: "Jobs", href: "/jobs", icon: "briefcase" },
-	{ label: "Agent", href: "/studio/agent", icon: "terminal" },
-	{ label: "Settings", href: "/settings", icon: "settings" },
+	{ label: "Studio",   href: "/studio",        icon: "scissors" },
+	{ label: "Library",  href: "/library",        icon: "library"  },
+	{ label: "Jobs",     href: "/jobs",           icon: "briefcase"},
+	{ label: "Plotters", href: "/plotter",        icon: "plotter"  },
+	{ label: "Agent",    href: "/studio/agent",   icon: "terminal" },
+	{ label: "Settings", href: "/settings",       icon: "settings" },
 ] as const;
 
 export const MARKETING_NAV = [

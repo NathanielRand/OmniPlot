@@ -2,8 +2,8 @@
 	import { onMount } from "svelte";
 	import Badge from "$lib/components/ui/Badge.svelte";
 	import Button from "$lib/components/ui/Button.svelte";
-	import { toastStore, themeStore, plotterStore, userStore, uiStore } from "$lib/stores";
-	import { PLOTTER_PRESETS, PRICING_PLANS, SHOP_PRICING_PLANS } from "$lib/config";
+	import { toastStore, themeStore, userStore, uiStore } from "$lib/stores";
+	import { PRICING_PLANS, SHOP_PRICING_PLANS } from "$lib/config";
 	import {
 		getShop,
 		getShopMembers,
@@ -20,7 +20,7 @@
 	import type { Shop, ShopMember, ShopInvite, ShopRole, ShopPlan } from "$lib/types";
 
 	let activeTab = $state<
-		"profile" | "plotter" | "billing" | "notifications" | "team" | "security" | "danger"
+		"profile" | "billing" | "notifications" | "team" | "security" | "danger"
 	>("profile");
 
 	// Profile form
@@ -415,11 +415,6 @@
 			icon: "M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2M12 11a4 4 0 100-8 4 4 0 000 8z",
 		},
 		{
-			id: "plotter",
-			label: "Plotter",
-			icon: "M6 6a3 3 0 100-6 3 3 0 000 6zM6 18a3 3 0 100-6 3 3 0 000 6zM20 4L8.12 15.88M14.47 14.48L20 20M8.12 8.12L12 12",
-		},
-		{
 			id: "billing",
 			label: "Billing",
 			icon: "M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z",
@@ -633,122 +628,6 @@
 					</div>
 				</div>
 			{/if}
-
-			<!-- ─── Plotter ─── -->
-		{:else if activeTab === "plotter"}
-			<div class="settings-section">
-				<h2 class="settings-section-title">Plotter Settings</h2>
-				<p class="settings-section-sub">
-					Configure your cutting device. Settings are saved
-					per-session.
-				</p>
-
-				<div class="form-field">
-					<label for="plotterPreset" class="form-label"
-						>Device preset</label
-					>
-					<select
-						id="plotterPreset"
-						class="form-select"
-						onchange={(e) => {
-							const p = PLOTTER_PRESETS.find(
-								(pr) =>
-									pr.name ===
-									(e.target as HTMLSelectElement).value,
-							);
-							if (p) plotterStore.applyPreset(p);
-							toastStore.success("Preset applied", p?.name);
-						}}
-					>
-						{#each PLOTTER_PRESETS as preset}
-							<option
-								value={preset.name}
-								selected={plotterStore.config.name ===
-									preset.name}>{preset.name}</option
-							>
-						{/each}
-					</select>
-				</div>
-
-				<div class="form-grid">
-					{#each [["Blade Force (g)", "bladeForce", 10, 200], ["Speed (mm/s)", "cuttingSpeed", 50, 900], ["Passes", "passes", 1, 4], ["Overcut (mm)", "overcut", 0, 2]] as const as [label, key, min, max]}
-						<div class="form-field">
-							<label class="form-label">{label}</label>
-							<div class="slider-row">
-								<input
-									type="range"
-									class="form-slider"
-									{min}
-									{max}
-									step={key === "overcut" ? 0.1 : 1}
-									value={plotterStore.config[key]}
-									aria-label={label}
-									oninput={(e) =>
-										plotterStore.update({
-											[key]: parseFloat(
-												(e.target as HTMLInputElement)
-													.value,
-											),
-										})}
-								/>
-								<span class="slider-val"
-									>{plotterStore.config[key]}</span
-								>
-							</div>
-						</div>
-					{/each}
-				</div>
-
-				<div class="form-field">
-					<label for="connection" class="form-label"
-						>Connection method</label
-					>
-					<select
-						id="connection"
-						class="form-select"
-						onchange={(e) =>
-							plotterStore.update({
-								connection: (e.target as HTMLSelectElement)
-									.value as any,
-							})}
-					>
-						<option value="download"
-							>Download PLT file (universal)</option
-						>
-						<option value="usb-serial"
-							>USB via Web Serial API (Chrome/Edge only)</option
-						>
-						<option value="network">Network TCP/IP</option>
-						<option value="cut-agent">Local Cut Agent</option>
-					</select>
-					<p class="form-hint">
-						Web Serial requires Chrome or Edge. All other methods
-						work in any browser.
-					</p>
-				</div>
-
-				<div class="form-actions">
-					<Button
-						variant="primary"
-						size="sm"
-						onclick={() =>
-							toastStore.success("Plotter settings saved")}
-					>
-						Save plotter settings
-					</Button>
-					<Button
-						variant="ghost"
-						size="sm"
-						onclick={() =>
-							toastStore.info(
-								"Test cut sent",
-								'A 1" × 1" test square was sent to your plotter.',
-							)}
-					>
-						Send test cut
-					</Button>
-				</div>
-			</div>
 
 			<!-- ─── Billing ─── -->
 		{:else if activeTab === "billing"}

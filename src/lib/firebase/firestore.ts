@@ -34,6 +34,7 @@ import type {
 	ShopMember,
 	ShopInvite,
 	ShopRole,
+	PlotterDevice,
 } from "$lib/types";
 
 // ─── Collection refs ──────────────────────────
@@ -759,4 +760,64 @@ export async function getShopInvitesByShop(shopId: string): Promise<ShopInvite[]
 	);
 	const snap = await getDocs(q);
 	return snap.docs.map((d) => toShopInvite(d.id, d.data()));
+}
+
+// ─── Plotter Device CRUD ──────────────────────
+
+function toPlotterDevice(id: string, data: DocumentData): PlotterDevice {
+	return {
+		id,
+		userId:          data.userId ?? "",
+		name:            data.name ?? "",
+		presetName:      data.presetName ?? "",
+		manufacturer:    data.manufacturer ?? "",
+		model:           data.model ?? "",
+		protocol:        data.protocol ?? "hpgl",
+		connection:      data.connection ?? "download",
+		maxMediaWidthMm: data.maxMediaWidthMm ?? 0,
+		ipAddress:       data.ipAddress,
+		port:            data.port,
+		baudRate:        data.baudRate,
+		serialPort:      data.serialPort,
+		agentUrl:        data.agentUrl,
+		compatNote:      data.compatNote,
+		createdAt:       fromTimestamp(data.createdAt),
+		updatedAt:       fromTimestamp(data.updatedAt),
+	};
+}
+
+export async function getUserPlotters(uid: string): Promise<PlotterDevice[]> {
+	const q = query(
+		collection(db, Collections.PLOTTERS),
+		where("userId", "==", uid),
+		orderBy("createdAt", "asc"),
+	);
+	const snap = await getDocs(q);
+	return snap.docs.map((d) => toPlotterDevice(d.id, d.data()));
+}
+
+export async function savePlotter(plotter: PlotterDevice): Promise<void> {
+	await setDoc(
+		doc(db, Collections.PLOTTERS, plotter.id),
+		{ ...plotter, updatedAt: serverTimestamp() },
+		{ merge: true },
+	);
+}
+
+export async function deletePlotter(id: string): Promise<void> {
+	await deleteDoc(doc(db, Collections.PLOTTERS, id));
+}
+
+export function subscribeToPlotters(
+	uid: string,
+	callback: (plotters: PlotterDevice[]) => void,
+): Unsubscribe {
+	const q = query(
+		collection(db, Collections.PLOTTERS),
+		where("userId", "==", uid),
+		orderBy("createdAt", "asc"),
+	);
+	return onSnapshot(q, (snap) => {
+		callback(snap.docs.map((d) => toPlotterDevice(d.id, d.data())));
+	});
 }

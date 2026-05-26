@@ -279,6 +279,29 @@ export type PlotterConnection =
 	| "download"
 	| "cut-agent";
 
+export type PlotterStatus = "idle" | "cutting" | "paused" | "error" | "offline";
+
+/** A registered, user-owned cutting device persisted in Firestore. */
+export interface PlotterDevice {
+	id: string;
+	userId: string;
+	name: string;             // user-assigned label, e.g. "Bay 1 Roland"
+	presetName: string;       // PLOTTER_PRESETS[].name
+	manufacturer: string;
+	model: string;
+	protocol: PlotterProtocol;
+	connection: PlotterConnection;
+	maxMediaWidthMm: number;
+	ipAddress?: string;
+	port?: number;
+	baudRate?: number;
+	serialPort?: string;
+	agentUrl?: string;
+	compatNote?: string;
+	createdAt: Date;
+	updatedAt: Date;
+}
+
 export interface PlotterConfig {
 	id: string;
 	name: string;
@@ -294,8 +317,9 @@ export interface PlotterConfig {
 	overcut: number; // mm
 	offsetBlade: number; // mm
 
-	// Sheet setup
-	mediaWidthMm: number;
+	// Sheet / hardware constraints
+	mediaWidthMm: number;       // configured working width
+	maxMediaWidthMm: number;    // hardware max cutting width (from preset)
 	originX: number;
 	originY: number;
 	flipH: boolean;
@@ -307,6 +331,9 @@ export interface PlotterConfig {
 	baudRate?: number;
 	serialPort?: string;
 	agentUrl?: string;  // Cut-Agent URL, default "http://localhost:7878"
+
+	// Compatibility note shown in UI (e.g. for Silhouette proprietary protocol)
+	compatNote?: string;
 }
 
 // ─── Admin ────────────────────────────────────

@@ -32,12 +32,13 @@ func main() {
 	flag.Parse()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/status",   withCORS(handleStatus))
-	mux.HandleFunc("/api/ports",    withCORS(handlePorts))
-	mux.HandleFunc("/api/cut",      withCORS(handleCut))
-	mux.HandleFunc("/api/events",   withCORS(handleEvents))
-	mux.HandleFunc("/api/stats",    withCORS(handleStats))
-	mux.HandleFunc("/api/shutdown", withCORS(handleShutdown))
+	mux.HandleFunc("/api/status",       withCORS(handleStatus))
+	mux.HandleFunc("/api/ports",        withCORS(handlePorts))
+	mux.HandleFunc("/api/cut",          withCORS(handleCut))
+	mux.HandleFunc("/api/events",       withCORS(handleEvents))
+	mux.HandleFunc("/api/stats",        withCORS(handleStats))
+	mux.HandleFunc("/api/shutdown",     withCORS(handleShutdown))
+	mux.HandleFunc("/api/network-scan", withCORS(handleNetworkScan))
 	// Catch-all: handle CORS preflight for any path
 	mux.HandleFunc("/", withCORS(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodOptions {

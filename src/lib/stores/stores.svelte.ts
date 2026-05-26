@@ -158,6 +158,7 @@ function createUiStore() {
 	let exportModalOpen = $state(false);
 	let commandPaletteOpen = $state(false);
 	let reportModalOpen = $state(false);
+	let tourOpen = $state(false);
 
 	return {
 		get sidebarOpen() {
@@ -177,6 +178,9 @@ function createUiStore() {
 		},
 		get reportModalOpen() {
 			return reportModalOpen;
+		},
+		get tourOpen() {
+			return tourOpen;
 		},
 
 		toggleSidebar() {
@@ -211,6 +215,12 @@ function createUiStore() {
 		},
 		closeReport() {
 			reportModalOpen = false;
+		},
+		openTour() {
+			tourOpen = true;
+		},
+		closeTour() {
+			tourOpen = false;
 		},
 	};
 }
@@ -414,13 +424,14 @@ function createPlotterStore() {
 		passes: defaultPreset.passes!,
 		overcut: 0.5,
 		offsetBlade: 0.25,
-		mediaWidthMm: 1524,
+		mediaWidthMm: defaultPreset.maxMediaWidthMm,
+		maxMediaWidthMm: defaultPreset.maxMediaWidthMm,
 		originX: 0,
 		originY: 0,
 		flipH: false,
 		flipV: false,
 		agentUrl: "http://localhost:7878",
-		baudRate: 9600,
+		baudRate: defaultPreset.baudRate ?? 9600,
 		ipAddress: "192.168.1.100",
 		port: 9100,
 	});
@@ -432,10 +443,54 @@ function createPlotterStore() {
 		update(patch: Partial<PlotterConfig>) {
 			config = { ...config, ...patch };
 		},
-		applyPreset(preset: Partial<PlotterConfig>) {
-			config = { ...config, ...preset, id: config.id };
+		applyPreset(preset: Partial<PlotterConfig> & { maxMediaWidthMm?: number; compatNote?: string }) {
+			config = {
+				...config,
+				...preset,
+				id: config.id,
+				// Always sync working width to the new hardware max
+				mediaWidthMm: preset.maxMediaWidthMm ?? config.mediaWidthMm,
+			};
 		},
 	};
 }
 
 export const plotterStore = createPlotterStore();
+
+// ─── Cut Agent shared state ───────────────────
+// Single source of truth for agent connectivity so any page can read
+// current status without independently polling.
+function createAgentStore() {
+	let status  = $state<"unknown" | "online" | "offline">("unknown");
+	let version = $state<string | null>(null);
+	let stats   = $state<{
+		jobsTotal?: number;
+		jobsToday?: number;
+		bytesTotal?: number;
+		errorsTotal?: number;
+		portsUsed?: string[];
+		uptimeSeconds?: number;
+	} | null>(null);
+
+	return {
+		get status()  { return status;  },
+		get version() { return version; },
+		get stats()   { return stats;   },
+		setOnline(v: string) {
+			status  = "online";
+			version = v;
+		},
+		setOffline() {
+			status  = "offline";
+			version = null;
+		},
+		setStats(s: typeof stats) {
+			stats = s;
+		},
+		get url() {
+			return (plotterStore.config.agentUrl ?? "http://localhost:7878").replace(/\/$/, "");
+		},
+	};
+}
+
+export const agentStore = createAgentStore();

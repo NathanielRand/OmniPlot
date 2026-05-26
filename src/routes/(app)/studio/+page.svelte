@@ -28,9 +28,66 @@
 		formatEfficiency,
 	} from "$lib/utils";
 	import { DEFAULT_MATERIALS, PLOTTER_PRESETS } from "$lib/config";
+	import {
+		detectUsbPlotters,
+		detectAgentPorts,
+		scanNetworkViaAgent,
+		getCompatibilityStatus,
+		compatLabel,
+		type DetectedPlotter,
+		type NetworkDevice,
+	} from "$lib/utils/plotter-detect";
 	import Button from "$lib/components/ui/Button.svelte";
 	import Badge from "$lib/components/ui/Badge.svelte";
+	import GuidedTour from "$lib/components/ui/GuidedTour.svelte";
+	import type { TourStep } from "$lib/components/ui/GuidedTour.svelte";
 	import type { CanvasItem } from "$lib/types";
+
+	// ─── Guided tour ─────────────────────────────
+	const TOUR_STEPS: TourStep[] = [
+		{
+			target: null,
+			title: "Welcome to OmniPlot Studio",
+			body: "This quick tour covers the cutting workflow end-to-end. You can skip anytime — and replay it from your account menu.",
+			position: "center",
+		},
+		{
+			target: '[data-tour="sidebar-library"]',
+			title: "Pattern Library",
+			body: "Start here: browse PPF and window tint patterns by vehicle. Click a pattern to add it directly to your cut sheet.",
+			position: "right",
+		},
+		{
+			target: '[data-tour="canvas"]',
+			title: "Material Roll Canvas",
+			body: "This canvas represents your physical material roll. Patterns are placed here. Zoom in/out to inspect and scroll to explore the full length.",
+			position: "top",
+		},
+		{
+			target: '[data-tour="toolbar-nest"]',
+			title: "Nesting Tools",
+			body: "Auto-nest arranges patterns instantly to minimize waste. AI Nest runs a deeper multi-pass optimization — best for complex layouts.",
+			position: "bottom",
+		},
+		{
+			target: '[data-tour="panel-tabs"]',
+			title: "Properties Panel",
+			body: "Properties: tweak cut force, speed, and roll width. Patterns: see every piece on sheet. Plotter: configure your cutter device and connection.",
+			position: "left",
+		},
+		{
+			target: '[data-tour="statusbar"]',
+			title: "Status Bar",
+			body: "Live metrics: material efficiency percentage, number of cut paths, estimated cut time, roll dimensions, and cursor position.",
+			position: "top",
+		},
+		{
+			target: '[data-tour="cut-btn"]',
+			title: "Export & Cut",
+			body: "Export as PLT, SVG, or DXF — or send the job directly to your plotter over USB, network, or the local Cut Agent.",
+			position: "bottom",
+		},
+	];
 
 	// ─── Derived metrics ──────────────────────────
 	const outOfBoundsCount = $derived(
@@ -161,6 +218,79 @@
 	let smartNestGain = $state<number | null>(null);
 	let cutting          = $state(false);
 	let serialPortInfo   = $state<SerialPortInfo | null>(null);
+
+	// ─── Plotter detection state ──────────────────
+	let detecting       = $state(false);
+	let detectedPlotter = $state<DetectedPlotter | null>(null);
+	let networkScan     = $state<"idle" | "scanning" | "done">("idle");
+	let networkDevices  = $state<NetworkDevice[]>([]);
+
+	const compat = $derived(
+		getCompatibilityStatus(
+			plotterStore.config.maxMediaWidthMm,
+			canvasStore.sheet.widthInches,
+		),
+	);
+
+	// Max cutting width of the selected plotter in inches
+	const plotterMaxWidthIn = $derived(plotterStore.config.maxMediaWidthMm / 25.4);
+
+	async function handleDetectPlotter() {
+		detecting = true;
+		detectedPlotter = null;
+		try {
+			// 1. Try USB Web Serial (previously authorized ports, no dialog)
+			const usbResults = await detectUsbPlotters();
+			if (usbResults.length > 0) {
+				detectedPlotter = usbResults[0];
+				plotterStore.applyPreset(detectedPlotter.preset);
+				toastStore.success(
+					`Detected: ${detectedPlotter.preset.name}`,
+					detectedPlotter.detail,
+				);
+				return;
+			}
+
+			// 2. Try Cut Agent port enumeration
+			const agentUrl = plotterStore.config.agentUrl ?? "http://localhost:7878";
+			const agentResults = await detectAgentPorts(agentUrl);
+			if (agentResults.length > 0) {
+				detectedPlotter = agentResults[0];
+				plotterStore.applyPreset(detectedPlotter.preset);
+				toastStore.success(
+					`Detected: ${detectedPlotter.preset.name}`,
+					`via Cut Agent — ${detectedPlotter.detail}`,
+				);
+				return;
+			}
+
+			toastStore.info(
+				"No plotter detected",
+				"Connect via USB and click 'Select USB Port…', or make sure the Cut Agent is running.",
+			);
+		} finally {
+			detecting = false;
+		}
+	}
+
+	async function handleNetworkScan() {
+		networkScan = "scanning";
+		networkDevices = [];
+		const agentUrl = plotterStore.config.agentUrl ?? "http://localhost:7878";
+		try {
+			const found = await scanNetworkViaAgent(agentUrl);
+			networkDevices = found;
+			networkScan = "done";
+			if (found.length === 0) {
+				toastStore.info("No network plotters found", "No devices responded on port 9100 or 5000.");
+			} else {
+				toastStore.success(`Found ${found.length} device${found.length > 1 ? "s" : ""}`, "Select an IP to connect.");
+			}
+		} catch {
+			networkScan = "done";
+			toastStore.error("Scan failed", "Make sure the Cut Agent is running.");
+		}
+	}
 
 	function handleSmartNest() {
 		if (!canvasStore.items.length) {
@@ -440,6 +570,10 @@
 		canvasStore.restoreFromStorage();
 		_mounted = true;
 		requestAnimationFrame(fitToView);
+		// Auto-trigger tour for first-time visitors
+		if (typeof localStorage !== "undefined" && !localStorage.getItem("op-tour-seen")) {
+			setTimeout(() => uiStore.openTour(), 800);
+		}
 	});
 
 	$effect(() => {
@@ -503,7 +637,7 @@
 		<div class="toolbar-sep" aria-hidden="true"></div>
 
 		<!-- Edit actions -->
-		<div class="tool-group">
+		<div class="tool-group" data-tour="toolbar-nest">
 			<button
 				class="tool-btn"
 				title="Auto-nest"
@@ -742,7 +876,7 @@
 		</button>
 
 		<!-- Cut button -->
-		<button class="cut-btn" onclick={handleCut} disabled={cutting}>
+		<button class="cut-btn" data-tour="cut-btn" onclick={handleCut} disabled={cutting}>
 			{#if cutting}
 				<span class="ai-spinner" aria-hidden="true"></span>
 				<span class="ai-label">Sending…</span>
@@ -802,6 +936,7 @@
 			onclick={onCanvasClick}
 			role="application"
 			aria-label="Cut layout canvas"
+			data-tour="canvas"
 		>
 			{#if canvasStore.state.showGrid}
 				<div class="canvas-grid" aria-hidden="true"></div>
@@ -833,6 +968,21 @@
 							style="top: {canvasStore.sheet.widthInches * 48 * canvasStore.zoom / 100}px"
 							aria-hidden="true"
 						></div>
+					{/if}
+
+					<!-- Plotter limit line: shown when material is wider than plotter's max cutting width -->
+					{#if compat !== "ok" && plotterMaxWidthIn < canvasStore.sheet.widthInches}
+						<div
+							class="plotter-limit-line"
+							class:plotter-limit-line--overflow={compat === "overflow"}
+							class:plotter-limit-line--tight={compat === "tight"}
+							style="top: {plotterMaxWidthIn * 48 * canvasStore.zoom / 100}px"
+							aria-label="Plotter cutting limit: {plotterStore.config.name} max {plotterMaxWidthIn.toFixed(1)}&quot;"
+						>
+							<span class="plotter-limit-label">
+								{plotterStore.config.name} limit · {plotterMaxWidthIn.toFixed(1)}"
+							</span>
+						</div>
 					{/if}
 
 					<!-- Cut items -->
@@ -956,7 +1106,7 @@
 
 		<!-- Right panel -->
 		<aside class="studio__panel">
-			<div class="panel-tabs" role="tablist">
+			<div class="panel-tabs" role="tablist" data-tour="panel-tabs">
 				{#each ["properties", "patterns", "plotter"] as const as tab}
 					<button
 						class="panel-tab"
@@ -1244,28 +1394,97 @@
 
 					<!-- Plotter tab -->
 				{:else}
+
+					<!-- ── Smart Detection ─────────────────────── -->
+					<div class="prop-section detect-section">
+						<button
+							class="detect-btn"
+							class:detecting
+							onclick={handleDetectPlotter}
+							disabled={detecting}
+							aria-label="Auto-detect connected plotter"
+						>
+							{#if detecting}
+								<span class="ai-spinner" aria-hidden="true"></span>
+								Detecting…
+							{:else}
+								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+								Detect Plotter
+							{/if}
+						</button>
+						{#if detectedPlotter}
+							<div class="detect-result">
+								<span class="detect-result__dot"></span>
+								<div class="detect-result__info">
+									<span class="detect-result__name">{detectedPlotter.preset.name}</span>
+									<span class="detect-result__detail">{detectedPlotter.detail}</span>
+								</div>
+								<span class="detect-badge detect-badge--{detectedPlotter.confidence === 'exact-vid' ? 'exact' : detectedPlotter.confidence === 'manufacturer-name' ? 'mfr' : 'generic'}">
+									{detectedPlotter.confidence === "exact-vid" ? "Exact match" : detectedPlotter.confidence === "manufacturer-name" ? "By name" : "Generic"}
+								</span>
+							</div>
+						{/if}
+					</div>
+
+					<!-- ── Device Selection + Compatibility ───── -->
 					<div class="prop-section">
-						<div class="prop-label">Plotter Device</div>
+						<div class="prop-label-row">
+							<span class="prop-label">Plotter Device</span>
+							<span
+								class="compat-badge compat-badge--{compat}"
+								title="{plotterStore.config.name} max: {plotterMaxWidthIn.toFixed(1)}&quot; · Material: {canvasStore.sheet.widthInches}&quot;"
+							>
+								{#if compat === "ok"}
+									<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>
+								{:else if compat === "tight"}
+									<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M12 9v4M12 17h.01"/></svg>
+								{:else}
+									<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>
+								{/if}
+								{compatLabel(compat)}
+							</span>
+						</div>
 						<select
 							class="prop-select"
 							aria-label="Plotter preset"
 							onchange={(e) => {
 								const preset = PLOTTER_PRESETS.find(
-									(p) =>
-										p.name ===
-										(e.target as HTMLSelectElement).value,
+									(p) => p.name === (e.target as HTMLSelectElement).value,
 								);
-								if (preset) plotterStore.applyPreset(preset);
+								if (preset) {
+									plotterStore.applyPreset(preset);
+									detectedPlotter = null;
+								}
 							}}
 						>
 							{#each PLOTTER_PRESETS as preset}
-								<option value={preset.name}
-									>{preset.name}</option
-								>
+								<option value={preset.name} selected={plotterStore.config.name === preset.name}>
+									{preset.name} · {(preset.maxMediaWidthMm / 25.4).toFixed(0)}"
+								</option>
 							{/each}
 						</select>
+						<div class="plotter-spec-row">
+							<span class="plotter-spec">Max width: <strong>{plotterMaxWidthIn.toFixed(1)}"</strong></span>
+							<span class="plotter-spec">Protocol: <strong>{plotterStore.config.protocol.toUpperCase()}</strong></span>
+							<span class="plotter-spec">Baud: <strong>{plotterStore.config.baudRate ?? 9600}</strong></span>
+						</div>
+						{#if compat === "overflow"}
+							<p class="compat-warn">
+								Material ({canvasStore.sheet.widthInches}") exceeds this plotter's cutting zone ({plotterMaxWidthIn.toFixed(1)}"). Patterns near the edge won't cut correctly.
+							</p>
+						{:else if compat === "tight"}
+							<p class="compat-tight">
+								Material is near this plotter's max width. Verify roll alignment before cutting.
+							</p>
+						{/if}
+						{#if plotterStore.config.compatNote}
+							<p class="compat-warn compat-warn--protocol">
+								⚠ {plotterStore.config.compatNote}
+							</p>
+						{/if}
 					</div>
 
+					<!-- ── Connection ─────────────────────────── -->
 					<div class="prop-section">
 						<div class="prop-label">Connection</div>
 						<select
@@ -1273,21 +1492,16 @@
 							aria-label="Connection method"
 							onchange={(e) =>
 								plotterStore.update({
-									connection: (e.target as HTMLSelectElement)
-										.value as any,
+									connection: (e.target as HTMLSelectElement).value as any,
 								})}
 						>
 							{#each [["download", "Download PLT file"], ["usb-serial", "USB (Web Serial — Chrome/Edge)"], ["network", "Network (TCP/IP)"], ["cut-agent", "Local Cut Agent"]] as const as [val, label]}
-								<option
-									value={val}
-									selected={plotterStore.config.connection ===
-										val}>{label}</option
-								>
+								<option value={val} selected={plotterStore.config.connection === val}>{label}</option>
 							{/each}
 						</select>
 					</div>
 
-					<!-- USB-Serial connection fields -->
+					<!-- USB-Serial fields -->
 					{#if plotterStore.config.connection === "usb-serial"}
 						<div class="prop-section">
 							<div class="prop-label">Baud Rate</div>
@@ -1313,30 +1527,73 @@
 								<p class="prop-note">Chrome or Edge required for USB direct connect.</p>
 							{/if}
 						</div>
+
+					<!-- Network fields -->
 					{:else if plotterStore.config.connection === "network"}
 						<div class="prop-section">
 							<div class="prop-label">Plotter IP Address</div>
-							<input
-								class="prop-input prop-input--full"
-								type="text"
-								placeholder="192.168.1.100"
-								value={plotterStore.config.ipAddress ?? "192.168.1.100"}
-								oninput={(e) => plotterStore.update({ ipAddress: (e.target as HTMLInputElement).value })}
-							/>
+							<div class="prop-input-row">
+								<input
+									class="prop-input prop-input--grow"
+									type="text"
+									placeholder="192.168.1.100"
+									value={plotterStore.config.ipAddress ?? "192.168.1.100"}
+									oninput={(e) => plotterStore.update({ ipAddress: (e.target as HTMLInputElement).value })}
+								/>
+								<span class="prop-input-sep">:</span>
+								<input
+									class="prop-input prop-input--port"
+									type="number"
+									placeholder="9100"
+									min="1"
+									max="65535"
+									value={plotterStore.config.port ?? 9100}
+									oninput={(e) => plotterStore.update({ port: parseInt((e.target as HTMLInputElement).value) || 9100 })}
+								/>
+							</div>
+							<p class="prop-note">Port 9100 = HP JetDirect (most network plotters).</p>
 						</div>
+						<!-- Network scan via agent -->
 						<div class="prop-section">
-							<div class="prop-label">TCP Port</div>
-							<input
-								class="prop-input prop-input--full"
-								type="number"
-								placeholder="9100"
-								min="1"
-								max="65535"
-								value={plotterStore.config.port ?? 9100}
-								oninput={(e) => plotterStore.update({ port: parseInt((e.target as HTMLInputElement).value) || 9100 })}
-							/>
-							<p class="prop-note">Most network plotters use port 9100 (HP JetDirect).</p>
+							<div class="prop-label">Discover on LAN</div>
+							<button
+								class="prop-btn prop-btn--ghost scan-btn"
+								class:scanning={networkScan === "scanning"}
+								onclick={handleNetworkScan}
+								disabled={networkScan === "scanning"}
+							>
+								{#if networkScan === "scanning"}
+									<span class="ai-spinner" aria-hidden="true"></span>
+									Scanning network…
+								{:else}
+									<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M1.42 9a16 16 0 0121.16 0M5 12.55a11 11 0 0114.08 0M10.5 16a6 6 0 013 0M12 20h.01"/></svg>
+									Scan via Cut Agent
+								{/if}
+							</button>
+							<p class="prop-note">Requires Cut Agent running on this machine. Scans the local LAN for plotters on port 9100.</p>
+							{#if networkScan === "done" && networkDevices.length > 0}
+								<div class="network-results">
+									{#each networkDevices as dev}
+										<button
+											class="network-device"
+											onclick={() => {
+												plotterStore.update({ ipAddress: dev.ip, port: dev.port });
+												networkScan = "idle";
+											}}
+										>
+											<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+											<span class="network-device__ip">{dev.ip}</span>
+											<span class="network-device__port">:{dev.port}</span>
+											<span class="network-device__ms">{dev.responseMs}ms</span>
+										</button>
+									{/each}
+								</div>
+							{:else if networkScan === "done"}
+								<p class="prop-note" style="color: var(--color-warning)">No plotter-compatible devices found on this LAN.</p>
+							{/if}
 						</div>
+
+					<!-- Cut Agent fields -->
 					{:else if plotterStore.config.connection === "cut-agent"}
 						<div class="prop-section">
 							<div class="prop-label">Agent URL</div>
@@ -1363,6 +1620,7 @@
 						</div>
 					{/if}
 
+					<!-- ── Output Format ───────────────────────── -->
 					<div class="prop-section">
 						<div class="prop-label">Output Format</div>
 						<select
@@ -1381,6 +1639,7 @@
 						</select>
 					</div>
 
+					<!-- ── Origin ──────────────────────────────── -->
 					{#each [["Origin X (in)", "originX", 0, 200, 1], ["Origin Y (in)", "originY", 0, 200, 1]] as const as [label, key, min, max, step]}
 						<div class="prop-section">
 							<div class="prop-slider-row">
@@ -1395,15 +1654,10 @@
 									aria-label={label}
 									oninput={(e) =>
 										plotterStore.update({
-											[key]: parseFloat(
-												(e.target as HTMLInputElement)
-													.value,
-											),
+											[key]: parseFloat((e.target as HTMLInputElement).value),
 										})}
 								/>
-								<span class="prop-slider-val"
-									>{plotterStore.config[key]}</span
-								>
+								<span class="prop-slider-val">{plotterStore.config[key]}</span>
 							</div>
 						</div>
 					{/each}
@@ -1413,7 +1667,7 @@
 	</div>
 
 	<!-- ─── Status bar ─── -->
-	<div class="studio__statusbar" role="status" aria-label="Job metrics">
+	<div class="studio__statusbar" role="status" aria-label="Job metrics" data-tour="statusbar">
 		<div class="status-metric">
 			<span class="status-metric__label">Material Usage</span>
 			<span class="status-metric__value-row">
@@ -1438,6 +1692,12 @@
 		{/each}
 	</div>
 </div>
+
+<GuidedTour
+	steps={TOUR_STEPS}
+	open={uiStore.tourOpen}
+	onclose={uiStore.closeTour}
+/>
 
 <style>
 	.studio {
@@ -2323,4 +2583,242 @@
 	:global(.mt-3) {
 		margin-top: 12px;
 	}
+
+	/* ─── Plotter limit line ────── */
+	.plotter-limit-line {
+		position: absolute;
+		left: 0;
+		right: 0;
+		height: 0;
+		pointer-events: none;
+		z-index: 3;
+	}
+	.plotter-limit-line--overflow {
+		border-top: 2px solid rgba(255, 60, 60, 0.7);
+	}
+	.plotter-limit-line--tight {
+		border-top: 2px dashed rgba(255, 181, 71, 0.7);
+	}
+	.plotter-limit-label {
+		position: absolute;
+		top: 3px;
+		right: 6px;
+		font-family: var(--font-mono);
+		font-size: 0.5rem;
+		letter-spacing: 0.06em;
+		font-weight: 600;
+		text-transform: uppercase;
+		padding: 1px 5px;
+		border-radius: 3px;
+		white-space: nowrap;
+	}
+	.plotter-limit-line--overflow .plotter-limit-label {
+		background: rgba(255, 60, 60, 0.15);
+		color: rgba(255, 100, 100, 0.9);
+	}
+	.plotter-limit-line--tight .plotter-limit-label {
+		background: rgba(255, 181, 71, 0.12);
+		color: rgba(255, 181, 71, 0.9);
+	}
+
+	/* ─── Detection section ────── */
+	.detect-section {
+		margin-bottom: 12px;
+	}
+	.detect-btn {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		width: 100%;
+		padding: 7px 12px;
+		background: var(--bg-surface-2);
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-md);
+		font-size: 0.8rem;
+		font-weight: 600;
+		font-family: var(--font-body);
+		color: var(--text-primary);
+		cursor: pointer;
+		transition: background 0.12s, border-color 0.12s;
+		justify-content: center;
+	}
+	.detect-btn:hover:not(:disabled) {
+		background: var(--bg-surface-3);
+		border-color: var(--color-brand-dim);
+		color: var(--color-brand);
+	}
+	.detect-btn:disabled { opacity: 0.6; cursor: wait; }
+
+	.detect-result {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		margin-top: 8px;
+		padding: 8px 10px;
+		background: rgba(0, 229, 255, 0.05);
+		border: 1px solid rgba(0, 229, 255, 0.2);
+		border-radius: var(--radius-md);
+	}
+	.detect-result__dot {
+		width: 7px;
+		height: 7px;
+		border-radius: 50%;
+		background: var(--color-success);
+		flex-shrink: 0;
+		animation: pulse-dot 2s ease-in-out infinite;
+	}
+	.detect-result__info {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 1px;
+	}
+	.detect-result__name {
+		font-size: 0.75rem;
+		font-weight: 600;
+		color: var(--text-primary);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.detect-result__detail {
+		font-size: 0.625rem;
+		font-family: var(--font-mono);
+		color: var(--text-tertiary);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.detect-badge {
+		font-family: var(--font-mono);
+		font-size: 0.5rem;
+		font-weight: 700;
+		letter-spacing: 0.04em;
+		padding: 2px 6px;
+		border-radius: 3px;
+		text-transform: uppercase;
+		flex-shrink: 0;
+	}
+	.detect-badge--exact { background: rgba(0, 214, 143, 0.12); color: var(--color-success); border: 1px solid rgba(0, 214, 143, 0.3); }
+	.detect-badge--mfr   { background: rgba(0, 112, 255, 0.1); color: var(--color-brand-dim); border: 1px solid rgba(0, 112, 255, 0.25); }
+	.detect-badge--generic { background: var(--bg-surface-3); color: var(--text-tertiary); border: 1px solid var(--border-default); }
+
+	/* ─── Compatibility badge ────── */
+	.prop-label-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		margin-bottom: 8px;
+	}
+	.prop-label-row .prop-label { margin-bottom: 0; }
+
+	.compat-badge {
+		display: inline-flex;
+		align-items: center;
+		gap: 3px;
+		font-family: var(--font-mono);
+		font-size: 0.5rem;
+		font-weight: 700;
+		letter-spacing: 0.05em;
+		text-transform: uppercase;
+		padding: 2px 6px;
+		border-radius: 3px;
+	}
+	.compat-badge--ok       { background: rgba(0, 214, 143, 0.1); color: var(--color-success); border: 1px solid rgba(0, 214, 143, 0.25); }
+	.compat-badge--tight    { background: rgba(255, 181, 71, 0.1); color: var(--color-warning, #ffb547); border: 1px solid rgba(255, 181, 71, 0.3); }
+	.compat-badge--overflow { background: rgba(255, 77, 109, 0.1); color: var(--color-danger); border: 1px solid rgba(255, 77, 109, 0.3); }
+
+	/* Plotter spec row */
+	.plotter-spec-row {
+		display: flex;
+		gap: 10px;
+		flex-wrap: wrap;
+		margin-top: 6px;
+	}
+	.plotter-spec {
+		font-family: var(--font-mono);
+		font-size: 0.5625rem;
+		color: var(--text-tertiary);
+	}
+	.plotter-spec strong { color: var(--text-secondary); }
+
+	/* Compatibility warnings */
+	.compat-warn {
+		font-size: 0.72rem;
+		color: var(--color-danger);
+		background: rgba(255, 77, 109, 0.06);
+		border: 1px solid rgba(255, 77, 109, 0.2);
+		border-radius: var(--radius-sm);
+		padding: 6px 8px;
+		margin-top: 6px;
+		line-height: 1.45;
+	}
+	.compat-warn--protocol {
+		color: var(--color-warning, #ffb547);
+		background: rgba(255, 181, 71, 0.06);
+		border-color: rgba(255, 181, 71, 0.25);
+	}
+	.compat-tight {
+		font-size: 0.72rem;
+		color: var(--color-warning, #ffb547);
+		background: rgba(255, 181, 71, 0.06);
+		border: 1px solid rgba(255, 181, 71, 0.2);
+		border-radius: var(--radius-sm);
+		padding: 6px 8px;
+		margin-top: 6px;
+		line-height: 1.45;
+	}
+
+	/* prop-input-row for IP:Port inline layout */
+	.prop-input-row {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+	}
+	.prop-input--grow { flex: 1; }
+	.prop-input--port { width: 64px; }
+	.prop-input-sep {
+		font-size: 0.875rem;
+		color: var(--text-tertiary);
+		flex-shrink: 0;
+	}
+
+	/* Network scan */
+	.scan-btn {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 6px;
+		width: 100%;
+	}
+	.network-results {
+		display: flex;
+		flex-direction: column;
+		gap: 3px;
+		margin-top: 8px;
+	}
+	.network-device {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 6px 10px;
+		background: var(--bg-surface-2);
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-sm);
+		font-family: var(--font-mono);
+		font-size: 0.6875rem;
+		color: var(--text-primary);
+		cursor: pointer;
+		text-align: left;
+		width: 100%;
+		transition: background 0.1s, border-color 0.1s;
+	}
+	.network-device:hover {
+		background: var(--bg-surface-3);
+		border-color: var(--color-brand-dim);
+	}
+	.network-device__ip   { flex: 1; font-weight: 600; }
+	.network-device__port { color: var(--text-tertiary); }
+	.network-device__ms   { font-size: 0.5625rem; color: var(--text-tertiary); margin-left: auto; }
 </style>

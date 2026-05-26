@@ -7,6 +7,7 @@
 	import { uiStore, userStore, shopStore } from "$lib/stores";
 	import { APP_NAV } from "$lib/config";
 	import { signOutUser } from "$lib/firebase/auth";
+	import { goto } from "$app/navigation";
 
 	interface Props {
 		children: Snippet;
@@ -216,6 +217,11 @@
 							Report an issue
 						</button>
 
+						<button role="menuitem" class="user-menu__item" onclick={() => { closeMenu(); goto('/studio'); uiStore.openTour(); }}>
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+							Take a tour
+						</button>
+
 						<hr class="user-menu__sep" />
 
 						<button role="menuitem" class="user-menu__item user-menu__item--danger" onclick={signOutUser}>
@@ -242,6 +248,7 @@
 						aria-current={currentPath === item.href
 							? "page"
 							: undefined}
+						data-tour={item.href === "/library" ? "sidebar-library" : undefined}
 					>
 						<span class="sidebar__icon" aria-hidden="true">
 							{#if item.icon === "scissors"}
@@ -294,6 +301,20 @@
 										rx="2"
 									/><path
 										d="M16 7V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v2"
+									/></svg
+								>
+							{:else if item.icon === "plotter"}
+								<svg
+									width="16"
+									height="16"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="1.75"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									><rect x="2" y="8" width="20" height="8" rx="2" /><path
+										d="M6 8V4h12v4M6 16v4h12v-4M9 12h.01M13 12h2"
 									/></svg
 								>
 							{:else if item.icon === "terminal"}

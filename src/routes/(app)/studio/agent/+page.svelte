@@ -4,7 +4,7 @@
 
 <script lang="ts">
 	import { onMount } from "svelte";
-	import { plotterStore } from "$lib/stores";
+	import { plotterStore, agentStore } from "$lib/stores";
 
 	// ─── Types ────────────────────────────────────
 
@@ -61,9 +61,11 @@
 			if (!res.ok) throw new Error();
 			status = await res.json();
 			statusError = false;
+			agentStore.setOnline(status?.version ?? "");
 		} catch {
 			status = null;
 			statusError = true;
+			agentStore.setOffline();
 		}
 	}
 
@@ -76,6 +78,7 @@
 			const res = await fetch(`${agentUrl}/api/stats`, { signal: AbortSignal.timeout(3000) });
 			if (!res.ok) return;
 			stats = await res.json();
+			agentStore.setStats(stats);
 		} catch { /* offline */ }
 	}
 
