@@ -1102,6 +1102,13 @@ function createPatternStore() {
 
 export const patternStore = createPatternStore();
 
+// ─── Vehicle name lookup ──────────────────────
+export function getVehicleName(vehicleId: string): string {
+	const v = INITIAL_VEHICLES.find((e) => e.id === vehicleId);
+	if (!v) return vehicleId;
+	return `${v.year} ${v.make} ${v.model}`;
+}
+
 // ─── Zone options (for admin add-pattern form) ─
 
 export const PPF_ZONES_LIST: Array<{ value: PatternZone; label: string }> = [

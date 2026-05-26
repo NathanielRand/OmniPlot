@@ -3,5 +3,4 @@
 - insights/blog system for seo and lead funneling
 - investors page
 - update home page hero plot screenshot sample.
-- auto the AI Nest by default. No user would want a non ai mode by default. only if truly custom would they need to use non-ai nesting.
-- add vehicle tag to the studio grid so we can see what car was selected. if more than 1 car pattern was placed, show the list of the cars with tags for each pattern to know which pattern goes to which car.
+- IN-PROGRESS: The "AI Nest" button in the studio view crashes the client. auto the AI Nest by default. No user would want a non ai mode by default. only if truly custom would they need to use non-ai nesting.

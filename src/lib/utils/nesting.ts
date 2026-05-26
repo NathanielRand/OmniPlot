@@ -364,6 +364,7 @@ function rotationImprovementPass(
 	placed: CanvasItem[],
 	sheet: MaterialSheet,
 	allowRotation: boolean,
+	withinBudget?: () => boolean,
 ): CanvasItem[] {
 	if (!allowRotation) return placed;
 
@@ -372,6 +373,7 @@ function rotationImprovementPass(
 	const n = current.length;
 
 	for (let i = 0; i < n; i++) {
+		if (withinBudget && !withinBudget()) break;
 		const item = current[i];
 		const orientations = buildOrientations(item, sheet.widthInches, true);
 		for (const { rot } of orientations) {
@@ -396,12 +398,14 @@ function swapImprovementPass(
 	placed: CanvasItem[],
 	sheet: MaterialSheet,
 	allowRotation: boolean,
+	withinBudget?: () => boolean,
 ): CanvasItem[] {
 	let current = [...placed].sort((a, b) => a.x - b.x || a.y - b.y);
 	let curLen  = layoutLen(current);
 	const n = current.length;
 
 	for (let i = 0; i < n; i++) {
+		if (withinBudget && !withinBudget()) break;
 		for (let j = i + 1; j < n; j++) {
 			const trial = [...current];
 			[trial[i], trial[j]] = [trial[j], trial[i]];
@@ -625,11 +629,14 @@ function bestOverOrderings(
 	orderings: CanvasItem[][],
 	sheet: MaterialSheet,
 	allowRotation: boolean,
+	withinBudget?: () => boolean,
 ): CanvasItem[] {
 	let best: CanvasItem[] | null = null;
 	let bestLen = Infinity;
 
 	for (const ordering of orderings) {
+		// Always run at least one ordering so best is never null.
+		if (best !== null && withinBudget && !withinBudget()) break;
 		for (const scoring of ["left", "compact"] as const) {
 			const result = bestFitPack(ordering, sheet, allowRotation, scoring);
 			const len = layoutLen(result);
@@ -704,6 +711,10 @@ export function smartNest(
 		return { items, improvementPct: 0, trialsRun: 0 };
 	}
 
+	// 3-second wall-clock budget — prevents browser freeze on large layouts.
+	const deadline = Date.now() + 3000;
+	const withinBudget = () => Date.now() < deadline;
+
 	// Naive baseline: items in original order, no optimization.
 	const baselinePacked = bestFitPack(items, sheet, allowRotation, "left");
 	const baselineLen    = layoutLen(baselinePacked);
@@ -718,48 +729,56 @@ export function smartNest(
 		...buildPairedOrderings(items, pairs),
 	];
 
-	// Phase 2: 50 random restart trials (seeded for reproducibility)
-	const RANDOM_TRIALS = 50;
+	// Phase 2: random restart trials (count scaled down for large layouts)
+	// 50 trials is fine for ≤ 15 items; above that the marginal benefit drops
+	// rapidly while cost grows — cap to 15 for large item sets.
+	const RANDOM_TRIALS = items.length <= 15 ? 50 : items.length <= 30 ? 25 : 15;
 	for (let seed = 0; seed < RANDOM_TRIALS; seed++) {
 		orderings.push(shuffled(items, seed * 7919 + 1));
 	}
 
-	let best = bestOverOrderings(orderings, sheet, allowRotation);
+	let best = bestOverOrderings(orderings, sheet, allowRotation, withinBudget);
 	const trialsRun = orderings.length * 2; // × 2 scoring modes
 
 	// Phase 3: rotation improvement pass
-	best = rotationImprovementPass(best, sheet, allowRotation);
+	best = rotationImprovementPass(best, sheet, allowRotation, withinBudget);
 
 	// Phase 4: pair rotation-combination pass (all 16 combos per pair)
-	if (pairs.length > 0) {
+	if (pairs.length > 0 && withinBudget()) {
 		const pairOpt = pairRotationCombinationPass(best, sheet, pairs);
 		if (layoutLen(pairOpt) < layoutLen(best)) best = pairOpt;
 	}
 
-	// Phase 5: swap improvement pass
-	const swapped = swapImprovementPass(best, sheet, allowRotation);
-	if (layoutLen(swapped) < layoutLen(best)) best = swapped;
+	// Phase 5: swap improvement pass (O(n²) repacks — budget-guarded per row)
+	if (withinBudget()) {
+		const swapped = swapImprovementPass(best, sheet, allowRotation, withinBudget);
+		if (layoutLen(swapped) < layoutLen(best)) best = swapped;
+	}
 
-	// Phase 6: insertion improvement pass (most thorough, O(n²) repacks)
-	if (items.length <= 40) {
+	// Phase 6: insertion improvement pass (O(n³) repacks — only for small sets)
+	// Threshold kept low: each while-loop round is O(n²) bestFitPack calls and
+	// can run multiple rounds. At n=40 this freezes the browser for several seconds.
+	if (items.length <= 15 && withinBudget()) {
 		const inserted = insertionImprovementPass(best, sheet, allowRotation);
 		if (layoutLen(inserted) < layoutLen(best)) best = inserted;
 	}
 
 	// Phase 7: NFP nesting pass — true polygon-based packing.
-	// Run as a competing trial; keep whichever result uses less roll.
-	try {
-		const nfpResult = nfpNest(items, sheet, allowRotation);
-		const nfpInBounds = nfpResult.filter(i => !i.outOfBounds);
-		const skyInBounds = best.filter(i => !i.outOfBounds);
-		// Only prefer NFP result if it fits all pieces and uses less roll.
-		if (
-			nfpInBounds.length >= skyInBounds.length &&
-			layoutLen(nfpResult) < layoutLen(best) - 0.01
-		) {
-			best = nfpResult;
-		}
-	} catch { /* NFP failure is non-fatal; skyline result is kept */ }
+	// O(n²) polygon operations per item; capped to avoid multi-second freezes
+	// on real PPF layouts where most shapes are unique (cache misses dominate).
+	if (items.length <= 10 && withinBudget()) {
+		try {
+			const nfpResult = nfpNest(items, sheet, allowRotation);
+			const nfpInBounds = nfpResult.filter(i => !i.outOfBounds);
+			const skyInBounds = best.filter(i => !i.outOfBounds);
+			if (
+				nfpInBounds.length >= skyInBounds.length &&
+				layoutLen(nfpResult) < layoutLen(best) - 0.01
+			) {
+				best = nfpResult;
+			}
+		} catch { /* NFP failure is non-fatal; skyline result is kept */ }
+	}
 
 	const finalLen = layoutLen(best);
 

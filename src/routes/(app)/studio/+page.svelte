@@ -41,6 +41,7 @@
 	import Badge from "$lib/components/ui/Badge.svelte";
 	import GuidedTour from "$lib/components/ui/GuidedTour.svelte";
 	import type { TourStep } from "$lib/components/ui/GuidedTour.svelte";
+	import { getVehicleName } from "$lib/stores/patternStore.svelte";
 	import type { CanvasItem } from "$lib/types";
 
 	// ─── Guided tour ─────────────────────────────
@@ -298,12 +299,23 @@
 			return;
 		}
 		smartNesting = true;
-		// Yield to the browser to paint the loading state before the heavy work
+		// Yield once so Svelte can paint the loading state before we block the thread.
 		setTimeout(() => {
 			try {
-				const result = smartNest(canvasStore.items, transposedSheet());
+				// Deproxy: convert Svelte 5 reactive proxies to plain objects so the
+				// nesting engine can spread/mutate them freely without triggering
+				// reactive tracking or creating proxy-of-proxy structures.
+				const plainItems = canvasStore.items.map((item) => ({
+					...item,
+					pattern: { ...item.pattern },
+				}));
+				const sheet = { ...canvasStore.sheet };
+
+				const result = smartNest(plainItems, transposedSheet(sheet));
+
 				canvasStore.setItems(result.items);
 				smartNestGain = result.improvementPct;
+
 				const oob = result.items.filter((i) => i.outOfBounds).length;
 				const fit = result.items.length - oob;
 				const eff = formatEfficiency(calcEfficiency(result.items, canvasStore.sheet));
@@ -322,8 +334,12 @@
 					);
 				}
 				fitToView();
-			} catch {
-				toastStore.error("Smart Nest failed", "Could not optimize layout.");
+			} catch (e) {
+				console.error("[AI Nest]", e);
+				toastStore.error(
+					"Smart Nest failed",
+					e instanceof Error ? e.message : "Could not optimize layout.",
+				);
 			} finally {
 				smartNesting = false;
 			}
@@ -509,6 +525,22 @@
 		requestAnimationFrame(fitToView);
 	}
 
+	// ─── Vehicle grouping ─────────────────────────
+	// Groups all canvas items by their vehicleId so the legend and Patterns tab
+	// can show which patterns belong to which car.
+	const vehicleGroups = $derived.by(() => {
+		const map = new Map<string, { vehicleId: string; vehicleName: string; items: CanvasItem[] }>();
+		for (const item of canvasStore.items) {
+			const vid = item.pattern.vehicleId || "unknown";
+			if (!map.has(vid)) {
+				map.set(vid, { vehicleId: vid, vehicleName: getVehicleName(vid), items: [] });
+			}
+			map.get(vid)!.items.push(item);
+		}
+		return [...map.values()];
+	});
+	const hasMultipleVehicles = $derived(vehicleGroups.length > 1);
+
 	// ─── Selected item ────────────────────────────
 	const selectedItem = $derived(
 		canvasStore.selected.length === 1
@@ -589,6 +621,36 @@
 <svelte:head>
 	<title>Studio — OmniPlot</title>
 </svelte:head>
+
+{#snippet patternCard(item: CanvasItem)}
+	<div
+		class="pattern-card"
+		class:active={canvasStore.selected.includes(item.id)}
+		role="button"
+		tabindex="0"
+		aria-pressed={canvasStore.selected.includes(item.id)}
+		onclick={() => canvasStore.select(item.id)}
+		onkeydown={(e) => e.key === "Enter" && canvasStore.select(item.id)}
+	>
+		<div class="pattern-card__thumb" style="border-color: {item.color}20">
+			<svg width="44" height="30" viewBox="0 0 100 90" aria-hidden="true">
+				<path d={item.pattern.svgPath} fill="none" stroke={item.color} stroke-width="2" />
+			</svg>
+		</div>
+		<div class="pattern-card__info">
+			<div class="pattern-card__name">{item.label ?? item.pattern.name}</div>
+			<div class="pattern-card__meta">{item.width.toFixed(1)}" × {item.height.toFixed(1)}"</div>
+		</div>
+		<button
+			class="pattern-card__del"
+			onclick={(e) => { e.stopPropagation(); canvasStore.select(item.id); canvasStore.removeSelected(); }}
+			aria-label="Remove {item.label}"
+		>
+			<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"
+				><path d="M18 6L6 18M6 6l12 12" /></svg>
+		</button>
+	</div>
+{/snippet}
 
 <div class="studio">
 	<!-- ─── Canvas Toolbar ─── -->
@@ -920,6 +982,31 @@
 						<div class="export-option__desc">{desc}</div>
 					</div>
 				</button>
+			{/each}
+		</div>
+	{/if}
+
+	<!-- ─── Vehicle legend ─── -->
+	{#if hasMultipleVehicles}
+		<div class="vehicle-legend" role="region" aria-label="Vehicle breakdown">
+			{#each vehicleGroups as group (group.vehicleId)}
+				<div class="vl-group">
+					<span class="vl-car">{group.vehicleName}</span>
+					<div class="vl-chips">
+						{#each group.items as item (item.id)}
+							<button
+								class="vl-chip"
+								class:vl-chip--sel={canvasStore.selected.includes(item.id)}
+								style="--chip: {item.color}"
+								onclick={() => canvasStore.select(item.id)}
+								title="{item.label ?? item.pattern.name} · {item.width.toFixed(1)}&quot; × {item.height.toFixed(1)}&quot;"
+							>
+								<span class="vl-dot" aria-hidden="true"></span>
+								{item.label ?? item.pattern.zone}
+							</button>
+						{/each}
+					</div>
+				</div>
 			{/each}
 		</div>
 	{/if}
@@ -1308,75 +1395,30 @@
 				{:else if panelTab === "patterns"}
 					<div class="prop-label" style="padding: 0 0 10px;">
 						Placed patterns
+						{#if canvasStore.items.length}
+							<span class="patterns-count">{canvasStore.items.length}</span>
+						{/if}
 					</div>
 					{#if canvasStore.items.length}
-						{#each canvasStore.items as item (item.id)}
-							<div
-								class="pattern-card"
-								class:active={canvasStore.selected.includes(
-									item.id,
-								)}
-								role="button"
-								tabindex="0"
-								aria-pressed={canvasStore.selected.includes(
-									item.id,
-								)}
-								onclick={() => canvasStore.select(item.id)}
-								onkeydown={(e) =>
-									e.key === "Enter" &&
-									canvasStore.select(item.id)}
-							>
-								<div
-									class="pattern-card__thumb"
-									style="border-color: {item.color}20"
-								>
-									<svg
-										width="44"
-										height="30"
-										viewBox="0 0 100 90"
-										aria-hidden="true"
-									>
-										<path
-											d={item.pattern.svgPath}
-											fill="none"
-											stroke={item.color}
-											stroke-width="2"
-										/>
-									</svg>
-								</div>
-								<div class="pattern-card__info">
-									<div class="pattern-card__name">
-										{item.label ?? item.pattern.name}
+						{#if hasMultipleVehicles}
+							<!-- Grouped by vehicle -->
+							{#each vehicleGroups as group (group.vehicleId)}
+								<div class="vehicle-section">
+									<div class="vehicle-section__header">
+										<span class="vehicle-section__name">{group.vehicleName}</span>
+										<span class="vehicle-section__count">{group.items.length}</span>
 									</div>
-									<div class="pattern-card__meta">
-										{item.width.toFixed(1)}" × {item.height.toFixed(
-											1,
-										)}"
-									</div>
+									{#each group.items as item (item.id)}
+										{@render patternCard(item)}
+									{/each}
 								</div>
-								<button
-									class="pattern-card__del"
-									onclick={(e) => {
-										e.stopPropagation();
-										canvasStore.select(item.id);
-										canvasStore.removeSelected();
-									}}
-									aria-label="Remove {item.label}"
-								>
-									<svg
-										width="12"
-										height="12"
-										viewBox="0 0 24 24"
-										fill="none"
-										stroke="currentColor"
-										stroke-width="2.5"
-										stroke-linecap="round"
-										aria-hidden="true"
-										><path d="M18 6L6 18M6 6l12 12" /></svg
-									>
-								</button>
-							</div>
-						{/each}
+							{/each}
+						{:else}
+							<!-- Flat list (single vehicle) -->
+							{#each canvasStore.items as item (item.id)}
+								{@render patternCard(item)}
+							{/each}
+						{/if}
 					{:else}
 						<div class="panel-placeholder">
 							<p>
@@ -1702,10 +1744,79 @@
 <style>
 	.studio {
 		display: grid;
-		grid-template-rows: auto 1fr auto;
+		grid-template-rows: auto auto 1fr auto;
 		height: 100%;
 		overflow: hidden;
 		position: relative;
+	}
+
+	/* ─── Vehicle legend ────── */
+	.vehicle-legend {
+		display: flex;
+		align-items: flex-start;
+		gap: 0;
+		background: var(--bg-surface);
+		border-bottom: 1px solid var(--border-subtle);
+		overflow-x: auto;
+		scrollbar-width: none;
+	}
+	.vehicle-legend::-webkit-scrollbar { display: none; }
+
+	.vl-group {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 7px 14px;
+		flex-shrink: 0;
+		border-right: 1px solid var(--border-subtle);
+	}
+	.vl-group:last-child { border-right: none; }
+
+	.vl-car {
+		font-size: 0.6875rem;
+		font-weight: 600;
+		color: var(--text-secondary);
+		white-space: nowrap;
+		letter-spacing: 0.01em;
+	}
+
+	.vl-chips {
+		display: flex;
+		gap: 4px;
+		flex-wrap: wrap;
+	}
+
+	.vl-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		padding: 2px 7px 2px 5px;
+		border-radius: 999px;
+		border: 1px solid color-mix(in srgb, var(--chip) 40%, transparent);
+		background: color-mix(in srgb, var(--chip) 10%, transparent);
+		color: var(--chip);
+		font-size: 0.6875rem;
+		font-weight: 500;
+		cursor: pointer;
+		white-space: nowrap;
+		transition: all 0.1s;
+		font-family: var(--font-body);
+	}
+	.vl-chip:hover {
+		background: color-mix(in srgb, var(--chip) 20%, transparent);
+	}
+	.vl-chip--sel {
+		background: color-mix(in srgb, var(--chip) 22%, transparent);
+		border-color: var(--chip);
+		box-shadow: 0 0 0 1px color-mix(in srgb, var(--chip) 50%, transparent);
+	}
+
+	.vl-dot {
+		width: 5px;
+		height: 5px;
+		border-radius: 50%;
+		background: var(--chip);
+		flex-shrink: 0;
 	}
 
 	/* ─── Toolbar ────── */
@@ -2454,6 +2565,55 @@
 	.pattern-card__del:hover {
 		background: rgba(255, 77, 109, 0.1);
 		color: var(--color-danger);
+	}
+
+	/* ─── Vehicle section (Patterns tab, multi-vehicle) ────── */
+	.vehicle-section {
+		margin-bottom: 10px;
+	}
+
+	.vehicle-section__header {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 6px 0 4px;
+		margin-bottom: 4px;
+		border-bottom: 1px solid var(--border-subtle);
+	}
+
+	.vehicle-section__name {
+		font-size: 0.6875rem;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.07em;
+		color: var(--text-tertiary, var(--text-muted));
+		flex: 1;
+	}
+
+	.vehicle-section__count {
+		font-size: 0.6875rem;
+		font-family: var(--font-mono, monospace);
+		color: var(--text-tertiary, var(--text-muted));
+		background: var(--bg-surface-2, var(--bg-elevated));
+		border: 1px solid var(--border-subtle);
+		border-radius: 999px;
+		padding: 0 5px;
+		line-height: 1.6;
+	}
+
+	.patterns-count {
+		display: inline-flex;
+		align-items: center;
+		padding: 0 5px;
+		font-size: 0.6875rem;
+		font-family: var(--font-mono, monospace);
+		font-weight: 600;
+		background: var(--bg-surface-2, var(--bg-elevated));
+		border: 1px solid var(--border-subtle);
+		border-radius: 999px;
+		color: var(--text-secondary);
+		line-height: 1.6;
+		margin-left: 5px;
 	}
 
 	/* ─── Status bar ────── */

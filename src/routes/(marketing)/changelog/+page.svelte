@@ -69,7 +69,6 @@
 					["Cut Agent: port auto-detection UI in studio", "Q2 2026"],
 					["Window tint pattern library expansion", "Q2 2026"],
 					["Multi-plotter queue — send to multiple cutters in parallel", "Q3 2026"],
-					["Agent status ping in studio — live connected/disconnected indicator", "Q3 2026"],
 					["Mobile cut agent companion app", "Q3 2026"],
 					["Offline mode — studio works without internet", "Q4 2026"],
 				] as [item, eta]}

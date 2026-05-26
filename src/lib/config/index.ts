@@ -749,6 +749,33 @@ export const FAQ_ITEMS = [
 // ─── Changelog ────────────────────────────────
 export const CHANGELOG = [
 	{
+		version: "1.7.0",
+		date: "2026-05-26",
+		label: "Fleet Management",
+		changes: [
+			{
+				type: "feature",
+				text: "Plotters page — dedicated fleet command center for registering, monitoring, and managing all your cutting devices. Includes live job queue, 4-stat dashboard, per-device test cut, and connection-specific troubleshooting for failed jobs.",
+			},
+			{
+				type: "feature",
+				text: "Live agent log stream — the Plotters page opens an SSE connection to the Cut Agent and surfaces real-time events (cuts sent, errors, port activity) in a scrollable log feed.",
+			},
+			{
+				type: "feature",
+				text: "Plotter registration with CRUD — add and remove plotters stored in Firestore; supports Cut Agent, USB Serial, Network TCP, and Download connection types with USB auto-detect and local network scan.",
+			},
+			{
+				type: "improvement",
+				text: "Shared Cut Agent state — agent online/offline status is lifted into a global reactive store so the Plotters page, Agent page, and Studio all reflect live connectivity without independent polling.",
+			},
+			{
+				type: "improvement",
+				text: "Plotter settings removed from the Settings page and consolidated into the dedicated Plotters route.",
+			},
+		],
+	},
+	{
 		version: "1.6.0",
 		date: "2026-05-25",
 		label: "Billing & Admin",
