@@ -66,8 +66,8 @@
 		},
 		{
 			target: '[data-tour="toolbar-nest"]',
-			title: "Nesting Tools",
-			body: "Auto-nest arranges patterns instantly to minimize waste. AI Nest runs a deeper multi-pass optimization — best for complex layouts.",
+			title: "AI Nest",
+			body: "AI Nest is on by default — patterns auto-arrange to minimize material waste whenever you add them. Click the star toggle to switch to manual placement mode. The refresh icon runs a deeper re-optimization pass on demand.",
 			position: "bottom",
 		},
 		{
@@ -217,6 +217,21 @@
 
 	let smartNesting = $state(false);
 	let smartNestGain = $state<number | null>(null);
+
+	// ─── AI Nest mode (default ON) ────────────────
+	// When enabled: patterns auto-nest using the fast skyline algorithm whenever
+	// items are added or the sheet changes. Users can toggle this off to drag
+	// patterns to custom positions without the layout being overridden.
+	let aiNestEnabled = $state(
+		typeof localStorage !== "undefined"
+			? localStorage.getItem("op-ai-nest") !== "false"
+			: true,
+	);
+	$effect(() => {
+		if (typeof localStorage !== "undefined") {
+			localStorage.setItem("op-ai-nest", aiNestEnabled ? "true" : "false");
+		}
+	});
 	let cutting          = $state(false);
 	let serialPortInfo   = $state<SerialPortInfo | null>(null);
 
@@ -519,8 +534,14 @@
 				idx % 4
 			],
 		};
-		canvasStore.setItems([...canvasStore.items, item]);
-		canvasStore.select(item.id);
+		if (aiNestEnabled) {
+			const nested = autoNest([...canvasStore.items, item], transposedSheet());
+			canvasStore.setItems(nested);
+			canvasStore.select(item.id);
+		} else {
+			canvasStore.setItems([...canvasStore.items, item]);
+			canvasStore.select(item.id);
+		}
 		toastStore.info("Pattern added", item.label);
 		requestAnimationFrame(fitToView);
 	}
@@ -700,11 +721,14 @@
 
 		<!-- Edit actions -->
 		<div class="tool-group" data-tour="toolbar-nest">
+			<!-- AI Nest mode toggle — ON by default; turning off enables manual placement -->
 			<button
-				class="tool-btn"
-				title="Auto-nest"
-				onclick={handleAutoNest}
-				aria-label="Auto-nest patterns"
+				class="tool-btn tool-btn--ai-mode"
+				class:active={aiNestEnabled}
+				title={aiNestEnabled ? "AI Nest ON — patterns auto-arrange on add (click to disable for manual placement)" : "AI Nest OFF — manual placement mode (click to re-enable)"}
+				onclick={() => { aiNestEnabled = !aiNestEnabled; }}
+				aria-pressed={aiNestEnabled}
+				aria-label="Toggle AI Nest mode"
 			>
 				<svg
 					width="14"
@@ -716,36 +740,26 @@
 					stroke-linecap="round"
 					stroke-linejoin="round"
 					aria-hidden="true"
-					><rect x="2" y="2" width="9" height="11" rx="1" /><rect
-						x="13"
-						y="2"
-						width="9"
-						height="7"
-						rx="1"
-					/><rect x="13" y="13" width="9" height="9" rx="1" /><rect
-						x="2"
-						y="17"
-						width="9"
-						height="5"
-						rx="1"
-					/></svg
 				>
+					<path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+				</svg>
+				<span class="ai-mode-label">{aiNestEnabled ? "AI Nest" : "Manual"}</span>
 			</button>
+			<!-- Deep optimize button — reruns full smartNest on demand -->
 			<button
-				class="tool-btn tool-btn--ai tool-btn--ai-labeled"
+				class="tool-btn tool-btn--ai-optimize"
 				class:loading={smartNesting}
-				title="AI Nest — deep optimization with multiple strategies and improvement passes"
+				title="Re-optimize — run deep AI nesting across all patterns now"
 				onclick={handleSmartNest}
 				disabled={smartNesting}
-				aria-label="AI-assisted smart nest"
+				aria-label="Run deep AI nest optimization"
 			>
 				{#if smartNesting}
 					<span class="ai-spinner" aria-hidden="true"></span>
-					<span class="ai-label">Nesting…</span>
 				{:else}
 					<svg
-						width="14"
-						height="14"
+						width="12"
+						height="12"
 						viewBox="0 0 24 24"
 						fill="none"
 						stroke="currentColor"
@@ -754,9 +768,11 @@
 						stroke-linejoin="round"
 						aria-hidden="true"
 					>
-						<path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+						<path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+						<path d="M3 3v5h5" />
+						<path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+						<path d="M16 16h5v5" />
 					</svg>
-					<span class="ai-label">AI Nest</span>
 				{/if}
 			</button>
 			<button
@@ -1871,7 +1887,47 @@
 		cursor: not-allowed;
 	}
 
-	/* AI Nest button — star icon with brand accent */
+	/* AI Nest mode toggle — star icon, active = ON state with brand fill */
+	.tool-btn--ai-mode {
+		width: auto;
+		padding: 0 10px;
+		gap: 5px;
+		color: var(--text-muted);
+		border: 1px solid transparent;
+		transition: color 0.15s, background 0.15s, border-color 0.15s;
+	}
+	.tool-btn--ai-mode.active {
+		color: var(--color-brand-dim);
+		background: rgba(0, 112, 255, 0.08);
+		border-color: rgba(0, 112, 255, 0.2);
+	}
+	.tool-btn--ai-mode.active svg {
+		fill: var(--color-brand-dim);
+		stroke: var(--color-brand-dim);
+	}
+	.tool-btn--ai-mode:hover:not(:disabled) {
+		background: rgba(0, 112, 255, 0.1);
+		color: var(--color-brand-dim);
+	}
+	.ai-mode-label {
+		font-size: 0.75rem;
+		font-weight: 600;
+		font-family: var(--font-body);
+		letter-spacing: 0.01em;
+	}
+	/* Deep re-optimize button — small refresh icon, visible but understated */
+	.tool-btn--ai-optimize {
+		color: var(--text-muted);
+	}
+	.tool-btn--ai-optimize:hover:not(:disabled) {
+		color: var(--color-brand-dim);
+		background: rgba(0, 112, 255, 0.08);
+	}
+	.tool-btn--ai-optimize.loading {
+		opacity: 1;
+		cursor: wait;
+	}
+	/* Legacy class kept for other spinner uses */
 	.tool-btn--ai {
 		color: var(--color-brand-dim);
 		position: relative;

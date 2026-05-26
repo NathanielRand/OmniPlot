@@ -429,15 +429,18 @@ function insertionImprovementPass(
 	placed: CanvasItem[],
 	sheet: MaterialSheet,
 	allowRotation: boolean,
+	withinBudget?: () => boolean,
 ): CanvasItem[] {
 	let current = [...placed].sort((a, b) => a.x - b.x || a.y - b.y);
 	let curLen  = layoutLen(current);
 	let improved = true;
 
 	while (improved) {
+		if (withinBudget && !withinBudget()) break;
 		improved = false;
 		const n = current.length;
 		for (let i = 0; i < n; i++) {
+			if (withinBudget && !withinBudget()) break;
 			const item = current[i];
 			const rest = current.filter((_, idx) => idx !== i);
 			let bestInsertLen = curLen;
@@ -759,25 +762,8 @@ export function smartNest(
 	// Threshold kept low: each while-loop round is O(n²) bestFitPack calls and
 	// can run multiple rounds. At n=40 this freezes the browser for several seconds.
 	if (items.length <= 15 && withinBudget()) {
-		const inserted = insertionImprovementPass(best, sheet, allowRotation);
+		const inserted = insertionImprovementPass(best, sheet, allowRotation, withinBudget);
 		if (layoutLen(inserted) < layoutLen(best)) best = inserted;
-	}
-
-	// Phase 7: NFP nesting pass — true polygon-based packing.
-	// O(n²) polygon operations per item; capped to avoid multi-second freezes
-	// on real PPF layouts where most shapes are unique (cache misses dominate).
-	if (items.length <= 10 && withinBudget()) {
-		try {
-			const nfpResult = nfpNest(items, sheet, allowRotation);
-			const nfpInBounds = nfpResult.filter(i => !i.outOfBounds);
-			const skyInBounds = best.filter(i => !i.outOfBounds);
-			if (
-				nfpInBounds.length >= skyInBounds.length &&
-				layoutLen(nfpResult) < layoutLen(best) - 0.01
-			) {
-				best = nfpResult;
-			}
-		} catch { /* NFP failure is non-fatal; skyline result is kept */ }
 	}
 
 	const finalLen = layoutLen(best);

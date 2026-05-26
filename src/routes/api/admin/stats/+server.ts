@@ -37,7 +37,7 @@ export const GET: RequestHandler = async ({ request }) => {
 
 	// ── Shops ─────────────────────────────────────
 	const KNOWN_SHOP_PLANS = new Set(['starter', 'team', 'studio']);
-	const byShopPlan: Record<string, number> = {};
+	const byShopPlan: Record<string, number> = { starter: 0, team: 0, studio: 0 };
 	let totalShops = 0;
 
 	try {
@@ -50,6 +50,24 @@ export const GET: RequestHandler = async ({ request }) => {
 		}
 	} catch {
 		// shops collection may not exist yet
+	}
+
+	// ── Plotters ──────────────────────────────────
+	let totalPlotters = 0;
+	try {
+		const plottersSnap = await db.collection('plotters').get();
+		totalPlotters = plottersSnap.size;
+	} catch {
+		// plotters collection may not exist yet
+	}
+
+	// ── Agent downloads ───────────────────────────
+	let agentDownloads = 0;
+	try {
+		const counterSnap = await db.doc('counters/agent_downloads').get();
+		agentDownloads = counterSnap.data()?.count ?? 0;
+	} catch {
+		// counter document may not exist yet
 	}
 
 	const recentSignups = usersSnap.docs.slice(0, 5).map((doc) => {
@@ -112,6 +130,12 @@ export const GET: RequestHandler = async ({ request }) => {
 		shops: {
 			total:      totalShops,
 			byShopPlan,
+		},
+		plotters: {
+			total: totalPlotters,
+		},
+		agent: {
+			downloads: agentDownloads,
 		},
 		jobs: {
 			today:  cutsToday,

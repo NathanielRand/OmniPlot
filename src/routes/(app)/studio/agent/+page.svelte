@@ -209,6 +209,10 @@
 	const AGENT_VERSION = "1.0.0";
 	const APP_URL = (import.meta.env.VITE_APP_URL ?? "https://omniplot.app").replace(/\/$/, "");
 
+	function dlUrl(file: string, platform: string) {
+		return `/api/agent/download?file=${encodeURIComponent(file)}&platform=${encodeURIComponent(platform)}&version=${AGENT_VERSION}`;
+	}
+
 	const DOWNLOADS = {
 		linux:     { label: "Linux",               file: `omniplot-agent-linux-amd64` },
 		windows:   { label: "Windows",             file: `omniplot-agent-windows-amd64.exe` },
@@ -555,10 +559,9 @@
 						<div class="download-row">
 							{#each Object.entries(DOWNLOADS) as [pid, d]}
 								<a
-									href="{APP_URL}/downloads/agent/v{AGENT_VERSION}/{d.file}"
+									href={dlUrl(d.file, pid)}
 									class="dl-btn"
 									class:dl-btn--detected={pid === detectedPlatform}
-									download
 								>
 									{#if pid === detectedPlatform}
 										<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
