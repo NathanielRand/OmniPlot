@@ -188,45 +188,83 @@
 							stroke-width="1"
 							stroke-dasharray="6 3"
 						/>
-						<!-- Hood pattern -->
-						<path
-							d="M40,180 Q60,80 120,50 Q180,30 240,55 Q290,80 310,180"
-							fill="rgba(0,229,255,0.06)"
-							stroke="#00E5FF"
-							stroke-width="1.5"
-							stroke-linecap="round"
-						/>
-						<text
-							x="175"
-							y="130"
-							text-anchor="middle"
-							fill="rgba(0,229,255,0.4)"
-							font-size="9"
-							font-family="monospace">HOOD MAIN</text
-						>
-						<!-- Fender L -->
-						<path
-							d="M340,60 Q345,30 360,25 L375,60 Z"
-							fill="rgba(167,139,250,0.08)"
-							stroke="#A78BFA"
-							stroke-width="1.5"
-						/>
-						<!-- Bumper -->
-						<path
-							d="M40,190 Q110,165 175,162 Q240,165 310,190 Z"
-							fill="rgba(0,214,143,0.06)"
-							stroke="#00D68F"
-							stroke-width="1.5"
-							stroke-linecap="round"
-						/>
-						<text
-							x="175"
-							y="185"
-							text-anchor="middle"
-							fill="rgba(0,214,143,0.4)"
-							font-size="7"
-							font-family="monospace">FRONT BUMPER</text
-						>
+						<!-- Hood (61"×50") -->
+						<g transform="translate(28,28) scale(1.45,1.15)">
+							<path
+								d="M8,5 Q50,2 92,5 L95,95 Q50,98 5,95 Z"
+								fill="rgba(0,229,255,0.07)"
+								stroke="#00E5FF"
+								stroke-width="1.2"
+								vector-effect="non-scaling-stroke"
+							/>
+						</g>
+						<text x="101" y="88" text-anchor="middle" fill="rgba(0,229,255,0.45)" font-size="7" font-family="monospace">HOOD</text>
+						<!-- Front Bumper (68"×12") -->
+						<g transform="translate(28,148) scale(1.45,0.30)">
+							<path
+								d="M4,15 Q8,4 92,4 Q96,15 96,85 Q92,96 8,96 Q4,85 4,15 Z"
+								fill="rgba(0,214,143,0.07)"
+								stroke="#00D68F"
+								stroke-width="1.2"
+								vector-effect="non-scaling-stroke"
+							/>
+						</g>
+						<text x="101" y="166" text-anchor="middle" fill="rgba(0,214,143,0.45)" font-size="7" font-family="monospace">BUMPER</text>
+						<!-- Fender Left (28"×22") -->
+						<g transform="translate(178,28) scale(0.72,0.58)">
+							<path
+								d="M5,12 Q10,4 40,2 L95,4 L96,88 Q70,96 5,82 Z"
+								fill="rgba(167,139,250,0.07)"
+								stroke="#A78BFA"
+								stroke-width="1.2"
+								vector-effect="non-scaling-stroke"
+							/>
+						</g>
+						<text x="214" y="60" text-anchor="middle" fill="rgba(167,139,250,0.45)" font-size="7" font-family="monospace">FDR L</text>
+						<!-- Fender Right (28"×22") -->
+						<g transform="translate(178,90) scale(0.72,0.58)">
+							<path
+								d="M4,4 L60,2 Q90,4 95,12 L95,82 Q30,96 4,88 Z"
+								fill="rgba(129,140,248,0.07)"
+								stroke="#818CF8"
+								stroke-width="1.2"
+								vector-effect="non-scaling-stroke"
+							/>
+						</g>
+						<text x="214" y="122" text-anchor="middle" fill="rgba(129,140,248,0.45)" font-size="7" font-family="monospace">FDR R</text>
+						<!-- Headlight Left (24"×8") -->
+						<g transform="translate(178,152) scale(0.90,0.24)">
+							<path
+								d="M4,18 Q8,4 88,5 Q96,18 96,82 Q88,96 8,95 Q4,82 4,18 Z"
+								fill="rgba(252,211,77,0.07)"
+								stroke="#FCD34D"
+								stroke-width="1.2"
+								vector-effect="non-scaling-stroke"
+							/>
+						</g>
+						<text x="223" y="167" text-anchor="middle" fill="rgba(252,211,77,0.45)" font-size="7" font-family="monospace">HDLT L</text>
+						<!-- Mirror Left (10"×6") -->
+						<g transform="translate(254,28) scale(0.38,0.22)">
+							<path
+								d="M4,18 Q12,4 72,4 Q92,12 95,55 L90,92 Q65,98 4,88 Z"
+								fill="rgba(244,114,182,0.07)"
+								stroke="#F472B6"
+								stroke-width="1.2"
+								vector-effect="non-scaling-stroke"
+							/>
+						</g>
+						<text x="273" y="42" text-anchor="middle" fill="rgba(244,114,182,0.45)" font-size="7" font-family="monospace">MRR L</text>
+						<!-- Rocker Panel (74"×8") -->
+						<g transform="translate(254,55) scale(1.0,0.16)">
+							<path
+								d="M2,8 Q6,2 94,2 Q98,8 98,92 Q94,98 6,98 Q2,92 2,8 Z"
+								fill="rgba(52,211,153,0.07)"
+								stroke="#34D399"
+								stroke-width="1.2"
+								vector-effect="non-scaling-stroke"
+							/>
+						</g>
+						<text x="304" y="66" text-anchor="middle" fill="rgba(52,211,153,0.45)" font-size="7" font-family="monospace">ROCKER</text>
 						<!-- Efficiency bar -->
 						<rect
 							x="20"
@@ -239,7 +277,7 @@
 						<rect
 							x="20"
 							y="205"
-							width="280"
+							width="297"
 							height="4"
 							rx="2"
 							fill="url(#effgrad)"
@@ -263,9 +301,9 @@
 						<span class="preview-dot-status"></span>
 						Plotter ready
 					</span>
-					<span class="preview-status-item">76.4% efficient</span>
+					<span class="preview-status-item">82.5% efficient</span>
 					<span class="preview-status-item"
-						>3 patterns · 6m 22s est.</span
+						>7 patterns · 9m 45s est.</span
 					>
 				</div>
 			</div>
