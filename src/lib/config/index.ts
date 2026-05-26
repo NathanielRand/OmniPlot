@@ -610,6 +610,7 @@ export const ADMIN_NAV = [
 	{ label: "Users",     href: "/admin/users",       icon: "users" },
 	{ label: "Patterns",  href: "/admin/patterns",    icon: "vector-bezier" },
 	{ label: "Insights",  href: "/admin/insights",    icon: "book-open" },
+	{ label: "Plotters",  href: "/admin/plotters",    icon: "printer" },
 	{ label: "Analytics", href: "/admin/analytics",   icon: "chart-bar" },
 	{ label: "Products",  href: "/admin/products",    icon: "package" },
 	{ label: "Coupons",   href: "/admin/coupons",     icon: "tag" },

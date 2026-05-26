@@ -15,8 +15,9 @@
 //   CORS: agent must include Access-Control-Allow-Origin: *
 // ─────────────────────────────────────────────
 import type { PlotterConfig } from "$lib/types";
+import { classifyError, type PlotterDiagnostic } from "./plotter-errors";
 
-export type SendResult = { ok: true } | { ok: false; error: string };
+export type SendResult = { ok: true } | { ok: false; diagnostic: PlotterDiagnostic };
 
 // ─── Web Serial port cache ────────────────────
 // Survives across handleCut calls in a session so the browser
@@ -74,14 +75,20 @@ export async function sendToPlotter(
         case "network":    return sendViaNetwork(hpgl, config);
         case "cut-agent":  return sendViaAgent(hpgl, config);
         default:
-            return { ok: false, error: "Use Download to save a PLT file." };
+            return {
+                ok: false,
+                diagnostic: classifyError("Use Download to save a PLT file.", config.connection),
+            };
     }
 }
 
 // ─── USB-Serial (Web Serial API) ─────────────
 async function sendViaSerial(hpgl: string, config: PlotterConfig): Promise<SendResult> {
     if (!("serial" in navigator)) {
-        return { ok: false, error: "Web Serial is only available in Chrome or Edge." };
+        return {
+            ok: false,
+            diagnostic: classifyError("Web Serial is only available in Chrome or Edge.", "usb-serial"),
+        };
     }
     try {
         if (!_cachedPort) {
@@ -117,7 +124,10 @@ async function sendViaSerial(hpgl: string, config: PlotterConfig): Promise<SendR
         if (err?.name === "NetworkError" || err?.name === "InvalidStateError") {
             _cachedPort = null; // force re-selection next time
         }
-        return { ok: false, error: err?.message ?? "Serial send failed." };
+        return {
+            ok: false,
+            diagnostic: classifyError(err?.message ?? "Serial send failed.", "usb-serial"),
+        };
     }
 }
 
@@ -136,11 +146,17 @@ async function sendViaNetwork(hpgl: string, config: PlotterConfig): Promise<Send
         });
         if (!res.ok) {
             const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-            return { ok: false, error: body.error ?? `HTTP ${res.status}` };
+            return {
+                ok: false,
+                diagnostic: classifyError(body.error ?? `HTTP ${res.status}`, "network", res.status),
+            };
         }
         return { ok: true };
     } catch (err: any) {
-        return { ok: false, error: err?.message ?? "Network send failed." };
+        return {
+            ok: false,
+            diagnostic: classifyError(err?.message ?? "Network send failed.", "network"),
+        };
     }
 }
 
@@ -164,7 +180,14 @@ async function sendViaAgent(hpgl: string, config: PlotterConfig): Promise<SendRe
         });
         if (!res.ok) {
             const body = await res.json().catch(() => ({ error: `Agent error ${res.status}` }));
-            return { ok: false, error: body.error ?? `Agent error ${res.status}` };
+            return {
+                ok: false,
+                diagnostic: classifyError(
+                    body.error ?? `Agent error ${res.status}`,
+                    "cut-agent",
+                    res.status,
+                ),
+            };
         }
         return { ok: true };
     } catch (err: any) {
@@ -172,11 +195,12 @@ async function sendViaAgent(hpgl: string, config: PlotterConfig): Promise<SendRe
             err?.message?.includes("fetch") ||
             err?.name === "TypeError" ||
             err?.message?.includes("Failed to fetch");
+        const msg = isNetworkErr
+            ? `OmniPlot Cut Agent not reachable at ${base}. Is the agent running?`
+            : (err?.message ?? "Agent send failed.");
         return {
             ok: false,
-            error: isNetworkErr
-                ? `OmniPlot Cut Agent not reachable at ${base}. Is the agent running?`
-                : (err?.message ?? "Agent send failed."),
+            diagnostic: classifyError(msg, "cut-agent"),
         };
     }
 }

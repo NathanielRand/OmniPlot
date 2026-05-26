@@ -1,6 +1,4 @@
 - Create a local plotter emulator/simulator to verify the communication between plotter and agent (or other method) is bidirectional and valid throughout each expected communication event with proper processing and response. we need to test without having the quipment in person.
-- Plotter device compatability pass.
-- insights/blog system for seo and lead funneling
+- Plotter device compatability pass another  couple of times.
 - investors page
-- update home page hero plot screenshot sample.
 - add vehicle tag to the studio grid so we can see what car was selected. if more than 1 car pattern was placed, show the list of the cars with tags for each pattern to know which pattern goes to which car.

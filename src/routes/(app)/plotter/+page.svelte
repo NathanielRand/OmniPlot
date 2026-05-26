@@ -12,13 +12,17 @@
 		savePlotter,
 		deletePlotter,
 		getUserJobs,
+		logPlotterError,
 	} from "$lib/firebase/firestore";
 	import {
 		detectUsbPlotters,
 		detectAgentPorts,
 		scanNetworkViaAgent,
 	} from "$lib/utils/plotter-detect";
-	import type { PlotterDevice, CutJob, PlotterConnection } from "$lib/types";
+	import { sendToPlotter } from "$lib/utils/plotter-connection";
+	import type { PlotterDiagnostic } from "$lib/utils/plotter-errors";
+	import PlotterDiagPanel from "$lib/components/ui/PlotterDiagPanel.svelte";
+	import type { PlotterDevice, CutJob, PlotterConnection, PlotterConfig } from "$lib/types";
 	import type { NetworkDevice } from "$lib/utils/plotter-detect";
 
 	// ─── Core state ──────────────────────────────
@@ -44,6 +48,11 @@
 	let networkDevices  = $state<NetworkDevice[]>([]);
 	let confirmDelete   = $state<string | null>(null);
 	let addStep         = $state<"form" | "detect">("form");
+
+	// ─── Diagnostic panel ────────────────────────
+	let diagData        = $state<PlotterDiagnostic | null>(null);
+	let diagReported    = $state(false);
+	let diagPlotter     = $state<PlotterDevice | null>(null);
 
 	// ─── Add plotter form ────────────────────────
 	let form = $state({
@@ -238,25 +247,79 @@
 		}
 	}
 
+	const TEST_HPGL = "IN;SP1;VS10;FS80;PU0,0;PD1016,0,1016,1016,0,1016,0,0;PU;SP0;"; // 1" × 1" square
+
+	function deviceToConfig(plotter: PlotterDevice): PlotterConfig {
+		return {
+			id:            plotter.id,
+			name:          plotter.name,
+			manufacturer:  plotter.manufacturer,
+			model:         plotter.model,
+			protocol:      plotter.protocol,
+			connection:    plotter.connection,
+			bladeForce:    80,
+			cuttingSpeed:  10,
+			passes:        1,
+			overcut:       0.5,
+			offsetBlade:   0.5,
+			mediaWidthMm:  600,
+			maxMediaWidthMm: plotter.maxMediaWidthMm,
+			originX:       0,
+			originY:       0,
+			flipH:         false,
+			flipV:         false,
+			ipAddress:     plotter.ipAddress,
+			port:          plotter.port,
+			baudRate:      plotter.baudRate,
+			serialPort:    plotter.serialPort,
+			agentUrl:      plotter.agentUrl,
+		};
+	}
+
 	async function handleTestCut(plotter: PlotterDevice) {
-		if (agentStore.status !== "online") {
-			toastStore.error("Agent offline", "Start the Cut Agent first.");
-			return;
-		}
-		try {
-			await fetch(`${agentStore.url}/api/cut`, {
-				method: "POST", headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					hpgl: "IN;SP1;PU0,0;PD100,0,100,100,0,100,0,0;PU;SP0;",
-					port: plotter.serialPort ?? plotter.ipAddress ?? null,
-					ip: plotter.ipAddress ?? null, tcpPort: plotter.port ?? 9100,
-					baudRate: plotter.baudRate ?? 9600, connection: plotter.connection,
-				}),
-			});
+		const result = await sendToPlotter(TEST_HPGL, deviceToConfig(plotter));
+		if (result.ok) {
 			toastStore.success("Test cut sent", `1" × 1" square → ${plotter.name}`);
-		} catch {
-			toastStore.error("Test cut failed", "Check connection and agent logs.");
+		} else {
+			diagPlotter  = plotter;
+			diagData     = result.diagnostic;
+			diagReported = result.diagnostic.escalate;
+			if (result.diagnostic.escalate && userStore.user) {
+				logPlotterError({
+					userId:        userStore.user.uid,
+					userEmail:     userStore.user.email ?? null,
+					displayName:   userStore.user.displayName ?? null,
+					plotterPreset: plotter.presetName,
+					connection:    plotter.connection,
+					protocol:      plotter.protocol,
+					errorCode:     result.diagnostic.code,
+					errorTitle:    result.diagnostic.title,
+					errorRaw:      result.diagnostic.raw ?? "",
+					agentVersion:  agentStore.version,
+					userAgent:     navigator.userAgent,
+					autoReported:  true,
+				}).catch(() => {});
+			}
 		}
+	}
+
+	async function diagReport() {
+		if (!diagData || !diagPlotter || !userStore.user) return;
+		await logPlotterError({
+			userId:        userStore.user.uid,
+			userEmail:     userStore.user.email ?? null,
+			displayName:   userStore.user.displayName ?? null,
+			plotterPreset: diagPlotter.presetName,
+			connection:    diagPlotter.connection,
+			protocol:      diagPlotter.protocol,
+			errorCode:     diagData.code,
+			errorTitle:    diagData.title,
+			errorRaw:      diagData.raw ?? "",
+			agentVersion:  agentStore.version,
+			userAgent:     navigator.userAgent,
+			autoReported:  false,
+		}).catch(() => {});
+		diagReported = true;
 	}
 
 	// ─── Helpers ─────────────────────────────────
@@ -678,6 +741,14 @@
 		</div>
 	</div>
 {/if}
+
+<PlotterDiagPanel
+	diagnostic={diagData}
+	reported={diagReported}
+	onClose={() => { diagData = null; diagReported = false; diagPlotter = null; }}
+	onRetry={() => { const p = diagPlotter; diagData = null; diagReported = false; diagPlotter = null; if (p) handleTestCut(p); }}
+	onReport={diagReport}
+/>
 
 <style>
 	/* ─── Page shell ─── */

@@ -414,6 +414,26 @@ export interface InsightPost {
 	updatedAt: Date;
 }
 
+// ─── Plotter Error Reports ────────────────────
+export interface PlotterErrorReport {
+	id: string;
+	userId: string;
+	userEmail: string | null;
+	displayName: string | null;
+	plotterPreset: string;
+	connection: string;
+	protocol: string;
+	errorCode: string;
+	errorTitle: string;
+	errorRaw: string;
+	agentVersion: string | null;
+	userAgent: string;
+	/** true = escalate flag was set; auto-logged without user action */
+	autoReported: boolean;
+	resolvedAt: Date | null;
+	createdAt: Date;
+}
+
 // ─── UI State ─────────────────────────────────
 export interface Toast {
 	id: string;

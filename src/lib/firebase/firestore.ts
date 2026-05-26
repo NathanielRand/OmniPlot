@@ -36,6 +36,7 @@ import type {
 	ShopRole,
 	PlotterDevice,
 	InsightPost,
+	PlotterErrorReport,
 } from "$lib/types";
 
 // ─── Collection refs ──────────────────────────
@@ -50,6 +51,7 @@ export const Collections = {
 	SHOPS: "shops",
 	SHOP_INVITES: "shopInvites",
 	INSIGHTS: "insights",
+	PLOTTER_ERRORS: "plotterErrors",
 } as const;
 
 // ─── Converters ───────────────────────────────
@@ -927,4 +929,60 @@ export async function updateInsightPost(
 
 export async function deleteInsightPost(id: string): Promise<void> {
 	await deleteDoc(doc(db, Collections.INSIGHTS, id));
+}
+
+// ─── Plotter Error Reports ────────────────────
+
+function toPlotterErrorReport(id: string, data: DocumentData): PlotterErrorReport {
+	return {
+		id,
+		userId:       data.userId       ?? "",
+		userEmail:    data.userEmail    ?? null,
+		displayName:  data.displayName  ?? null,
+		plotterPreset: data.plotterPreset ?? "",
+		connection:   data.connection   ?? "",
+		protocol:     data.protocol     ?? "",
+		errorCode:    data.errorCode    ?? "UNKNOWN",
+		errorTitle:   data.errorTitle   ?? "",
+		errorRaw:     data.errorRaw     ?? "",
+		agentVersion: data.agentVersion ?? null,
+		userAgent:    data.userAgent    ?? "",
+		autoReported: data.autoReported ?? false,
+		resolvedAt:   data.resolvedAt ? fromTimestamp(data.resolvedAt) : null,
+		createdAt:    fromTimestamp(data.createdAt),
+	};
+}
+
+// Client-side dedup: same user+code+preset within 5 minutes won't double-log.
+const _errorLogCache = new Map<string, number>();
+
+export async function logPlotterError(
+	report: Omit<PlotterErrorReport, "id" | "createdAt" | "resolvedAt">,
+): Promise<void> {
+	const key = `${report.userId}:${report.errorCode}:${report.plotterPreset}`;
+	const lastLogged = _errorLogCache.get(key) ?? 0;
+	if (Date.now() - lastLogged < 5 * 60 * 1000) return;
+	_errorLogCache.set(key, Date.now());
+
+	const ref = doc(collection(db, Collections.PLOTTER_ERRORS));
+	await setDoc(ref, {
+		...report,
+		resolvedAt: null,
+		createdAt: serverTimestamp(),
+	});
+}
+
+export async function getPlotterErrors(maxResults = 150): Promise<PlotterErrorReport[]> {
+	// No orderBy — sort client-side to avoid composite index requirement
+	const q = query(collection(db, Collections.PLOTTER_ERRORS), limit(maxResults));
+	const snap = await getDocs(q);
+	return snap.docs
+		.map((d) => toPlotterErrorReport(d.id, d.data()))
+		.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+}
+
+export async function resolvePlotterError(id: string): Promise<void> {
+	await updateDoc(doc(db, Collections.PLOTTER_ERRORS, id), {
+		resolvedAt: serverTimestamp(),
+	});
 }

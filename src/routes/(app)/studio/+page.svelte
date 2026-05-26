@@ -18,7 +18,9 @@
 		generateHpgl,
 	} from "$lib/utils/hpgl";
 	import { sendToPlotter, connectSerialPort, disconnectSerialPort, isSerialConnected, type SerialPortInfo } from "$lib/utils/plotter-connection";
-	import { saveJob } from "$lib/firebase/firestore";
+	import { saveJob, logPlotterError } from "$lib/firebase/firestore";
+	import type { PlotterDiagnostic } from "$lib/utils/plotter-errors";
+	import PlotterDiagPanel from "$lib/components/ui/PlotterDiagPanel.svelte";
 	import {
 		canCut,
 		formatDimensions,
@@ -235,6 +237,10 @@
 	let cutting          = $state(false);
 	let serialPortInfo   = $state<SerialPortInfo | null>(null);
 
+	// ─── Plotter diagnostic panel ─────────────────
+	let diagData     = $state<PlotterDiagnostic | null>(null);
+	let diagReported = $state(false);
+
 	// ─── Plotter detection state ──────────────────
 	let detecting       = $state(false);
 	let detectedPlotter = $state<DetectedPlotter | null>(null);
@@ -431,11 +437,52 @@
 				toastStore.success("Sent to plotter", `${inBounds.length} paths sent successfully.`);
 				persistJob({ user, inBounds, eff, usedLength, patternArea, sheetArea, jobName });
 			} else {
-				toastStore.error("Send failed", result.error);
+				diagData     = result.diagnostic;
+				diagReported = result.diagnostic.escalate;
+				if (result.diagnostic.escalate && userStore.user) {
+					logPlotterError({
+						userId:       userStore.user.uid,
+						userEmail:    userStore.user.email ?? null,
+						displayName:  userStore.user.displayName ?? null,
+						plotterPreset: plotterStore.config.name,
+						connection:   plotterStore.config.connection,
+						protocol:     plotterStore.config.protocol,
+						errorCode:    result.diagnostic.code,
+						errorTitle:   result.diagnostic.title,
+						errorRaw:     result.diagnostic.raw ?? "",
+						agentVersion: agentStore.version,
+						userAgent:    navigator.userAgent,
+						autoReported: true,
+					}).catch(() => {});
+				}
 			}
 		} finally {
 			cutting = false;
 		}
+	}
+
+	async function diagRetry() {
+		diagData = null;
+		await handleCut();
+	}
+
+	async function diagReport() {
+		if (!diagData || !userStore.user) return;
+		await logPlotterError({
+			userId:       userStore.user.uid,
+			userEmail:    userStore.user.email ?? null,
+			displayName:  userStore.user.displayName ?? null,
+			plotterPreset: plotterStore.config.name,
+			connection:   plotterStore.config.connection,
+			protocol:     plotterStore.config.protocol,
+			errorCode:    diagData.code,
+			errorTitle:   diagData.title,
+			errorRaw:     diagData.raw ?? "",
+			agentVersion: agentStore.version,
+			userAgent:    navigator.userAgent,
+			autoReported: false,
+		}).catch(() => {});
+		diagReported = true;
 	}
 
 	function persistJob(opts: {
@@ -1755,6 +1802,14 @@
 	steps={TOUR_STEPS}
 	open={uiStore.tourOpen}
 	onclose={uiStore.closeTour}
+/>
+
+<PlotterDiagPanel
+	diagnostic={diagData}
+	reported={diagReported}
+	onClose={() => { diagData = null; diagReported = false; }}
+	onRetry={diagRetry}
+	onReport={diagReport}
 />
 
 <style>
