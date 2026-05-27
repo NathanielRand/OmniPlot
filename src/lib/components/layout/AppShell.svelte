@@ -88,8 +88,7 @@
 				<a
 					href={item.href}
 					class="topbar__nav-item"
-					class:active={currentPath === item.href ||
-						currentPath.startsWith(item.href + "/")}
+					class:active={currentPath === item.href}
 					aria-current={currentPath === item.href
 						? "page"
 						: undefined}
@@ -246,8 +245,7 @@
 					<a
 						href={item.href}
 						class="sidebar__item"
-						class:active={currentPath === item.href ||
-							currentPath.startsWith(item.href + "/")}
+						class:active={currentPath === item.href}
 						aria-current={currentPath === item.href
 							? "page"
 							: undefined}
