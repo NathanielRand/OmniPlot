@@ -1869,10 +1869,20 @@
 
 					<!-- ── Cut Settings ───────────────────────── -->
 					<div class="prop-section">
-						<div class="prop-label">Cut Settings</div>
-						{#each [["Blade force", "bladeForce", 10, 400, "g"], ["Speed mm/s", "cuttingSpeed", 10, 1200, ""], ["Passes", "passes", 1, 4, ""], ["Overcut mm", "overcut", 0, 2, ""]] as const as [label, key, min, max, unit]}
+						<div class="prop-label-row">
+							<span class="prop-label">Cut Settings</span>
+							{#if plotterStore.config.connection === "usb-serial" || plotterStore.config.connection === "cut-agent"}
+								<span class="live-badge" title="Blade force and speed sync to plotter in real-time">Live</span>
+							{/if}
+						</div>
+						{#each [["Blade force", "bladeForce", 10, 400, "g"], ["Speed mm/s", "cuttingSpeed", 10, 1200, "mm/s"], ["Passes", "passes", 1, 4, "×"], ["Overcut mm", "overcut", 0, 2, "mm"]] as const as [label, key, min, max, unit]}
 							<div class="prop-slider-row">
-								<span class="prop-slider-name">{label}</span>
+								<span class="prop-slider-name">
+									{label}
+									{#if key === "passes" || key === "overcut"}
+										<span class="cut-time-badge" title="Applied at cut time — not sent as a live command">Cut-time</span>
+									{/if}
+								</span>
 								<input
 									type="range"
 									class="prop-slider"
@@ -1890,9 +1900,18 @@
 										}
 									}}
 								/>
-								<span class="prop-slider-val">{plotterStore.config[key]}{unit}</span>
+								<span class="prop-slider-val">{key === "overcut" ? plotterStore.config[key].toFixed(1) : plotterStore.config[key]}{unit}</span>
 							</div>
 						{/each}
+						<p class="prop-note">
+							Force and speed send to the plotter immediately when you move the slider.
+							Passes and overcut are woven into the cut paths — they apply when you hit Send to Plotter.
+						</p>
+						{#if plotterStore.config.connection !== "download"}
+							<p class="prop-note prop-note--disclaimer">
+								<strong>Display disclaimer:</strong> Many plotters (including most budget cutters like VEVOR) do not update their front-panel display when settings are changed via serial. This is a hardware limitation — the commands are received and applied internally. Assume your force and speed are correctly set and proceed with your cut normally.
+							</p>
+						{/if}
 					</div>
 
 					<!-- ── Origin Offset ───────────────────────── -->
@@ -1917,7 +1936,7 @@
 								<span class="prop-slider-val">{plotterStore.config[key].toFixed(1)}"</span>
 							</div>
 						{/each}
-						<p class="prop-note">Shifts the cut start point on the physical roll — useful for resuming from used material.</p>
+						<p class="prop-note">Shifts the cut origin in the generated HPGL — applied at cut time, not sent as a standalone command.</p>
 					</div>
 
 					<!-- ── Connection ─────────────────────────── -->
@@ -2106,16 +2125,14 @@
 							class="prop-select"
 							aria-label="Output format"
 							onchange={(e) => {
-								const v = (e.target as HTMLSelectElement).value;
-								if (v === "hpgl" || v === "hpgl2") {
-									plotterStore.update({ protocol: v });
-								}
+								plotterStore.update({ protocol: (e.target as HTMLSelectElement).value as PlotterConfig["protocol"] });
 							}}
 						>
-							{#each [["hpgl", "HPGL (.plt) — universal"], ["hpgl2", "HPGL/2 (.plt) — Graphtec / Summa"]] as const as [val, label]}
+							{#each [["hpgl", "HPGL — Standard (VEVOR, USCutter, GCC, Mimaki)"], ["roland", "HPGL — Roland CAMM-1 series"], ["hpgl2", "HPGL/2 — Graphtec / Summa"]] as [val, label]}
 								<option value={val} selected={plotterStore.config.protocol === val}>{label}</option>
 							{/each}
 						</select>
+						<p class="prop-note">Standard HPGL and Roland use different speed units internally — selecting the right format ensures your plotter receives correctly scaled commands.</p>
 					</div>
 
 				{/if}
@@ -3003,6 +3020,47 @@
 	}
 	.prop-note--usb-hint {
 		color: var(--color-warning, #F7B731);
+	}
+	.prop-note--disclaimer {
+		margin-top: 6px;
+		padding: 6px 8px;
+		background: var(--bg-surface-2);
+		border-left: 2px solid var(--border-default);
+		border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+		color: var(--text-secondary);
+	}
+	.prop-note--disclaimer strong {
+		color: var(--text-primary);
+		font-weight: 600;
+	}
+
+	/* Live / cut-time indicator badges on slider labels */
+	.live-badge {
+		display: inline-flex;
+		align-items: center;
+		gap: 3px;
+		font-size: 0.6rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		padding: 1px 5px;
+		border-radius: 3px;
+		background: color-mix(in srgb, var(--color-success, #00D68F) 15%, transparent);
+		color: var(--color-success, #00D68F);
+		border: 1px solid color-mix(in srgb, var(--color-success, #00D68F) 30%, transparent);
+	}
+	.cut-time-badge {
+		display: inline-flex;
+		font-size: 0.58rem;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.03em;
+		padding: 1px 4px;
+		border-radius: 3px;
+		background: var(--bg-surface-3);
+		color: var(--text-tertiary);
+		vertical-align: middle;
+		margin-left: 3px;
 	}
 
 	.conn-status {

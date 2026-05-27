@@ -97,16 +97,27 @@ export function isSerialConnected(): boolean {
 
 // ─── Settings-only HPGL ──────────────────────
 // Builds a minimal HPGL string containing only speed + force commands.
-// Does NOT include IN; (which would reset the plotter) or SP1;/PA;.
+// Does NOT include IN; (which resets position) or SP1;/PA;.
 // Sent immediately when sliders change to update the plotter in real-time.
+//
+// Speed units:
+//   "roland"  → VS in mm/s (Roland CAMM-1 firmware extension)
+//   all others → VS in cm/s (standard HPGL spec; applies to VEVOR, USCutter, GCC, Graphtec, etc.)
+//
+// Force units:
+//   "hpgl2"  → FC 0–38 (Graphtec/Summa units, ~15.8 g/unit)
+//   "gpgl"   → no command (Silhouette — force is front-panel only)
+//   all others → FS in grams (hpgl, roland)
+//
+// Note: passes and overcut are job-time parameters embedded in the cut paths.
+// X/Y origin offset is applied via IP command in the full job preamble.
+// Neither can be sent as a standalone live plotter command.
 function buildSettingsHpgl(config: PlotterConfig): string {
-    // Speed
-    const speed = config.protocol === "hpgl"
-        ? config.cuttingSpeed
-        : Math.max(1, Math.round(config.cuttingSpeed / 10));
+    const speed = config.protocol === "roland"
+        ? config.cuttingSpeed                              // mm/s — Roland extension
+        : Math.max(1, Math.round(config.cuttingSpeed / 10)); // mm/s → cm/s standard HPGL
     const speedCmd = `VS${speed};`;
 
-    // Force (protocol-dependent)
     let forceCmd = "";
     switch (config.protocol) {
         case "hpgl2": {
@@ -115,8 +126,8 @@ function buildSettingsHpgl(config: PlotterConfig): string {
             break;
         }
         case "gpgl":
-            break; // force is device-side only on Silhouette
-        default:
+            break;
+        default: // hpgl, roland
             forceCmd = `FS${config.bladeForce};`;
     }
 

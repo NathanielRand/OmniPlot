@@ -272,7 +272,11 @@ export interface CutJob {
 }
 
 // ─── Plotter ──────────────────────────────────
-export type PlotterProtocol = "hpgl" | "hpgl2" | "gpgl";
+// hpgl   — Standard HPGL: VS in cm/s, FS in grams. Correct for VEVOR, USCutter, GCC, Mimaki, and most budget cutters.
+// roland — Roland CAMM-1 HPGL extension: VS in mm/s (non-standard), FS in grams.
+// hpgl2  — HPGL/2: VS in cm/s, FC in 0–38 units. Graphtec FC9000, Summa S2.
+// gpgl   — Silhouette proprietary: no serial force command.
+export type PlotterProtocol = "hpgl" | "roland" | "hpgl2" | "gpgl";
 export type PlotterConnection =
 	| "usb-serial"
 	| "network"

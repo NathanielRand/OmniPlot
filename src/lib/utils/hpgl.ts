@@ -121,20 +121,21 @@ function transformPoints(
 // ═══════════════════════════════════════════════
 
 // ─── Protocol-aware speed command ────────────
-// Roland (hpgl): VS in mm/s.
-// Graphtec (hpgl2) and Silhouette (gpgl): VS in cm/s per HPGL spec.
+// Standard HPGL and budget cutters (hpgl): VS in cm/s per HP-GL spec.
+// Roland CAMM-1 series (roland): VS in mm/s — non-standard Roland extension.
+// HPGL/2 (hpgl2) and Silhouette (gpgl): VS in cm/s.
 function speedCommand(config: PlotterConfig): string {
 	const speed =
-		config.protocol === "hpgl"
-			? config.cuttingSpeed
-			: Math.max(1, Math.round(config.cuttingSpeed / 10));
+		config.protocol === "roland"
+			? config.cuttingSpeed // mm/s directly (Roland firmware extension)
+			: Math.max(1, Math.round(config.cuttingSpeed / 10)); // mm/s → cm/s
 	return `VS${speed};`;
 }
 
 // ─── Protocol-aware force command ────────────
-// Generic HPGL: FS (grams) — supported by budget cutters, ignored by most pro models.
+// Standard HPGL / Roland / budget cutters: FS in grams.
 // HPGL/2 (Graphtec, Summa): FC 0–38 units; ~15.8 g/unit, min ~10 g.
-// GPGL (Silhouette): force is device-only, no command.
+// GPGL (Silhouette): force is device-only — no serial command supported.
 function forceCommand(config: PlotterConfig): string {
 	switch (config.protocol) {
 		case "hpgl2": {
@@ -143,7 +144,7 @@ function forceCommand(config: PlotterConfig): string {
 		}
 		case "gpgl":
 			return "";
-		default:
+		default: // hpgl, roland — both use FS in grams
 			return `FS${config.bladeForce};`;
 	}
 }

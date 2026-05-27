@@ -323,10 +323,11 @@ export const PLOTTER_PRESETS: PlotterPreset[] = [
 		// Roland CAMM-1 GS-24: desktop 24" professional vinyl cutter.
 		// Max cutting width 609.6mm (24.0"). Max force ~250g. Max speed 500 mm/s.
 		// Baud: 9600 default (selectable to 38400 in Roland driver settings).
+		// Roland uses a non-standard HPGL extension: VS in mm/s (not cm/s).
 		name: "Roland CAMM-1 GS-24",
 		manufacturer: "Roland",
 		model: "GS-24",
-		protocol: "hpgl",
+		protocol: "roland",
 		bladeForce: 80,
 		cuttingSpeed: 450,
 		passes: 1,
@@ -340,7 +341,7 @@ export const PLOTTER_PRESETS: PlotterPreset[] = [
 		name: "Roland CAMM-1 GR4-640",
 		manufacturer: "Roland",
 		model: "GR4-640",
-		protocol: "hpgl",
+		protocol: "roland",
 		bladeForce: 90,
 		cuttingSpeed: 500,
 		passes: 1,
