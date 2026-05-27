@@ -32,9 +32,9 @@ export const GET: RequestHandler = async ({ request, url }) => {
 			status:       d.status       ?? 'active',
 			shopId:       d.shopId       ?? null,
 			shopName:     d.shopName     ?? null,
+			shopRole:     d.shopRole     ?? null,
 			cutsTotal:    d.usage?.cutCount ?? 0,
 			createdAt:    d.createdAt?.toDate?.()?.toISOString()   ?? null,
-			updatedAt:    d.updatedAt?.toDate?.()?.toISOString()   ?? null,
 			lastActiveAt: d.updatedAt?.toDate?.()?.toISOString()   ?? null,
 		};
 	});
@@ -49,7 +49,7 @@ export const PATCH: RequestHandler = async ({ request }) => {
 		return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403 });
 	}
 
-	const { uid, tier, status } = await request.json();
+	const { uid, tier, status, clearSession, removeShop } = await request.json();
 	if (!uid) {
 		return new Response(JSON.stringify({ error: 'uid required' }), { status: 400 });
 	}
@@ -57,8 +57,10 @@ export const PATCH: RequestHandler = async ({ request }) => {
 	const db    = getAdminDb();
 	const patch: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
 
-	if (tier)   patch.tier   = tier;
-	if (status) patch.status = status;
+	if (tier)         patch.tier            = tier;
+	if (status)       patch.status          = status;
+	if (clearSession) patch.activeSessionId = null;
+	if (removeShop)   { patch.shopId = null; patch.shopRole = null; patch.shopName = null; }
 
 	await db.doc(`users/${uid}`).update(patch);
 

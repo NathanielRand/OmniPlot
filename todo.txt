@@ -1,13 +1,10 @@
 - Create a local plotter emulator/simulator to verify the communication between plotter and agent (or other method) is bidirectional and valid throughout each expected communication event with proper processing and response. we need to test without having the quipment in person.
 - investors page
 - offline mode
-- add vehicle tag to the studio grid so we can see what car was selected. if more than 1 car pattern was placed, show the list of the cars with tags for each pattern to know which pattern goes to which car.
 - create (or send the command to use the plotters default test) a test print feature that creates a small perfect square, triangle, & circle.
 - HEAT SHRINKAGE: add option/setting for user to add internal buffer to each design to intentional give excess inside the cut zone line a 1cm-ish default (can be changed by user) for user's placements and make up from HEAT SHRINKAGE
-- add shop/enterprise accounts to admin/users view
 - TEST: the first pattern for any job completes succesfully but the any additional patterns after the first never even start. Instead of moving on the next pattern in the job's pattern order/queue, it jumps to the end where it makes its final end cut off of the film to seperate it from the rest of the roll. The last step is expected and good but not before the rest of the added patterns to job are finished cutting. we need to make sure that each pattern is properly accounted for and not a single one is forgotten about. We need to verify our job handles recoveries correctly and acknowledges when a job is not complete fully. These are the types of logs admin/user could benefit from seeing the admin dashboard.
 - Also there is likely an origin settings issues. perhaps the 53 inch plotter and the 40 inch roll are not aligned in the correct origin and maybe the 13 inch difference is in the wrong origin. We need a smart way to verify all origins match, even if it requires the user to manually adjustment or relay info from the equipment back to the site if needed. We need a efficient, simple solution.
-- username missing on review cut jobs from the admin view. might be due to phone signup or the name show is just a stripped down email which shouldnt be used. it should be the username if available then email then phone until one is valid.
 
 LAST OFF:
 the plotter discovery plotter is flickering the ui everytime it rechecks. can we abstract that
