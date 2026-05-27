@@ -65,6 +65,45 @@ export function isSerialConnected(): boolean {
     return !!_cachedPort;
 }
 
+// ─── Settings-only HPGL ──────────────────────
+// Builds a minimal HPGL string containing only speed + force commands.
+// Does NOT include IN; (which would reset the plotter) or SP1;/PA;.
+// Sent immediately when sliders change to update the plotter in real-time.
+function buildSettingsHpgl(config: PlotterConfig): string {
+    // Speed
+    const speed = config.protocol === "hpgl"
+        ? config.cuttingSpeed
+        : Math.max(1, Math.round(config.cuttingSpeed / 10));
+    const speedCmd = `VS${speed};`;
+
+    // Force (protocol-dependent)
+    let forceCmd = "";
+    switch (config.protocol) {
+        case "hpgl2": {
+            const fc = Math.max(0, Math.min(38, Math.round((config.bladeForce - 10) / 15.8)));
+            forceCmd = `FC${fc};`;
+            break;
+        }
+        case "gpgl":
+            break; // force is device-side only on Silhouette
+        default:
+            forceCmd = `FS${config.bladeForce};`;
+    }
+
+    return speedCmd + forceCmd;
+}
+
+// Sends only speed + force to the plotter without starting a full cut job.
+// Call this (debounced) from slider oninput handlers.
+// Failures are returned as SendResult — callers should log silently rather
+// than showing the full diagnostic panel (this is a background operation).
+export async function sendSettings(config: PlotterConfig): Promise<SendResult> {
+    if (config.connection === "download") return { ok: true };
+    const hpgl = buildSettingsHpgl(config);
+    if (!hpgl) return { ok: true };
+    return sendToPlotter(hpgl, config);
+}
+
 // ─── Main dispatch ────────────────────────────
 export async function sendToPlotter(
     hpgl: string,

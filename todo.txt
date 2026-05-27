@@ -2,3 +2,7 @@
 - Plotter device compatability pass another  couple of times.
 - investors page
 - add vehicle tag to the studio grid so we can see what car was selected. if more than 1 car pattern was placed, show the list of the cars with tags for each pattern to know which pattern goes to which car.
+- plotter settings are not changing
+- canvas excess width on single pattern jobs
+- usb port detection/connection/commands need to ve verified again as it does not work completely. every plotter is detected as generic. the setting commands dont work.
+- create (or send the command to use the plotters default test) a test print feature that creates a small perfect square, triangle, & circle.

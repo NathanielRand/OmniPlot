@@ -5,19 +5,42 @@
 //   1. USB (Web Serial): query previously-authorized ports, match by USB VID
 //   2. Agent USB: ask the Cut Agent for all OS serial ports, match by name/VID
 //   3. Agent network scan: ask the Cut Agent to probe the LAN for port 9100
+//
+// Post-connect: call matchPortToPreset() immediately after connectSerialPort()
+// returns to surface detection results without a second "Detect" click.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { PLOTTER_PRESETS, type PlotterPreset } from "$lib/config";
 
 // ─── USB Vendor ID registry ───────────────────
-// Source: USB-IF / manufacturer driver documentation.
-// Only include VIDs we can confirm with high confidence.
+// Sources: USB-IF, manufacturer driver packages, community hardware reports.
+// ─────────────────────────────────────────────
+// Brand-name plotters
+// ─────────────────────────────────────────────
 const USB_VID_TO_MANUFACTURER: Record<number, string> = {
-	0x09CA: "Roland",      // Roland DG Corporation
-	0x0B4B: "Graphtec",    // Graphtec Corporation
-	0x0B4D: "Silhouette",  // Silhouette America
-	// Summa NV uses 0x0CA6 but this is less universally confirmed
-	// USCutter uses commodity UART chips (CH340, CP2102) — no reliable VID
+	0x09CA: "Roland",       // Roland DG Corporation
+	0x0B4B: "Graphtec",     // Graphtec Corporation
+	0x0B4D: "Silhouette",   // Silhouette America
+	0x08F0: "Mimaki",       // Mimaki Engineering
+	0x0CA6: "Summa",        // Summa NV (less universally confirmed)
+	// ─────────────────────────────────────────
+	// USB-serial bridge chips used by budget cutters
+	// (USCutter, VEVOR, GCC, and many no-brand vinyl cutters)
+	// ─────────────────────────────────────────
+	0x1A86: "CH340",        // WCH CH340/CH341 — very common in budget cutters
+	0x0403: "FTDI",         // FTDI FT232/FT2232 — older Roland/Summa, some industrials
+	0x10C4: "CP210x",       // Silicon Labs CP2102/CP2104 — VEVOR and others
+	0x067B: "PL2303",       // Prolific PL2303 — older budget vinyl cutters
+	0x04B8: "Epson",        // Epson (some plotter/large-format variants)
+};
+
+// Descriptions shown in the UI for serial bridge chips.
+// These chips tell us the physical interface but not the brand of cutter.
+const SERIAL_BRIDGE_NOTES: Partial<Record<string, string>> = {
+	"CH340":  "CH340 USB-serial bridge — likely a budget vinyl cutter (USCutter, VEVOR, or similar)",
+	"FTDI":   "FTDI USB-serial bridge — could be Roland, Summa, GCC, or an industrial cutter",
+	"CP210x": "CP210x USB-serial bridge — likely a budget vinyl cutter (VEVOR or similar)",
+	"PL2303": "PL2303 USB-serial bridge — older budget vinyl cutter",
 };
 
 // ─── Types ────────────────────────────────────
@@ -41,6 +64,8 @@ export interface NetworkDevice {
 // ─── USB detection (Web Serial) ───────────────
 // Uses getPorts() — returns ONLY previously-authorized ports (no dialog).
 // Call this silently on load; show the "Select USB Port…" dialog separately.
+// After requestPort() completes, call matchPortToPreset() directly instead
+// of re-running detectUsbPlotters() — the matched result is more immediate.
 export async function detectUsbPlotters(): Promise<DetectedPlotter[]> {
 	if (typeof navigator === "undefined" || !("serial" in navigator)) return [];
 	try {
@@ -49,8 +74,7 @@ export async function detectUsbPlotters(): Promise<DetectedPlotter[]> {
 		for (const port of ports) {
 			const info: { usbVendorId?: number; usbProductId?: number } =
 				port.getInfo?.() ?? {};
-			const detected = matchByUsbVid(info.usbVendorId, info.usbProductId);
-			results.push(detected);
+			results.push(matchByUsbVid(info.usbVendorId, info.usbProductId));
 		}
 		return results;
 	} catch {
@@ -58,41 +82,68 @@ export async function detectUsbPlotters(): Promise<DetectedPlotter[]> {
 	}
 }
 
+// ─── Post-connect match ───────────────────────
+// Call this immediately after connectSerialPort() returns so the VID/PID
+// we already have is used for detection without needing a separate click.
+// Returns null if neither vendorId nor productId is available.
+export function matchPortToPreset(
+	vendorId?: number,
+	productId?: number,
+): DetectedPlotter | null {
+	if (vendorId === undefined && productId === undefined) return null;
+	return matchByUsbVid(vendorId, productId);
+}
+
 function matchByUsbVid(
 	vid?: number,
 	pid?: number,
 ): DetectedPlotter {
 	const vidHex = vid !== undefined
-		? `${vid.toString(16).toUpperCase().padStart(4, "0")}`
+		? vid.toString(16).toUpperCase().padStart(4, "0")
 		: "????";
 	const pidHex = pid !== undefined
-		? `${pid.toString(16).toUpperCase().padStart(4, "0")}`
+		? pid.toString(16).toUpperCase().padStart(4, "0")
 		: "????";
+	const rawId = `VID ${vidHex}:PID ${pidHex}`;
 
 	if (vid !== undefined) {
 		const mfr = USB_VID_TO_MANUFACTURER[vid];
+
 		if (mfr) {
-			// Pick the first preset matching this manufacturer
+			// Try to find a brand-name preset for this manufacturer
 			const preset = PLOTTER_PRESETS.find(
 				(p) => p.manufacturer?.toLowerCase() === mfr.toLowerCase(),
 			);
+
 			if (preset) {
+				// Exact VID match to a known brand preset
 				return {
 					preset,
 					confidence: "exact-vid",
 					source: "usb",
-					detail: `${mfr} (USB ${vidHex}:${pidHex})`,
+					detail: `${mfr} ${preset.model} — ${rawId}`,
 				};
 			}
+
+			// Known serial bridge chip — descriptive note, fall back to generic preset
+			const chipNote = SERIAL_BRIDGE_NOTES[mfr] ?? `${mfr} USB-serial adapter`;
+			return {
+				preset: PLOTTER_PRESETS[0],
+				confidence: "generic",
+				source: "usb",
+				detail: `${chipNote} — ${rawId}`,
+			};
 		}
 	}
 
-	// Unknown VID — return Generic with the raw identifier
+	// Completely unrecognised VID — still surface whatever we have
 	return {
 		preset: PLOTTER_PRESETS[0],
 		confidence: "generic",
 		source: "usb",
-		detail: `Unknown USB device (${vidHex}:${pidHex})`,
+		detail: vid !== undefined
+			? `Unrecognized USB device — ${rawId}`
+			: "USB device — no vendor ID available",
 	};
 }
 
@@ -155,6 +206,14 @@ function matchByAgentPort(port: {
 					detail: `${preset.name} — ${port.name}`,
 				};
 			}
+			// Bridge chip — show chip name + port path
+			const chipNote = SERIAL_BRIDGE_NOTES[mfr] ?? `${mfr} USB-serial`;
+			return {
+				preset: PLOTTER_PRESETS[0],
+				confidence: "generic",
+				source: "agent-usb",
+				detail: `${chipNote} — ${port.name}`,
+			};
 		}
 	}
 
@@ -162,7 +221,7 @@ function matchByAgentPort(port: {
 	const combined = `${port.manufacturer ?? ""} ${port.product ?? ""}`.toLowerCase().trim();
 	if (combined) {
 		for (const preset of PLOTTER_PRESETS) {
-			if (!preset.manufacturer) continue;
+			if (!preset.manufacturer || preset.manufacturer === "Generic") continue;
 			if (combined.includes(preset.manufacturer.toLowerCase())) {
 				return {
 					preset,
@@ -174,12 +233,12 @@ function matchByAgentPort(port: {
 		}
 	}
 
-	// 3. Generic USB device — show it but mark as unknown
+	// 3. Generic USB device — show it but mark unknown
 	return {
 		preset: PLOTTER_PRESETS[0],
 		confidence: "generic",
 		source: "agent-usb",
-		detail: `USB device — ${port.name}`,
+		detail: `USB device — ${port.name}${port.manufacturer ? ` (${port.manufacturer})` : ""}`,
 	};
 }
 

@@ -17,7 +17,7 @@
 		estimateCutTime,
 		generateHpgl,
 	} from "$lib/utils/hpgl";
-	import { sendToPlotter, connectSerialPort, disconnectSerialPort, isSerialConnected, type SerialPortInfo } from "$lib/utils/plotter-connection";
+	import { sendToPlotter, sendSettings, connectSerialPort, disconnectSerialPort, isSerialConnected, type SerialPortInfo } from "$lib/utils/plotter-connection";
 	import { saveJob, logPlotterError } from "$lib/firebase/firestore";
 	import type { PlotterDiagnostic } from "$lib/utils/plotter-errors";
 	import PlotterDiagPanel from "$lib/components/ui/PlotterDiagPanel.svelte";
@@ -34,6 +34,7 @@
 		detectUsbPlotters,
 		detectAgentPorts,
 		scanNetworkViaAgent,
+		matchPortToPreset,
 		getCompatibilityStatus,
 		compatLabel,
 		type DetectedPlotter,
@@ -241,6 +242,22 @@
 	let diagData     = $state<PlotterDiagnostic | null>(null);
 	let diagReported = $state(false);
 
+	// ─── Live settings debounce ───────────────────
+	let _settingsTimer: ReturnType<typeof setTimeout> | null = null;
+
+	function scheduleSettingsSend() {
+		if (plotterStore.config.connection === "download") return;
+		if (_settingsTimer) clearTimeout(_settingsTimer);
+		_settingsTimer = setTimeout(async () => {
+			_settingsTimer = null;
+			const result = await sendSettings(plotterStore.config);
+			if (!result.ok) {
+				// Silent fail — settings updates are best-effort background ops
+				console.debug("[settings send]", result.diagnostic.code, result.diagnostic.raw);
+			}
+		}, 400);
+	}
+
 	// ─── Plotter detection state ──────────────────
 	let detecting       = $state(false);
 	let detectedPlotter = $state<DetectedPlotter | null>(null);
@@ -374,7 +391,29 @@
 		}
 		try {
 			serialPortInfo = await connectSerialPort(plotterStore.config.baudRate ?? 9600);
-			toastStore.success("Port connected", serialPortInfo.label);
+
+			// Immediately match VID/PID from the authorized port — no second "Detect" click needed
+			const match = matchPortToPreset(serialPortInfo.vendorId, serialPortInfo.productId);
+			if (match) {
+				detectedPlotter = match;
+				if (match.confidence === "exact-vid") {
+					plotterStore.applyPreset(match.preset);
+					toastStore.success(
+						"Plotter identified",
+						`${match.preset.name} — settings applied automatically.`,
+					);
+				} else {
+					toastStore.success("Port connected", serialPortInfo.label);
+					if (match.confidence === "generic" && match.detail.includes("bridge")) {
+						toastStore.info(
+							"USB adapter detected",
+							"Budget cutter via serial bridge — select your preset manually.",
+						);
+					}
+				}
+			} else {
+				toastStore.success("Port connected", serialPortInfo.label);
+			}
 		} catch (err: any) {
 			if (err?.name !== "NotAllowedError") {
 				toastStore.error("Connection failed", err?.message ?? "Could not open serial port.");
@@ -1360,13 +1399,17 @@
 									step={key === "overcut" ? 0.1 : 1}
 									value={plotterStore.config[key]}
 									aria-label={label}
-									oninput={(e) =>
+									oninput={(e) => {
 										plotterStore.update({
 											[key]: parseFloat(
-												(e.target as HTMLInputElement)
-													.value,
+												(e.target as HTMLInputElement).value,
 											),
-										})}
+										});
+										// Live-send speed/force to connected plotter; passes + overcut are software-only
+										if (key === "bladeForce" || key === "cuttingSpeed") {
+											scheduleSettingsSend();
+										}
+									}}
 								/>
 								<span class="prop-slider-val"
 									>{plotterStore.config[key]}{unit}</span
