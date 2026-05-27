@@ -24,7 +24,7 @@
 		agent: { downloads: number };
 		jobs: {
 			today: number;
-			recent: { id: string; userId: string; userEmail: string; vehicleName: string; status: string; pieces: number; createdAt: string | null }[];
+			recent: { id: string; userId: string; userEmail: string; vehicleName: string; status: string; pieces: number; patternsCompleted: number; connection: string; presetName: string; createdAt: string | null }[];
 		};
 	} | null>(null);
 
@@ -217,16 +217,33 @@
 			{:else}
 				<table class="mini-table" aria-label="Recent cut jobs">
 					<thead>
-						<tr><th>User</th><th>Vehicle</th><th>Status</th></tr>
+						<tr><th>User</th><th>Job / Preset</th><th>Pieces</th><th>Via</th><th>Status</th></tr>
 					</thead>
 					<tbody>
 						{#each stats.jobs.recent.slice(0, 5) as j}
 							<tr>
 								<td class="td-email">{j.userEmail.split("@")[0]}</td>
-								<td class="td-vehicle">{j.vehicleName}</td>
+								<td class="td-vehicle">
+									<span>{j.vehicleName}</span>
+									{#if j.presetName}
+										<span class="td-preset">{j.presetName}</span>
+									{/if}
+								</td>
+								<td class="td-pieces">
+									{#if j.status === "error" && j.patternsCompleted < j.pieces}
+										<span class="td-partial">{j.patternsCompleted}/{j.pieces}</span>
+									{:else}
+										{j.pieces}
+									{/if}
+								</td>
+								<td class="td-conn">
+									<span class="conn-chip conn-chip--{j.connection}">
+										{j.connection === "cut-agent" ? "Agent" : j.connection === "usb-serial" ? "USB" : j.connection === "network" ? "Net" : j.connection === "download" ? "DL" : j.connection}
+									</span>
+								</td>
 								<td>
 									<Badge variant={j.status === "complete" || j.status === "completed" ? "success" : j.status === "error" ? "danger" : "default"} size="sm" dot>
-										{j.status}
+										{j.status === "error" && j.patternsCompleted < j.pieces ? "partial" : j.status}
 									</Badge>
 								</td>
 							</tr>
@@ -468,6 +485,20 @@
 	.td-time    { font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-tertiary); white-space: nowrap; }
 	.td-email   { font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-secondary); }
 	.td-vehicle { font-size: 0.8125rem; color: var(--text-secondary); white-space: nowrap; }
+	.td-vehicle { display: flex; flex-direction: column; gap: 1px; }
+	.td-preset  { font-family: var(--font-mono); font-size: 0.6875rem; color: var(--text-tertiary); }
+	.td-pieces  { font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-secondary); white-space: nowrap; }
+	.td-partial { color: var(--color-warning, #FFB347); font-weight: 600; }
+	.td-conn    { white-space: nowrap; }
+	.conn-chip {
+		display: inline-block; padding: 2px 6px;
+		font-family: var(--font-mono); font-size: 0.65rem; font-weight: 600;
+		border-radius: var(--radius-sm); border: 1px solid var(--border-default);
+		color: var(--text-tertiary); background: var(--bg-surface-2);
+	}
+	.conn-chip--cut-agent  { color: var(--color-brand); border-color: color-mix(in srgb, var(--color-brand) 30%, transparent); background: color-mix(in srgb, var(--color-brand) 6%, var(--bg-surface-2)); }
+	.conn-chip--usb-serial { color: var(--color-success, #00D68F); border-color: color-mix(in srgb, var(--color-success, #00D68F) 30%, transparent); background: color-mix(in srgb, var(--color-success, #00D68F) 6%, var(--bg-surface-2)); }
+	.conn-chip--download   { color: var(--text-tertiary); }
 
 	/* Pattern requests */
 	.requests-list { padding: 4px 0; }

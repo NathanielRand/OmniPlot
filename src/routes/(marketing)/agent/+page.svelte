@@ -15,7 +15,7 @@
 
 	type Platform = "windows" | "mac-arm" | "mac-intel" | "linux" | "unknown";
 
-	const AGENT_VERSION = "1.0.0";
+	const AGENT_VERSION = "1.0.1";
 	const APP_URL = import.meta.env.VITE_APP_URL ?? "https://omniplot.app";
 
 	function dlUrl(file: string, platform: string) {

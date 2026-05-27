@@ -100,14 +100,19 @@ export const GET: RequestHandler = async ({ request }) => {
 
 		recentJobs = jobsSnap.docs.map((doc) => {
 			const d = doc.data();
+			const itemCount         = d.metrics?.itemCount ?? 0;
+			const patternsCompleted = d.metrics?.patternsCompleted ?? itemCount;
 			return {
-				id:          doc.id,
-				userId:      d.userId ?? '',
-				userEmail:   userMap[d.userId] ?? d.userId ?? '',
-				vehicleName: d.name ?? 'Unknown',
-				status:      d.status ?? 'complete',
-				pieces:      d.metrics?.itemCount ?? 0,
-				createdAt:   d.createdAt?.toDate?.()?.toISOString() ?? null,
+				id:                 doc.id,
+				userId:             d.userId ?? '',
+				userEmail:          userMap[d.userId] ?? d.userId ?? '',
+				vehicleName:        d.name ?? 'Unknown',
+				status:             d.status ?? 'complete',
+				pieces:             itemCount,
+				patternsCompleted,
+				connection:         d.plotterConfig?.connection ?? 'unknown',
+				presetName:         d.plotterConfig?.name ?? '',
+				createdAt:          d.createdAt?.toDate?.()?.toISOString() ?? null,
 			};
 		});
 

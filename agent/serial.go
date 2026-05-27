@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -173,9 +174,10 @@ func resolvePort(name string) (string, error) {
 }
 
 // ─── Serial write ─────────────────────────────
-// Opens the port, writes HPGL in 4 KB chunks (conservative for small plotter
-// receive buffers), and closes. A 30-second write deadline prevents hangs
-// if the plotter stops accepting data mid-job.
+// Opens the port, writes HPGL in 4 KB chunks, drains the OS TX buffer, then
+// closes. Drain is critical: close() on a TTY does NOT wait for the kernel
+// serial TX buffer to empty, so patterns beyond the first are discarded if
+// the buffer hasn't been physically transmitted before the FD is released.
 
 func sendHPGL(portName string, baudRate int, hpgl string) (int, error) {
 	mode := &serial.Mode{
@@ -206,6 +208,13 @@ func sendHPGL(portName string, baudRate int, hpgl string) (int, error) {
 			return total, fmt.Errorf("write error after %d bytes on %s: %w", total, portName, err)
 		}
 		data = data[end:]
+	}
+
+	// Block until every byte in the OS serial TX buffer has been physically
+	// transmitted to the cutter. Without this, Close() discards buffered data
+	// and the cutter only sees the first pattern of a multi-pattern job.
+	if err := port.Drain(); err != nil {
+		log.Printf("agent: drain warning on %s: %v (job may be incomplete)", portName, err)
 	}
 
 	return total, nil

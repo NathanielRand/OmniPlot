@@ -829,7 +829,7 @@ export const CHANGELOG = [
 		changes: [
 			{
 				type: "feature",
-				text: "OmniPlot Cut Agent v1.0.0 — lightweight Go daemon (9 MB) that bridges any browser to your USB/serial cutter. Works in Firefox, Safari, and every other browser, no Chrome required.",
+				text: "OmniPlot Cut Agent v1.0.1 — lightweight Go daemon (9 MB) that bridges any browser to your USB/serial cutter. Works in Firefox, Safari, and every other browser, no Chrome required.",
 			},
 			{
 				type: "feature",

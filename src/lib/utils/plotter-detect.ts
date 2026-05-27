@@ -55,6 +55,11 @@ export interface DetectedPlotter {
 	detail: string;
 	/** Serial port path from Cut Agent (e.g. /dev/ttyUSB0 or COM3) — agent-usb only. */
 	portPath?: string;
+	/** Raw USB identity — populated when available for display in the discovery panel. */
+	vendorId?: number;
+	productId?: number;
+	manufacturer?: string;
+	product?: string;
 }
 
 export interface NetworkDevice {
@@ -76,7 +81,8 @@ export async function detectUsbPlotters(): Promise<DetectedPlotter[]> {
 		for (const port of ports) {
 			const info: { usbVendorId?: number; usbProductId?: number } =
 				port.getInfo?.() ?? {};
-			results.push(matchByUsbVid(info.usbVendorId, info.usbProductId));
+			const det = matchByUsbVid(info.usbVendorId, info.usbProductId);
+			results.push({ ...det, vendorId: info.usbVendorId, productId: info.usbProductId });
 		}
 		return results;
 	} catch {
@@ -177,7 +183,14 @@ export async function detectAgentPorts(
 			if (!port.isUSB) continue;
 
 			const detected = matchByAgentPort(port);
-			if (detected) results.push({ ...detected, portPath: port.name });
+			if (detected) results.push({
+				...detected,
+				portPath: port.name,
+				vendorId: port.vendorId ? parseInt(port.vendorId, 16) : undefined,
+				productId: port.productId ? parseInt(port.productId, 16) : undefined,
+				manufacturer: port.manufacturer,
+				product: port.product,
+			});
 		}
 		return results;
 	} catch {

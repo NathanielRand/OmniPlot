@@ -24,7 +24,7 @@ import (
 	"time"
 )
 
-const agentVersion = "1.0.0"
+const agentVersion = "1.0.1"
 
 func main() {
 	port    := flag.Int("port", 7878, "HTTP port to listen on (default 7878)")
@@ -53,7 +53,7 @@ func main() {
 		Addr:         addr,
 		Handler:      observeMiddleware(logMiddleware(mux, *verbose)),
 		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 40 * time.Second, // must exceed serial write timeout
+		WriteTimeout: 120 * time.Second, // covers serial drain for large jobs at 9600 baud
 	}
 
 	go func() {

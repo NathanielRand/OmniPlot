@@ -273,43 +273,42 @@
 		}, 400);
 	}
 
-	// ─── Plotter detection state ──────────────────
-	let detecting       = $state(false);
-	let detectedPlotter = $state<DetectedPlotter | null>(null);
-	let networkScan     = $state<"idle" | "scanning" | "done">("idle");
-	let networkDevices  = $state<NetworkDevice[]>([]);
+	// ─── Plotter discovery ───────────────────────
+	// Replaces the manual preset dropdown + connection cards.
+	// runDiscovery() probes all sources (Cut Agent + Web Serial) on mount and
+	// every 8s; auto-selects and auto-connects when a single device is found.
+	interface DiscoveredDevice {
+		id: string;
+		source: "agent" | "usb";
+		portPath?: string;
+		preset: PlotterPreset;
+		confidence: "exact-vid" | "manufacturer-name" | "generic";
+		vendorId?: number;
+		productId?: number;
+		manufacturer?: string;
+		product?: string;
+		status: "detected" | "connected" | "offline";
+		lastSeenMs: number;
+	}
+
+	let discoveredDevices  = $state<DiscoveredDevice[]>([]);
+	let discoveryPhase     = $state<"idle" | "scanning" | "done">("idle");
+	let selectedDeviceId   = $state<string | null>(null);
+	let autoConnectedAgent = $state(false);  // prevents re-auto-connecting on every poll
+	let testingConn        = $state(false);
+
+	const liveDevices    = $derived(discoveredDevices.filter(d => d.status !== "offline"));
+	const selectedDevice = $derived(discoveredDevices.find(d => d.id === selectedDeviceId) ?? null);
 
 	// ─── Connection UI state ───────────────────────
-	// agentProbeStatus: live health of the Cut Agent (auto-probed on mount + every 15s).
-	// selectedConnMethod: which card the user has selected (UI intent, not yet active).
-	// isConnected: derived — true when a live connection is actually active.
 	let agentProbeStatus = $state<"probing" | "online" | "offline">("probing");
-	let selectedConnMethod = $state<"cut-agent" | "usb-serial">("usb-serial");
-	let connecting = $state(false);
-	let showConfig = $state(false);
+	let connecting       = $state(false);
+	let showConfig       = $state(false);
 
 	const isConnected = $derived(
 		(plotterStore.config.connection === "usb-serial" && !!serialPortInfo) ||
 		plotterStore.config.connection === "cut-agent"
 	);
-
-	const activeConnLabel = $derived.by(() => {
-		if (plotterStore.config.connection === "cut-agent") {
-			if (detectedPlotter && detectedPlotter.confidence !== "generic") return detectedPlotter.preset.name;
-			return agentStore.version ? `Cut Agent · ${agentStore.version}` : "Cut Agent";
-		}
-		if (detectedPlotter?.confidence === "exact-vid") return detectedPlotter.preset.name;
-		if (detectedPlotter) return detectedPlotter.detail;
-		return serialPortInfo?.label ?? "USB";
-	});
-
-	const activeConnSub = $derived.by(() => {
-		if (plotterStore.config.connection === "cut-agent") {
-			const port = plotterStore.config.serialPort;
-			return port && port !== "auto" ? port : "Cut Agent";
-		}
-		return "USB Direct";
-	});
 
 	const compat = $derived(
 		getCompatibilityStatus(
@@ -339,67 +338,188 @@
 	const pltLocked = $derived(!cutCheck.allowed);
 	const dxfLocked = $derived(isFree);
 
-	async function handleDetectPlotter() {
-		detecting = true;
-		detectedPlotter = null;
+	// ─── Plotter discovery ───────────────────────
+	// Polls all sources (Cut Agent USB ports + Web Serial granted ports),
+	// merges results, auto-connects agent devices, and updates live status.
+	async function runDiscovery() {
+		discoveryPhase = "scanning";
+		const now = Date.now();
+		const next: DiscoveredDevice[] = [];
+
+		// 1. Probe agent + enumerate its USB ports
+		const base = (plotterStore.config.agentUrl ?? "http://localhost:7878").replace(/\/$/, "");
 		try {
-			// 1. Try USB Web Serial (previously authorized ports, no dialog)
-			const usbResults = await detectUsbPlotters();
-			if (usbResults.length > 0) {
-				detectedPlotter = usbResults[0];
-				plotterStore.applyPreset(detectedPlotter.preset);
-				plotterStore.switchConnection("usb-serial");
-				toastStore.success(
-					`Detected: ${detectedPlotter.preset.name}`,
-					detectedPlotter.detail,
-				);
-				return;
-			}
+			const r = await fetch(`${base}/api/status`, { signal: AbortSignal.timeout(2500) });
+			agentProbeStatus = r.ok ? "online" : "offline";
+		} catch {
+			agentProbeStatus = "offline";
+		}
 
-			// 2. Try Cut Agent port enumeration
-			const agentUrl = plotterStore.config.agentUrl ?? "http://localhost:7878";
-			const agentResults = await detectAgentPorts(agentUrl);
-			if (agentResults.length > 0) {
-				detectedPlotter = agentResults[0];
-				plotterStore.applyPreset(detectedPlotter.preset);
-				plotterStore.switchConnection("cut-agent");
-				// If the agent returned a port path, pre-select it
-				if (agentResults[0].portPath) {
-					plotterStore.update({ serialPort: agentResults[0].portPath });
+		if (agentProbeStatus === "online") {
+			type AgentPort = { name: string; isUSB: boolean; vendorId?: string; productId?: string; manufacturer?: string; product?: string; };
+			const ports: AgentPort[] = await fetch(`${base}/api/ports`, { signal: AbortSignal.timeout(3000) })
+				.then(r => r.ok ? r.json() : []).catch(() => []);
+			for (const p of (ports as AgentPort[]).filter(pp => pp.isUSB)) {
+				const vid = p.vendorId ? parseInt(p.vendorId, 16) : undefined;
+				const pid = p.productId ? parseInt(p.productId, 16) : undefined;
+				const matched = matchPortToPreset(vid, pid);
+				const id = `agent:${p.name}`;
+				const isActive = plotterStore.config.connection === "cut-agent";
+				next.push({
+					id,
+					source: "agent",
+					portPath: p.name,
+					preset: matched?.preset ?? PLOTTER_PRESETS[0],
+					confidence: matched?.confidence ?? "generic",
+					vendorId: vid,
+					productId: pid,
+					manufacturer: p.manufacturer,
+					product: p.product,
+					status: isActive ? "connected" : "detected",
+					lastSeenMs: now,
+				});
+			}
+		}
+
+		// 2. Web Serial previously-granted ports (Chrome/Edge only)
+		if (typeof navigator !== "undefined" && "serial" in navigator) {
+			const ports: any[] = await (navigator as any).serial.getPorts().catch(() => []);
+			for (const port of ports) {
+				const info: { usbVendorId?: number; usbProductId?: number } = port.getInfo?.() ?? {};
+				const vid = info.usbVendorId;
+				const pid = info.usbProductId;
+				const matched = matchPortToPreset(vid, pid);
+				const id = `usb:${vid?.toString(16).padStart(4, "0") ?? "??"}:${pid?.toString(16).padStart(4, "0") ?? "??"}`;
+				// Skip if this port is already listed via agent (avoid duplicates)
+				if (next.find(d => d.source === "agent" && d.vendorId === vid && d.productId === pid)) continue;
+				const isActive = plotterStore.config.connection === "usb-serial" && !!serialPortInfo;
+				next.push({
+					id,
+					source: "usb",
+					preset: matched?.preset ?? PLOTTER_PRESETS[0],
+					confidence: matched?.confidence ?? "generic",
+					vendorId: vid,
+					productId: pid,
+					status: isActive ? "connected" : "detected",
+					lastSeenMs: now,
+				});
+			}
+		}
+
+		// 3. Merge — preserve connected devices that vanished (mark offline + disconnect)
+		const merged: DiscoveredDevice[] = [...next];
+		for (const prev of discoveredDevices) {
+			if (!next.find(d => d.id === prev.id) && prev.status === "connected") {
+				merged.push({ ...prev, status: "offline" });
+				if (prev.source === "usb") { disconnectSerialPort(); serialPortInfo = null; }
+				if (prev.source === "agent") { plotterStore.switchConnection("download"); autoConnectedAgent = false; }
+			}
+		}
+
+		discoveredDevices = merged;
+		discoveryPhase = "done";
+
+		// 4. Auto-select + auto-connect
+		const online = merged.filter(d => d.status !== "offline");
+		if (online.length >= 1) {
+			// Pick selection: prefer existing, fall back to single or first
+			const target = (selectedDeviceId ? online.find(d => d.id === selectedDeviceId) : null)
+				?? (online.length === 1 ? online[0] : null);
+			if (target) {
+				if (selectedDeviceId !== target.id) {
+					selectedDeviceId = target.id;
+					plotterStore.applyPreset(target.preset);
+					if (target.portPath) plotterStore.update({ serialPort: target.portPath });
 				}
-				fetchAgentPorts();
-				toastStore.success(
-					`Detected: ${detectedPlotter.preset.name}`,
-					`via Cut Agent — ${detectedPlotter.detail}`,
-				);
-				return;
+				// Auto-connect single agent device (no browser dialog needed)
+				if (online.length === 1 && target.source === "agent" && !autoConnectedAgent && !isConnected) {
+					plotterStore.switchConnection("cut-agent");
+					sendSettings(plotterStore.config).catch(() => {});
+					autoConnectedAgent = true;
+					discoveredDevices = discoveredDevices.map(d =>
+						d.id === target.id ? { ...d, status: "connected" } : d
+					);
+				}
 			}
-
-			toastStore.info(
-				"No plotter detected",
-				"Connect via USB and click 'Select USB Port…', or make sure the Cut Agent is running.",
-			);
-		} finally {
-			detecting = false;
 		}
 	}
 
-	async function handleNetworkScan() {
-		networkScan = "scanning";
-		networkDevices = [];
-		const agentUrl = plotterStore.config.agentUrl ?? "http://localhost:7878";
+	async function handleConnectDevice(device: DiscoveredDevice) {
+		if (connecting) return;
+		connecting = true;
 		try {
-			const found = await scanNetworkViaAgent(agentUrl);
-			networkDevices = found;
-			networkScan = "done";
-			if (found.length === 0) {
-				toastStore.info("No network plotters found", "No devices responded on port 9100 or 5000.");
+			if (device.source === "agent") {
+				plotterStore.applyPreset(device.preset);
+				if (device.portPath) plotterStore.update({ serialPort: device.portPath });
+				plotterStore.switchConnection("cut-agent");
+				sendSettings(plotterStore.config).catch(() => {});
+				autoConnectedAgent = true;
+				discoveredDevices = discoveredDevices.map(d =>
+					d.id === device.id ? { ...d, status: "connected" } : d
+				);
+				selectedDeviceId = device.id;
+				toastStore.success(`Connected · ${device.preset.name}`, `Cut Agent · ${device.portPath ?? "auto"}`);
 			} else {
-				toastStore.success(`Found ${found.length} device${found.length > 1 ? "s" : ""}`, "Select an IP to connect.");
+				if (!("serial" in navigator)) {
+					toastStore.warning("Not supported", "USB Direct requires Chrome or Edge.");
+					return;
+				}
+				if (isFree) { toastStore.info("Lite plan required", "USB Direct is available on Lite and above."); uiStore.openPricing(); return; }
+				try {
+					serialPortInfo = await connectSerialPort(device.preset.baudRate ?? plotterStore.config.baudRate ?? 9600);
+					plotterStore.applyPreset(device.preset);
+					plotterStore.switchConnection("usb-serial");
+					selectedDeviceId = device.id;
+					discoveredDevices = discoveredDevices.map(d =>
+						d.id === device.id ? { ...d, status: "connected" } : d
+					);
+					sendSettings(plotterStore.config).catch(() => {});
+					toastStore.success(`Connected · ${device.preset.name}`, serialPortInfo.label);
+				} catch (err: any) {
+					if (err?.name !== "NotAllowedError") toastStore.error("Connection failed", err?.message ?? "Could not open serial port.");
+					serialPortInfo = null;
+				}
 			}
-		} catch {
-			networkScan = "done";
-			toastStore.error("Scan failed", "Make sure the Cut Agent is running.");
+		} finally {
+			connecting = false;
+		}
+	}
+
+	function handleSelectDevice(device: DiscoveredDevice) {
+		if (device.status === "offline") return;
+		selectedDeviceId = device.id;
+		plotterStore.applyPreset(device.preset);
+		if (device.portPath) plotterStore.update({ serialPort: device.portPath });
+	}
+
+	async function handleTestConnection(device: DiscoveredDevice) {
+		if (testingConn) return;
+		testingConn = true;
+		try {
+			const result = await sendToPlotter("PU;", plotterStore.config);
+			if (result.ok) {
+				toastStore.success("Plotter responding", `${device.preset.name} acknowledged the test command.`);
+			} else {
+				toastStore.warning("Test failed", result.diagnostic.title);
+			}
+		} finally {
+			testingConn = false;
+		}
+	}
+
+	async function handleGrantUsbPort() {
+		if (!("serial" in navigator)) return;
+		if (isFree) { uiStore.openPricing(); return; }
+		try {
+			const portInfo = await connectSerialPort(plotterStore.config.baudRate ?? 9600);
+			serialPortInfo = portInfo;
+			const matched = matchPortToPreset(portInfo.vendorId, portInfo.productId);
+			if (matched) plotterStore.applyPreset(matched.preset);
+			plotterStore.switchConnection("usb-serial");
+			await runDiscovery();
+			toastStore.success("USB port authorized", portInfo.label);
+		} catch (err: any) {
+			if (err?.name !== "NotAllowedError") toastStore.error("Connection failed", err?.message ?? "Could not open port.");
 		}
 	}
 
@@ -459,62 +579,6 @@
 				smartNesting = false;
 			}
 		}, 16);
-	}
-
-	async function handleConnectSerial() {
-		if (isFree) {
-			toastStore.info("Lite plan required", "USB Web Serial is available on Lite and above.");
-			uiStore.openPricing();
-			return;
-		}
-		if (!("serial" in navigator)) {
-			toastStore.warning("Not supported", "USB direct connect requires Chrome or Edge. Use Download or Cut Agent for other browsers.");
-			return;
-		}
-		try {
-			serialPortInfo = await connectSerialPort(plotterStore.config.baudRate ?? 9600);
-
-			// Auto-switch connection type so settings sends and cut sends use the right path
-			plotterStore.update({ connection: "usb-serial" });
-
-			// Immediately match VID/PID — no second "Detect" click needed
-			const match = matchPortToPreset(serialPortInfo.vendorId, serialPortInfo.productId);
-			if (match) {
-				detectedPlotter = match;
-				if (match.confidence === "exact-vid") {
-					plotterStore.applyPreset(match.preset);
-					toastStore.success(
-						"Plotter identified",
-						`${match.preset.name} — settings applied automatically.`,
-					);
-				} else {
-					if (match.detail.toLowerCase().includes("bridge")) {
-						toastStore.info(
-							"USB device connected",
-							"Bridge chip detected — select your plotter model for optimal settings.",
-						);
-					} else {
-						toastStore.success("Port connected", serialPortInfo.label);
-					}
-				}
-			} else {
-				toastStore.success("Port connected", serialPortInfo.label);
-			}
-
-			// Sync current UI cut settings to plotter immediately after connecting
-			sendSettings(plotterStore.config).catch(() => {});
-		} catch (err: any) {
-			if (err?.name !== "NotAllowedError") {
-				toastStore.error("Connection failed", err?.message ?? "Could not open serial port.");
-			}
-			serialPortInfo = null;
-		}
-	}
-
-	function handleDisconnectSerial() {
-		disconnectSerialPort();
-		serialPortInfo = null;
-		toastStore.info("Disconnected", "Serial port closed.");
 	}
 
 	async function handleResumeCut() {
@@ -646,15 +710,33 @@
 				persistJob({ user, inBounds, eff, usedLength, patternArea, sheetArea, jobName });
 			} else {
 				// Save resume checkpoint if at least one pattern completed
+				const completedSoFar = lastCompletedIdx + 1;
 				if (lastCompletedIdx >= 0 && lastCompletedIdx < sortedInBounds.length - 1) {
 					const checkpoint: ResumeCheckpoint = {
-						remainingItemIds: sortedInBounds.slice(lastCompletedIdx + 1).map((i) => i.id),
-						completedCount: lastCompletedIdx + 1,
+						remainingItemIds: sortedInBounds.slice(completedSoFar).map((i) => i.id),
+						completedCount: completedSoFar,
 						totalCount: sortedInBounds.length,
 						presetName: plotterStore.config.name,
 					};
 					localStorage.setItem("omniplot-resume-checkpoint", JSON.stringify(checkpoint));
 					resumeCheckpoint = checkpoint;
+				}
+
+				// Persist an error job record so admin can see interrupted jobs.
+				// Only saved when at least one pattern cut (completedSoFar > 0) so
+				// total failures before any progress don't produce a misleading record.
+				if (completedSoFar > 0) {
+					persistJob({
+						user,
+						inBounds: sortedInBounds,
+						eff,
+						usedLength,
+						patternArea,
+						sheetArea,
+						jobName,
+						status: "error",
+						patternsCompleted: completedSoFar,
+					});
 				}
 
 				diagData     = result.diagnostic;
@@ -669,7 +751,7 @@
 						protocol:      plotterStore.config.protocol,
 						errorCode:     result.diagnostic.code,
 						errorTitle:    result.diagnostic.title,
-						errorRaw:      `${result.diagnostic.raw ?? ""} [interrupted after ${lastCompletedIdx + 1}/${sortedInBounds.length} patterns]`,
+						errorRaw:      `${result.diagnostic.raw ?? ""} [interrupted after ${completedSoFar}/${sortedInBounds.length} patterns]`,
 						agentVersion:  null,
 						userAgent:     navigator.userAgent,
 						autoReported:  result.diagnostic.escalate,
@@ -714,14 +796,18 @@
 		patternArea: number;
 		sheetArea: number;
 		jobName: string;
+		status?: "complete" | "error";
+		patternsCompleted?: number; // for interrupted jobs; defaults to inBounds.length
 	}) {
 		if (!opts.user) return;
+		const status = opts.status ?? "complete";
+		const patternsCompleted = opts.patternsCompleted ?? opts.inBounds.length;
 		const job = {
 			id: uid("job_"),
 			userId: opts.user.uid,
 			vehicleId: canvasStore.items[0]?.pattern.vehicleId ?? "",
 			name: opts.jobName,
-			status: "complete" as const,
+			status,
 			canvasState: canvasStore.state,
 			plotterConfig: plotterStore.config,
 			materialSheet: canvasStore.sheet,
@@ -731,17 +817,20 @@
 				totalPathLengthMm: 0,
 				estimatedCutSeconds: estimateCutTime(opts.inBounds, plotterStore.config.cuttingSpeed),
 				itemCount: opts.inBounds.length,
+				patternsCompleted,
 				sheetArea: opts.sheetArea,
 				usedArea: opts.patternArea,
 			},
 			createdAt: new Date(),
 			updatedAt: new Date(),
-			completedAt: new Date(),
+			completedAt: status === "complete" ? new Date() : null,
 			exportUrl: null,
 		};
 		saveJob(job).catch(() => {});
-		// Increment usage so canCut re-derives and the button gates correctly on next render
-		incrementCutUsage(opts.user.uid, opts.user.usage.monthResetAt).catch(() => {});
+		// Only count usage increments for completed jobs
+		if (status === "complete") {
+			incrementCutUsage(opts.user.uid, opts.user.usage.monthResetAt).catch(() => {});
+		}
 	}
 
 	function handleExport(format: "hpgl" | "svg" | "dxf") {
@@ -897,104 +986,17 @@
 
 	// ─── Canvas persistence ───────────────────────
 	let _mounted = false;
-	// ─── Cut Agent port list ─────────────────────
-	let agentPortsList = $state<Array<{ name: string; manufacturer?: string }>>([]);
-	let agentPortsLoading = $state(false);
-
-	async function fetchAgentPorts() {
-		agentPortsLoading = true;
-		const base = (plotterStore.config.agentUrl ?? "http://localhost:7878").replace(/\/$/, "");
-		try {
-			const res = await fetch(`${base}/api/ports`, { signal: AbortSignal.timeout(3000) });
-			if (res.ok) {
-				const ports: Array<{ name: string; isUSB: boolean; manufacturer?: string }> = await res.json();
-				agentPortsList = ports.filter((p) => p.isUSB);
-				if (!agentPortsList.length) toastStore.info("No USB ports found", "Connect a plotter via USB to the machine running the Cut Agent.");
-			} else {
-				agentPortsList = [];
-			}
-		} catch {
-			agentPortsList = [];
-			toastStore.warning("Agent unreachable", "Make sure the OmniPlot Cut Agent is running.");
-		} finally {
-			agentPortsLoading = false;
-		}
-	}
-
-	async function probeAgent(autoSelect = false) {
-		const base = (plotterStore.config.agentUrl ?? "http://localhost:7878").replace(/\/$/, "");
-		agentProbeStatus = "probing";
-		try {
-			const res = await fetch(`${base}/api/status`, { signal: AbortSignal.timeout(2500) });
-			if (res.ok) {
-				agentProbeStatus = "online";
-				if (autoSelect) {
-					selectedConnMethod = "cut-agent";
-					fetchAgentPorts();
-				}
-			} else {
-				agentProbeStatus = "offline";
-				if (autoSelect) selectedConnMethod = "usb-serial";
-			}
-		} catch {
-			agentProbeStatus = "offline";
-			if (autoSelect) selectedConnMethod = "usb-serial";
-		}
-	}
-
-	async function handleConnect() {
-		if (connecting) return;
-		connecting = true;
-		try {
-			if (selectedConnMethod === "cut-agent") {
-				plotterStore.switchConnection("cut-agent");
-				sendSettings(plotterStore.config).catch(() => {});
-				toastStore.success("Connected to agent", plotterStore.config.agentUrl ?? "http://localhost:7878");
-			} else {
-				if (!("serial" in navigator)) {
-					toastStore.warning("Not supported", "USB direct connect requires Chrome or Edge.");
-					return;
-				}
-				if (isFree) {
-					toastStore.info("Lite plan required", "USB Web Serial is available on Lite and above.");
-					uiStore.openPricing();
-					return;
-				}
-				try {
-					serialPortInfo = await connectSerialPort(plotterStore.config.baudRate ?? 9600);
-					plotterStore.switchConnection("usb-serial");
-					const match = matchPortToPreset(serialPortInfo.vendorId, serialPortInfo.productId);
-					if (match) {
-						detectedPlotter = match;
-						if (match.confidence === "exact-vid") {
-							plotterStore.applyPreset(match.preset);
-							toastStore.success("Plotter identified", `${match.preset.name} — settings applied.`);
-						} else {
-							toastStore.success("Port connected", serialPortInfo.label);
-						}
-					} else {
-						toastStore.success("Port connected", serialPortInfo.label);
-					}
-					sendSettings(plotterStore.config).catch(() => {});
-				} catch (err: any) {
-					if (err?.name !== "NotAllowedError") {
-						toastStore.error("Connection failed", err?.message ?? "Could not open serial port.");
-					}
-					serialPortInfo = null;
-				}
-			}
-		} finally {
-			connecting = false;
-		}
-	}
-
 	function handleDisconnect() {
 		if (plotterStore.config.connection === "usb-serial") {
 			disconnectSerialPort();
 			serialPortInfo = null;
 		}
 		plotterStore.switchConnection("download");
+		autoConnectedAgent = false;
 		showConfig = false;
+		discoveredDevices = discoveredDevices.map(d =>
+			d.status === "connected" ? { ...d, status: "detected" } : d
+		);
 		toastStore.info("Disconnected", "Connection closed.");
 	}
 
@@ -1013,11 +1015,29 @@
 		if (typeof localStorage !== "undefined" && !localStorage.getItem("op-tour-seen")) {
 			setTimeout(() => uiStore.openTour(), 800);
 		}
-		// Probe Cut Agent on mount — auto-selects best connection method
-		probeAgent(true);
-		// Re-probe every 15s so the status dot stays accurate
-		const probeInterval = setInterval(() => probeAgent(), 15_000);
-		return () => clearInterval(probeInterval);
+
+		// Initial plotter discovery
+		runDiscovery();
+
+		// Web Serial connect/disconnect events — re-scan immediately on cable change
+		const cleanup: Array<() => void> = [];
+		if (typeof navigator !== "undefined" && "serial" in navigator) {
+			const serial = (navigator as any).serial;
+			const onSerialConnect    = () => runDiscovery();
+			const onSerialDisconnect = () => runDiscovery();
+			serial.addEventListener("connect",    onSerialConnect);
+			serial.addEventListener("disconnect", onSerialDisconnect);
+			cleanup.push(() => {
+				serial.removeEventListener("connect",    onSerialConnect);
+				serial.removeEventListener("disconnect", onSerialDisconnect);
+			});
+		}
+
+		// Poll every 8s — keeps status dots live without hammering the agent
+		const pollInterval = setInterval(runDiscovery, 8_000);
+		cleanup.push(() => clearInterval(pollInterval));
+
+		return () => cleanup.forEach(fn => fn());
 	});
 
 	$effect(() => {
@@ -1880,228 +1900,199 @@
 					<!-- Plotter tab -->
 				{:else}
 
-					<!-- ── Device Selection + Compatibility ───── -->
-					<!-- ── Connection ─────────────────────────── -->
-					<div class="prop-section">
-						<div class="prop-label">Connection</div>
-						<div class="conn-method-cards">
-							<button
-								class="conn-method-card"
-								class:selected={selectedConnMethod === "cut-agent"}
-								onclick={() => { if (!isConnected) selectedConnMethod = "cut-agent"; }}
-								disabled={isConnected}
-								aria-pressed={selectedConnMethod === "cut-agent"}
-							>
-								<div
-									class="conn-method-card__dot"
-									class:online={agentProbeStatus === "online"}
-									class:probing={agentProbeStatus === "probing"}
-								></div>
-								<div class="conn-method-card__body">
-									<span class="conn-method-card__name">Cut Agent</span>
-									<span class="conn-method-card__status">
-										{#if agentProbeStatus === "probing"}
-											Checking…
-										{:else if agentProbeStatus === "online"}
-											Online{agentStore.version ? ` · v${agentStore.version}` : ""}
-										{:else}
-											Not running
-										{/if}
+					<!-- ── Plotter Discovery ─────────────────── -->
+					<div class="discovery-panel">
+						<!-- header: scan status + rescan button -->
+						<div class="discovery-header">
+							<div class="discovery-header__left">
+								{#if discoveryPhase === "scanning"}
+									<span class="ai-spinner" style="width:10px;height:10px;flex-shrink:0" aria-hidden="true"></span>
+									<span class="discovery-title">Scanning…</span>
+								{:else if liveDevices.length === 0}
+									<span class="discovery-title">No cutters detected</span>
+								{:else if liveDevices.length === 1}
+									<span class="discovery-title">
+										{liveDevices[0].status === "connected" ? "Cutter connected" : "Cutter detected"}
 									</span>
-								</div>
-								{#if selectedConnMethod === "cut-agent"}
-									<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>
+								{:else}
+									<span class="discovery-title">{liveDevices.length} cutters found — select one</span>
 								{/if}
-							</button>
+							</div>
 							<button
-								class="conn-method-card"
-								class:selected={selectedConnMethod === "usb-serial"}
-								onclick={() => { if (!isConnected) selectedConnMethod = "usb-serial"; }}
-								disabled={isConnected}
-								aria-pressed={selectedConnMethod === "usb-serial"}
+								class="discovery-rescan-btn"
+								onclick={() => runDiscovery()}
+								disabled={discoveryPhase === "scanning"}
+								title="Rescan for cutters"
+								aria-label="Rescan"
 							>
-								<div
-									class="conn-method-card__dot"
-									class:online={plotterStore.config.connection === "usb-serial" && !!serialPortInfo}
-								></div>
-								<div class="conn-method-card__body">
-									<span class="conn-method-card__name">USB Direct</span>
-									<span class="conn-method-card__status">
-										{#if plotterStore.config.connection === "usb-serial" && serialPortInfo}
-											{serialPortInfo.label}
-										{:else}
-											Chrome / Edge only
-										{/if}
-									</span>
-								</div>
-								{#if selectedConnMethod === "usb-serial"}
-									<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>
-								{/if}
+								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true">
+									<path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+									<path d="M3 3v5h5"/>
+									<path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/>
+									<path d="M16 16h5v5"/>
+								</svg>
 							</button>
 						</div>
 
-						{#if !isConnected}
-							{#if selectedConnMethod === "cut-agent"}
-								<div class="conn-method-settings">
-									<div class="prop-label-row" style="margin-bottom: 6px;">
-										<span class="prop-label" style="margin-bottom: 0;">Agent URL</span>
-										<span class="info-tip" data-tip="URL of the OmniPlot Cut Agent on this machine. Leave as default unless the agent runs on a different port.">
-											<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
-										</span>
+						{#if discoveredDevices.length > 0}
+							<div class="device-list">
+								{#each discoveredDevices as device (device.id)}
+									<div
+										class="device-card"
+										class:device-card--connected={device.status === "connected"}
+										class:device-card--offline={device.status === "offline"}
+										class:device-card--selectable={liveDevices.length > 1 && device.status !== "offline"}
+										class:device-card--selected={selectedDeviceId === device.id && liveDevices.length > 1}
+										role={liveDevices.length > 1 && device.status !== "offline" ? "button" : undefined}
+										tabindex={liveDevices.length > 1 && device.status !== "offline" ? 0 : undefined}
+										onclick={liveDevices.length > 1 && device.status !== "offline" ? () => handleSelectDevice(device) : undefined}
+										onkeydown={liveDevices.length > 1 && device.status !== "offline" ? (e) => { if (e.key === "Enter" || e.key === " ") handleSelectDevice(device); } : undefined}
+									>
+										<!-- Identity row -->
+										<div class="device-card__top">
+											<div class="device-dot device-dot--{device.status}"></div>
+											<div class="device-identity">
+												<span class="device-name">{device.preset.name}</span>
+												<span class="device-via">
+													{device.source === "agent"
+														? `Cut Agent${agentStore.version ? ` · v${agentStore.version}` : ""}`
+														: "USB Direct"}
+												</span>
+											</div>
+											<span class="device-status-badge device-status-badge--{device.status}">
+												{device.status === "connected" ? "Connected" : device.status === "offline" ? "Offline" : "Detected"}
+											</span>
+										</div>
+
+										<!-- Spec chips -->
+										<div class="device-specs">
+											{#if device.portPath}
+												<span class="device-spec-chip">{device.portPath}</span>
+											{/if}
+											{#if device.vendorId !== undefined}
+												<span class="device-spec-chip device-spec-chip--mono">
+													VID {device.vendorId.toString(16).toUpperCase().padStart(4, "0")}{device.productId !== undefined ? `:${device.productId.toString(16).toUpperCase().padStart(4, "0")}` : ""}
+												</span>
+											{/if}
+											<span class="device-spec-chip">{(device.preset.maxMediaWidthMm / 25.4).toFixed(0)}" max</span>
+											<span class="device-spec-chip">{device.preset.protocol.toUpperCase()}</span>
+											<span class="device-spec-chip">{device.preset.baudRate ?? 9600} baud</span>
+										</div>
+
+										{#if device.manufacturer || device.product}
+											<div class="device-hw-line">
+												{[device.manufacturer, device.product].filter(Boolean).join(" ")}
+											</div>
+										{/if}
+
+										<!-- Compat warning inline -->
+										{#if compat === "overflow" && device.status !== "offline"}
+											<p class="compat-warn" style="margin:6px 0 0">
+												Material ({canvasStore.sheet.widthInches}") wider than this plotter's max ({(device.preset.maxMediaWidthMm / 25.4).toFixed(1)}").
+											</p>
+										{:else if compat === "tight" && device.status !== "offline"}
+											<p class="compat-tight" style="margin:6px 0 0">Near max width — verify roll alignment.</p>
+										{/if}
+										{#if plotterStore.config.compatNote && device.status !== "offline"}
+											<p class="compat-warn compat-warn--protocol" style="margin:4px 0 0">⚠ {plotterStore.config.compatNote}</p>
+										{/if}
+
+										<!-- Actions: show only for single device OR selected device in multi-device mode -->
+										{#if liveDevices.length === 1 || selectedDeviceId === device.id}
+											<div class="device-card__actions">
+												{#if device.status === "connected"}
+													<button
+														class="device-action-test"
+														onclick={(e) => { e.stopPropagation(); handleTestConnection(device); }}
+														disabled={testingConn}
+													>
+														{testingConn ? "Testing…" : "Test"}
+													</button>
+													<button
+														class="device-action-disconnect"
+														onclick={(e) => { e.stopPropagation(); handleDisconnect(); }}
+													>
+														Disconnect
+													</button>
+												{:else if device.status === "detected"}
+													<button
+														class="device-action-connect"
+														onclick={(e) => { e.stopPropagation(); handleConnectDevice(device); }}
+														disabled={connecting}
+													>
+														{#if connecting}
+															<span class="ai-spinner" style="width:10px;height:10px" aria-hidden="true"></span>
+															Connecting…
+														{:else if device.source === "usb"}
+															Select USB Port…
+														{:else}
+															Connect
+														{/if}
+													</button>
+												{:else}
+													<span class="device-offline-msg">Reconnect cable and rescan</span>
+												{/if}
+											</div>
+										{/if}
 									</div>
+								{/each}
+							</div>
+
+						{:else if discoveryPhase === "done"}
+							<!-- No devices found -->
+							<div class="discovery-empty">
+								<div class="discovery-check-row">
+									<span class="discovery-check-dot discovery-check-dot--{agentProbeStatus}"></span>
+									<span class="discovery-check-label">
+										Cut Agent {agentProbeStatus === "online" ? "online" : agentProbeStatus === "probing" ? "checking…" : "not running"}
+									</span>
+									{#if agentProbeStatus === "offline"}
+										<a href="/studio/agent" class="discovery-check-action">Install ↗</a>
+									{/if}
+								</div>
+								{#if typeof navigator !== "undefined" && "serial" in navigator}
+									<div class="discovery-check-row">
+										<span class="discovery-check-dot discovery-check-dot--none"></span>
+										<span class="discovery-check-label">No USB ports authorized</span>
+										<button class="discovery-check-action" onclick={handleGrantUsbPort}>Authorize →</button>
+									</div>
+								{:else}
+									<div class="discovery-check-row">
+										<span class="discovery-check-dot discovery-check-dot--none"></span>
+										<span class="discovery-check-label">USB Direct requires Chrome or Edge</span>
+									</div>
+								{/if}
+								<p class="discovery-empty__tip">
+									Power on your cutter, then
+									<button class="discovery-link-btn" onclick={() => runDiscovery()}>scan again</button>.
+								</p>
+							</div>
+						{/if}
+
+						<!-- Advanced settings (Agent URL + baud rate) — collapsed by default -->
+						<details class="discovery-advanced">
+							<summary class="discovery-advanced__summary">Advanced settings</summary>
+							<div class="discovery-advanced__body">
+								<label class="discovery-adv-label">
+									Agent URL
 									<input
 										class="prop-input prop-input--full"
 										type="text"
 										placeholder="http://localhost:7878"
 										value={plotterStore.config.agentUrl ?? "http://localhost:7878"}
-										oninput={(e) => plotterStore.update({ agentUrl: (e.target as HTMLInputElement).value })}
+										oninput={(e) => { plotterStore.update({ agentUrl: (e.target as HTMLInputElement).value }); runDiscovery(); }}
 									/>
-									<div class="prop-label-row" style="margin-top: 10px; margin-bottom: 6px;">
-										<div style="display:flex;align-items:center;gap:4px;">
-											<span class="prop-label" style="margin-bottom: 0;">Serial Port</span>
-											<span class="info-tip" data-tip="USB port the plotter is connected to on the agent machine. Auto-detect works for most setups.">
-												<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
-											</span>
-										</div>
-										<button class="prop-btn-inline" onclick={fetchAgentPorts} disabled={agentPortsLoading} title="Refresh" aria-label="Refresh port list">
-											{#if agentPortsLoading}
-												<span class="ai-spinner" style="width:10px;height:10px;" aria-hidden="true"></span>
-											{:else}
-												<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
-											{/if}
-										</button>
-									</div>
-									<select class="prop-select" aria-label="Serial port" onchange={(e) => plotterStore.update({ serialPort: (e.target as HTMLSelectElement).value })}>
-										<option value="auto" selected={!plotterStore.config.serialPort || plotterStore.config.serialPort === "auto"}>Auto-detect</option>
-										{#each agentPortsList as p}
-											<option value={p.name} selected={plotterStore.config.serialPort === p.name}>{p.name}{p.manufacturer ? ` — ${p.manufacturer}` : ""}</option>
-										{/each}
-									</select>
-									{#if !agentPortsList.length && !agentPortsLoading}
-										<p class="prop-note">No USB ports found — connect a plotter and refresh.</p>
-									{/if}
-								</div>
-							{:else}
-								<div class="conn-method-settings">
-									<div class="prop-label-row" style="margin-bottom: 6px;">
-										<span class="prop-label" style="margin-bottom: 0;">Baud Rate</span>
-										<span class="info-tip" data-tip="Serial communication speed in bits/sec. Must match your plotter's baud setting. Most plotters default to 9600.">
-											<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
-										</span>
-									</div>
+								</label>
+								<label class="discovery-adv-label" style="margin-top:8px">
+									Baud Rate
 									<select class="prop-select" aria-label="Baud rate" onchange={(e) => plotterStore.update({ baudRate: parseInt((e.target as HTMLSelectElement).value) })}>
 										{#each [9600, 19200, 38400, 57600, 115200] as rate}
 											<option value={rate} selected={plotterStore.config.baudRate === rate}>{rate}</option>
 										{/each}
 									</select>
-									{#if !("serial" in navigator)}
-										<p class="prop-note" style="color: var(--color-warning)">Requires Chrome or Edge.</p>
-									{/if}
-								</div>
-							{/if}
-						{/if}
-
-						{#if isConnected}
-							<div class="plotter-active-bar">
-								<span class="plotter-active-bar__dot"></span>
-								<div class="plotter-active-bar__info">
-									<span class="plotter-active-bar__label">{activeConnLabel}</span>
-									<span class="plotter-active-bar__sub">{activeConnSub}</span>
-								</div>
-								<button class="plotter-disconnect-btn" onclick={handleDisconnect}>Disconnect</button>
+								</label>
 							</div>
-						{:else}
-							<button
-								class="plotter-connect-btn"
-								class:connecting
-								onclick={handleConnect}
-								disabled={connecting || (selectedConnMethod === "cut-agent" && agentProbeStatus === "offline")}
-							>
-								{#if connecting}
-									<span class="ai-spinner" aria-hidden="true"></span>
-									Connecting…
-								{:else if selectedConnMethod === "cut-agent"}
-									{#if agentProbeStatus === "offline"}
-										Agent Offline — Start Agent First
-									{:else if agentProbeStatus === "probing"}
-										<span class="ai-spinner" aria-hidden="true"></span>
-										Checking agent…
-									{:else}
-										Connect via Cut Agent
-									{/if}
-								{:else}
-									Select USB Port…
-								{/if}
-							</button>
-						{/if}
-					</div>
-
-					<div class="plotter-divider"></div>
-
-					<!-- ── Plotter Device ─────────────────────── -->
-					<div class="prop-section">
-						<div class="prop-label-row">
-							<span class="prop-label">Plotter Device</span>
-							<span
-								class="compat-badge compat-badge--{compat}"
-								title="{plotterStore.config.name} max: {plotterMaxWidthIn.toFixed(1)}&quot; · Material: {canvasStore.sheet.widthInches}&quot;"
-							>
-								{#if compat === "ok"}
-									<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>
-								{:else if compat === "tight"}
-									<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M12 9v4M12 17h.01"/></svg>
-								{:else}
-									<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>
-								{/if}
-								{compatLabel(compat)}
-							</span>
-						</div>
-						<select
-							class="prop-select"
-							aria-label="Plotter preset"
-							onchange={(e) => {
-								const preset = PLOTTER_PRESETS.find(
-									(p) => p.name === (e.target as HTMLSelectElement).value,
-								);
-								if (preset) {
-									plotterStore.applyPreset(preset);
-									if (plotterStore.config.connection === "usb-serial") {
-										sendSettings(plotterStore.config).catch(() => {});
-									}
-									detectedPlotter = null;
-								}
-							}}
-						>
-							{#each PLOTTER_PRESETS as preset}
-								<option value={preset.name} selected={plotterStore.config.name === preset.name}>
-									{preset.name} · {(preset.maxMediaWidthMm / 25.4).toFixed(0)}"
-								</option>
-							{/each}
-						</select>
-						{#if detectedPlotter && detectedPlotter.confidence !== "exact-vid" && plotterStore.config.connection === "usb-serial"}
-							<p class="prop-note prop-note--usb-hint">
-								USB connected — pick your model above to apply optimized cut settings.
-							</p>
-						{/if}
-						<div class="plotter-spec-row">
-							<span class="plotter-spec">Max width: <strong>{plotterMaxWidthIn.toFixed(1)}"</strong></span>
-							<span class="plotter-spec">Protocol: <strong>{plotterStore.config.protocol.toUpperCase()}</strong></span>
-							<span class="plotter-spec">Baud: <strong>{plotterStore.config.baudRate ?? 9600}</strong></span>
-						</div>
-						{#if compat === "overflow"}
-							<p class="compat-warn">
-								Material ({canvasStore.sheet.widthInches}") exceeds this plotter's cutting zone ({plotterMaxWidthIn.toFixed(1)}"). Patterns near the edge won't cut correctly.
-							</p>
-						{:else if compat === "tight"}
-							<p class="compat-tight">
-								Material is near this plotter's max width. Verify roll alignment before cutting.
-							</p>
-						{/if}
-						{#if plotterStore.config.compatNote}
-							<p class="compat-warn compat-warn--protocol">
-								⚠ {plotterStore.config.compatNote}
-							</p>
-						{/if}
+						</details>
 					</div>
 
 					<div class="plotter-divider"></div>
@@ -3980,4 +3971,426 @@
 		transition: opacity 0.1s;
 	}
 	.info-tip:hover::before { opacity: 1; }
+
+	/* ── Plotter Discovery Panel ──────────────── */
+
+	.discovery-panel {
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+	}
+
+	.discovery-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
+	}
+
+	.discovery-header__left {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		min-width: 0;
+	}
+
+	.discovery-title {
+		font-size: 0.78rem;
+		font-weight: 600;
+		color: var(--text-secondary);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.discovery-rescan-btn {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		padding: 4px 9px;
+		background: transparent;
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-sm);
+		font-size: 0.72rem;
+		font-weight: 500;
+		font-family: var(--font-body);
+		color: var(--text-tertiary);
+		cursor: pointer;
+		white-space: nowrap;
+		flex-shrink: 0;
+		transition: border-color 0.12s, color 0.12s, background 0.12s;
+	}
+	.discovery-rescan-btn:hover:not(:disabled) {
+		border-color: var(--text-tertiary);
+		color: var(--text-secondary);
+		background: var(--interactive-hover);
+	}
+	.discovery-rescan-btn:disabled {
+		opacity: 0.45;
+		cursor: default;
+	}
+
+	/* ── Device list ─────────────────────────── */
+
+	.device-list {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+
+	.device-card {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		padding: 10px 12px;
+		background: var(--bg-surface-2);
+		border: 1px solid var(--border-subtle);
+		border-radius: var(--radius-md);
+		transition: border-color 0.12s, background 0.12s;
+	}
+	.device-card--connected {
+		border-color: var(--color-success, #22c55e);
+		background: color-mix(in srgb, var(--color-success, #22c55e) 6%, var(--bg-surface-2));
+	}
+	.device-card--offline {
+		opacity: 0.55;
+		border-color: var(--border-subtle);
+	}
+	.device-card--selectable {
+		cursor: pointer;
+	}
+	.device-card--selectable:hover {
+		border-color: var(--border-default);
+		background: var(--interactive-hover);
+	}
+	.device-card--selected {
+		border-color: var(--color-accent, #7c3aed);
+		background: color-mix(in srgb, var(--color-accent, #7c3aed) 6%, var(--bg-surface-2));
+	}
+
+	.device-card__top {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+
+	/* ── Status dot ──────────────────────────── */
+
+	.device-dot {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		flex-shrink: 0;
+	}
+	.device-dot--detected {
+		background: var(--color-warning, #f59e0b);
+		box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-warning, #f59e0b) 22%, transparent);
+	}
+	.device-dot--connected {
+		background: var(--color-success, #22c55e);
+		box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-success, #22c55e) 22%, transparent);
+		animation: dot-pulse 2s ease-in-out infinite;
+	}
+	.device-dot--offline {
+		background: var(--text-disabled, #6b7280);
+	}
+
+	@keyframes dot-pulse {
+		0%, 100% { opacity: 1; }
+		50% { opacity: 0.55; }
+	}
+
+	/* ── Device identity ─────────────────────── */
+
+	.device-identity {
+		display: flex;
+		flex-direction: column;
+		gap: 1px;
+		min-width: 0;
+		flex: 1;
+	}
+
+	.device-name {
+		font-size: 0.8rem;
+		font-weight: 600;
+		color: var(--text-primary);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.device-via {
+		font-size: 0.69rem;
+		color: var(--text-tertiary);
+		white-space: nowrap;
+	}
+
+	/* ── Status badge ────────────────────────── */
+
+	.device-status-badge {
+		flex-shrink: 0;
+		padding: 2px 7px;
+		border-radius: 999px;
+		font-size: 0.67rem;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+	}
+	.device-status-badge--connected {
+		background: color-mix(in srgb, var(--color-success, #22c55e) 18%, transparent);
+		color: var(--color-success, #22c55e);
+	}
+	.device-status-badge--detected {
+		background: color-mix(in srgb, var(--color-warning, #f59e0b) 18%, transparent);
+		color: var(--color-warning, #f59e0b);
+	}
+	.device-status-badge--offline {
+		background: var(--bg-surface-3, rgba(255,255,255,0.05));
+		color: var(--text-disabled, #6b7280);
+	}
+
+	/* ── Spec chips ──────────────────────────── */
+
+	.device-specs {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px;
+	}
+
+	.device-spec-chip {
+		padding: 2px 7px;
+		background: var(--bg-surface-3, rgba(255,255,255,0.06));
+		border: 1px solid var(--border-subtle);
+		border-radius: 4px;
+		font-size: 0.68rem;
+		color: var(--text-secondary);
+		white-space: nowrap;
+	}
+	.device-spec-chip--mono {
+		font-family: var(--font-mono, monospace);
+		font-size: 0.66rem;
+		color: var(--text-tertiary);
+	}
+
+	/* ── Hardware identity line ──────────────── */
+
+	.device-hw-line {
+		font-size: 0.69rem;
+		color: var(--text-tertiary);
+		font-style: italic;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	/* ── Action buttons ──────────────────────── */
+
+	.device-card__actions {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		flex-wrap: wrap;
+	}
+
+	.device-action-connect,
+	.device-action-disconnect,
+	.device-action-test {
+		padding: 5px 12px;
+		border-radius: var(--radius-sm);
+		font-size: 0.73rem;
+		font-weight: 500;
+		font-family: var(--font-body);
+		cursor: pointer;
+		border: 1px solid transparent;
+		transition: background 0.12s, border-color 0.12s, color 0.12s;
+	}
+	.device-action-connect {
+		background: var(--color-accent, #7c3aed);
+		color: #fff;
+		border-color: var(--color-accent, #7c3aed);
+	}
+	.device-action-connect:hover:not(:disabled) {
+		background: color-mix(in srgb, var(--color-accent, #7c3aed) 85%, #000);
+	}
+	.device-action-connect:disabled {
+		opacity: 0.45;
+		cursor: default;
+	}
+	.device-action-disconnect {
+		background: transparent;
+		color: var(--color-danger, #ef4444);
+		border-color: var(--color-danger, #ef4444);
+	}
+	.device-action-disconnect:hover {
+		background: color-mix(in srgb, var(--color-danger, #ef4444) 12%, transparent);
+	}
+	.device-action-test {
+		background: transparent;
+		color: var(--text-secondary);
+		border-color: var(--border-default);
+	}
+	.device-action-test:hover:not(:disabled) {
+		border-color: var(--text-tertiary);
+		color: var(--text-primary);
+		background: var(--interactive-hover);
+	}
+	.device-action-test:disabled {
+		opacity: 0.45;
+		cursor: default;
+	}
+
+	/* ── Offline message ─────────────────────── */
+
+	.device-offline-msg {
+		font-size: 0.69rem;
+		color: var(--text-disabled, #6b7280);
+		font-style: italic;
+	}
+
+	/* ── Empty state ─────────────────────────── */
+
+	.discovery-empty {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		padding: 10px 0 4px;
+	}
+
+	.discovery-check-row {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+
+	.discovery-check-dot {
+		width: 7px;
+		height: 7px;
+		border-radius: 50%;
+		flex-shrink: 0;
+	}
+	.discovery-check-dot--online {
+		background: var(--color-success, #22c55e);
+	}
+	.discovery-check-dot--offline {
+		background: var(--color-danger, #ef4444);
+	}
+	.discovery-check-dot--probing {
+		background: var(--color-warning, #f59e0b);
+		animation: dot-pulse 1.2s ease-in-out infinite;
+	}
+	.discovery-check-dot--none {
+		background: var(--text-disabled, #6b7280);
+	}
+
+	.discovery-check-label {
+		flex: 1;
+		font-size: 0.73rem;
+		color: var(--text-secondary);
+	}
+
+	.discovery-check-action {
+		padding: 2px 8px;
+		background: transparent;
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-sm);
+		font-size: 0.69rem;
+		font-weight: 500;
+		font-family: var(--font-body);
+		color: var(--text-tertiary);
+		cursor: pointer;
+		text-decoration: none;
+		white-space: nowrap;
+		transition: border-color 0.12s, color 0.12s;
+	}
+	.discovery-check-action:hover {
+		border-color: var(--text-tertiary);
+		color: var(--text-secondary);
+	}
+
+	.discovery-empty__tip {
+		margin: 4px 0 0;
+		font-size: 0.69rem;
+		color: var(--text-tertiary);
+		line-height: 1.5;
+	}
+
+	.discovery-link-btn {
+		background: none;
+		border: none;
+		padding: 0;
+		font: inherit;
+		font-size: inherit;
+		color: var(--color-accent, #7c3aed);
+		cursor: pointer;
+		text-decoration: underline;
+		text-underline-offset: 2px;
+	}
+	.discovery-link-btn:hover {
+		color: color-mix(in srgb, var(--color-accent, #7c3aed) 80%, #fff);
+	}
+
+	/* ── Advanced settings ───────────────────── */
+
+	.discovery-advanced {
+		border: 1px solid var(--border-subtle);
+		border-radius: var(--radius-md);
+		overflow: hidden;
+	}
+
+	.discovery-advanced__summary {
+		padding: 7px 11px;
+		font-size: 0.72rem;
+		font-weight: 500;
+		color: var(--text-tertiary);
+		cursor: pointer;
+		user-select: none;
+		list-style: none;
+		display: flex;
+		align-items: center;
+		gap: 5px;
+		background: var(--bg-surface-2);
+		transition: color 0.1s, background 0.1s;
+	}
+	.discovery-advanced__summary:hover {
+		color: var(--text-secondary);
+		background: var(--interactive-hover);
+	}
+	.discovery-advanced__summary::marker,
+	.discovery-advanced__summary::-webkit-details-marker {
+		display: none;
+	}
+
+	.discovery-advanced__body {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		padding: 10px 12px 12px;
+		background: var(--bg-surface-2);
+		border-top: 1px solid var(--border-subtle);
+	}
+
+	.discovery-adv-label {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		font-size: 0.72rem;
+		font-weight: 500;
+		color: var(--text-secondary);
+	}
+	.discovery-adv-label input,
+	.discovery-adv-label select {
+		padding: 5px 8px;
+		background: var(--bg-surface);
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-sm);
+		font-size: 0.73rem;
+		font-family: var(--font-body);
+		color: var(--text-primary);
+		outline: none;
+		transition: border-color 0.12s;
+	}
+	.discovery-adv-label input:focus,
+	.discovery-adv-label select:focus {
+		border-color: var(--color-accent, #7c3aed);
+	}
 </style>
