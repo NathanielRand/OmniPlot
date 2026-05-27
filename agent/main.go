@@ -24,7 +24,7 @@ import (
 	"time"
 )
 
-const agentVersion = "1.0.1"
+const agentVersion = "1.1.0"
 
 func main() {
 	port    := flag.Int("port", 7878, "HTTP port to listen on (default 7878)")
@@ -35,6 +35,7 @@ func main() {
 	mux.HandleFunc("/api/status",       withCORS(handleStatus))
 	mux.HandleFunc("/api/ports",        withCORS(handlePorts))
 	mux.HandleFunc("/api/cut",          withCORS(handleCut))
+	mux.HandleFunc("/api/query",        withCORS(handleQuery))
 	mux.HandleFunc("/api/events",       withCORS(handleEvents))
 	mux.HandleFunc("/api/stats",        withCORS(handleStats))
 	mux.HandleFunc("/api/shutdown",     withCORS(handleShutdown))

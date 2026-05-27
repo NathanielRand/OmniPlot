@@ -296,6 +296,45 @@ async function sendViaNetwork(hpgl: string, config: PlotterConfig): Promise<Send
     }
 }
 
+// ─── Agent bidirectional query ────────────────
+// Sends a raw HPGL command to the plotter via the Cut Agent and reads back
+// the response. Used for calibration queries such as OA (Output Actual Position).
+// Only works when connection === "cut-agent".
+export interface QueryResult {
+    ok: boolean;
+    response?: string;
+    port?: string;
+    error?: string;
+}
+
+export async function queryPlotter(
+    command: string,
+    config: PlotterConfig,
+    timeoutMs = 3000,
+): Promise<QueryResult> {
+    const base = (config.agentUrl ?? "http://localhost:7878").replace(/\/$/, "");
+    try {
+        const res = await fetch(`${base}/api/query`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                command,
+                serialPort: config.serialPort ?? "auto",
+                baudRate:   config.baudRate   ?? 9600,
+                timeoutMs,
+            }),
+        });
+        if (!res.ok) {
+            const body = await res.json().catch(() => ({ error: `Agent error ${res.status}` }));
+            return { ok: false, error: body.error ?? `Agent error ${res.status}` };
+        }
+        const data = await res.json();
+        return { ok: true, response: data.response ?? "", port: data.port };
+    } catch (err: any) {
+        return { ok: false, error: err?.message ?? "Agent not reachable" };
+    }
+}
+
 // ─── Cut-Agent ────────────────────────────────
 // Posts to a local OmniPlot Cut Agent daemon. The agent accepts HPGL
 // over HTTP and forwards it to the plotter via USB/serial on the host OS,

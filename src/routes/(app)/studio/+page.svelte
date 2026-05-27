@@ -19,7 +19,7 @@
 		generateHpgl,
 		generateHpglSegments,
 	} from "$lib/utils/hpgl";
-	import { sendToPlotter, sendToPlotterSegmented, sendSettings, connectSerialPort, disconnectSerialPort, isSerialConnected, type SerialPortInfo, type CutProgress } from "$lib/utils/plotter-connection";
+	import { sendToPlotter, sendToPlotterSegmented, sendSettings, connectSerialPort, disconnectSerialPort, isSerialConnected, queryPlotter, type SerialPortInfo, type CutProgress } from "$lib/utils/plotter-connection";
 	import { saveJob, logPlotterError, incrementCutUsage } from "$lib/firebase/firestore";
 	import type { PlotterDiagnostic } from "$lib/utils/plotter-errors";
 	import PlotterDiagPanel from "$lib/components/ui/PlotterDiagPanel.svelte";
@@ -299,6 +299,84 @@
 	let agentProbeStatus = $state<"probing" | "online" | "offline">("probing");
 	let connecting       = $state(false);
 	let showConfig       = $state(false);
+
+	// ─── Roll alignment calibration ───────────────
+	type CalPhase = 'idle' | 'probe-wait' | 'probe-busy' | 'probe-done' | 'probe-error';
+	let calPhase    = $state<CalPhase>('idle');
+	let calCapture  = $state<{ offsetIn: number; raw: string } | null>(null);
+	let calError    = $state<string | null>(null);
+	let calCustomX  = $state(0);
+
+	const plotterMaxIn  = $derived(plotterStore.config.maxMediaWidthMm / 25.4);
+	const rollWidthIn   = $derived(plotterStore.config.mediaWidthMm   / 25.4);
+	const originXIn     = $derived(plotterStore.config.originX);
+	const mountPreset   = $derived.by(() => {
+		const diff = plotterMaxIn - rollWidthIn;
+		if (Math.abs(originXIn) < 0.05) return 'flush-left' as const;
+		if (diff > 0.1 && Math.abs(originXIn - diff) < 0.1) return 'flush-right' as const;
+		return 'custom' as const;
+	});
+
+	// Diagram geometry — precomputed so template needs no {@const}
+	const CAL_DIAG_BED  = 172;
+	const calDiagSafe   = $derived(Math.max(plotterMaxIn, rollWidthIn, 1));
+	const calDiagRoll   = $derived(Math.round((rollWidthIn / calDiagSafe) * CAL_DIAG_BED));
+	const calDiagOff    = $derived(Math.round((Math.min(originXIn, calDiagSafe - rollWidthIn) / calDiagSafe) * CAL_DIAG_BED));
+
+	function setMountMode(mode: 'flush-left' | 'flush-right' | 'custom') {
+		if (mode === 'flush-left')  { plotterStore.update({ originX: 0 }); calPhase = 'idle'; }
+		if (mode === 'flush-right') { plotterStore.update({ originX: Math.max(0, plotterMaxIn - rollWidthIn) }); calPhase = 'idle'; }
+		if (mode === 'custom')      { calCustomX = originXIn; }
+	}
+
+	function applyCustomX() {
+		const v = Math.max(0, Math.min(calCustomX, plotterMaxIn));
+		plotterStore.update({ originX: v });
+	}
+
+	async function runProbe() {
+		calPhase = 'probe-busy';
+		calError = null;
+		const res = await queryPlotter('OA;', plotterStore.config, 3000);
+		if (!res.ok || !res.response) {
+			calError = res.error ?? 'No response — plotter may not support OA query';
+			calPhase = 'probe-error';
+			return;
+		}
+		// Parse HPGL OA response: "{x},{y};" or "{x},{y}\r\n"
+		const clean = res.response.replace(/[;\r\n\s]/g, '');
+		const parts = clean.split(',').map(Number);
+		if (parts.length < 1 || isNaN(parts[0])) {
+			calError = `Unexpected response: "${res.response}"`;
+			calPhase = 'probe-error';
+			return;
+		}
+		const offsetIn = parts[0] / 1016; // HPGL_UNITS_PER_INCH
+		calCapture = { offsetIn, raw: res.response };
+		plotterStore.update({ originX: offsetIn });
+		calPhase = 'probe-done';
+	}
+
+	function buildCalCut(offsetIn: number, widthIn: number): string {
+		const U = 1016;
+		const pad = Math.round(0.3 * U);
+		const len = Math.round(0.8 * U);
+		const y0  = Math.round(0.5 * U);
+		const xL  = Math.round(offsetIn * U) + pad;
+		const xR  = Math.round((offsetIn + widthIn) * U) - pad;
+		return [
+			'IN;', 'SP1;', 'PA;',
+			`PU${xL},${y0};PD${xL},${y0 + len};`,
+			`PU${xR},${y0};PD${xR},${y0 + len};`,
+			`PU${xL},${y0 + Math.round(0.4 * U)};PD${xR},${y0 + Math.round(0.4 * U)};`,
+			'PU0,0;', 'SP0;', 'IN;',
+		].join('\n');
+	}
+
+	async function sendCalCut() {
+		const hpgl = buildCalCut(plotterStore.config.originX, rollWidthIn);
+		await sendToPlotter(hpgl, plotterStore.config);
+	}
 
 	const isConnected = $derived(
 		(plotterStore.config.connection === "usb-serial" && !!serialPortInfo) ||
@@ -2195,30 +2273,136 @@
 							{/each}
 						</div>
 
-						<!-- ── Origin Offset ───────────────────────── -->
+						<!-- ── Roll Alignment ───────────────────────── -->
 						<div class="prop-section">
 							<div class="prop-label-row">
-								<span class="prop-label">Origin Offset</span>
-								<span class="info-tip" data-tip="Shifts the cut start position in the HPGL output. Useful for aligning cuts to a specific roll position. Applied at cut time, not a live command.">
+								<span class="prop-label">Roll Alignment</span>
+								<span class="info-tip" data-tip="Tells OmniPlot where your roll sits on the plotter bed. Critical when roll width is less than plotter max width — without this, cuts will be offset by the difference.">
 									<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
 								</span>
 							</div>
-							{#each [["X offset (in)", "originX", 0, 48, 0.1], ["Y offset (in)", "originY", 0, 24, 0.1]] as const as [label, key, min, max, step]}
-								<div class="prop-slider-row">
-									<span class="prop-slider-name">{label}</span>
+
+							<!-- Visual diagram: plotter bed + roll position -->
+							<div class="cal-diagram-wrap" aria-hidden="true">
+								<svg class="cal-diagram" width="192" height="44" overflow="visible">
+									<rect x="10" y="10" width={CAL_DIAG_BED} height="14" rx="3" fill="var(--bg-surface-3)" stroke="var(--border-subtle)" stroke-width="1"/>
+									<rect x={10 + calDiagOff} y="10" width={calDiagRoll} height="14" rx="2" fill="#00e5ff" fill-opacity="0.18" stroke="#00e5ff" stroke-opacity="0.55" stroke-width="1.5"/>
+									<text x="10"              y="7" font-size="6.5" fill="var(--text-tertiary)" font-family="monospace" text-anchor="start">0"</text>
+									<text x={10 + CAL_DIAG_BED} y="7" font-size="6.5" fill="var(--text-tertiary)" font-family="monospace" text-anchor="end">{plotterMaxIn.toFixed(0)}"</text>
+									<text x={10 + calDiagOff + calDiagRoll / 2} y="20" font-size="6" fill="#00e5ff" font-family="monospace" text-anchor="middle" fill-opacity="0.9">{rollWidthIn.toFixed(0)}" roll</text>
+									{#if originXIn > 0.05 && calDiagOff > 6}
+										<line x1="10" y1="30" x2={10 + calDiagOff} y2="30" stroke="var(--text-tertiary)" stroke-width="1" stroke-dasharray="2 1.5"/>
+										<text x={10 + calDiagOff / 2} y="40" font-size="6" fill="var(--text-tertiary)" font-family="monospace" text-anchor="middle">+{originXIn.toFixed(2)}"</text>
+									{/if}
+								</svg>
+							</div>
+
+							<!-- Mode 1: Quick mount preset -->
+							<div class="cal-mount-row">
+								<button
+									class="cal-mount-btn"
+									class:cal-mount-btn--active={mountPreset === 'flush-left'}
+									onclick={() => setMountMode('flush-left')}
+								>Flush Left<span class="cal-mount-dim">0"</span></button>
+								<button
+									class="cal-mount-btn"
+									class:cal-mount-btn--active={mountPreset === 'flush-right'}
+									onclick={() => setMountMode('flush-right')}
+									disabled={plotterMaxIn <= rollWidthIn}
+								>Flush Right<span class="cal-mount-dim">{Math.max(0, plotterMaxIn - rollWidthIn).toFixed(1)}"</span></button>
+								<button
+									class="cal-mount-btn"
+									class:cal-mount-btn--active={mountPreset === 'custom'}
+									onclick={() => setMountMode('custom')}
+								>Custom</button>
+							</div>
+
+							{#if mountPreset === 'custom'}
+								<div class="cal-custom-row">
+									<span class="prop-slider-name">X offset</span>
 									<input
-										type="range"
-										class="prop-slider"
-										{min}
-										{max}
-										{step}
-										value={plotterStore.config[key]}
-										aria-label={label}
-										oninput={(e) => plotterStore.update({ [key]: parseFloat((e.target as HTMLInputElement).value) })}
+										type="number"
+										class="cal-custom-input"
+										min="0"
+										max={plotterMaxIn}
+										step="0.1"
+										bind:value={calCustomX}
+										aria-label="Custom X offset in inches"
 									/>
-									<span class="prop-slider-val">{plotterStore.config[key].toFixed(1)}"</span>
+									<span class="cal-custom-unit">"</span>
+									<button class="cal-apply-btn" onclick={applyCustomX}>Apply</button>
 								</div>
-							{/each}
+							{/if}
+
+							<!-- Mode 2: Auto-probe (cut-agent only) -->
+							{#if plotterStore.config.connection === 'cut-agent'}
+								<div class="cal-probe-section">
+									<div class="cal-probe-header">
+										<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
+										<span>Auto-probe</span>
+									</div>
+
+									{#if calPhase === 'idle' || calPhase === 'probe-done'}
+										<p class="cal-probe-hint">Jog the plotter carriage to the left edge of your roll, then click Capture — the agent reads the carriage position directly.</p>
+										<button class="cal-probe-btn" onclick={() => calPhase = 'probe-wait'}>
+											Start Probe
+										</button>
+									{/if}
+
+									{#if calPhase === 'probe-wait'}
+										<p class="cal-probe-hint cal-probe-hint--active">Using your plotter's keypad, jog the carriage to the <strong>left edge</strong> of your roll. Click Capture when positioned.</p>
+										<div class="cal-probe-actions">
+											<button class="cal-probe-btn cal-probe-btn--capture" onclick={runProbe}>
+												<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></svg>
+												Capture Position
+											</button>
+											<button class="cal-probe-btn cal-probe-btn--cancel" onclick={() => calPhase = 'idle'}>Cancel</button>
+										</div>
+									{/if}
+
+									{#if calPhase === 'probe-busy'}
+										<p class="cal-probe-hint">Reading carriage position…</p>
+										<div class="cal-probe-spinner" aria-hidden="true"></div>
+									{/if}
+
+									{#if calPhase === 'probe-done' && calCapture}
+										<div class="cal-probe-result">
+											<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#2ecc71" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+											Offset captured: <strong>{calCapture.offsetIn.toFixed(3)}"</strong> applied
+										</div>
+									{/if}
+
+									{#if calPhase === 'probe-error'}
+										<div class="cal-probe-error">
+											<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+											{calError}
+										</div>
+										<button class="cal-probe-btn" onclick={() => { calPhase = 'idle'; calError = null; }}>Retry</button>
+									{/if}
+								</div>
+							{/if}
+
+							<!-- Test cut: sends bracket marks at roll edges -->
+							{#if isConnected}
+								<button class="cal-test-cut-btn" onclick={sendCalCut} title="Cuts bracket marks at the configured roll edges on scrap material to verify alignment">
+									<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+									Send test cut
+								</button>
+							{/if}
+
+							<!-- Y offset (minor, kept as compact slider) -->
+							<div class="cal-y-row">
+								<span class="prop-slider-name">Y offset</span>
+								<input
+									type="range"
+									class="prop-slider"
+									min="0" max="24" step="0.1"
+									value={plotterStore.config.originY}
+									aria-label="Y offset in inches"
+									oninput={(e) => plotterStore.update({ originY: parseFloat((e.target as HTMLInputElement).value) })}
+								/>
+								<span class="prop-slider-val">{plotterStore.config.originY.toFixed(1)}"</span>
+							</div>
 						</div>
 
 						<div class="plotter-divider"></div>
@@ -3932,6 +4116,101 @@
 		height: 1px;
 		background: var(--border-subtle);
 		margin: 14px -14px;
+	}
+
+	/* ─── Roll Alignment / Calibration Wizard ─── */
+	.cal-diagram-wrap { margin: 8px 0 6px; overflow: visible; }
+	.cal-diagram { display: block; overflow: visible; }
+
+	.cal-mount-row {
+		display: flex; gap: 4px; margin: 6px 0 4px;
+	}
+	.cal-mount-btn {
+		flex: 1; display: flex; flex-direction: column; align-items: center; gap: 1px;
+		padding: 5px 4px; background: var(--bg-surface-2); border: 1px solid var(--border-subtle);
+		border-radius: var(--radius-md); font-size: 0.6875rem; font-weight: 500;
+		color: var(--text-secondary); cursor: pointer; transition: all 0.12s; font-family: var(--font-body);
+	}
+	.cal-mount-btn:hover:not(:disabled) { border-color: var(--border-default); color: var(--text-primary); }
+	.cal-mount-btn--active { border-color: #00e5ff60; background: color-mix(in srgb, #00e5ff 10%, var(--bg-surface-2)); color: #00e5ff; }
+	.cal-mount-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+	.cal-mount-dim { font-size: 0.5625rem; font-family: var(--font-mono); opacity: 0.7; }
+
+	.cal-custom-row {
+		display: flex; align-items: center; gap: 6px; margin: 4px 0;
+	}
+	.cal-custom-input {
+		width: 60px; padding: 3px 6px; background: var(--bg-surface-2);
+		border: 1px solid var(--border-default); border-radius: var(--radius-md);
+		font-family: var(--font-mono); font-size: 0.8125rem; color: var(--text-primary);
+		text-align: right;
+	}
+	.cal-custom-unit { font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-tertiary); }
+	.cal-apply-btn {
+		padding: 3px 10px; background: var(--bg-surface-3); border: 1px solid var(--border-default);
+		border-radius: var(--radius-md); font-size: 0.75rem; color: var(--text-secondary); cursor: pointer;
+		font-family: var(--font-body); transition: all 0.12s;
+	}
+	.cal-apply-btn:hover { background: var(--interactive-hover); color: var(--text-primary); }
+
+	.cal-probe-section {
+		margin: 8px 0 4px; padding: 10px 10px 8px;
+		background: var(--bg-surface-2); border: 1px solid var(--border-subtle);
+		border-radius: var(--radius-lg); display: flex; flex-direction: column; gap: 6px;
+	}
+	.cal-probe-header {
+		display: flex; align-items: center; gap: 5px;
+		font-size: 0.6875rem; font-weight: 600; color: var(--text-tertiary);
+		text-transform: uppercase; letter-spacing: 0.07em;
+	}
+	.cal-probe-hint {
+		font-size: 0.75rem; color: var(--text-tertiary); line-height: 1.5; margin: 0;
+	}
+	.cal-probe-hint--active { color: var(--text-secondary); }
+	.cal-probe-hint strong { color: var(--text-primary); }
+
+	.cal-probe-actions { display: flex; gap: 6px; }
+	.cal-probe-btn {
+		display: flex; align-items: center; gap: 5px; padding: 5px 10px;
+		background: var(--bg-surface-3); border: 1px solid var(--border-default);
+		border-radius: var(--radius-md); font-size: 0.75rem; font-weight: 500;
+		color: var(--text-secondary); cursor: pointer; font-family: var(--font-body); transition: all 0.12s;
+	}
+	.cal-probe-btn:hover { border-color: var(--border-default); color: var(--text-primary); }
+	.cal-probe-btn--capture {
+		border-color: #00e5ff50; color: #00e5ff; background: color-mix(in srgb, #00e5ff 8%, var(--bg-surface-3));
+	}
+	.cal-probe-btn--capture:hover { background: color-mix(in srgb, #00e5ff 15%, var(--bg-surface-3)); }
+	.cal-probe-btn--cancel { font-size: 0.6875rem; }
+
+	.cal-probe-spinner {
+		width: 16px; height: 16px; border: 2px solid var(--border-subtle);
+		border-top-color: #00e5ff; border-radius: 50%; animation: spin 0.7s linear infinite;
+	}
+	@keyframes spin { to { transform: rotate(360deg); } }
+
+	.cal-probe-result {
+		display: flex; align-items: center; gap: 5px;
+		font-size: 0.75rem; color: var(--text-secondary);
+	}
+	.cal-probe-result strong { color: #2ecc71; }
+
+	.cal-probe-error {
+		display: flex; align-items: flex-start; gap: 5px;
+		font-size: 0.75rem; color: rgba(255,100,100,0.9); line-height: 1.4;
+	}
+
+	.cal-test-cut-btn {
+		display: flex; align-items: center; gap: 5px; margin: 6px 0 2px;
+		padding: 5px 10px; background: transparent; border: 1px dashed var(--border-default);
+		border-radius: var(--radius-md); font-size: 0.75rem; color: var(--text-tertiary);
+		cursor: pointer; font-family: var(--font-body); transition: all 0.12s; width: 100%;
+	}
+	.cal-test-cut-btn:hover { border-color: var(--border-default); color: var(--text-secondary); background: var(--interactive-hover); }
+
+	.cal-y-row {
+		display: grid; grid-template-columns: auto 1fr auto; align-items: center;
+		gap: 8px; margin-top: 6px;
 	}
 
 	.config-reveal-btn {
