@@ -12,10 +12,12 @@
 
 <script lang="ts">
 	import { onMount } from "svelte";
+	import { CURRENT_AGENT_VERSION } from "$lib/config";
 
 	type Platform = "windows" | "mac-arm" | "mac-intel" | "linux" | "unknown";
+	type KnownPlatform = Exclude<Platform, "unknown">;
 
-	const AGENT_VERSION = "1.0.1";
+	const AGENT_VERSION = CURRENT_AGENT_VERSION;
 	const APP_URL = import.meta.env.VITE_APP_URL ?? "https://omniplot.app";
 
 	function dlUrl(file: string, platform: string) {
@@ -30,23 +32,27 @@
 	};
 
 	let detected: Platform = $state("unknown");
+	let selectedOS = $state<KnownPlatform>("windows");
 
 	onMount(() => {
 		const ua = navigator.userAgent;
 		const platform = (navigator as any).userAgentData?.platform ?? navigator.platform ?? "";
 		if (/Win/.test(platform) || /Windows/.test(ua)) {
 			detected = "windows";
+			selectedOS = "windows";
 		} else if (/Mac/.test(platform) || /Mac/.test(ua)) {
 			// Rough M-chip detection: 72 hardware concurrency or ARM arch
 			const arm = (navigator as any).userAgentData?.architecture === "arm" ||
 				(navigator.hardwareConcurrency >= 8 && /Mac OS X 1[1-9]/.test(ua));
 			detected = arm ? "mac-arm" : "mac-intel";
+			selectedOS = detected as KnownPlatform;
 		} else if (/Linux/.test(platform) || /Linux/.test(ua)) {
 			detected = "linux";
+			selectedOS = "linux";
 		}
 	});
 
-	const platformOrder: Exclude<Platform, "unknown">[] = ["windows", "mac-arm", "mac-intel", "linux"];
+	const platformOrder: KnownPlatform[] = ["windows", "mac-arm", "mac-intel", "linux"];
 </script>
 
 <div class="agent-page">
@@ -220,11 +226,88 @@
 					</div>
 				</div>
 				<div class="step__connector" aria-hidden="true"></div>
-				<div class="step">
+				<div class="step step--wide">
 					<div class="step__num">2</div>
 					<div class="step__body">
-						<h3 class="step__title">Run it once</h3>
-						<p class="step__desc">Double-click or run <code>./omniplot-agent</code> in a terminal. It listens on <code>localhost:7878</code>.</p>
+						<h3 class="step__title">Open it — no install needed</h3>
+						<p class="step__desc" style="margin-bottom:14px">Follow the steps for your computer. No terminal required.</p>
+
+						<!-- OS selector tabs -->
+						<div class="os-tabs">
+							<button class="os-tab" class:os-tab--active={selectedOS === "windows"} onclick={() => selectedOS = "windows"}>Windows</button>
+							<button class="os-tab" class:os-tab--active={selectedOS === "mac-arm" || selectedOS === "mac-intel"} onclick={() => selectedOS = detected === "mac-intel" ? "mac-intel" : "mac-arm"}>macOS</button>
+							<button class="os-tab" class:os-tab--active={selectedOS === "linux"} onclick={() => selectedOS = "linux"}>Linux</button>
+						</div>
+
+						<div class="mkt-vsteps">
+							{#if selectedOS === "windows"}
+								<div class="mvstep">
+									<span class="mvstep__num">1</span>
+									<div class="mvstep__body">Open your <strong>Downloads</strong> folder and find <code>omniplot-agent-windows-amd64.exe</code></div>
+								</div>
+								<div class="mvstep">
+									<span class="mvstep__num">2</span>
+									<div class="mvstep__body"><strong>Double-click</strong> the file — a blue warning screen may appear</div>
+								</div>
+								<div class="mvstep mvstep--highlight">
+									<span class="mvstep__num">3</span>
+									<div class="mvstep__body">Click <strong>"More info"</strong> → then <strong>"Run anyway"</strong> — Windows shows this for new apps. You only need to do this once.</div>
+								</div>
+								<div class="mvstep mvstep--success">
+									<span class="mvstep__num">4</span>
+									<div class="mvstep__body">A <strong>black terminal window</strong> opens — the agent is running. Leave it open while cutting.</div>
+								</div>
+
+							{:else if selectedOS === "mac-arm" || selectedOS === "mac-intel"}
+								<div class="mvstep">
+									<span class="mvstep__num">1</span>
+									<div class="mvstep__body">Open <strong>Finder → Downloads</strong> and find the file named <code>{selectedOS === "mac-arm" ? "omniplot-agent-darwin-arm64" : "omniplot-agent-darwin-amd64"}</code></div>
+								</div>
+								<div class="mvstep mvstep--highlight">
+									<span class="mvstep__num">2</span>
+									<div class="mvstep__body"><strong>Right-click</strong> the file → click <strong>"Open"</strong> (don't just double-click — right-click is important on Mac)</div>
+								</div>
+								<div class="mvstep mvstep--highlight">
+									<span class="mvstep__num">3</span>
+									<div class="mvstep__body">A dialog appears — click <strong>"Open"</strong> again to confirm. macOS asks once for new apps.</div>
+								</div>
+								<div class="mvstep mvstep--success">
+									<span class="mvstep__num">4</span>
+									<div class="mvstep__body">A <strong>terminal window</strong> opens showing the agent is running. Leave it open while cutting.</div>
+								</div>
+
+							{:else}
+								<div class="mvstep">
+									<span class="mvstep__num">1</span>
+									<div class="mvstep__body">Open your <strong>file manager</strong> and go to Downloads. Find <code>omniplot-agent-linux-amd64</code></div>
+								</div>
+								<div class="mvstep mvstep--highlight">
+									<span class="mvstep__num">2</span>
+									<div class="mvstep__body"><strong>Right-click → Properties → Permissions</strong> tab → tick <strong>"Allow executing as program"</strong></div>
+								</div>
+								<div class="mvstep">
+									<span class="mvstep__num">3</span>
+									<div class="mvstep__body"><strong>Double-click</strong> to run, or right-click → <strong>"Run as Program"</strong></div>
+								</div>
+								<div class="mvstep mvstep--success">
+									<span class="mvstep__num">4</span>
+									<div class="mvstep__body">A <strong>terminal window</strong> opens showing the agent is running. Leave it open while cutting.</div>
+								</div>
+							{/if}
+						</div>
+
+						<details class="mkt-advanced">
+							<summary class="mkt-advanced__summary">Terminal / advanced users</summary>
+							{#if selectedOS === "windows"}
+								<code class="mkt-cmd">omniplot-agent-windows-amd64.exe</code>
+							{:else if selectedOS === "mac-arm"}
+								<code class="mkt-cmd">xattr -c omniplot-agent-darwin-arm64 &amp;&amp; chmod +x omniplot-agent-darwin-arm64 &amp;&amp; ./omniplot-agent-darwin-arm64</code>
+							{:else if selectedOS === "mac-intel"}
+								<code class="mkt-cmd">xattr -c omniplot-agent-darwin-amd64 &amp;&amp; chmod +x omniplot-agent-darwin-amd64 &amp;&amp; ./omniplot-agent-darwin-amd64</code>
+							{:else}
+								<code class="mkt-cmd">chmod +x omniplot-agent-linux-amd64 &amp;&amp; ./omniplot-agent-linux-amd64</code>
+							{/if}
+						</details>
 					</div>
 				</div>
 				<div class="step__connector" aria-hidden="true"></div>
@@ -287,8 +370,9 @@
 			</div>
 
 			<p class="download-note">
-				On Mac, after downloading: right-click → Open → Open (bypasses Gatekeeper on unsigned binary).
-				On Linux, run <code>chmod +x omniplot-agent-linux-amd64</code> first.
+				<strong>Windows:</strong> Double-click the .exe, then click "More info" → "Run anyway" if prompted. &nbsp;
+				<strong>Mac:</strong> Right-click → Open → Open (needed once for unsigned apps). &nbsp;
+				<strong>Linux:</strong> Right-click → Properties → Permissions → tick "Allow executing as program", then double-click. Full instructions in Step 2 above.
 			</p>
 		</div>
 	</section>
@@ -814,6 +898,129 @@
 		text-decoration: none;
 	}
 	.agent-cta__link:hover { text-decoration: underline; }
+
+	/* ── OS tabs (Step 2) ──────────────────────── */
+	.os-tabs {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+		margin-bottom: 14px;
+	}
+	.os-tab {
+		padding: 5px 14px;
+		border-radius: var(--radius-md);
+		font-size: 0.8125rem;
+		font-weight: 600;
+		border: 1px solid var(--border-default);
+		background: transparent;
+		color: var(--text-tertiary);
+		cursor: pointer;
+		transition: border-color 0.12s, color 0.12s, background 0.12s;
+	}
+	.os-tab:hover {
+		border-color: var(--color-brand-dim);
+		color: var(--text-primary);
+	}
+	.os-tab--active {
+		border-color: var(--color-brand-dim);
+		background: color-mix(in srgb, var(--color-brand-dim) 10%, transparent);
+		color: var(--text-primary);
+	}
+
+	/* Wide step variant for step 2 */
+	.step--wide { align-items: flex-start; }
+
+	/* Mini visual steps for marketing page */
+	.mkt-vsteps {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		max-width: 560px;
+		margin-bottom: 14px;
+	}
+	.mvstep {
+		display: flex;
+		align-items: flex-start;
+		gap: 12px;
+		padding: 11px 14px;
+		background: var(--bg-surface-2, rgba(255,255,255,0.04));
+		border: 1px solid var(--border-default, rgba(255,255,255,0.08));
+		border-radius: var(--radius-lg);
+	}
+	.mvstep--highlight {
+		border-color: rgba(245, 158, 11, 0.45);
+		background: rgba(245, 158, 11, 0.06);
+	}
+	.mvstep--success {
+		border-color: rgba(46, 204, 113, 0.35);
+		background: rgba(46, 204, 113, 0.05);
+	}
+	.mvstep__num {
+		width: 22px;
+		height: 22px;
+		border-radius: 50%;
+		background: var(--color-brand-dim);
+		color: #fff;
+		font-size: 0.6875rem;
+		font-weight: 700;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		flex-shrink: 0;
+		margin-top: 1px;
+	}
+	.mvstep--highlight .mvstep__num {
+		background: #f59e0b;
+	}
+	.mvstep--success .mvstep__num {
+		background: #2ecc71;
+	}
+	.mvstep__body {
+		font-size: 0.875rem;
+		color: var(--text-secondary);
+		line-height: 1.5;
+	}
+	.mvstep__body strong { color: var(--text-primary); font-weight: 600; }
+	.mvstep--highlight .mvstep__body strong { color: #f59e0b; }
+	.mvstep--success .mvstep__body strong { color: #2ecc71; }
+	.mvstep__body code {
+		font-family: var(--font-mono);
+		font-size: 0.85em;
+		background: var(--bg-surface-3, rgba(255,255,255,0.06));
+		padding: 1px 5px;
+		border-radius: 4px;
+		color: var(--text-primary);
+	}
+
+	/* Advanced / terminal details */
+	.mkt-advanced {
+		max-width: 560px;
+	}
+	.mkt-advanced__summary {
+		font-size: 0.8125rem;
+		font-weight: 600;
+		color: var(--text-tertiary);
+		cursor: pointer;
+		padding: 4px 2px;
+		list-style: none;
+		user-select: none;
+	}
+	.mkt-advanced__summary::-webkit-details-marker { display: none; }
+	.mkt-advanced__summary:hover { color: var(--text-secondary); }
+	.mkt-cmd {
+		display: block;
+		margin-top: 8px;
+		padding: 10px 14px;
+		background: #0d1117;
+		border: 1px solid rgba(255,255,255,0.08);
+		border-radius: var(--radius-lg);
+		font-family: var(--font-mono);
+		font-size: 0.8125rem;
+		color: #79c0ff;
+		white-space: pre-wrap;
+		word-break: break-all;
+		line-height: 1.6;
+	}
 
 	/* ── Responsive ────────────────────────────── */
 	@media (max-width: 960px) {

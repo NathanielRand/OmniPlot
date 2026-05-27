@@ -5,6 +5,7 @@
 <script lang="ts">
 	import { onMount } from "svelte";
 	import { plotterStore, agentStore } from "$lib/stores";
+	import { CURRENT_AGENT_VERSION } from "$lib/config";
 
 	// ─── Types ────────────────────────────────────
 
@@ -206,7 +207,7 @@
 
 	// ─── Guide ────────────────────────────────────
 
-	const AGENT_VERSION = "1.0.1";
+	const AGENT_VERSION = CURRENT_AGENT_VERSION;
 	const APP_URL = (import.meta.env.VITE_APP_URL ?? "https://omniplot.app").replace(/\/$/, "");
 
 	function dlUrl(file: string, platform: string) {
@@ -271,14 +272,35 @@
 
 <div class="agent-page">
 
+	<!-- ── Update banner ─────────────────────────── -->
+	{#if agentStore.needsUpdate}
+		<div class="update-banner">
+			<div class="update-banner__left">
+				<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+				<div>
+					<strong>Agent update required</strong> — you're running v{agentStore.version}, but v{AGENT_VERSION} is required.
+					Old versions are not compatible with the current studio.
+				</div>
+			</div>
+			<div class="update-banner__right">
+				<span class="update-banner__steps">1. Stop the agent &nbsp;→&nbsp; 2. Delete the old file &nbsp;→&nbsp; 3. Download v{AGENT_VERSION} below</span>
+			</div>
+		</div>
+	{/if}
+
 	<!-- ── Header ────────────────────────────────── -->
 	<div class="agent-header">
 		<div class="agent-header__left">
-			<div class="status-dot" class:status-dot--online={!!status} aria-hidden="true"></div>
+			<div class="status-dot" class:status-dot--online={!!status && agentStore.isCurrentVersion} class:status-dot--outdated={agentStore.needsUpdate} aria-hidden="true"></div>
 			<div class="agent-header__info">
 				<h1 class="agent-header__title">
 					{#if status}
-						OmniPlot Cut Agent <span class="version">v{status.version}</span>
+						OmniPlot Cut Agent <span class="version" class:version--outdated={agentStore.needsUpdate}>v{status.version}</span>
+						{#if agentStore.needsUpdate}
+							<span class="version-badge version-badge--outdated">Outdated</span>
+						{:else if agentStore.isCurrentVersion}
+							<span class="version-badge version-badge--current">Up to date</span>
+						{/if}
 					{:else}
 						OmniPlot Cut Agent
 					{/if}
@@ -307,7 +329,7 @@
 					Stop Agent
 				</button>
 			{:else}
-				<a href="/agent" class="btn btn--ghost">Download agent →</a>
+				<a href="#guide" class="btn btn--ghost">Setup guide ↓</a>
 			{/if}
 		</div>
 	</div>
@@ -542,101 +564,241 @@
 		</section>
 
 		<!-- Setup steps -->
-		<section class="guide-section">
+		<section class="guide-section" id="guide">
 			<p class="guide-eyebrow">Quick setup</p>
 			<h2 class="guide-title">Up and cutting in 4 steps</h2>
 
 			<div class="steps">
 
-				<!-- Step 1 -->
+				<!-- Step 1: Download -->
 				<div class="step">
 					<div class="step__num">1</div>
 					<div class="step__body">
-						<h3 class="step__title">Download the agent for your OS</h3>
-						<p class="step__desc">
-							Pick your platform below. Single binary — no installer, no runtime, no admin rights needed on Mac or Linux.
-						</p>
-						<div class="download-row">
-							{#each Object.entries(DOWNLOADS) as [pid, d]}
-								<a
-									href={dlUrl(d.file, pid)}
-									class="dl-btn"
-									class:dl-btn--detected={pid === detectedPlatform}
-								>
-									{#if pid === detectedPlatform}
-										<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-									{/if}
-									{d.label}
-								</a>
-							{/each}
-						</div>
+						<h3 class="step__title">Download the agent for your computer</h3>
+
+						{#if agentStore.isCurrentVersion}
+							<!-- Already running current version -->
+							<div class="already-running">
+								<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+								<div>
+									<strong>Agent v{AGENT_VERSION} is already running on this computer.</strong>
+									No download needed — skip to Step 3.
+								</div>
+							</div>
+						{:else}
+							{#if agentStore.needsUpdate}
+								<div class="delete-old-notice">
+									<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+									<strong>Delete your old agent file first.</strong>
+									Find <code>omniplot-agent-*</code> on your computer and move it to the trash before downloading the new one — having two copies causes confusion.
+								</div>
+							{/if}
+							<p class="step__desc">
+								Single file — no installer, no setup, no admin rights needed.
+								{#if !agentStore.needsUpdate}Pick your platform:&nbsp;{/if}
+							</p>
+							<div class="download-row">
+								{#each Object.entries(DOWNLOADS) as [pid, d]}
+									<a
+										href={dlUrl(d.file, pid)}
+										class="dl-btn"
+										class:dl-btn--detected={pid === detectedPlatform}
+									>
+										{#if pid === detectedPlatform}
+											<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+										{/if}
+										{d.label}
+									</a>
+								{/each}
+							</div>
+						{/if}
 					</div>
 				</div>
 
-				<!-- Step 2 -->
+				<!-- Step 2: Run -->
 				<div class="step">
 					<div class="step__num">2</div>
 					<div class="step__body">
-						<h3 class="step__title">Run the binary</h3>
-						<p class="step__desc">
-							No install required. Choose the method that suits you — the quick-click option works
-							for most users, or use the terminal for full control.
+						<h3 class="step__title">Open the agent — no install needed</h3>
+						<p class="step__desc" style="margin-bottom:16px">
+							The file you downloaded is ready to run. Follow the steps for your computer below.
 						</p>
 
-						<!-- Simple click-to-run -->
-						<div class="run-simple">
-							<p class="run-simple__label">Simple — no terminal needed</p>
+						<!-- OS selector tabs -->
+						<div class="os-tabs">
+							{#each Object.entries(DOWNLOADS) as [pid, d]}
+								<button
+									class="os-tab"
+									class:os-tab--active={detectedPlatform === pid}
+									onclick={() => detectedPlatform = pid as typeof detectedPlatform}
+								>{d.label.replace(" (Apple Silicon)", "").replace(" (Intel)", " Intel")}</button>
+							{/each}
+						</div>
+
+						<!-- Visual step cards -->
+						<div class="visual-steps">
 							{#if detectedPlatform === "windows"}
-								<ol class="run-simple__steps">
-									<li>Find <code>omniplot-agent-windows-amd64.exe</code> in your Downloads folder</li>
-									<li>Double-click it to run</li>
-									<li>If Windows Defender appears, click <strong>More info</strong> → <strong>Run anyway</strong></li>
-									<li>A black terminal window opens — that means it's running. Leave it open.</li>
-								</ol>
+								<div class="vstep">
+									<div class="vstep__icon vstep__icon--folder">
+										<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+									</div>
+									<div class="vstep__body">
+										<strong>Open your Downloads folder</strong>
+										<span>Find the file named <code>omniplot-agent-windows-amd64.exe</code></span>
+									</div>
+								</div>
+								<div class="vstep__arrow" aria-hidden="true">↓</div>
+								<div class="vstep">
+									<div class="vstep__icon vstep__icon--click">
+										<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+									</div>
+									<div class="vstep__body">
+										<strong>Double-click the file to run it</strong>
+										<span>Windows will open a blue warning screen</span>
+									</div>
+								</div>
+								<div class="vstep__arrow" aria-hidden="true">↓</div>
+								<div class="vstep vstep--highlight">
+									<div class="vstep__icon vstep__icon--shield">
+										<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+									</div>
+									<div class="vstep__body">
+										<strong>Click <span class="action-word">"More info"</span> then <span class="action-word">"Run anyway"</span></strong>
+										<span>Windows shows this for any new unsigned app — it's safe. You only need to do this once.</span>
+									</div>
+								</div>
+								<div class="vstep__arrow" aria-hidden="true">↓</div>
+								<div class="vstep vstep--success">
+									<div class="vstep__icon vstep__icon--terminal">
+										<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4M6 8l3 3-3 3M11 14h4"/></svg>
+									</div>
+									<div class="vstep__body">
+										<strong>A black window opens — the agent is running ✓</strong>
+										<span>Leave that window open while you're cutting. Closing it stops the agent.</span>
+									</div>
+								</div>
+
 							{:else if detectedPlatform === "mac-arm" || detectedPlatform === "mac-intel"}
-								<ol class="run-simple__steps">
-									<li>Find the downloaded file in Finder</li>
-									<li><strong>Right-click</strong> (or Control-click) the file → <strong>Open</strong></li>
-									<li>Click <strong>Open</strong> again in the security dialog — you only need to do this once</li>
-									<li>A terminal window opens showing the agent is running. Leave it open.</li>
-								</ol>
+								{@const macFile = detectedPlatform === "mac-arm" ? "omniplot-agent-darwin-arm64" : "omniplot-agent-darwin-amd64"}
+								<div class="vstep">
+									<div class="vstep__icon vstep__icon--folder">
+										<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+									</div>
+									<div class="vstep__body">
+										<strong>Open Finder and go to Downloads</strong>
+										<span>Find the file named <code>{macFile}</code></span>
+									</div>
+								</div>
+								<div class="vstep__arrow" aria-hidden="true">↓</div>
+								<div class="vstep vstep--highlight">
+									<div class="vstep__icon vstep__icon--rightclick">
+										<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 2v8M5 10h14"/></svg>
+									</div>
+									<div class="vstep__body">
+										<strong>Right-click the file → click <span class="action-word">"Open"</span></strong>
+										<span>Don't just double-click — right-click first, then Open. This is important on Mac.</span>
+									</div>
+								</div>
+								<div class="vstep__arrow" aria-hidden="true">↓</div>
+								<div class="vstep vstep--highlight">
+									<div class="vstep__icon vstep__icon--shield">
+										<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+									</div>
+									<div class="vstep__body">
+										<strong>A dialog appears — click <span class="action-word">"Open"</span> again</strong>
+										<span>macOS checks apps it hasn't seen before. Click Open to confirm. You only need to do this once.</span>
+									</div>
+								</div>
+								<div class="vstep__arrow" aria-hidden="true">↓</div>
+								<div class="vstep vstep--success">
+									<div class="vstep__icon vstep__icon--terminal">
+										<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4M6 8l3 3-3 3M11 14h4"/></svg>
+									</div>
+									<div class="vstep__body">
+										<strong>Terminal opens showing the agent is running ✓</strong>
+										<span>Leave that window open while you're cutting. Closing it stops the agent.</span>
+									</div>
+								</div>
+
 							{:else}
-								<ol class="run-simple__steps">
-									<li>Find the downloaded file in your file manager</li>
-									<li>Right-click → <strong>Properties → Permissions</strong> → tick "Allow executing as program"</li>
-									<li>Double-click to run, or right-click → <strong>Run as Program</strong></li>
-									<li>A terminal window opens showing the agent is running. Leave it open.</li>
-								</ol>
+								<!-- Linux -->
+								<div class="vstep">
+									<div class="vstep__icon vstep__icon--folder">
+										<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+									</div>
+									<div class="vstep__body">
+										<strong>Open your file manager and go to Downloads</strong>
+										<span>Find the file named <code>omniplot-agent-linux-amd64</code></span>
+									</div>
+								</div>
+								<div class="vstep__arrow" aria-hidden="true">↓</div>
+								<div class="vstep vstep--highlight">
+									<div class="vstep__icon vstep__icon--settings">
+										<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+									</div>
+									<div class="vstep__body">
+										<strong>Right-click → <span class="action-word">Properties</span> → <span class="action-word">Permissions</span> tab</strong>
+										<span>Tick the checkbox labelled <strong>"Allow executing as program"</strong> or <strong>"Execute"</strong></span>
+									</div>
+								</div>
+								<div class="vstep__arrow" aria-hidden="true">↓</div>
+								<div class="vstep">
+									<div class="vstep__icon vstep__icon--click">
+										<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+									</div>
+									<div class="vstep__body">
+										<strong>Double-click to run, or right-click → <span class="action-word">"Run as Program"</span></strong>
+										<span>Some file managers show "Run as Executable" instead — either works.</span>
+									</div>
+								</div>
+								<div class="vstep__arrow" aria-hidden="true">↓</div>
+								<div class="vstep vstep--success">
+									<div class="vstep__icon vstep__icon--terminal">
+										<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4M6 8l3 3-3 3M11 14h4"/></svg>
+									</div>
+									<div class="vstep__body">
+										<strong>A terminal window opens — the agent is running ✓</strong>
+										<span>Leave that window open while you're cutting. Closing it stops the agent.</span>
+									</div>
+								</div>
+								<p class="vstep-linux-note">
+									<strong>File manager doesn't have that option?</strong> Use the terminal method below instead.
+								</p>
 							{/if}
 						</div>
 
-						<!-- Terminal / advanced -->
-						<div class="run-advanced">
-							<p class="run-advanced__label">Advanced — terminal</p>
-							<div class="code-tabs">
-								<div class="code-tab" class:code-tab--active={detectedPlatform === "linux"}>
-									<span class="code-tab__label">Linux</span>
-									<pre class="code-block"><span class="c-dim">$</span> <span class="c-cmd">chmod +x omniplot-agent-linux-amd64</span>
+						<!-- Terminal / advanced (collapsed) -->
+						<details class="run-advanced-details">
+							<summary class="run-advanced-details__summary">
+								<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+								Terminal / advanced users
+							</summary>
+							<div class="run-advanced">
+								<div class="code-tabs">
+									<div class="code-tab" class:code-tab--active={detectedPlatform === "linux"}>
+										<span class="code-tab__label">Linux</span>
+										<pre class="code-block"><span class="c-dim">$</span> <span class="c-cmd">chmod +x omniplot-agent-linux-amd64</span>
 <span class="c-dim">$</span> <span class="c-cmd">./omniplot-agent-linux-amd64</span>
 <span class="c-out">{`{"agent":"omniplot-cut-agent","version":"${AGENT_VERSION}","port":7878}`}</span>
 <span class="c-ok">OmniPlot Cut Agent v{AGENT_VERSION} listening on http://127.0.0.1:7878</span></pre>
-								</div>
-								<div class="code-tab" class:code-tab--active={detectedPlatform === "mac-arm" || detectedPlatform === "mac-intel"}>
-									<span class="code-tab__label">macOS</span>
-									<pre class="code-block"><span class="c-dim">$</span> <span class="c-cmd">xattr -c omniplot-agent-darwin-arm64   <span class="c-comment"># removes Gatekeeper quarantine</span></span>
+									</div>
+									<div class="code-tab" class:code-tab--active={detectedPlatform === "mac-arm" || detectedPlatform === "mac-intel"}>
+										<span class="code-tab__label">macOS</span>
+										<pre class="code-block"><span class="c-dim">$</span> <span class="c-cmd">xattr -c omniplot-agent-darwin-arm64   <span class="c-comment"># removes Gatekeeper quarantine</span></span>
 <span class="c-dim">$</span> <span class="c-cmd">chmod +x omniplot-agent-darwin-arm64</span>
 <span class="c-dim">$</span> <span class="c-cmd">./omniplot-agent-darwin-arm64</span>
 <span class="c-out">{`{"agent":"omniplot-cut-agent","version":"${AGENT_VERSION}","port":7878}`}</span>
 <span class="c-ok">OmniPlot Cut Agent v{AGENT_VERSION} listening on http://127.0.0.1:7878</span></pre>
-								</div>
-								<div class="code-tab" class:code-tab--active={detectedPlatform === "windows"}>
-									<span class="code-tab__label">Windows</span>
-									<pre class="code-block"><span class="c-dim">></span> <span class="c-cmd">omniplot-agent-windows-amd64.exe</span>
+									</div>
+									<div class="code-tab" class:code-tab--active={detectedPlatform === "windows"}>
+										<span class="code-tab__label">Windows</span>
+										<pre class="code-block"><span class="c-dim">></span> <span class="c-cmd">omniplot-agent-windows-amd64.exe</span>
 <span class="c-out">{`{"agent":"omniplot-cut-agent","version":"${AGENT_VERSION}","port":7878}`}</span>
 <span class="c-ok">OmniPlot Cut Agent v{AGENT_VERSION} listening on http://127.0.0.1:7878</span></pre>
+									</div>
 								</div>
 							</div>
-						</div>
+						</details>
 					</div>
 				</div>
 
@@ -644,15 +806,14 @@
 				<div class="step">
 					<div class="step__num">3</div>
 					<div class="step__body">
-						<h3 class="step__title">Select "Cut Agent" in Plotter Settings</h3>
+						<h3 class="step__title">OmniPlot detects it automatically</h3>
 						<p class="step__desc">
-							In the Studio, open <strong>Plotter Settings → Connection</strong> and choose <strong>Cut Agent</strong>.
-							OmniPlot will ping <code>localhost:7878</code> and confirm it's reachable.
-							The status dot at the top of this page turns green when the connection is live.
+							Go to the <strong>Studio → Plotter tab</strong>. As long as the agent window is open, OmniPlot
+							will find it and show it as <em>Detected</em> or <em>Connected</em> within a few seconds — no extra setup.
 						</p>
 						<div class="tip-box">
 							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-							<span>If you use a custom port (<code>--port 7879</code>), update the Agent URL in Plotter Settings to match.</span>
+							<span>If you changed the port (<code>--port 7879</code>), update the Agent URL in the Studio's Advanced settings to match.</span>
 						</div>
 					</div>
 				</div>
@@ -1501,5 +1662,286 @@
 		.step { grid-template-columns: 40px 1fr; }
 		.download-row { flex-direction: column; }
 		.dl-btn { width: fit-content; }
+	}
+
+	/* ── Update banner ─────────────────────────── */
+	@keyframes update-pulse {
+		0%, 100% { opacity: 1; }
+		50%       { opacity: 0.7; }
+	}
+	.update-banner {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 16px;
+		padding: 14px 18px;
+		background: color-mix(in srgb, #f59e0b 10%, var(--bg-surface));
+		border: 1px solid #f59e0b;
+		border-radius: var(--radius-xl);
+		animation: update-pulse 2.5s ease-in-out infinite;
+		flex-wrap: wrap;
+	}
+	.update-banner__left {
+		display: flex;
+		align-items: flex-start;
+		gap: 10px;
+		color: #f59e0b;
+		font-size: 0.875rem;
+		line-height: 1.5;
+		flex: 1;
+	}
+	.update-banner__left svg { flex-shrink: 0; margin-top: 2px; }
+	.update-banner__left div { color: var(--text-primary); }
+	.update-banner__left strong { color: #f59e0b; }
+	.update-banner__right {
+		flex-shrink: 0;
+	}
+	.update-banner__steps {
+		font-size: 0.8125rem;
+		font-weight: 600;
+		color: var(--text-secondary);
+		white-space: nowrap;
+	}
+
+	/* ── Version badges ────────────────────────── */
+	.version--outdated {
+		color: #f59e0b;
+	}
+	.status-dot--outdated {
+		background: #f59e0b;
+		box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.25);
+	}
+	.version-badge {
+		display: inline-flex;
+		align-items: center;
+		padding: 1px 7px;
+		border-radius: 999px;
+		font-size: 0.6875rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		margin-left: 6px;
+		vertical-align: middle;
+	}
+	.version-badge--current {
+		background: rgba(46, 204, 113, 0.15);
+		color: #2ecc71;
+		border: 1px solid rgba(46, 204, 113, 0.35);
+	}
+	.version-badge--outdated {
+		background: rgba(245, 158, 11, 0.15);
+		color: #f59e0b;
+		border: 1px solid rgba(245, 158, 11, 0.35);
+	}
+
+	/* ── Already-running / delete-old notices ──── */
+	.already-running {
+		display: flex;
+		align-items: flex-start;
+		gap: 10px;
+		padding: 12px 16px;
+		background: rgba(46, 204, 113, 0.08);
+		border: 1px solid rgba(46, 204, 113, 0.35);
+		border-radius: var(--radius-lg);
+		font-size: 0.875rem;
+		color: var(--text-primary);
+		line-height: 1.5;
+		max-width: 560px;
+		margin-bottom: 4px;
+	}
+	.already-running svg { color: #2ecc71; flex-shrink: 0; margin-top: 1px; }
+	.already-running strong { color: #2ecc71; }
+
+	.delete-old-notice {
+		display: flex;
+		align-items: flex-start;
+		gap: 10px;
+		padding: 12px 16px;
+		background: rgba(245, 158, 11, 0.08);
+		border: 1px solid rgba(245, 158, 11, 0.35);
+		border-radius: var(--radius-lg);
+		font-size: 0.875rem;
+		color: var(--text-primary);
+		line-height: 1.5;
+		max-width: 560px;
+		margin-bottom: 12px;
+	}
+	.delete-old-notice svg { color: #f59e0b; flex-shrink: 0; margin-top: 1px; }
+	.delete-old-notice strong { color: #f59e0b; }
+	.delete-old-notice code {
+		font-family: var(--font-mono);
+		font-size: 0.85em;
+		background: var(--bg-surface-3);
+		padding: 1px 5px;
+		border-radius: 4px;
+		color: var(--text-primary);
+	}
+
+	/* ── OS selector tabs ──────────────────────── */
+	.os-tabs {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+		margin-bottom: 16px;
+	}
+	.os-tab {
+		padding: 5px 13px;
+		border-radius: var(--radius-md);
+		font-size: 0.8125rem;
+		font-weight: 600;
+		border: 1px solid var(--border-default);
+		background: var(--bg-surface-2);
+		color: var(--text-tertiary);
+		cursor: pointer;
+		transition: border-color 0.12s, color 0.12s, background 0.12s;
+	}
+	.os-tab:hover {
+		border-color: var(--color-brand-dim);
+		color: var(--text-primary);
+	}
+	.os-tab--active {
+		border-color: var(--color-brand-dim);
+		background: color-mix(in srgb, var(--color-brand-dim) 10%, var(--bg-surface-2));
+		color: var(--text-primary);
+	}
+
+	/* ── Visual step cards ─────────────────────── */
+	.visual-steps {
+		display: flex;
+		flex-direction: column;
+		gap: 0;
+		max-width: 560px;
+		margin-bottom: 20px;
+	}
+	.vstep {
+		display: flex;
+		align-items: flex-start;
+		gap: 14px;
+		padding: 14px 16px;
+		background: var(--bg-surface-2);
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-lg);
+		transition: border-color 0.15s, background 0.15s;
+	}
+	.vstep--highlight {
+		border-color: #f59e0b;
+		background: rgba(245, 158, 11, 0.06);
+	}
+	.vstep--success {
+		border-color: rgba(46, 204, 113, 0.45);
+		background: rgba(46, 204, 113, 0.06);
+	}
+	.vstep__arrow {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		height: 20px;
+		color: var(--text-tertiary);
+		font-size: 0.875rem;
+		line-height: 1;
+		padding-left: 28px;
+	}
+	.vstep__icon {
+		width: 40px;
+		height: 40px;
+		border-radius: var(--radius-md);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		flex-shrink: 0;
+		border: 1px solid var(--border-default);
+		background: var(--bg-surface-3);
+		color: var(--text-secondary);
+	}
+	.vstep--highlight .vstep__icon {
+		border-color: rgba(245, 158, 11, 0.4);
+		background: rgba(245, 158, 11, 0.1);
+		color: #f59e0b;
+	}
+	.vstep--success .vstep__icon {
+		border-color: rgba(46, 204, 113, 0.4);
+		background: rgba(46, 204, 113, 0.1);
+		color: #2ecc71;
+	}
+	.vstep__body {
+		display: flex;
+		flex-direction: column;
+		gap: 3px;
+		font-size: 0.875rem;
+		line-height: 1.5;
+		flex: 1;
+	}
+	.vstep__body strong {
+		font-weight: 700;
+		color: var(--text-primary);
+	}
+	.vstep--highlight .vstep__body strong {
+		color: #f59e0b;
+	}
+	.vstep--success .vstep__body strong {
+		color: #2ecc71;
+	}
+	.vstep__body span {
+		color: var(--text-secondary);
+		font-size: 0.8125rem;
+	}
+	.vstep__body code {
+		font-family: var(--font-mono);
+		font-size: 0.85em;
+		background: var(--bg-surface-3);
+		padding: 1px 5px;
+		border-radius: 4px;
+		color: var(--text-primary);
+	}
+
+	.action-word {
+		font-weight: 700;
+		color: var(--text-primary);
+		font-style: normal;
+	}
+	.vstep--highlight .action-word {
+		color: #f59e0b;
+	}
+
+	.vstep-linux-note {
+		font-size: 0.8125rem;
+		color: var(--text-tertiary);
+		margin: 8px 0 0;
+		line-height: 1.55;
+	}
+	.vstep-linux-note strong { color: var(--text-secondary); }
+
+	/* ── Advanced / terminal details ───────────── */
+	.run-advanced-details {
+		max-width: 620px;
+		margin-top: 4px;
+	}
+	.run-advanced-details__summary {
+		display: flex;
+		align-items: center;
+		gap: 7px;
+		cursor: pointer;
+		font-size: 0.8125rem;
+		font-weight: 600;
+		color: var(--text-tertiary);
+		padding: 6px 2px;
+		list-style: none;
+		user-select: none;
+		transition: color 0.12s;
+	}
+	.run-advanced-details__summary:hover { color: var(--text-secondary); }
+	.run-advanced-details__summary::-webkit-details-marker { display: none; }
+	.run-advanced-details[open] .run-advanced-details__summary {
+		color: var(--text-secondary);
+		margin-bottom: 10px;
+	}
+	.run-advanced-details[open] .run-advanced-details__summary svg {
+		transform: rotate(90deg);
+	}
+	.run-advanced-details__summary svg {
+		transition: transform 0.18s;
+	}
+	.run-advanced {
+		/* padding handled by code-tabs children */
 	}
 </style>
