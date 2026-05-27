@@ -14,6 +14,7 @@
 			total: number;
 			byTier: Record<string, number>;
 			activeToday: number;
+			shopMemberCount: number;
 		};
 		shops: {
 			total: number;
@@ -21,7 +22,7 @@
 		};
 		jobs: {
 			today: number;
-			recent: { id: string; userEmail: string; vehicleName: string; status: string; pieces: number; createdAt: string | null }[];
+			recent: { id: string; userLabel: string; vehicleName: string; status: string; pieces: number; createdAt: string | null }[];
 		};
 	} | null>(null);
 
@@ -244,6 +245,16 @@
 								<div class="tier-pct">{userPct(t.count)}%</div>
 							</div>
 						{/each}
+						{#if (stats.users.shopMemberCount ?? 0) > 0}
+							<div class="tier-row">
+								<div class="tier-label" style="color:#34d399">Shop</div>
+								<div class="tier-bar-wrap">
+									<div class="tier-bar" style="width:{userPct(stats.users.shopMemberCount)}%;background:#34d399;opacity:0.75"></div>
+								</div>
+								<div class="tier-count" style="color:#34d399">{stats.users.shopMemberCount}</div>
+								<div class="tier-pct">{userPct(stats.users.shopMemberCount)}%</div>
+							</div>
+						{/if}
 					{/if}
 
 					<!-- Shop / team plans -->
@@ -343,7 +354,7 @@
 					<tbody>
 						{#each (stats?.jobs.recent ?? []) as j}
 							<tr>
-								<td class="td-user">{j.userEmail.split("@")[0]}</td>
+								<td class="td-user">{j.userLabel}</td>
 								<td class="td-vehicle">{j.vehicleName}</td>
 								<td class="td-mono">{j.pieces}</td>
 								<td>

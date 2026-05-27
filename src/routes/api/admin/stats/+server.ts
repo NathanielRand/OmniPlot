@@ -24,7 +24,8 @@ export const GET: RequestHandler = async ({ request }) => {
 
 	const KNOWN_USER_TIERS = new Set(['free', 'lite', 'pro', 'admin']);
 	const byTier: Record<string, number> = { free: 0, lite: 0, pro: 0, admin: 0 };
-	let activeToday = 0;
+	let activeToday      = 0;
+	let shopMemberCount  = 0;
 
 	for (const doc of usersSnap.docs) {
 		const d    = doc.data();
@@ -33,6 +34,7 @@ export const GET: RequestHandler = async ({ request }) => {
 		byTier[key] = (byTier[key] ?? 0) + 1;
 		const lastActive: Date | null = d.updatedAt?.toDate?.() ?? null;
 		if (lastActive && lastActive >= oneDayAgo) activeToday++;
+		if (d.shopId) shopMemberCount++;
 	}
 
 	// ── Shops ─────────────────────────────────────
@@ -94,7 +96,9 @@ export const GET: RequestHandler = async ({ request }) => {
 		await Promise.all(
 			userIds.slice(0, 10).map(async (uid) => {
 				const snap = await db.doc(`users/${uid}`).get();
-				userMap[uid] = snap.data()?.email ?? uid;
+				const u = snap.data();
+				// Priority: username/displayName → email → phone → uid
+				userMap[uid] = u?.displayName || u?.email || u?.phone || uid;
 			}),
 		);
 
@@ -105,7 +109,7 @@ export const GET: RequestHandler = async ({ request }) => {
 			return {
 				id:                 doc.id,
 				userId:             d.userId ?? '',
-				userEmail:          userMap[d.userId] ?? d.userId ?? '',
+				userLabel:          userMap[d.userId] ?? d.userId ?? '',
 				vehicleName:        d.name ?? 'Unknown',
 				status:             d.status ?? 'complete',
 				pieces:             itemCount,
@@ -127,9 +131,10 @@ export const GET: RequestHandler = async ({ request }) => {
 
 	return json({
 		users: {
-			total:         usersSnap.size,
+			total:           usersSnap.size,
 			byTier,
 			activeToday,
+			shopMemberCount,
 			recentSignups,
 		},
 		shops: {

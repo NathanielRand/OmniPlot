@@ -1255,7 +1255,7 @@
 				>
 			</button>
 			<div class="zoom-display" aria-label="Current zoom">
-				{canvasStore.zoom}%
+				{Math.round(canvasStore.zoom)}%
 			</div>
 			<button
 				class="tool-btn"
@@ -1568,6 +1568,13 @@
 					<!-- Cut items -->
 					{#each canvasStore.items as item (item.id)}
 						{@const _bb = getSvgPathBBox(item.pattern.svgPath)}
+						{@const _textStr = item.label ?? item.pattern.zone ?? ''}
+						{@const _baseFS  = Math.max(3, Math.min(16, Math.min(_bb.w, _bb.h) * 0.08))}
+						{@const _fontSize = _textStr.length * _baseFS * 0.6 > _bb.w * 0.82
+							? Math.max(2, (_bb.w * 0.82) / (_textStr.length * 0.6))
+							: _baseFS}
+						{@const _vname = hasMultipleVehicles ? getVehicleName(item.pattern.vehicleId).split(' ').slice(1).join(' ') : ''}
+						{@const _vnameFS = Math.max(2, _fontSize * 0.7)}
 						<!-- svelte-ignore a11y_click_events_have_key_events -->
 						<div
 							class="cut-item"
@@ -1603,7 +1610,7 @@
 								<g transform="rotate({item.rotation} {_bb.x + _bb.w / 2} {_bb.y + _bb.h / 2})">
 									<path
 										d={item.pattern.svgPath}
-										fill="{item.color}0D"
+										fill="{item.color}20"
 										stroke={item.color}
 										stroke-width="1.5"
 										stroke-linecap="round"
@@ -1614,15 +1621,28 @@
 										)}
 									/>
 									<text
-										x="50"
-										y="55"
+										x={_bb.x + _bb.w / 2}
+										y={_bb.y + _bb.h / 2}
 										text-anchor="middle"
+										dominant-baseline="middle"
 										fill={item.color}
-										opacity="0.5"
-										font-size="8"
+										opacity="0.6"
+										font-size={_fontSize}
 										font-family="monospace"
-										>{item.label ?? item.pattern.zone}</text
+										>{_textStr}</text
 									>
+									{#if hasMultipleVehicles}
+										<text
+											x={_bb.x + _bb.w / 2}
+											y={_bb.y + _bb.h / 2 + _fontSize * 1.35}
+											text-anchor="middle"
+											dominant-baseline="middle"
+											fill={item.color}
+											opacity="0.38"
+											font-size={_vnameFS}
+											font-family="monospace"
+										>{_vname}</text>
+									{/if}
 								</g>
 							</svg>
 							{#if canvasStore.selected.includes(item.id)}

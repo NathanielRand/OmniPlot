@@ -24,7 +24,7 @@
 		agent: { downloads: number };
 		jobs: {
 			today: number;
-			recent: { id: string; userId: string; userEmail: string; vehicleName: string; status: string; pieces: number; patternsCompleted: number; connection: string; presetName: string; createdAt: string | null }[];
+			recent: { id: string; userId: string; userLabel: string; vehicleName: string; status: string; pieces: number; patternsCompleted: number; connection: string; presetName: string; createdAt: string | null }[];
 		};
 	} | null>(null);
 
@@ -222,7 +222,7 @@
 					<tbody>
 						{#each stats.jobs.recent.slice(0, 5) as j}
 							<tr>
-								<td class="td-email">{j.userEmail.split("@")[0]}</td>
+								<td class="td-user">{j.userLabel}</td>
 								<td class="td-vehicle">
 									<span>{j.vehicleName}</span>
 									{#if j.presetName}
@@ -483,7 +483,7 @@
 	.user-name  { font-size: 0.8125rem; font-weight: 500; color: var(--text-primary); }
 	.user-email { font-size: 0.6875rem; color: var(--text-tertiary); }
 	.td-time    { font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-tertiary); white-space: nowrap; }
-	.td-email   { font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-secondary); }
+	.td-user    { font-size: 0.75rem; color: var(--text-secondary); max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	.td-vehicle { font-size: 0.8125rem; color: var(--text-secondary); white-space: nowrap; }
 	.td-vehicle { display: flex; flex-direction: column; gap: 1px; }
 	.td-preset  { font-family: var(--font-mono); font-size: 0.6875rem; color: var(--text-tertiary); }
