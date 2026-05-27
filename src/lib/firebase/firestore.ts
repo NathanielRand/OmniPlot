@@ -16,6 +16,7 @@ import {
 	limit,
 	onSnapshot,
 	serverTimestamp,
+	increment,
 	Timestamp,
 	type DocumentData,
 	type QueryConstraint,
@@ -273,6 +274,36 @@ export async function getUserJobs(
 			} as CutJob;
 		})
 		.sort((a, b) => (b.updatedAt as Date).getTime() - (a.updatedAt as Date).getTime());
+}
+
+// ─── Cut usage tracking ───────────────────────
+// Call once per successful cut/download. Handles 30-day window reset client-side.
+// The real-time listener on the user document propagates the change back to userStore
+// so canCut() re-derives immediately without requiring a page reload.
+export async function incrementCutUsage(
+	uid: string,
+	currentMonthResetAt: Date | null,
+): Promise<void> {
+	const now = new Date();
+	const windowExpired = !currentMonthResetAt || now >= currentMonthResetAt;
+
+	const patch: Record<string, unknown> = {
+		"usage.cutCount": increment(1),
+		"usage.lastCutAt": serverTimestamp(),
+		updatedAt: serverTimestamp(),
+	};
+
+	if (windowExpired) {
+		// Start a fresh 30-day window
+		patch["usage.monthlyCount"] = 1;
+		patch["usage.monthResetAt"] = Timestamp.fromDate(
+			new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000),
+		);
+	} else {
+		patch["usage.monthlyCount"] = increment(1);
+	}
+
+	await updateDoc(doc(db, Collections.USERS, uid), patch);
 }
 
 export async function saveJob(job: CutJob): Promise<void> {

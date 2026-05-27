@@ -18,7 +18,7 @@
 		generateHpgl,
 	} from "$lib/utils/hpgl";
 	import { sendToPlotter, sendSettings, connectSerialPort, disconnectSerialPort, isSerialConnected, type SerialPortInfo } from "$lib/utils/plotter-connection";
-	import { saveJob, logPlotterError } from "$lib/firebase/firestore";
+	import { saveJob, logPlotterError, incrementCutUsage } from "$lib/firebase/firestore";
 	import type { PlotterDiagnostic } from "$lib/utils/plotter-errors";
 	import PlotterDiagPanel from "$lib/components/ui/PlotterDiagPanel.svelte";
 	import {
@@ -131,7 +131,7 @@
 	const displaySheetW = $derived.by(() => {
 		const inBounds = canvasStore.items.filter((i) => !i.outOfBounds);
 		if (!inBounds.length) return 12;
-		return Math.max(...inBounds.map((i) => i.x + i.width)) + 4;
+		return Math.max(...inBounds.map((i) => i.x + i.width)) + 1;
 	});
 	const displaySheetH = $derived.by(() => {
 		const rollWidth = canvasStore.sheet.widthInches;
@@ -274,6 +274,24 @@
 	// Max cutting width of the selected plotter in inches
 	const plotterMaxWidthIn = $derived(plotterStore.config.maxMediaWidthMm / 25.4);
 
+	// ─── Metered feature gates ────────────────────
+	// Re-derives whenever user or shop subscription changes (real-time listener).
+	const cutCheck = $derived(
+		userStore.user
+			? canCut(userStore.user, shopStore.shop)
+			: { allowed: true }, // don't block while auth is loading
+	);
+	// True for free-tier users with no active shop subscription — gates non-cut features.
+	const isFree = $derived(
+		!!userStore.user &&
+		userStore.user.tier === "free" &&
+		shopStore.shop?.subscriptionStatus !== "active" &&
+		shopStore.shop?.subscriptionStatus !== "trialing",
+	);
+	// Pre-compute export lock states for use in template
+	const pltLocked = $derived(!cutCheck.allowed);
+	const dxfLocked = $derived(isFree);
+
 	async function handleDetectPlotter() {
 		detecting = true;
 		detectedPlotter = null;
@@ -332,6 +350,11 @@
 	}
 
 	function handleSmartNest() {
+		if (isFree) {
+			toastStore.info("Lite plan required", "AI deep optimization is available on Lite and above.");
+			uiStore.openPricing();
+			return;
+		}
 		if (!canvasStore.items.length) {
 			toastStore.warning("No patterns", "Add patterns to the sheet first.");
 			return;
@@ -385,6 +408,11 @@
 	}
 
 	async function handleConnectSerial() {
+		if (isFree) {
+			toastStore.info("Lite plan required", "USB Web Serial is available on Lite and above.");
+			uiStore.openPricing();
+			return;
+		}
 		if (!("serial" in navigator)) {
 			toastStore.warning("Not supported", "USB direct connect requires Chrome or Edge. Use Download or Cut Agent for other browsers.");
 			return;
@@ -565,6 +593,8 @@
 			exportUrl: null,
 		};
 		saveJob(job).catch(() => {});
+		// Increment usage so canCut re-derives and the button gates correctly on next render
+		incrementCutUsage(opts.user.uid, opts.user.usage.monthResetAt).catch(() => {});
 	}
 
 	function handleExport(format: "hpgl" | "svg" | "dxf") {
@@ -572,8 +602,23 @@
 			toastStore.warning("Nothing to export", "Add patterns first.");
 			return;
 		}
+		// DXF is a Lite+ feature
+		if (format === "dxf" && isFree) {
+			toastStore.info("Lite plan required", "DXF export is available on Lite and above.");
+			uiStore.openPricing();
+			return;
+		}
+		// PLT download counts as a cut — enforce the same cut-rate limit
+		if (format === "hpgl" && !cutCheck.allowed) {
+			toastStore.warning("Cut limit reached", cutCheck.reason ?? "Upgrade to continue.");
+			uiStore.openPricing();
+			return;
+		}
 		if (format === "hpgl") {
 			downloadHpgl(canvasStore.state, plotterStore.config);
+			if (userStore.user) {
+				incrementCutUsage(userStore.user.uid, userStore.user.usage.monthResetAt).catch(() => {});
+			}
 		} else if (format === "dxf") {
 			downloadDxf(canvasStore.state);
 		} else {
@@ -831,11 +876,11 @@
 				</svg>
 				<span class="ai-mode-label">{aiNestEnabled ? "AI Nest" : "Manual"}</span>
 			</button>
-			<!-- Deep optimize button — reruns full smartNest on demand -->
+			<!-- Deep optimize button — reruns full smartNest on demand (Lite+) -->
 			<button
 				class="tool-btn tool-btn--ai-optimize"
 				class:loading={smartNesting}
-				title="Re-optimize — run deep AI nesting across all patterns now"
+				title={isFree ? "AI deep optimization — Lite plan required" : "Re-optimize — run deep AI nesting across all patterns now"}
 				onclick={handleSmartNest}
 				disabled={smartNesting}
 				aria-label="Run deep AI nest optimization"
@@ -1040,10 +1085,21 @@
 		</button>
 
 		<!-- Cut button -->
-		<button class="cut-btn" data-tour="cut-btn" onclick={handleCut} disabled={cutting}>
+		<button
+			class="cut-btn"
+			class:cut-btn--locked={!cutCheck.allowed}
+			data-tour="cut-btn"
+			onclick={handleCut}
+			disabled={cutting || !cutCheck.allowed}
+			title={!cutCheck.allowed ? (cutCheck.reason ?? "Cut limit reached — upgrade to continue") : undefined}
+			aria-disabled={!cutCheck.allowed}
+		>
 			{#if cutting}
 				<span class="ai-spinner" aria-hidden="true"></span>
 				<span class="ai-label">Sending…</span>
+			{:else if !cutCheck.allowed}
+				<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+				Upgrade to Cut
 			{:else}
 				<svg
 					width="14"
@@ -1076,15 +1132,33 @@
 			onclick={() => (showExport = false)}
 		></div>
 		<div class="export-dropdown animate-slide-down">
-			{#each [["hpgl", "PLT", "Universal plotter format. Works with any cutter."], ["svg", "SVG", "For FlexiSIGN, Inkscape, Illustrator."], ["dxf", "DXF", "For AutoCAD-compatible tools and CNC software."]] as const as [fmt, label, desc]}
-				<button class="export-option" onclick={() => handleExport(fmt)}>
-					<div class="export-option__icon">{label}</div>
-					<div>
-						<div class="export-option__title">{label} file</div>
-						<div class="export-option__desc">{desc}</div>
+			<button class="export-option" class:export-option--locked={pltLocked} onclick={() => handleExport("hpgl")}>
+				<div class="export-option__icon">PLT</div>
+				<div class="export-option__body">
+					<div class="export-option__title">
+						PLT file
+						{#if pltLocked}<span class="export-lock-badge">Limit reached</span>{/if}
 					</div>
-				</button>
-			{/each}
+					<div class="export-option__desc">Universal plotter format. Works with any cutter.</div>
+				</div>
+			</button>
+			<button class="export-option" onclick={() => handleExport("svg")}>
+				<div class="export-option__icon">SVG</div>
+				<div class="export-option__body">
+					<div class="export-option__title">SVG file</div>
+					<div class="export-option__desc">For FlexiSIGN, Inkscape, Illustrator.</div>
+				</div>
+			</button>
+			<button class="export-option" class:export-option--locked={dxfLocked} onclick={() => handleExport("dxf")}>
+				<div class="export-option__icon">DXF</div>
+				<div class="export-option__body">
+					<div class="export-option__title">
+						DXF file
+						{#if dxfLocked}<span class="export-lock-badge">Lite+</span>{/if}
+					</div>
+					<div class="export-option__desc">For AutoCAD-compatible tools and CNC software.</div>
+				</div>
+			</button>
 		</div>
 	{/if}
 
@@ -1387,38 +1461,6 @@
 					{/if}
 
 					<div class="prop-section">
-						<div class="prop-label">Cut Settings</div>
-						{#each [["Blade force", "bladeForce", 10, 200, "g"], ["Speed mm/s", "cuttingSpeed", 50, 900, ""], ["Passes", "passes", 1, 4, ""], ["Overcut mm", "overcut", 0, 2, ""]] as const as [label, key, min, max, unit]}
-							<div class="prop-slider-row">
-								<span class="prop-slider-name">{label}</span>
-								<input
-									type="range"
-									class="prop-slider"
-									{min}
-									{max}
-									step={key === "overcut" ? 0.1 : 1}
-									value={plotterStore.config[key]}
-									aria-label={label}
-									oninput={(e) => {
-										plotterStore.update({
-											[key]: parseFloat(
-												(e.target as HTMLInputElement).value,
-											),
-										});
-										// Live-send speed/force to connected plotter; passes + overcut are software-only
-										if (key === "bladeForce" || key === "cuttingSpeed") {
-											scheduleSettingsSend();
-										}
-									}}
-								/>
-								<span class="prop-slider-val"
-									>{plotterStore.config[key]}{unit}</span
-								>
-							</div>
-						{/each}
-					</div>
-
-					<div class="prop-section">
 						<div class="prop-label">Material</div>
 						<select
 							class="prop-select"
@@ -1644,6 +1686,59 @@
 						{/if}
 					</div>
 
+					<!-- ── Cut Settings ───────────────────────── -->
+					<div class="prop-section">
+						<div class="prop-label">Cut Settings</div>
+						{#each [["Blade force", "bladeForce", 10, 400, "g"], ["Speed mm/s", "cuttingSpeed", 10, 1200, ""], ["Passes", "passes", 1, 4, ""], ["Overcut mm", "overcut", 0, 2, ""]] as const as [label, key, min, max, unit]}
+							<div class="prop-slider-row">
+								<span class="prop-slider-name">{label}</span>
+								<input
+									type="range"
+									class="prop-slider"
+									{min}
+									{max}
+									step={key === "overcut" ? 0.1 : 1}
+									value={plotterStore.config[key]}
+									aria-label={label}
+									oninput={(e) => {
+										plotterStore.update({
+											[key]: parseFloat((e.target as HTMLInputElement).value),
+										});
+										if (key === "bladeForce" || key === "cuttingSpeed") {
+											scheduleSettingsSend();
+										}
+									}}
+								/>
+								<span class="prop-slider-val">{plotterStore.config[key]}{unit}</span>
+							</div>
+						{/each}
+					</div>
+
+					<!-- ── Origin Offset ───────────────────────── -->
+					<div class="prop-section">
+						<div class="prop-label">Origin Offset</div>
+						{#each [["X offset (in)", "originX", 0, 48, 0.1], ["Y offset (in)", "originY", 0, 24, 0.1]] as const as [label, key, min, max, step]}
+							<div class="prop-slider-row">
+								<span class="prop-slider-name">{label}</span>
+								<input
+									type="range"
+									class="prop-slider"
+									{min}
+									{max}
+									{step}
+									value={plotterStore.config[key]}
+									aria-label={label}
+									oninput={(e) =>
+										plotterStore.update({
+											[key]: parseFloat((e.target as HTMLInputElement).value),
+										})}
+								/>
+								<span class="prop-slider-val">{plotterStore.config[key].toFixed(1)}"</span>
+							</div>
+						{/each}
+						<p class="prop-note">Shifts the cut start point on the physical roll — useful for resuming from used material.</p>
+					</div>
+
 					<!-- ── Connection ─────────────────────────── -->
 					<div class="prop-section">
 						<div class="prop-label">Connection</div>
@@ -1805,28 +1900,6 @@
 						</select>
 					</div>
 
-					<!-- ── Origin ──────────────────────────────── -->
-					{#each [["Origin X (in)", "originX", 0, 200, 1], ["Origin Y (in)", "originY", 0, 200, 1]] as const as [label, key, min, max, step]}
-						<div class="prop-section">
-							<div class="prop-slider-row">
-								<span class="prop-slider-name">{label}</span>
-								<input
-									type="range"
-									class="prop-slider"
-									{min}
-									{max}
-									{step}
-									value={plotterStore.config[key]}
-									aria-label={label}
-									oninput={(e) =>
-										plotterStore.update({
-											[key]: parseFloat((e.target as HTMLInputElement).value),
-										})}
-								/>
-								<span class="prop-slider-val">{plotterStore.config[key]}</span>
-							</div>
-						</div>
-					{/each}
 				{/if}
 			</div>
 		</aside>
@@ -2150,6 +2223,14 @@
 	.cut-btn:active {
 		transform: scale(0.98);
 	}
+	.cut-btn--locked,
+	.cut-btn:disabled {
+		opacity: 0.55;
+		cursor: not-allowed;
+		background: var(--bg-surface-2);
+		color: var(--text-secondary);
+	}
+	.cut-btn--locked:hover { opacity: 0.55; }
 
 	/* Export dropdown */
 	.export-dropdown-backdrop {
@@ -2187,6 +2268,26 @@
 
 	.export-option:hover {
 		background: var(--interactive-hover);
+	}
+	.export-option--locked {
+		opacity: 0.6;
+	}
+	.export-option__body {
+		flex: 1;
+		min-width: 0;
+	}
+	.export-lock-badge {
+		display: inline-block;
+		font-size: 0.6rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		background: var(--color-warning, #F7B731);
+		color: #000;
+		padding: 1px 5px;
+		border-radius: 3px;
+		margin-left: 6px;
+		vertical-align: middle;
 	}
 
 	.export-option__icon {

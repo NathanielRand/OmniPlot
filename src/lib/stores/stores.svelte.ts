@@ -410,8 +410,38 @@ function createCanvasStore() {
 export const canvasStore = createCanvasStore();
 
 // ─── Plotter config ───────────────────────────
+
+// Settings that are user-customizable per plotter preset and should survive page reloads.
+const PRESET_PERSIST_KEYS = ["bladeForce", "cuttingSpeed", "passes", "overcut", "baudRate"] as const;
+type PresetPersistKey = (typeof PRESET_PERSIST_KEYS)[number];
+
+function _presetStorageKey(name: string) {
+	return `omniplot-preset:${name}`;
+}
+
+function _savePresetSettings(name: string, config: PlotterConfig) {
+	if (typeof localStorage === "undefined") return;
+	const data: Partial<Record<PresetPersistKey, number>> = {};
+	for (const k of PRESET_PERSIST_KEYS) data[k] = config[k] as number;
+	localStorage.setItem(_presetStorageKey(name), JSON.stringify(data));
+}
+
+function _loadPresetSettings(name: string): Partial<Record<PresetPersistKey, number>> | null {
+	if (typeof localStorage === "undefined") return null;
+	try {
+		const raw = localStorage.getItem(_presetStorageKey(name));
+		return raw ? JSON.parse(raw) : null;
+	} catch {
+		return null;
+	}
+}
+
 function createPlotterStore() {
 	const defaultPreset = PLOTTER_PRESETS[0];
+
+	// Start from preset defaults, then layer in any saved user customisations
+	const _savedDefaults = _loadPresetSettings(defaultPreset.name!) ?? {};
+
 	let config = $state<PlotterConfig>({
 		id: "default",
 		name: defaultPreset.name!,
@@ -419,10 +449,10 @@ function createPlotterStore() {
 		model: defaultPreset.model!,
 		protocol: defaultPreset.protocol!,
 		connection: "download",
-		bladeForce: defaultPreset.bladeForce!,
-		cuttingSpeed: defaultPreset.cuttingSpeed!,
-		passes: defaultPreset.passes!,
-		overcut: 0.5,
+		bladeForce: _savedDefaults.bladeForce ?? defaultPreset.bladeForce!,
+		cuttingSpeed: _savedDefaults.cuttingSpeed ?? defaultPreset.cuttingSpeed!,
+		passes: _savedDefaults.passes ?? defaultPreset.passes!,
+		overcut: _savedDefaults.overcut ?? 0.5,
 		offsetBlade: 0.25,
 		mediaWidthMm: defaultPreset.maxMediaWidthMm,
 		maxMediaWidthMm: defaultPreset.maxMediaWidthMm,
@@ -431,7 +461,7 @@ function createPlotterStore() {
 		flipH: false,
 		flipV: false,
 		agentUrl: "http://localhost:7878",
-		baudRate: defaultPreset.baudRate ?? 9600,
+		baudRate: _savedDefaults.baudRate ?? defaultPreset.baudRate ?? 9600,
 		ipAddress: "192.168.1.100",
 		port: 9100,
 	});
@@ -442,14 +472,24 @@ function createPlotterStore() {
 		},
 		update(patch: Partial<PlotterConfig>) {
 			config = { ...config, ...patch };
+			// Persist cut settings whenever they change so the next session/reconnect inherits them
+			if (PRESET_PERSIST_KEYS.some((k) => k in patch)) {
+				_savePresetSettings(config.name, config);
+			}
 		},
 		applyPreset(preset: Partial<PlotterConfig> & { maxMediaWidthMm?: number; compatNote?: string }) {
+			// Restore any previously saved customisations for this specific preset
+			const saved = _loadPresetSettings(preset.name ?? "") ?? {};
 			config = {
 				...config,
 				...preset,
+				// User-saved values override preset defaults, but hardware limits come from the preset
+				...saved,
 				id: config.id,
-				// Always sync working width to the new hardware max
 				mediaWidthMm: preset.maxMediaWidthMm ?? config.mediaWidthMm,
+				// Clamp saved values to the preset's plausible range
+				bladeForce: Math.max(10, Math.min(500, saved.bladeForce ?? (preset.bladeForce as number) ?? config.bladeForce)),
+				cuttingSpeed: Math.max(10, Math.min(1200, saved.cuttingSpeed ?? (preset.cuttingSpeed as number) ?? config.cuttingSpeed)),
 			};
 		},
 	};
