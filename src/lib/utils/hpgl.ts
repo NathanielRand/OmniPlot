@@ -203,6 +203,59 @@ function itemToHpgl(item: CanvasItem, config: PlotterConfig): string {
 	return lines.join("\n");
 }
 
+// ─── Segmented HPGL stream ───────────────────
+// Splits the job into preamble + one segment per pattern + epilogue.
+// Used by sendViaSerialSegmented() so progress can be tracked per-pattern
+// and the job can be resumed from a known checkpoint on interruption.
+export interface HpglSegment {
+    itemId: string;
+    label: string;
+    hpgl: string; // complete HPGL for this pattern (always ends with PU;)
+}
+
+export interface HpglStream {
+    preamble: string;
+    segments: HpglSegment[];
+    epilogue: string;
+}
+
+export function generateHpglSegments(state: CanvasState, config: PlotterConfig): HpglStream {
+    const { items, sheet } = state;
+    const forceCmd = forceCommand(config);
+
+    const preambleLines: string[] = [
+        "IN;",
+        speedCommand(config),
+        ...(forceCmd ? [forceCmd] : []),
+        "SP1;",
+        "PA;",
+    ];
+
+    if (config.originX || config.originY) {
+        const x0 = Math.round(config.originX * HPGL_UNITS_PER_INCH);
+        const y0 = Math.round(config.originY * HPGL_UNITS_PER_INCH);
+        const x1 = Math.round((sheet.widthInches  + config.originX) * HPGL_UNITS_PER_INCH);
+        const y1 = Math.round((sheet.heightInches + config.originY) * HPGL_UNITS_PER_INCH);
+        preambleLines.push(`IP${x0},${y0},${x1},${y1};`);
+    }
+
+    const sorted = [...items]
+        .filter((i) => !i.outOfBounds)
+        .sort((a, b) => a.layer - b.layer || a.y - b.y);
+
+    const segments: HpglSegment[] = sorted.map((item) => ({
+        itemId: item.id,
+        label: item.label ?? item.pattern.name,
+        hpgl: itemToHpgl(item, config),
+    }));
+
+    return {
+        preamble: preambleLines.join("\n"),
+        segments,
+        epilogue: "PU0,0;\nSP0;\nIN;",
+    };
+}
+
 export function generateHpgl(state: CanvasState, config: PlotterConfig): string {
 	const { items, sheet } = state;
 

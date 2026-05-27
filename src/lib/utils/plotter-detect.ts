@@ -53,6 +53,8 @@ export interface DetectedPlotter {
 	source: "usb" | "agent-usb" | "agent-network";
 	/** Human-readable description of the detected device. */
 	detail: string;
+	/** Serial port path from Cut Agent (e.g. /dev/ttyUSB0 or COM3) — agent-usb only. */
+	portPath?: string;
 }
 
 export interface NetworkDevice {
@@ -175,7 +177,7 @@ export async function detectAgentPorts(
 			if (!port.isUSB) continue;
 
 			const detected = matchByAgentPort(port);
-			if (detected) results.push(detected);
+			if (detected) results.push({ ...detected, portPath: port.name });
 		}
 		return results;
 	} catch {

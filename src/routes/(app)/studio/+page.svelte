@@ -7,6 +7,7 @@
 		uiStore,
 		userStore,
 		shopStore,
+		agentStore,
 	} from "$lib/stores";
 	import { autoNest, smartNest, findNextPosition, samplePolygonArea, getSvgPathBBox, type PlacementResult } from "$lib/utils/nesting";
 	import {
@@ -16,8 +17,9 @@
 		calcEfficiency,
 		estimateCutTime,
 		generateHpgl,
+		generateHpglSegments,
 	} from "$lib/utils/hpgl";
-	import { sendToPlotter, sendSettings, connectSerialPort, disconnectSerialPort, isSerialConnected, type SerialPortInfo } from "$lib/utils/plotter-connection";
+	import { sendToPlotter, sendToPlotterSegmented, sendSettings, connectSerialPort, disconnectSerialPort, isSerialConnected, type SerialPortInfo, type CutProgress } from "$lib/utils/plotter-connection";
 	import { saveJob, logPlotterError, incrementCutUsage } from "$lib/firebase/firestore";
 	import type { PlotterDiagnostic } from "$lib/utils/plotter-errors";
 	import PlotterDiagPanel from "$lib/components/ui/PlotterDiagPanel.svelte";
@@ -45,7 +47,7 @@
 	import GuidedTour from "$lib/components/ui/GuidedTour.svelte";
 	import type { TourStep } from "$lib/components/ui/GuidedTour.svelte";
 	import { getVehicleName } from "$lib/stores/patternStore.svelte";
-	import type { CanvasItem } from "$lib/types";
+	import type { CanvasItem, PlotterConfig } from "$lib/types";
 
 	// ─── Guided tour ─────────────────────────────
 	const TOUR_STEPS: TourStep[] = [
@@ -131,7 +133,7 @@
 	const displaySheetW = $derived.by(() => {
 		const inBounds = canvasStore.items.filter((i) => !i.outOfBounds);
 		if (!inBounds.length) return 12;
-		return Math.max(...inBounds.map((i) => i.x + i.width)) + 1;
+		return Math.max(...inBounds.map((i) => i.x + i.width));
 	});
 	const displaySheetH = $derived.by(() => {
 		const rollWidth = canvasStore.sheet.widthInches;
@@ -238,6 +240,19 @@
 	let cutting          = $state(false);
 	let serialPortInfo   = $state<SerialPortInfo | null>(null);
 
+	// ─── Cut progress + resume checkpoint ────────
+	// Progress is shown in the toolbar during a segmented USB send.
+	// Checkpoint lets the user resume if the job was interrupted mid-job.
+	let cutProgress = $state<CutProgress | null>(null);
+
+	interface ResumeCheckpoint {
+		remainingItemIds: string[];
+		completedCount: number;
+		totalCount: number;
+		presetName: string;
+	}
+	let resumeCheckpoint = $state<ResumeCheckpoint | null>(null);
+
 	// ─── Plotter diagnostic panel ─────────────────
 	let diagData     = $state<PlotterDiagnostic | null>(null);
 	let diagReported = $state(false);
@@ -301,6 +316,7 @@
 			if (usbResults.length > 0) {
 				detectedPlotter = usbResults[0];
 				plotterStore.applyPreset(detectedPlotter.preset);
+				plotterStore.switchConnection("usb-serial");
 				toastStore.success(
 					`Detected: ${detectedPlotter.preset.name}`,
 					detectedPlotter.detail,
@@ -314,6 +330,12 @@
 			if (agentResults.length > 0) {
 				detectedPlotter = agentResults[0];
 				plotterStore.applyPreset(detectedPlotter.preset);
+				plotterStore.switchConnection("cut-agent");
+				// If the agent returned a port path, pre-select it
+				if (agentResults[0].portPath) {
+					plotterStore.update({ serialPort: agentResults[0].portPath });
+				}
+				fetchAgentPorts();
 				toastStore.success(
 					`Detected: ${detectedPlotter.preset.name}`,
 					`via Cut Agent — ${detectedPlotter.detail}`,
@@ -463,6 +485,65 @@
 		toastStore.info("Disconnected", "Serial port closed.");
 	}
 
+	async function handleResumeCut() {
+		if (!resumeCheckpoint) return;
+		const checkpoint = resumeCheckpoint;
+
+		const remainingItems = canvasStore.items.filter(
+			(i) => checkpoint.remainingItemIds.includes(i.id),
+		);
+		if (!remainingItems.length) {
+			resumeCheckpoint = null;
+			localStorage.removeItem("omniplot-resume-checkpoint");
+			return;
+		}
+
+		cutting = true;
+		cutProgress = null;
+		let lastCompletedIdx = -1;
+
+		try {
+			const partialState = { ...canvasStore.state, items: remainingItems };
+			const result = await sendToPlotterSegmented(
+				partialState,
+				plotterStore.config,
+				(progress) => {
+					cutProgress = progress;
+					lastCompletedIdx = progress.lastCompletedIndex;
+				},
+			);
+
+			cutProgress = null;
+
+			if (result.ok) {
+				localStorage.removeItem("omniplot-resume-checkpoint");
+				resumeCheckpoint = null;
+				toastStore.success(
+					"Resume complete",
+					`${remainingItems.length} remaining pattern${remainingItems.length !== 1 ? "s" : ""} sent.`,
+				);
+			} else {
+				// Advance the checkpoint past any newly completed patterns
+				if (lastCompletedIdx >= 0) {
+					const sortedRemaining = [...remainingItems].sort((a, b) => a.layer - b.layer || a.y - b.y);
+					const newCheckpoint: ResumeCheckpoint = {
+						remainingItemIds: sortedRemaining.slice(lastCompletedIdx + 1).map((i) => i.id),
+						completedCount: checkpoint.completedCount + lastCompletedIdx + 1,
+						totalCount: checkpoint.totalCount,
+						presetName: plotterStore.config.name,
+					};
+					localStorage.setItem("omniplot-resume-checkpoint", JSON.stringify(newCheckpoint));
+					resumeCheckpoint = newCheckpoint;
+				}
+				diagData = result.diagnostic;
+				diagReported = result.diagnostic.escalate;
+			}
+		} finally {
+			cutting = false;
+			cutProgress = null;
+		}
+	}
+
 	async function handleCut() {
 		const user = userStore.user;
 		if (user) {
@@ -502,36 +583,70 @@
 			return;
 		}
 
-		// ── Live connection: async send ───────────────────────────────────
+		// ── Live connection: async segmented send ────────────────────────
+		// USB uses per-pattern segmented send so progress is tracked and the job
+		// can be resumed from a known pattern index if the connection drops.
+		// Network and Cut Agent use monolithic send (the agent/server handles serial).
 		cutting = true;
-		const hpgl = generateHpgl(canvasStore.state, plotterStore.config);
+		cutProgress = null;
+
+		// Sorted in-bounds items match the order generateHpglSegments will use
+		const sortedInBounds = [...inBounds].sort((a, b) => a.layer - b.layer || a.y - b.y);
+		let lastCompletedIdx = -1;
+
 		try {
-			const result = await sendToPlotter(hpgl, plotterStore.config);
+			const result = await sendToPlotterSegmented(
+				canvasStore.state,
+				plotterStore.config,
+				(progress) => {
+					cutProgress = progress;
+					lastCompletedIdx = progress.lastCompletedIndex;
+				},
+			);
+
+			cutProgress = null;
+
 			if (result.ok) {
-				toastStore.success("Sent to plotter", `${inBounds.length} paths sent successfully.`);
+				// Clear any stale resume checkpoint — job completed fully
+				localStorage.removeItem("omniplot-resume-checkpoint");
+				resumeCheckpoint = null;
+				toastStore.success("Sent to plotter", `${inBounds.length} pattern${inBounds.length !== 1 ? "s" : ""} sent successfully.`);
 				persistJob({ user, inBounds, eff, usedLength, patternArea, sheetArea, jobName });
 			} else {
+				// Save resume checkpoint if at least one pattern completed
+				if (lastCompletedIdx >= 0 && lastCompletedIdx < sortedInBounds.length - 1) {
+					const checkpoint: ResumeCheckpoint = {
+						remainingItemIds: sortedInBounds.slice(lastCompletedIdx + 1).map((i) => i.id),
+						completedCount: lastCompletedIdx + 1,
+						totalCount: sortedInBounds.length,
+						presetName: plotterStore.config.name,
+					};
+					localStorage.setItem("omniplot-resume-checkpoint", JSON.stringify(checkpoint));
+					resumeCheckpoint = checkpoint;
+				}
+
 				diagData     = result.diagnostic;
 				diagReported = result.diagnostic.escalate;
-				if (result.diagnostic.escalate && userStore.user) {
+				if (userStore.user) {
 					logPlotterError({
-						userId:       userStore.user.uid,
-						userEmail:    userStore.user.email ?? null,
-						displayName:  userStore.user.displayName ?? null,
+						userId:        userStore.user.uid,
+						userEmail:     userStore.user.email ?? null,
+						displayName:   userStore.user.displayName ?? null,
 						plotterPreset: plotterStore.config.name,
-						connection:   plotterStore.config.connection,
-						protocol:     plotterStore.config.protocol,
-						errorCode:    result.diagnostic.code,
-						errorTitle:   result.diagnostic.title,
-						errorRaw:     result.diagnostic.raw ?? "",
-						agentVersion: agentStore.version,
-						userAgent:    navigator.userAgent,
-						autoReported: true,
+						connection:    plotterStore.config.connection,
+						protocol:      plotterStore.config.protocol,
+						errorCode:     result.diagnostic.code,
+						errorTitle:    result.diagnostic.title,
+						errorRaw:      `${result.diagnostic.raw ?? ""} [interrupted after ${lastCompletedIdx + 1}/${sortedInBounds.length} patterns]`,
+						agentVersion:  null,
+						userAgent:     navigator.userAgent,
+						autoReported:  result.diagnostic.escalate,
 					}).catch(() => {});
 				}
 			}
 		} finally {
 			cutting = false;
+			cutProgress = null;
 		}
 	}
 
@@ -750,10 +865,41 @@
 
 	// ─── Canvas persistence ───────────────────────
 	let _mounted = false;
+	// ─── Cut Agent port list ─────────────────────
+	let agentPortsList = $state<Array<{ name: string; manufacturer?: string }>>([]);
+	let agentPortsLoading = $state(false);
+
+	async function fetchAgentPorts() {
+		agentPortsLoading = true;
+		const base = (plotterStore.config.agentUrl ?? "http://localhost:7878").replace(/\/$/, "");
+		try {
+			const res = await fetch(`${base}/api/ports`, { signal: AbortSignal.timeout(3000) });
+			if (res.ok) {
+				const ports: Array<{ name: string; isUSB: boolean; manufacturer?: string }> = await res.json();
+				agentPortsList = ports.filter((p) => p.isUSB);
+				if (!agentPortsList.length) toastStore.info("No USB ports found", "Connect a plotter via USB to the machine running the Cut Agent.");
+			} else {
+				agentPortsList = [];
+			}
+		} catch {
+			agentPortsList = [];
+			toastStore.warning("Agent unreachable", "Make sure the OmniPlot Cut Agent is running.");
+		} finally {
+			agentPortsLoading = false;
+		}
+	}
+
 	onMount(() => {
 		canvasStore.restoreFromStorage();
 		_mounted = true;
 		requestAnimationFrame(fitToView);
+		// Restore any interrupted job resume checkpoint
+		if (typeof localStorage !== "undefined") {
+			const raw = localStorage.getItem("omniplot-resume-checkpoint");
+			if (raw) {
+				try { resumeCheckpoint = JSON.parse(raw); } catch { localStorage.removeItem("omniplot-resume-checkpoint"); }
+			}
+		}
 		// Auto-trigger tour for first-time visitors
 		if (typeof localStorage !== "undefined" && !localStorage.getItem("op-tour-seen")) {
 			setTimeout(() => uiStore.openTour(), 800);
@@ -1065,6 +1211,16 @@
 		<!-- Spacer -->
 		<div style="flex:1" aria-hidden="true"></div>
 
+		<!-- Cut progress indicator — shown during segmented USB send -->
+		{#if cutProgress}
+			<div class="cut-progress" role="status" aria-live="polite" aria-label="Cut progress">
+				<div class="cut-progress__track">
+					<div class="cut-progress__fill" style="width: {(cutProgress.sent / cutProgress.total) * 100}%"></div>
+				</div>
+				<span class="cut-progress__label">{cutProgress.sent}/{cutProgress.total}</span>
+			</div>
+		{/if}
+
 		<!-- Export button -->
 		<button class="export-btn" onclick={() => (showExport = !showExport)}>
 			<svg
@@ -1184,6 +1340,31 @@
 					</div>
 				</div>
 			{/each}
+		</div>
+	{/if}
+
+	<!-- ─── Resume banner ─── -->
+	{#if resumeCheckpoint && !cutting}
+		<div class="resume-banner" role="alert">
+			<div class="resume-banner__info">
+				<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+				<span>
+					Job interrupted — <strong>{resumeCheckpoint.totalCount - resumeCheckpoint.completedCount}</strong> of <strong>{resumeCheckpoint.totalCount}</strong> patterns remaining
+					{#if resumeCheckpoint.presetName}
+						<span class="resume-banner__preset">· {resumeCheckpoint.presetName}</span>
+					{/if}
+				</span>
+			</div>
+			<div class="resume-banner__actions">
+				<button class="resume-banner__btn resume-banner__btn--primary" onclick={handleResumeCut} disabled={cutting}>
+					<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+					Resume Cut
+				</button>
+				<button
+					class="resume-banner__btn resume-banner__btn--ghost"
+					onclick={() => { resumeCheckpoint = null; localStorage.removeItem("omniplot-resume-checkpoint"); }}
+				>Dismiss</button>
+			</div>
 		</div>
 	{/if}
 
@@ -1745,10 +1926,14 @@
 						<select
 							class="prop-select"
 							aria-label="Connection method"
-							onchange={(e) =>
-								plotterStore.update({
-									connection: (e.target as HTMLSelectElement).value as any,
-								})}
+							onchange={(e) => {
+								const newConn = (e.target as HTMLSelectElement).value as PlotterConfig["connection"];
+								if (plotterStore.config.connection === "usb-serial" && newConn !== "usb-serial") {
+									handleDisconnectSerial();
+								}
+								plotterStore.switchConnection(newConn);
+								if (newConn === "cut-agent") fetchAgentPorts();
+							}}
 						>
 							{#each [["download", "Download PLT file"], ["usb-serial", "USB (Web Serial — Chrome/Edge)"], ["network", "Network (TCP/IP)"], ["cut-agent", "Local Cut Agent"]] as const as [val, label]}
 								<option value={val} selected={plotterStore.config.connection === val}>{label}</option>
@@ -1879,6 +2064,39 @@
 								{/each}
 							</select>
 						</div>
+						<div class="prop-section">
+							<div class="prop-label-row">
+								<span class="prop-label">Serial Port</span>
+								<button
+									class="prop-btn-inline"
+									onclick={fetchAgentPorts}
+									disabled={agentPortsLoading}
+									aria-label="Refresh port list"
+									title="Refresh"
+								>
+									{#if agentPortsLoading}
+										<span class="ai-spinner" style="width:10px;height:10px;" aria-hidden="true"></span>
+									{:else}
+										<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+									{/if}
+								</button>
+							</div>
+							<select
+								class="prop-select"
+								aria-label="Serial port"
+								onchange={(e) => plotterStore.update({ serialPort: (e.target as HTMLSelectElement).value })}
+							>
+								<option value="auto" selected={!plotterStore.config.serialPort || plotterStore.config.serialPort === "auto"}>Auto-detect</option>
+								{#each agentPortsList as p}
+									<option value={p.name} selected={plotterStore.config.serialPort === p.name}>
+										{p.name}{p.manufacturer ? ` — ${p.manufacturer}` : ""}
+									</option>
+								{/each}
+							</select>
+							{#if !agentPortsList.length && !agentPortsLoading}
+								<p class="prop-note">No USB ports found — connect a plotter to this machine and click refresh.</p>
+							{/if}
+						</div>
 					{/if}
 
 					<!-- ── Output Format ───────────────────────── -->
@@ -1949,7 +2167,7 @@
 <style>
 	.studio {
 		display: grid;
-		grid-template-rows: auto auto 1fr auto;
+		grid-template-rows: auto auto auto auto 1fr auto;
 		height: 100%;
 		overflow: hidden;
 		position: relative;
@@ -2315,6 +2533,117 @@
 		color: var(--text-secondary);
 		margin-top: 1px;
 	}
+
+	/* ─── Cut progress ─── */
+	.cut-progress {
+		display: flex;
+		align-items: center;
+		gap: 7px;
+		flex-shrink: 0;
+	}
+	.cut-progress__track {
+		width: 80px;
+		height: 4px;
+		background: var(--bg-surface-3);
+		border-radius: 99px;
+		overflow: hidden;
+	}
+	.cut-progress__fill {
+		height: 100%;
+		background: var(--color-brand);
+		border-radius: 99px;
+		transition: width 0.2s;
+	}
+	.cut-progress__label {
+		font-family: var(--font-mono);
+		font-size: 0.6875rem;
+		color: var(--text-secondary);
+		white-space: nowrap;
+	}
+
+	/* ─── Resume banner ─── */
+	.resume-banner {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		padding: 8px 16px;
+		background: color-mix(in srgb, var(--color-warning, #f7b731) 12%, var(--bg-surface));
+		border-bottom: 1px solid color-mix(in srgb, var(--color-warning, #f7b731) 35%, transparent);
+		font-size: 0.8125rem;
+		flex-wrap: wrap;
+	}
+	.resume-banner__info {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		color: var(--color-warning, #f7b731);
+		flex: 1;
+		min-width: 0;
+	}
+	.resume-banner__info span {
+		color: var(--text-primary);
+	}
+	.resume-banner__preset {
+		color: var(--text-secondary);
+	}
+	.resume-banner__actions {
+		display: flex;
+		gap: 6px;
+		flex-shrink: 0;
+	}
+	.resume-banner__btn {
+		display: flex;
+		align-items: center;
+		gap: 5px;
+		padding: 4px 12px;
+		font-size: 0.8rem;
+		font-weight: 600;
+		font-family: var(--font-body);
+		border-radius: var(--radius-md);
+		cursor: pointer;
+		transition: opacity 0.12s;
+	}
+	.resume-banner__btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+	.resume-banner__btn--primary {
+		background: var(--color-brand);
+		border: none;
+		color: #000;
+	}
+	.resume-banner__btn--primary:hover:not(:disabled) { opacity: 0.9; }
+	.resume-banner__btn--ghost {
+		background: transparent;
+		border: 1px solid var(--border-default);
+		color: var(--text-secondary);
+	}
+	.resume-banner__btn--ghost:hover:not(:disabled) {
+		background: var(--interactive-hover);
+		color: var(--text-primary);
+	}
+
+	/* ─── Inline prop row button ─── */
+	.prop-btn-inline {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 22px;
+		height: 22px;
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-sm);
+		background: var(--bg-surface-2);
+		color: var(--text-secondary);
+		cursor: pointer;
+		transition: background 0.1s, color 0.1s;
+		flex-shrink: 0;
+	}
+	.prop-btn-inline:hover:not(:disabled) {
+		background: var(--bg-surface-3);
+		color: var(--text-primary);
+	}
+	.prop-btn-inline:disabled { opacity: 0.4; cursor: not-allowed; }
 
 	/* ─── Body ────── */
 	.studio__body {

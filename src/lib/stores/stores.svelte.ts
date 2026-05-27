@@ -419,6 +419,32 @@ function _presetStorageKey(name: string) {
 	return `omniplot-preset:${name}`;
 }
 
+// Per-connection-type settings — restored when switching back to a connection type.
+const CONNECTION_PERSIST: Partial<Record<string, Array<keyof PlotterConfig>>> = {
+	"usb-serial": ["baudRate"],
+	"network":    ["ipAddress", "port"],
+	"cut-agent":  ["agentUrl", "baudRate", "serialPort"],
+	"download":   [],
+};
+
+function _connStorageKey(type: string) { return `omniplot-conn:${type}`; }
+
+function _saveConnSettings(type: string, config: PlotterConfig) {
+	if (typeof localStorage === "undefined") return;
+	const keys = CONNECTION_PERSIST[type] ?? [];
+	const data: Partial<PlotterConfig> = {};
+	for (const k of keys) if (config[k] !== undefined) (data as any)[k] = config[k];
+	if (Object.keys(data).length) localStorage.setItem(_connStorageKey(type), JSON.stringify(data));
+}
+
+function _loadConnSettings(type: string): Partial<PlotterConfig> {
+	if (typeof localStorage === "undefined") return {};
+	try {
+		const raw = localStorage.getItem(_connStorageKey(type));
+		return raw ? JSON.parse(raw) : {};
+	} catch { return {}; }
+}
+
 function _savePresetSettings(name: string, config: PlotterConfig) {
 	if (typeof localStorage === "undefined") return;
 	const data: Partial<Record<PresetPersistKey, number>> = {};
@@ -491,6 +517,14 @@ function createPlotterStore() {
 				bladeForce: Math.max(10, Math.min(500, saved.bladeForce ?? (preset.bladeForce as number) ?? config.bladeForce)),
 				cuttingSpeed: Math.max(10, Math.min(1200, saved.cuttingSpeed ?? (preset.cuttingSpeed as number) ?? config.cuttingSpeed)),
 			};
+		},
+		// Saves the current connection's specific settings, then restores the saved
+		// settings for the new connection type before switching. This ensures IP
+		// addresses, agent URLs, and baud rates are remembered per connection type.
+		switchConnection(newType: PlotterConfig["connection"]) {
+			_saveConnSettings(config.connection, config);
+			const saved = _loadConnSettings(newType);
+			config = { ...config, ...saved, connection: newType };
 		},
 	};
 }

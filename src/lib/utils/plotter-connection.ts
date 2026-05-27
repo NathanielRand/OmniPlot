@@ -14,10 +14,40 @@
 //   Response 4xx/5xx: { error: string }
 //   CORS: agent must include Access-Control-Allow-Origin: *
 // ─────────────────────────────────────────────
-import type { PlotterConfig } from "$lib/types";
+import type { PlotterConfig, CanvasState } from "$lib/types";
 import { classifyError, type PlotterDiagnostic } from "./plotter-errors";
+import { generateHpglSegments } from "./hpgl";
 
 export type SendResult = { ok: true } | { ok: false; diagnostic: PlotterDiagnostic };
+
+// Progress reported after each pattern segment is sent to the plotter.
+export interface CutProgress {
+    sent: number;              // patterns successfully flushed to plotter
+    total: number;             // total patterns in the job
+    label: string;             // name of the pattern just sent
+    lastCompletedIndex: number; // 0-based index of the last pattern confirmed sent (-1 = none)
+}
+export type ProgressCallback = (p: CutProgress) => void;
+
+// Segmented send for USB-serial: sends preamble + each pattern individually.
+// Correctly avoids splitting HPGL commands across write boundaries.
+// onProgress is called after each pattern is flushed so the caller can checkpoint.
+// Returns { completedCount } so the caller knows exactly where to resume on failure.
+export async function sendToPlotterSegmented(
+    state: CanvasState,
+    config: PlotterConfig,
+    onProgress?: ProgressCallback,
+): Promise<SendResult & { completedCount: number }> {
+    if (config.connection !== "usb-serial") {
+        // Non-USB connections don't support streaming — fall back to monolithic send
+        const { generateHpgl } = await import("./hpgl");
+        const hpgl = generateHpgl(state, config);
+        const result = await sendToPlotter(hpgl, config);
+        const total = state.items.filter((i) => !i.outOfBounds).length;
+        return { ...result, completedCount: result.ok ? total : 0 };
+    }
+    return _sendViaSerialSegmented(state, config, onProgress);
+}
 
 // ─── Web Serial port cache ────────────────────
 // Survives across handleCut calls in a session so the browser
@@ -122,6 +152,8 @@ export async function sendToPlotter(
 }
 
 // ─── USB-Serial (Web Serial API) ─────────────
+// Monolithic send — used for settings-only sends (force/speed) where segmentation
+// is unnecessary. Individual HPGL commands are short so no split-command risk.
 async function sendViaSerial(hpgl: string, config: PlotterConfig): Promise<SendResult> {
     if (!("serial" in navigator)) {
         return {
@@ -132,41 +164,95 @@ async function sendViaSerial(hpgl: string, config: PlotterConfig): Promise<SendR
     try {
         if (!_cachedPort) {
             const info = await connectSerialPort(config.baudRate ?? 9600);
-            void info; // port is cached as side effect
+            void info;
         }
         const port = _cachedPort!;
-
-        // Re-open if the port was closed (e.g. plotter was power-cycled)
-        if (!port.readable || port.readable.locked === false && !port.writable) {
-            await port.open({
-                baudRate: config.baudRate ?? 9600,
-                dataBits: 8,
-                stopBits: 1,
-                parity: "none",
-                flowControl: "none",
-            });
-        }
-
-        const writer = port.writable.getWriter();
-        try {
-            const bytes = new TextEncoder().encode(hpgl);
-            // 4 KB chunks — conservative for plotter receive buffers
-            const CHUNK = 4096;
-            for (let i = 0; i < bytes.length; i += CHUNK) {
-                await writer.write(bytes.slice(i, i + CHUNK));
-            }
-        } finally {
-            writer.releaseLock();
-        }
+        await _ensurePortOpen(port, config.baudRate ?? 9600);
+        await _writeString(port.writable, hpgl);
         return { ok: true };
     } catch (err: any) {
         if (err?.name === "NetworkError" || err?.name === "InvalidStateError") {
-            _cachedPort = null; // force re-selection next time
+            _cachedPort = null;
         }
         return {
             ok: false,
             diagnostic: classifyError(err?.message ?? "Serial send failed.", "usb-serial"),
         };
+    }
+}
+
+// Segmented serial send — one pattern at a time with a 60ms inter-pattern pause.
+// Prevents HPGL command splitting and plotter buffer overflow.
+async function _sendViaSerialSegmented(
+    state: CanvasState,
+    config: PlotterConfig,
+    onProgress?: ProgressCallback,
+): Promise<SendResult & { completedCount: number }> {
+    if (!("serial" in navigator)) {
+        return {
+            ok: false,
+            diagnostic: classifyError("Web Serial is only available in Chrome or Edge.", "usb-serial"),
+            completedCount: 0,
+        };
+    }
+    try {
+        if (!_cachedPort) {
+            await connectSerialPort(config.baudRate ?? 9600);
+        }
+        const port = _cachedPort!;
+        await _ensurePortOpen(port, config.baudRate ?? 9600);
+
+        const stream = generateHpglSegments(state, config);
+        const total = stream.segments.length;
+        let completedCount = 0;
+
+        // Send preamble (setup commands: IN, VS, FS/FC, SP1, PA, [IP])
+        await _writeString(port.writable, stream.preamble + "\n");
+
+        for (let i = 0; i < stream.segments.length; i++) {
+            const seg = stream.segments[i];
+            // Each segment is a complete HPGL sequence for one pattern — no command splits
+            await _writeString(port.writable, `\n; --- ${seg.label} ---\n${seg.hpgl}\n`);
+            completedCount = i + 1;
+            onProgress?.({
+                sent: completedCount,
+                total,
+                label: seg.label,
+                lastCompletedIndex: i,
+            });
+            // 60ms pause lets the plotter finish buffering before the next pattern arrives.
+            // This prevents buffer overflow on plotters without hardware flow control.
+            if (i < stream.segments.length - 1) {
+                await new Promise((r) => setTimeout(r, 60));
+            }
+        }
+
+        await _writeString(port.writable, "\n" + stream.epilogue + "\n");
+        return { ok: true, completedCount };
+    } catch (err: any) {
+        if (err?.name === "NetworkError" || err?.name === "InvalidStateError") {
+            _cachedPort = null;
+        }
+        return {
+            ok: false,
+            diagnostic: classifyError(err?.message ?? "Serial send failed.", "usb-serial"),
+            completedCount: 0,
+        };
+    }
+}
+
+async function _ensurePortOpen(port: any, baudRate: number): Promise<void> {
+    if (!port.readable || (!port.readable.locked && !port.writable)) {
+        await port.open({ baudRate, dataBits: 8, stopBits: 1, parity: "none", flowControl: "none" });
+    }
+}
+
+async function _writeString(writable: WritableStream<Uint8Array>, str: string): Promise<void> {
+    const writer = writable.getWriter();
+    try {
+        await writer.write(new TextEncoder().encode(str));
+    } finally {
+        writer.releaseLock();
     }
 }
 

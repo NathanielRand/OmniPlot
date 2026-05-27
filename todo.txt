@@ -1,9 +1,10 @@
 - Create a local plotter emulator/simulator to verify the communication between plotter and agent (or other method) is bidirectional and valid throughout each expected communication event with proper processing and response. we need to test without having the quipment in person.
-- Plotter device compatability pass another  couple of times.
 - investors page
 - add vehicle tag to the studio grid so we can see what car was selected. if more than 1 car pattern was placed, show the list of the cars with tags for each pattern to know which pattern goes to which car.
-- plotter settings are not changing
-- canvas (print zone) has excess space (right side) on most jobs but esepecially on single pattern jobs or narrow jobs. We need this to only use the necessary material
 - create (or send the command to use the plotters default test) a test print feature that creates a small perfect square, triangle, & circle.
 - HEAT SHRINKAGE: add option/setting for user to add internal buffer to each design to intentional give excess inside the cut zone line a 1cm-ish default (can be changed by user) for user's placements and make up from HEAT SHRINKAGE
-- disable cut/export buttons when user's cut use limited reached and verify all our metered services & features are properly gated.
+- changing the settings for plotter make the cutter wiggle which i guess proves there is a connection of sorts but it doesnt seem to be changing the actual cut settings and syncing with omniplots. Specifically, we are testing with a VEVOR 53 inch plotter. We need to reapproach those settings connections. We need to successfully be able to change the plotters blade force, speed, passes, overcut mm, x offset, y offset.
+
+
+- TEST: Cut job was interrupted and stopped after successfully completing half of the job. We need to investigate why, then we need some corrective measures to salavage the job without destroying what was done, and finally we need to wire these metrics back to the user & admin for troubleshooting and review.
+- TEST: Cut agent, USB, download connection methods and settings are messed up and crossing over each other. When the user selected a connection method (agent, usb, download, etc) the other related settings need to adjust auto adjust. For example, When  the user clicked detect plotter, we need to match the other related settings/params to match. the settings need some state and persistance  for each connection method type selected. the platform needs to be more strict about enforcing certain overlapping rules that could create conflicts.
