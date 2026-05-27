@@ -4,7 +4,7 @@
 	import Logo from "$lib/components/ui/Logo.svelte";
 	import Badge from "$lib/components/ui/Badge.svelte";
 	import ThemeToggle from "$lib/components/ui/ThemeToggle.svelte";
-	import { uiStore, userStore, shopStore } from "$lib/stores";
+	import { uiStore, userStore, shopStore, agentStore } from "$lib/stores";
 	import { APP_NAV } from "$lib/config";
 	import { signOutUser } from "$lib/firebase/auth";
 	import { goto } from "$app/navigation";
@@ -95,6 +95,9 @@
 						: undefined}
 				>
 					{item.label}
+					{#if item.href === "/studio/agent" && agentStore.needsUpdate}
+						<span class="nav-update-dot" title="Agent update available" aria-label="Update available"></span>
+					{/if}
 				</a>
 			{/each}
 		</nav>
@@ -348,6 +351,9 @@
 							{/if}
 						</span>
 						<span class="sidebar__label">{item.label}</span>
+						{#if item.href === "/studio/agent" && agentStore.needsUpdate}
+							<span class="sidebar__update-badge" title="Agent update available" aria-label="Update available">Update</span>
+						{/if}
 					</a>
 				{/each}
 			</nav>
@@ -452,6 +458,24 @@
 	.topbar__nav-item.active {
 		background: var(--bg-surface-3);
 		color: var(--text-primary);
+	}
+
+	/* Update dot shown next to "Agent" in topbar when a new version is available */
+	.nav-update-dot {
+		display: inline-block;
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: var(--color-warning, #f59e0b);
+		margin-left: 4px;
+		flex-shrink: 0;
+		vertical-align: middle;
+		animation: update-pulse 2s ease-in-out infinite;
+	}
+
+	@keyframes update-pulse {
+		0%, 100% { opacity: 1; }
+		50% { opacity: 0.4; }
 	}
 
 	.topbar__right {
@@ -739,6 +763,21 @@
 	.sidebar__label {
 		overflow: hidden;
 		text-overflow: ellipsis;
+		flex: 1;
+	}
+
+	/* "Update" pill badge shown in sidebar next to Agent link */
+	.sidebar__update-badge {
+		flex-shrink: 0;
+		padding: 1px 6px;
+		border-radius: 999px;
+		font-size: 0.6rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		background: var(--color-warning, #f59e0b);
+		color: #000;
+		animation: update-pulse 2s ease-in-out infinite;
 	}
 
 	.sidebar__footer {

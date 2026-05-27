@@ -537,6 +537,8 @@ export const plotterStore = createPlotterStore();
 function createAgentStore() {
 	let status  = $state<"unknown" | "online" | "offline">("unknown");
 	let version = $state<string | null>(null);
+	// Imported inline to avoid circular imports through the config barrel
+	const REQUIRED_VERSION = "1.0.1";
 	let stats   = $state<{
 		jobsTotal?: number;
 		jobsToday?: number;
@@ -547,9 +549,14 @@ function createAgentStore() {
 	} | null>(null);
 
 	return {
-		get status()  { return status;  },
-		get version() { return version; },
-		get stats()   { return stats;   },
+		get status()           { return status;  },
+		get version()          { return version; },
+		get stats()            { return stats;   },
+		/** True when agent is running but reports a version older than REQUIRED_VERSION. */
+		get needsUpdate()      { return status === "online" && version !== null && version !== REQUIRED_VERSION; },
+		/** True when agent is running and is the expected version. */
+		get isCurrentVersion() { return status === "online" && version === REQUIRED_VERSION; },
+		get requiredVersion()  { return REQUIRED_VERSION; },
 		setOnline(v: string) {
 			status  = "online";
 			version = v;

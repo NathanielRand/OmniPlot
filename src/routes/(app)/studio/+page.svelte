@@ -1942,6 +1942,12 @@
 						</div>
 
 						{#if discoveredDevices.length > 0}
+							{#if agentStore.needsUpdate}
+								<div class="discovery-update-warn">
+									<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+									<span>Agent v{agentStore.version} is outdated — <a href="/studio/agent" class="discovery-update-warn__link">update required</a> before connecting.</span>
+								</div>
+							{/if}
 							<div class="device-list">
 								{#each discoveredDevices as device (device.id)}
 									<div
@@ -2022,20 +2028,24 @@
 														Disconnect
 													</button>
 												{:else if device.status === "detected"}
-													<button
-														class="device-action-connect"
-														onclick={(e) => { e.stopPropagation(); handleConnectDevice(device); }}
-														disabled={connecting}
-													>
-														{#if connecting}
-															<span class="ai-spinner" style="width:10px;height:10px" aria-hidden="true"></span>
-															Connecting…
-														{:else if device.source === "usb"}
-															Select USB Port…
-														{:else}
-															Connect
-														{/if}
-													</button>
+													{#if device.source === "agent" && agentStore.needsUpdate}
+														<a href="/studio/agent" class="device-action-update">Update agent →</a>
+													{:else}
+														<button
+															class="device-action-connect"
+															onclick={(e) => { e.stopPropagation(); handleConnectDevice(device); }}
+															disabled={connecting}
+														>
+															{#if connecting}
+																<span class="ai-spinner" style="width:10px;height:10px" aria-hidden="true"></span>
+																Connecting…
+															{:else if device.source === "usb"}
+																Select USB Port…
+															{:else}
+																Connect
+															{/if}
+														</button>
+													{/if}
 												{:else}
 													<span class="device-offline-msg">Reconnect cable and rescan</span>
 												{/if}
@@ -4273,6 +4283,46 @@
 		opacity: 0.45;
 		cursor: default;
 	}
+
+	/* ── Update required button / banner ────────── */
+
+	.device-action-update {
+		padding: 5px 12px;
+		border-radius: var(--radius-sm);
+		font-size: 0.73rem;
+		font-weight: 600;
+		font-family: var(--font-body);
+		text-decoration: none;
+		display: inline-flex;
+		align-items: center;
+		background: rgba(245, 158, 11, 0.12);
+		color: #f59e0b;
+		border: 1px solid rgba(245, 158, 11, 0.45);
+		transition: background 0.12s;
+	}
+	.device-action-update:hover {
+		background: rgba(245, 158, 11, 0.2);
+	}
+	.discovery-update-warn {
+		display: flex;
+		align-items: center;
+		gap: 7px;
+		padding: 7px 10px;
+		margin: 0 0 8px;
+		background: rgba(245, 158, 11, 0.08);
+		border: 1px solid rgba(245, 158, 11, 0.35);
+		border-radius: var(--radius-md);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
+		line-height: 1.4;
+	}
+	.discovery-update-warn svg { color: #f59e0b; flex-shrink: 0; }
+	.discovery-update-warn__link {
+		color: #f59e0b;
+		font-weight: 600;
+		text-decoration: none;
+	}
+	.discovery-update-warn__link:hover { text-decoration: underline; }
 
 	/* ── Offline message ─────────────────────── */
 
