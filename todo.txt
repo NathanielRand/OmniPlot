@@ -1,12 +1,37 @@
 - Create a local plotter emulator/simulator to verify the communication between plotter and agent (or other method) is bidirectional and valid throughout each expected communication event with proper processing and response. we need to test without having the quipment in person.
 - investors page
+- offline mode
 - add vehicle tag to the studio grid so we can see what car was selected. if more than 1 car pattern was placed, show the list of the cars with tags for each pattern to know which pattern goes to which car.
 - create (or send the command to use the plotters default test) a test print feature that creates a small perfect square, triangle, & circle.
 - HEAT SHRINKAGE: add option/setting for user to add internal buffer to each design to intentional give excess inside the cut zone line a 1cm-ish default (can be changed by user) for user's placements and make up from HEAT SHRINKAGE
-
-- TEST: the first pattern for any job completes succesfully but the any additional patterns after the first never even start. Instead of moving on the next pattern in the job's pattern order/queue, it jumps to the end where it makes its final end cut off of the film to seperate it from the rest of the roll. The last step is expected and good but not before the rest of the added patterns to job are finished cutting. we need to make sure that each pattern is properly accounted for and not a single one is forgotten about. We need to verify our job handles recoveries correctly and acknowledges when a job is not complete fully. These are the types of logs admin/user could benefit from seeing the admin dashboard.
-- Also there is likely an origin settings issues. perhaps the 53 inche plotter and the 40 inch roll are not aligned in the correct origin and maybe it assume the 13 inch difference in the wrong origin. We need a smart way to verify all origin match, even if it requires the user to manually adjustment the equipment if needed.
-- update agent page with one click instructions. disclose that you may have to click "more info" and then "run anyways" with screenshots.
-- detect if up-to-date agent is already on the device before redownloading.
 - add shop/enterprise accounts to admin/users view
+- TEST: the first pattern for any job completes succesfully but the any additional patterns after the first never even start. Instead of moving on the next pattern in the job's pattern order/queue, it jumps to the end where it makes its final end cut off of the film to seperate it from the rest of the roll. The last step is expected and good but not before the rest of the added patterns to job are finished cutting. we need to make sure that each pattern is properly accounted for and not a single one is forgotten about. We need to verify our job handles recoveries correctly and acknowledges when a job is not complete fully. These are the types of logs admin/user could benefit from seeing the admin dashboard.
+- Also there is likely an origin settings issues. perhaps the 53 inch plotter and the 40 inch roll are not aligned in the correct origin and maybe the 13 inch difference is in the wrong origin. We need a smart way to verify all origins match, even if it requires the user to manually adjustment or relay info from the equipment back to the site if needed. We need a efficient, simple solution.
 - username missing on jude's review cut jobs from the admin view. might be due to phone signup or the name show is just a stripped down email which shouldnt be used. it should be the username.
+- show "update" badge next to dashboard agent navlink and before any agent connection attempt if a new agent version has been deployed that the user is not currently on. we will need version tracking on the agent so we can check what version is being used. users shouldnt be able to use an old agent. prompt to delete previous agent if one exists when dowloading new one.
+- detect if up-to-date agent is already on the device before redownloading.
+- We need to show stupid simple instructions first above any termainal commands (keep those too somehwere for those who know) with strong visuals for agent getting started guides. Make sure it is accurate for each OS option. Update in dashboard and on marketing page. Example:
+Simple — no terminal needed
+    1. Find the downloaded file in your file manager
+    2. Right-click → Properties → Permissions → tick "Allow executing as program"
+    3. Double-click to run, or right-click → Run as Program
+    4. A terminal window opens showing the agent is running. Leave it open.
+*disclose that you may have to click "more info" and then "run anyways" if you dont give it perms
+
+LAST OFF:
+the plotter discovery plotter is flickering the ui everytime it rechecks. can we abstract that
+  flicker away and add a cool animation
+
+● Let me read the discovery code and template to understand exactly what causes the flicker:
+
+  Read 1 file (ctrl+o to expand)
+
+● The flicker has two causes:
+  1. Every poll sets discoveryPhase = "scanning" → the header text jumps to "Scanning…" and the
+  rescan button disables
+  2. discoveredDevices = merged replaces the whole array — even for unchanged devices
+
+  The fix is two-pronged: make background polls silent (no phase change, data-only update at the
+  end), and add CSS transitions so any status changes animate instead of snap.
+
+  Let me see the full interval/mount setup and the rescan button:

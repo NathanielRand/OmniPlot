@@ -12,6 +12,7 @@
 // ─────────────────────────────────────────────
 import type { CanvasItem, CanvasState, PlotterConfig, MaterialSheet } from "$lib/types";
 import { HPGL_UNITS_PER_INCH } from "$lib/config";
+import { samplePolygonArea } from "./nesting";
 
 const SVG_PX_PER_INCH = 96;
 const MM_PER_INCH = 25.4;
@@ -499,8 +500,13 @@ export function calcEfficiency(items: CanvasItem[], sheet: MaterialSheet): numbe
 	if (!inBounds.length) return 0;
 	const usedLength = Math.max(...inBounds.map((i) => i.x + i.width));
 	if (usedLength === 0) return 0;
-	// Area used / (roll width × consumed roll length) — not the full roll
-	const usedArea = inBounds.reduce((sum, i) => sum + i.width * i.height, 0);
+	// Polygon area / (roll width × consumed roll length) — not the full roll.
+	// Uses the actual cut-path outline, not the bounding box, so curved shapes
+	// (e.g. hood pieces) don't get credited for corner material outside the cut.
+	const usedArea = inBounds.reduce(
+		(sum, i) => sum + samplePolygonArea(i.pattern.svgPath, i.width, i.height),
+		0,
+	);
 	return Math.min(1, usedArea / (sheet.widthInches * usedLength));
 }
 

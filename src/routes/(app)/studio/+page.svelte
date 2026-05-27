@@ -111,13 +111,7 @@
 		const usedLength = Math.max(...inBounds.map((i) => i.x + i.width), 0);
 		if (usedLength === 0) return 0;
 		const patternArea = inBounds.reduce(
-			(s, i) =>
-				s +
-				samplePolygonArea(
-					i.pattern.svgPath,
-					i.pattern.widthInches,
-					i.pattern.heightInches,
-				),
+			(s, i) => s + samplePolygonArea(i.pattern.svgPath, i.width, i.height),
 			0,
 		);
 		return Math.min(1, patternArea / (canvasStore.sheet.widthInches * usedLength));
@@ -296,6 +290,7 @@
 	let selectedDeviceId   = $state<string | null>(null);
 	let autoConnectedAgent = $state(false);  // prevents re-auto-connecting on every poll
 	let testingConn        = $state(false);
+	let bgRefreshing       = $state(false);  // silent background poll in progress
 
 	const liveDevices    = $derived(discoveredDevices.filter(d => d.status !== "offline"));
 	const selectedDevice = $derived(discoveredDevices.find(d => d.id === selectedDeviceId) ?? null);
@@ -341,8 +336,14 @@
 	// ─── Plotter discovery ───────────────────────
 	// Polls all sources (Cut Agent USB ports + Web Serial granted ports),
 	// merges results, auto-connects agent devices, and updates live status.
-	async function runDiscovery() {
-		discoveryPhase = "scanning";
+	// silent=true: background poll — skips the "Scanning…" phase change so the
+	// UI doesn't flicker every 8s. Data is still updated atomically at the end.
+	async function runDiscovery(silent = false) {
+		if (silent) {
+			bgRefreshing = true;
+		} else {
+			discoveryPhase = "scanning";
+		}
 		const now = Date.now();
 		const next: DiscoveredDevice[] = [];
 
@@ -417,7 +418,8 @@
 		}
 
 		discoveredDevices = merged;
-		discoveryPhase = "done";
+		if (!silent) discoveryPhase = "done";
+		bgRefreshing = false;
 
 		// 4. Auto-select + auto-connect
 		const online = merged.filter(d => d.status !== "offline");
@@ -663,7 +665,7 @@
 
 		const usedLength = Math.max(...inBounds.map((i) => i.x + i.width));
 		const patternArea = inBounds.reduce(
-			(s, i) => s + samplePolygonArea(i.pattern.svgPath, i.pattern.widthInches, i.pattern.heightInches),
+			(s, i) => s + samplePolygonArea(i.pattern.svgPath, i.width, i.height),
 			0,
 		);
 		const sheetArea = canvasStore.sheet.widthInches * usedLength;
@@ -1033,8 +1035,8 @@
 			});
 		}
 
-		// Poll every 8s — keeps status dots live without hammering the agent
-		const pollInterval = setInterval(runDiscovery, 8_000);
+		// Poll every 8s — silent so the UI doesn't flash "Scanning…" each cycle
+		const pollInterval = setInterval(() => runDiscovery(true), 8_000);
 		cleanup.push(() => clearInterval(pollInterval));
 
 		return () => cleanup.forEach(fn => fn());
@@ -1920,12 +1922,17 @@
 							</div>
 							<button
 								class="discovery-rescan-btn"
+								class:discovery-rescan-btn--spinning={bgRefreshing}
 								onclick={() => runDiscovery()}
 								disabled={discoveryPhase === "scanning"}
 								title="Rescan for cutters"
 								aria-label="Rescan"
 							>
-								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true">
+								<svg
+									class="rescan-icon"
+									class:rescan-icon--spin={bgRefreshing || discoveryPhase === "scanning"}
+									width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"
+								>
 									<path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
 									<path d="M3 3v5h5"/>
 									<path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/>
@@ -3974,6 +3981,15 @@
 
 	/* ── Plotter Discovery Panel ──────────────── */
 
+	@keyframes discovery-card-in {
+		from { opacity: 0; transform: translateY(-4px); }
+		to   { opacity: 1; transform: translateY(0); }
+	}
+
+	@keyframes rescan-spin {
+		to { transform: rotate(360deg); }
+	}
+
 	.discovery-panel {
 		display: flex;
 		flex-direction: column;
@@ -4001,6 +4017,7 @@
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
+		transition: opacity 0.2s ease;
 	}
 
 	.discovery-rescan-btn {
@@ -4029,6 +4046,20 @@
 		opacity: 0.45;
 		cursor: default;
 	}
+	/* Subtle highlight pulse while a background refresh is in flight */
+	.discovery-rescan-btn--spinning {
+		border-color: var(--color-accent, #7c3aed);
+		color: var(--color-accent, #7c3aed);
+	}
+
+	.rescan-icon {
+		display: block;
+		flex-shrink: 0;
+		transform-origin: center;
+	}
+	.rescan-icon--spin {
+		animation: rescan-spin 0.9s linear infinite;
+	}
 
 	/* ── Device list ─────────────────────────── */
 
@@ -4046,7 +4077,8 @@
 		background: var(--bg-surface-2);
 		border: 1px solid var(--border-subtle);
 		border-radius: var(--radius-md);
-		transition: border-color 0.12s, background 0.12s;
+		transition: border-color 0.35s ease, background 0.35s ease, opacity 0.35s ease;
+		animation: discovery-card-in 0.25s ease both;
 	}
 	.device-card--connected {
 		border-color: var(--color-success, #22c55e);
@@ -4081,6 +4113,7 @@
 		height: 8px;
 		border-radius: 50%;
 		flex-shrink: 0;
+		transition: background 0.4s ease, box-shadow 0.4s ease;
 	}
 	.device-dot--detected {
 		background: var(--color-warning, #f59e0b);
@@ -4093,6 +4126,7 @@
 	}
 	.device-dot--offline {
 		background: var(--text-disabled, #6b7280);
+		box-shadow: none;
 	}
 
 	@keyframes dot-pulse {
@@ -4135,6 +4169,7 @@
 		font-weight: 600;
 		text-transform: uppercase;
 		letter-spacing: 0.04em;
+		transition: background 0.4s ease, color 0.4s ease;
 	}
 	.device-status-badge--connected {
 		background: color-mix(in srgb, var(--color-success, #22c55e) 18%, transparent);

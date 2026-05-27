@@ -60,13 +60,13 @@ describe('calcEfficiency', () => {
 		const item = makeItem({ outOfBounds: true });
 		expect(calcEfficiency([item], sheet)).toBe(0);
 	});
-	it('100% efficiency: item exactly fills consumed area', () => {
-		// 2"×1" item starting at x=0: used length = 2", used area = 2
-		// efficiency = 2 / (60 * 2) = 1/60 ≈ not 1. Let's use sheet width = 2 instead.
+	it('50% efficiency: rectangular item occupies half the consumed area', () => {
+		// Rectangular SVG path → polygon area == bbox area == 2"×1" = 2 sq in.
+		// narrowSheet width=2": denominator = 2 * usedLen(2) = 4. eff = 2/4 = 0.5.
 		const narrowSheet: MaterialSheet = { ...sheet, widthInches: 2 };
 		const item = makeItem({ width: 2, height: 1 });
 		const eff = calcEfficiency([item], narrowSheet);
-		expect(eff).toBeCloseTo(0.5); // area=2, sheetW*usedLen = 2*2 = 4, eff=0.5
+		expect(eff).toBeCloseTo(0.5);
 	});
 	it('capped at 1', () => {
 		const item = makeItem({ width: 60, height: 1200 });
