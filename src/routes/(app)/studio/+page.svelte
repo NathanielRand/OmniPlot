@@ -1744,11 +1744,6 @@
 									Won't cut
 								</div>
 							{/if}
-							<span
-								class="cut-item__label"
-								style="color: {item.color}"
-								>{item.label ?? item.pattern.name}</span
-							>
 						</div>
 					{/each}
 
