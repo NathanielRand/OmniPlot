@@ -6,7 +6,7 @@ import type { PricingPlan, MaterialSheet, TintFilm, PlotterConfig, ShopPlan } fr
 // ─── Cut Agent version ────────────────────────
 // Single source of truth. Bump here when a new agent binary is deployed.
 // Any running agent that reports a different version triggers the update badge + block.
-export const CURRENT_AGENT_VERSION = "1.0.1";
+export const CURRENT_AGENT_VERSION = "1.1.0";
 
 // ─── Plotter preset type ──────────────────────
 // Extends PlotterConfig with hardware metadata used for detection and compatibility.

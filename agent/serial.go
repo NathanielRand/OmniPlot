@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"go.bug.st/serial"
@@ -27,6 +28,19 @@ type cutResponse struct {
 	OK           bool   `json:"ok"`
 	BytesWritten int    `json:"bytesWritten"`
 	Port         string `json:"port"`
+}
+
+type queryRequest struct {
+	Command    string `json:"command"`
+	SerialPort string `json:"serialPort"`
+	BaudRate   int    `json:"baudRate"`
+	TimeoutMs  int    `json:"timeoutMs"`
+}
+
+type queryResponse struct {
+	OK       bool   `json:"ok"`
+	Response string `json:"response"`
+	Port     string `json:"port"`
 }
 
 type portInfo struct {
@@ -171,6 +185,95 @@ func resolvePort(name string) (string, error) {
 		return "", fmt.Errorf("no serial ports found — is the cutter connected and powered on?")
 	}
 	return simple[0], nil
+}
+
+// ─── /api/query ───────────────────────────────
+// Bidirectional serial: sends a command string to the plotter and reads back
+// the response. Used for HPGL queries such as OA (Output Actual Position)
+// during roll-alignment calibration.
+
+func handleQuery(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonError(w, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+
+	var req queryRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+	if req.Command == "" {
+		jsonError(w, http.StatusBadRequest, "command required")
+		return
+	}
+	if req.TimeoutMs <= 0 {
+		req.TimeoutMs = 3000
+	}
+	if req.BaudRate == 0 {
+		req.BaudRate = 9600
+	}
+	if req.SerialPort == "" {
+		req.SerialPort = "auto"
+	}
+
+	portName, err := resolvePort(req.SerialPort)
+	if err != nil {
+		jsonError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+
+	response, err := querySerial(portName, req.BaudRate, req.Command, req.TimeoutMs)
+	if err != nil {
+		bus.emit(AgentEvent{Type: EvtError, Method: "POST", Path: "/api/query", Status: 500, Port: portName, Message: err.Error()})
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	bus.emit(AgentEvent{Type: EvtInfo, Method: "POST", Path: "/api/query", Status: 200, Port: portName, Message: "query: " + strings.TrimSpace(req.Command)})
+	jsonOK(w, queryResponse{OK: true, Response: response, Port: portName})
+}
+
+// querySerial opens portName, writes command, then reads until a response
+// terminator (\r, \n, or trailing ;) is seen or timeoutMs elapses.
+// Uses 100 ms read slices so the outer deadline can interrupt cleanly.
+func querySerial(portName string, baudRate int, command string, timeoutMs int) (string, error) {
+	mode := &serial.Mode{
+		BaudRate: baudRate,
+		DataBits: 8,
+		Parity:   serial.NoParity,
+		StopBits: serial.OneStopBit,
+	}
+	port, err := serial.Open(portName, mode)
+	if err != nil {
+		return "", fmt.Errorf("cannot open %s: %w", portName, err)
+	}
+	defer port.Close()
+
+	// Short per-read timeout so we can check the overall deadline between slices.
+	port.SetReadTimeout(100 * time.Millisecond)
+
+	if _, err := port.Write([]byte(command)); err != nil {
+		return "", fmt.Errorf("write error on %s: %w", portName, err)
+	}
+
+	var buf []byte
+	deadline := time.Now().Add(time.Duration(timeoutMs) * time.Millisecond)
+	tmp := make([]byte, 256)
+
+	for time.Now().Before(deadline) {
+		n, _ := port.Read(tmp)
+		if n > 0 {
+			buf = append(buf, tmp[:n]...)
+			s := string(buf)
+			// Common HPGL response terminators: CR, LF, or trailing semicolon
+			if strings.ContainsAny(s, "\r\n") || strings.HasSuffix(strings.TrimRight(s, " "), ";") {
+				break
+			}
+		}
+	}
+
+	return strings.TrimSpace(string(buf)), nil
 }
 
 // ─── Serial write ─────────────────────────────
