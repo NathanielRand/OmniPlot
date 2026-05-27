@@ -392,7 +392,10 @@
 		try {
 			serialPortInfo = await connectSerialPort(plotterStore.config.baudRate ?? 9600);
 
-			// Immediately match VID/PID from the authorized port — no second "Detect" click needed
+			// Auto-switch connection type so settings sends and cut sends use the right path
+			plotterStore.update({ connection: "usb-serial" });
+
+			// Immediately match VID/PID — no second "Detect" click needed
 			const match = matchPortToPreset(serialPortInfo.vendorId, serialPortInfo.productId);
 			if (match) {
 				detectedPlotter = match;
@@ -403,17 +406,21 @@
 						`${match.preset.name} — settings applied automatically.`,
 					);
 				} else {
-					toastStore.success("Port connected", serialPortInfo.label);
-					if (match.confidence === "generic" && match.detail.includes("bridge")) {
+					if (match.detail.toLowerCase().includes("bridge")) {
 						toastStore.info(
-							"USB adapter detected",
-							"Budget cutter via serial bridge — select your preset manually.",
+							"USB device connected",
+							"Bridge chip detected — select your plotter model for optimal settings.",
 						);
+					} else {
+						toastStore.success("Port connected", serialPortInfo.label);
 					}
 				}
 			} else {
 				toastStore.success("Port connected", serialPortInfo.label);
 			}
+
+			// Sync current UI cut settings to plotter immediately after connecting
+			sendSettings(plotterStore.config).catch(() => {});
 		} catch (err: any) {
 			if (err?.name !== "NotAllowedError") {
 				toastStore.error("Connection failed", err?.message ?? "Could not open serial port.");
@@ -1557,11 +1564,15 @@
 							<div class="detect-result">
 								<span class="detect-result__dot"></span>
 								<div class="detect-result__info">
-									<span class="detect-result__name">{detectedPlotter.preset.name}</span>
+									<span class="detect-result__name">
+										{detectedPlotter.confidence === "generic"
+											? "USB Device Detected"
+											: detectedPlotter.preset.name}
+									</span>
 									<span class="detect-result__detail">{detectedPlotter.detail}</span>
 								</div>
 								<span class="detect-badge detect-badge--{detectedPlotter.confidence === 'exact-vid' ? 'exact' : detectedPlotter.confidence === 'manufacturer-name' ? 'mfr' : 'generic'}">
-									{detectedPlotter.confidence === "exact-vid" ? "Exact match" : detectedPlotter.confidence === "manufacturer-name" ? "By name" : "Generic"}
+									{detectedPlotter.confidence === "exact-vid" ? "Exact match" : detectedPlotter.confidence === "manufacturer-name" ? "By name" : "Select model"}
 								</span>
 							</div>
 						{/if}
@@ -1594,6 +1605,9 @@
 								);
 								if (preset) {
 									plotterStore.applyPreset(preset);
+									if (plotterStore.config.connection === "usb-serial") {
+										sendSettings(plotterStore.config).catch(() => {});
+									}
 									detectedPlotter = null;
 								}
 							}}
@@ -1604,6 +1618,11 @@
 								</option>
 							{/each}
 						</select>
+						{#if detectedPlotter && detectedPlotter.confidence !== "exact-vid" && plotterStore.config.connection === "usb-serial"}
+							<p class="prop-note prop-note--usb-hint">
+								USB connected — pick your model above to apply optimized cut settings.
+							</p>
+						{/if}
 						<div class="plotter-spec-row">
 							<span class="plotter-spec">Max width: <strong>{plotterMaxWidthIn.toFixed(1)}"</strong></span>
 							<span class="plotter-spec">Protocol: <strong>{plotterStore.config.protocol.toUpperCase()}</strong></span>
@@ -1660,7 +1679,13 @@
 							{#if serialPortInfo}
 								<div class="conn-status conn-status--ok">
 									<span class="conn-dot"></span>
-									{serialPortInfo.label}
+									{#if detectedPlotter && detectedPlotter.confidence === "exact-vid"}
+										{detectedPlotter.preset.name}
+									{:else if detectedPlotter}
+										{detectedPlotter.detail}
+									{:else}
+										{serialPortInfo.label}
+									{/if}
 								</div>
 								<button class="prop-btn prop-btn--ghost" onclick={handleDisconnectSerial}>Disconnect</button>
 							{:else}
@@ -2545,6 +2570,9 @@
 		color: var(--text-tertiary);
 		margin-top: 4px;
 		line-height: 1.4;
+	}
+	.prop-note--usb-hint {
+		color: var(--color-warning, #F7B731);
 	}
 
 	.conn-status {
