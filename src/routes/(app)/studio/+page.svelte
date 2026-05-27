@@ -127,20 +127,20 @@
 	// ─── Horizontal roll canvas dimensions ─────────
 	// Roll width = fixed HEIGHT of canvas (Y axis = cross-cut dimension).
 	// Roll length used = dynamic WIDTH of canvas (X axis = direction feed).
-	// This matches how real cutting software displays material rolls.
-	const displaySheetW = $derived(
-		Math.max(
-			canvasStore.sheet.widthInches, // minimum: show at least 1× roll width
-			...canvasStore.items
-				.filter((i) => !i.outOfBounds)
-				.map((i) => i.x + i.width),
-			0,
-		) + 1, // 1" right buffer past the furthest pattern
-	);
-	// Fixed roll-width height + small staging strip below if OOB items exist
-	const displaySheetH = $derived(
-		canvasStore.sheet.widthInches + (outOfBoundsCount > 0 ? 20 : 0),
-	);
+	// Canvas crops to actual content extent + buffer — never pads to full roll width.
+	const displaySheetW = $derived.by(() => {
+		const inBounds = canvasStore.items.filter((i) => !i.outOfBounds);
+		if (!inBounds.length) return 12;
+		return Math.max(...inBounds.map((i) => i.x + i.width)) + 4;
+	});
+	const displaySheetH = $derived.by(() => {
+		const rollWidth = canvasStore.sheet.widthInches;
+		const oobStrip = outOfBoundsCount > 0 ? 20 : 0;
+		const inBounds = canvasStore.items.filter((i) => !i.outOfBounds);
+		if (!inBounds.length) return Math.min(rollWidth, 12) + oobStrip;
+		const maxY = Math.max(...inBounds.map((i) => i.y + i.height));
+		return Math.min(maxY + 4, rollWidth) + oobStrip;
+	});
 
 	// ─── Transposed sheet for nesting ─────────────
 	// Swap width/height so nesting treats roll_length as X (large, unconstrained)
@@ -685,15 +685,8 @@
 		const viewW = canvasEl.clientWidth;
 		const viewH = canvasEl.clientHeight;
 		const PAD = 96; // 48px canvas-content padding × 2
-		// Content bounds: roll width (Y axis) and actual items extent (X axis)
-		const inBounds = canvasStore.items.filter((i) => !i.outOfBounds);
-		const maxItemX = inBounds.length
-			? Math.max(...inBounds.map((i) => i.x + i.width))
-			: 0;
-		const contentW = Math.max(maxItemX, canvasStore.sheet.widthInches) + 1;
-		const contentH = canvasStore.sheet.widthInches;
-		const rollPxH = contentH * 48;
-		const rollPxW = contentW * 48;
+		const rollPxW = displaySheetW * 48;
+		const rollPxH = displaySheetH * 48;
 		if (viewH > PAD && viewW > PAD && rollPxH > 0 && rollPxW > 0) {
 			const zoomH = ((viewH - PAD) / rollPxH) * 100;
 			const zoomW = ((viewW - PAD) / rollPxW) * 100;
@@ -1151,7 +1144,7 @@
 						>{canvasStore.sheet.widthInches}" roll · {displaySheetW.toFixed(0)}" used</span
 					>
 					<!-- Roll-width boundary line: shows the edge of the cut zone -->
-					{#if outOfBoundsCount > 0}
+					{#if canvasStore.sheet.widthInches <= displaySheetH}
 						<div
 							class="roll-boundary"
 							style="top: {canvasStore.sheet.widthInches * 48 * canvasStore.zoom / 100}px"

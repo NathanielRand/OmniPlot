@@ -3,6 +3,6 @@
 - investors page
 - add vehicle tag to the studio grid so we can see what car was selected. if more than 1 car pattern was placed, show the list of the cars with tags for each pattern to know which pattern goes to which car.
 - plotter settings are not changing
-- canvas excess width on single pattern jobs
-- usb port detection/connection/commands need to ve verified again as it does not work completely. every plotter is detected as generic. the setting commands dont work.
+- canvas (print zone) has excess space (right side) on most jobs but esepecially on single pattern jobs or narrow jobs. We need this to only use the necessary material
 - create (or send the command to use the plotters default test) a test print feature that creates a small perfect square, triangle, & circle.
+- HEAT SHRINKAGE: add option/setting for user to add internal buffer to each design to intentional give excess inside the cut zone line a 1cm-ish default (can be changed by user) for user's placements and make up from HEAT SHRINKAGE
