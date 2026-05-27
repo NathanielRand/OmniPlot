@@ -279,6 +279,38 @@
 	let networkScan     = $state<"idle" | "scanning" | "done">("idle");
 	let networkDevices  = $state<NetworkDevice[]>([]);
 
+	// ─── Connection UI state ───────────────────────
+	// agentProbeStatus: live health of the Cut Agent (auto-probed on mount + every 15s).
+	// selectedConnMethod: which card the user has selected (UI intent, not yet active).
+	// isConnected: derived — true when a live connection is actually active.
+	let agentProbeStatus = $state<"probing" | "online" | "offline">("probing");
+	let selectedConnMethod = $state<"cut-agent" | "usb-serial">("usb-serial");
+	let connecting = $state(false);
+	let showConfig = $state(false);
+
+	const isConnected = $derived(
+		(plotterStore.config.connection === "usb-serial" && !!serialPortInfo) ||
+		plotterStore.config.connection === "cut-agent"
+	);
+
+	const activeConnLabel = $derived.by(() => {
+		if (plotterStore.config.connection === "cut-agent") {
+			if (detectedPlotter && detectedPlotter.confidence !== "generic") return detectedPlotter.preset.name;
+			return agentStore.version ? `Cut Agent · ${agentStore.version}` : "Cut Agent";
+		}
+		if (detectedPlotter?.confidence === "exact-vid") return detectedPlotter.preset.name;
+		if (detectedPlotter) return detectedPlotter.detail;
+		return serialPortInfo?.label ?? "USB";
+	});
+
+	const activeConnSub = $derived.by(() => {
+		if (plotterStore.config.connection === "cut-agent") {
+			const port = plotterStore.config.serialPort;
+			return port && port !== "auto" ? port : "Cut Agent";
+		}
+		return "USB Direct";
+	});
+
 	const compat = $derived(
 		getCompatibilityStatus(
 			plotterStore.config.maxMediaWidthMm,
@@ -889,6 +921,83 @@
 		}
 	}
 
+	async function probeAgent(autoSelect = false) {
+		const base = (plotterStore.config.agentUrl ?? "http://localhost:7878").replace(/\/$/, "");
+		agentProbeStatus = "probing";
+		try {
+			const res = await fetch(`${base}/api/status`, { signal: AbortSignal.timeout(2500) });
+			if (res.ok) {
+				agentProbeStatus = "online";
+				if (autoSelect) {
+					selectedConnMethod = "cut-agent";
+					fetchAgentPorts();
+				}
+			} else {
+				agentProbeStatus = "offline";
+				if (autoSelect) selectedConnMethod = "usb-serial";
+			}
+		} catch {
+			agentProbeStatus = "offline";
+			if (autoSelect) selectedConnMethod = "usb-serial";
+		}
+	}
+
+	async function handleConnect() {
+		if (connecting) return;
+		connecting = true;
+		try {
+			if (selectedConnMethod === "cut-agent") {
+				plotterStore.switchConnection("cut-agent");
+				sendSettings(plotterStore.config).catch(() => {});
+				toastStore.success("Connected to agent", plotterStore.config.agentUrl ?? "http://localhost:7878");
+			} else {
+				if (!("serial" in navigator)) {
+					toastStore.warning("Not supported", "USB direct connect requires Chrome or Edge.");
+					return;
+				}
+				if (isFree) {
+					toastStore.info("Lite plan required", "USB Web Serial is available on Lite and above.");
+					uiStore.openPricing();
+					return;
+				}
+				try {
+					serialPortInfo = await connectSerialPort(plotterStore.config.baudRate ?? 9600);
+					plotterStore.switchConnection("usb-serial");
+					const match = matchPortToPreset(serialPortInfo.vendorId, serialPortInfo.productId);
+					if (match) {
+						detectedPlotter = match;
+						if (match.confidence === "exact-vid") {
+							plotterStore.applyPreset(match.preset);
+							toastStore.success("Plotter identified", `${match.preset.name} — settings applied.`);
+						} else {
+							toastStore.success("Port connected", serialPortInfo.label);
+						}
+					} else {
+						toastStore.success("Port connected", serialPortInfo.label);
+					}
+					sendSettings(plotterStore.config).catch(() => {});
+				} catch (err: any) {
+					if (err?.name !== "NotAllowedError") {
+						toastStore.error("Connection failed", err?.message ?? "Could not open serial port.");
+					}
+					serialPortInfo = null;
+				}
+			}
+		} finally {
+			connecting = false;
+		}
+	}
+
+	function handleDisconnect() {
+		if (plotterStore.config.connection === "usb-serial") {
+			disconnectSerialPort();
+			serialPortInfo = null;
+		}
+		plotterStore.switchConnection("download");
+		showConfig = false;
+		toastStore.info("Disconnected", "Connection closed.");
+	}
+
 	onMount(() => {
 		canvasStore.restoreFromStorage();
 		_mounted = true;
@@ -904,6 +1013,11 @@
 		if (typeof localStorage !== "undefined" && !localStorage.getItem("op-tour-seen")) {
 			setTimeout(() => uiStore.openTour(), 800);
 		}
+		// Probe Cut Agent on mount — auto-selects best connection method
+		probeAgent(true);
+		// Re-probe every 15s so the status dot stays accurate
+		const probeInterval = setInterval(() => probeAgent(), 15_000);
+		return () => clearInterval(probeInterval);
 	});
 
 	$effect(() => {
@@ -1766,42 +1880,165 @@
 					<!-- Plotter tab -->
 				{:else}
 
-					<!-- ── Smart Detection ─────────────────────── -->
-					<div class="prop-section detect-section">
-						<button
-							class="detect-btn"
-							class:detecting
-							onclick={handleDetectPlotter}
-							disabled={detecting}
-							aria-label="Auto-detect connected plotter"
-						>
-							{#if detecting}
-								<span class="ai-spinner" aria-hidden="true"></span>
-								Detecting…
-							{:else}
-								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-								Detect Plotter
-							{/if}
-						</button>
-						{#if detectedPlotter}
-							<div class="detect-result">
-								<span class="detect-result__dot"></span>
-								<div class="detect-result__info">
-									<span class="detect-result__name">
-										{detectedPlotter.confidence === "generic"
-											? "USB Device Detected"
-											: detectedPlotter.preset.name}
+					<!-- ── Device Selection + Compatibility ───── -->
+					<!-- ── Connection ─────────────────────────── -->
+					<div class="prop-section">
+						<div class="prop-label">Connection</div>
+						<div class="conn-method-cards">
+							<button
+								class="conn-method-card"
+								class:selected={selectedConnMethod === "cut-agent"}
+								onclick={() => { if (!isConnected) selectedConnMethod = "cut-agent"; }}
+								disabled={isConnected}
+								aria-pressed={selectedConnMethod === "cut-agent"}
+							>
+								<div
+									class="conn-method-card__dot"
+									class:online={agentProbeStatus === "online"}
+									class:probing={agentProbeStatus === "probing"}
+								></div>
+								<div class="conn-method-card__body">
+									<span class="conn-method-card__name">Cut Agent</span>
+									<span class="conn-method-card__status">
+										{#if agentProbeStatus === "probing"}
+											Checking…
+										{:else if agentProbeStatus === "online"}
+											Online{agentStore.version ? ` · v${agentStore.version}` : ""}
+										{:else}
+											Not running
+										{/if}
 									</span>
-									<span class="detect-result__detail">{detectedPlotter.detail}</span>
 								</div>
-								<span class="detect-badge detect-badge--{detectedPlotter.confidence === 'exact-vid' ? 'exact' : detectedPlotter.confidence === 'manufacturer-name' ? 'mfr' : 'generic'}">
-									{detectedPlotter.confidence === "exact-vid" ? "Exact match" : detectedPlotter.confidence === "manufacturer-name" ? "By name" : "Select model"}
-								</span>
+								{#if selectedConnMethod === "cut-agent"}
+									<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>
+								{/if}
+							</button>
+							<button
+								class="conn-method-card"
+								class:selected={selectedConnMethod === "usb-serial"}
+								onclick={() => { if (!isConnected) selectedConnMethod = "usb-serial"; }}
+								disabled={isConnected}
+								aria-pressed={selectedConnMethod === "usb-serial"}
+							>
+								<div
+									class="conn-method-card__dot"
+									class:online={plotterStore.config.connection === "usb-serial" && !!serialPortInfo}
+								></div>
+								<div class="conn-method-card__body">
+									<span class="conn-method-card__name">USB Direct</span>
+									<span class="conn-method-card__status">
+										{#if plotterStore.config.connection === "usb-serial" && serialPortInfo}
+											{serialPortInfo.label}
+										{:else}
+											Chrome / Edge only
+										{/if}
+									</span>
+								</div>
+								{#if selectedConnMethod === "usb-serial"}
+									<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>
+								{/if}
+							</button>
+						</div>
+
+						{#if !isConnected}
+							{#if selectedConnMethod === "cut-agent"}
+								<div class="conn-method-settings">
+									<div class="prop-label-row" style="margin-bottom: 6px;">
+										<span class="prop-label" style="margin-bottom: 0;">Agent URL</span>
+										<span class="info-tip" data-tip="URL of the OmniPlot Cut Agent on this machine. Leave as default unless the agent runs on a different port.">
+											<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+										</span>
+									</div>
+									<input
+										class="prop-input prop-input--full"
+										type="text"
+										placeholder="http://localhost:7878"
+										value={plotterStore.config.agentUrl ?? "http://localhost:7878"}
+										oninput={(e) => plotterStore.update({ agentUrl: (e.target as HTMLInputElement).value })}
+									/>
+									<div class="prop-label-row" style="margin-top: 10px; margin-bottom: 6px;">
+										<div style="display:flex;align-items:center;gap:4px;">
+											<span class="prop-label" style="margin-bottom: 0;">Serial Port</span>
+											<span class="info-tip" data-tip="USB port the plotter is connected to on the agent machine. Auto-detect works for most setups.">
+												<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+											</span>
+										</div>
+										<button class="prop-btn-inline" onclick={fetchAgentPorts} disabled={agentPortsLoading} title="Refresh" aria-label="Refresh port list">
+											{#if agentPortsLoading}
+												<span class="ai-spinner" style="width:10px;height:10px;" aria-hidden="true"></span>
+											{:else}
+												<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+											{/if}
+										</button>
+									</div>
+									<select class="prop-select" aria-label="Serial port" onchange={(e) => plotterStore.update({ serialPort: (e.target as HTMLSelectElement).value })}>
+										<option value="auto" selected={!plotterStore.config.serialPort || plotterStore.config.serialPort === "auto"}>Auto-detect</option>
+										{#each agentPortsList as p}
+											<option value={p.name} selected={plotterStore.config.serialPort === p.name}>{p.name}{p.manufacturer ? ` — ${p.manufacturer}` : ""}</option>
+										{/each}
+									</select>
+									{#if !agentPortsList.length && !agentPortsLoading}
+										<p class="prop-note">No USB ports found — connect a plotter and refresh.</p>
+									{/if}
+								</div>
+							{:else}
+								<div class="conn-method-settings">
+									<div class="prop-label-row" style="margin-bottom: 6px;">
+										<span class="prop-label" style="margin-bottom: 0;">Baud Rate</span>
+										<span class="info-tip" data-tip="Serial communication speed in bits/sec. Must match your plotter's baud setting. Most plotters default to 9600.">
+											<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+										</span>
+									</div>
+									<select class="prop-select" aria-label="Baud rate" onchange={(e) => plotterStore.update({ baudRate: parseInt((e.target as HTMLSelectElement).value) })}>
+										{#each [9600, 19200, 38400, 57600, 115200] as rate}
+											<option value={rate} selected={plotterStore.config.baudRate === rate}>{rate}</option>
+										{/each}
+									</select>
+									{#if !("serial" in navigator)}
+										<p class="prop-note" style="color: var(--color-warning)">Requires Chrome or Edge.</p>
+									{/if}
+								</div>
+							{/if}
+						{/if}
+
+						{#if isConnected}
+							<div class="plotter-active-bar">
+								<span class="plotter-active-bar__dot"></span>
+								<div class="plotter-active-bar__info">
+									<span class="plotter-active-bar__label">{activeConnLabel}</span>
+									<span class="plotter-active-bar__sub">{activeConnSub}</span>
+								</div>
+								<button class="plotter-disconnect-btn" onclick={handleDisconnect}>Disconnect</button>
 							</div>
+						{:else}
+							<button
+								class="plotter-connect-btn"
+								class:connecting
+								onclick={handleConnect}
+								disabled={connecting || (selectedConnMethod === "cut-agent" && agentProbeStatus === "offline")}
+							>
+								{#if connecting}
+									<span class="ai-spinner" aria-hidden="true"></span>
+									Connecting…
+								{:else if selectedConnMethod === "cut-agent"}
+									{#if agentProbeStatus === "offline"}
+										Agent Offline — Start Agent First
+									{:else if agentProbeStatus === "probing"}
+										<span class="ai-spinner" aria-hidden="true"></span>
+										Checking agent…
+									{:else}
+										Connect via Cut Agent
+									{/if}
+								{:else}
+									Select USB Port…
+								{/if}
+							</button>
 						{/if}
 					</div>
 
-					<!-- ── Device Selection + Compatibility ───── -->
+					<div class="plotter-divider"></div>
+
+					<!-- ── Plotter Device ─────────────────────── -->
 					<div class="prop-section">
 						<div class="prop-label-row">
 							<span class="prop-label">Plotter Device</span>
@@ -1867,260 +2104,106 @@
 						{/if}
 					</div>
 
-					<!-- ── Cut Settings ───────────────────────── -->
-					<div class="prop-section">
-						<div class="prop-label-row">
-							<span class="prop-label">Cut Settings</span>
-							{#if plotterStore.config.connection === "usb-serial" || plotterStore.config.connection === "cut-agent"}
-								<span class="live-badge" title="Blade force and speed sync to plotter in real-time">Live</span>
-							{/if}
-						</div>
-						{#each [["Blade force", "bladeForce", 10, 400, "g"], ["Speed mm/s", "cuttingSpeed", 10, 1200, "mm/s"], ["Passes", "passes", 1, 4, "×"], ["Overcut mm", "overcut", 0, 2, "mm"]] as const as [label, key, min, max, unit]}
-							<div class="prop-slider-row">
-								<span class="prop-slider-name">
-									{label}
-									{#if key === "passes" || key === "overcut"}
-										<span class="cut-time-badge" title="Applied at cut time — not sent as a live command">Cut-time</span>
-									{/if}
-								</span>
-								<input
-									type="range"
-									class="prop-slider"
-									{min}
-									{max}
-									step={key === "overcut" ? 0.1 : 1}
-									value={plotterStore.config[key]}
-									aria-label={label}
-									oninput={(e) => {
-										plotterStore.update({
-											[key]: parseFloat((e.target as HTMLInputElement).value),
-										});
-										if (key === "bladeForce" || key === "cuttingSpeed") {
-											scheduleSettingsSend();
-										}
-									}}
-								/>
-								<span class="prop-slider-val">{key === "overcut" ? plotterStore.config[key].toFixed(1) : plotterStore.config[key]}{unit}</span>
-							</div>
-						{/each}
-						<p class="prop-note">
-							Force and speed send to the plotter immediately when you move the slider.
-							Passes and overcut are woven into the cut paths — they apply when you hit Send to Plotter.
-						</p>
-						{#if plotterStore.config.connection !== "download"}
-							<p class="prop-note prop-note--disclaimer">
-								<strong>Display disclaimer:</strong> Many plotters (including most budget cutters like VEVOR) do not update their front-panel display when settings are changed via serial. This is a hardware limitation — the commands are received and applied internally. Assume your force and speed are correctly set and proceed with your cut normally.
-							</p>
-						{/if}
-					</div>
+					<div class="plotter-divider"></div>
 
-					<!-- ── Origin Offset ───────────────────────── -->
-					<div class="prop-section">
-						<div class="prop-label">Origin Offset</div>
-						{#each [["X offset (in)", "originX", 0, 48, 0.1], ["Y offset (in)", "originY", 0, 24, 0.1]] as const as [label, key, min, max, step]}
-							<div class="prop-slider-row">
-								<span class="prop-slider-name">{label}</span>
-								<input
-									type="range"
-									class="prop-slider"
-									{min}
-									{max}
-									{step}
-									value={plotterStore.config[key]}
-									aria-label={label}
-									oninput={(e) =>
-										plotterStore.update({
-											[key]: parseFloat((e.target as HTMLInputElement).value),
-										})}
-								/>
-								<span class="prop-slider-val">{plotterStore.config[key].toFixed(1)}"</span>
-							</div>
-						{/each}
-						<p class="prop-note">Shifts the cut origin in the generated HPGL — applied at cut time, not sent as a standalone command.</p>
-					</div>
-
-					<!-- ── Connection ─────────────────────────── -->
-					<div class="prop-section">
-						<div class="prop-label">Connection</div>
-						<select
-							class="prop-select"
-							aria-label="Connection method"
-							onchange={(e) => {
-								const newConn = (e.target as HTMLSelectElement).value as PlotterConfig["connection"];
-								if (plotterStore.config.connection === "usb-serial" && newConn !== "usb-serial") {
-									handleDisconnectSerial();
-								}
-								plotterStore.switchConnection(newConn);
-								if (newConn === "cut-agent") fetchAgentPorts();
-							}}
+					<!-- ── Configuration: hidden until connected, reveal on demand ── -->
+					{#if !isConnected}
+						<button
+							class="config-reveal-btn"
+							onclick={() => showConfig = !showConfig}
+							aria-expanded={showConfig}
 						>
-							{#each [["download", "Download PLT file"], ["usb-serial", "USB (Web Serial — Chrome/Edge)"], ["network", "Network (TCP/IP)"], ["cut-agent", "Local Cut Agent"]] as const as [val, label]}
-								<option value={val} selected={plotterStore.config.connection === val}>{label}</option>
-							{/each}
-						</select>
-					</div>
+							<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true">
+								{#if showConfig}<path d="M18 15l-6-6-6 6"/>{:else}<path d="M6 9l6 6 6-6"/>{/if}
+							</svg>
+							{showConfig ? "Hide configuration" : "Show plotter configuration"}
+						</button>
+					{/if}
 
-					<!-- USB-Serial fields -->
-					{#if plotterStore.config.connection === "usb-serial"}
-						<div class="prop-section">
-							<div class="prop-label">Baud Rate</div>
-							<select
-								class="prop-select"
-								aria-label="Baud rate"
-								onchange={(e) => plotterStore.update({ baudRate: parseInt((e.target as HTMLSelectElement).value) })}
-							>
-								{#each [9600, 19200, 38400, 57600, 115200] as rate}
-									<option value={rate} selected={plotterStore.config.baudRate === rate}>{rate}</option>
-								{/each}
-							</select>
-						</div>
-						<div class="prop-section">
-							{#if serialPortInfo}
-								<div class="conn-status conn-status--ok">
-									<span class="conn-dot"></span>
-									{#if detectedPlotter && detectedPlotter.confidence === "exact-vid"}
-										{detectedPlotter.preset.name}
-									{:else if detectedPlotter}
-										{detectedPlotter.detail}
-									{:else}
-										{serialPortInfo.label}
-									{/if}
-								</div>
-								<button class="prop-btn prop-btn--ghost" onclick={handleDisconnectSerial}>Disconnect</button>
-							{:else}
-								<button class="prop-btn" onclick={handleConnectSerial}>Select USB Port…</button>
-								<p class="prop-note">Chrome or Edge required for USB direct connect.</p>
-							{/if}
-						</div>
-
-					<!-- Network fields -->
-					{:else if plotterStore.config.connection === "network"}
-						<div class="prop-section">
-							<div class="prop-label">Plotter IP Address</div>
-							<div class="prop-input-row">
-								<input
-									class="prop-input prop-input--grow"
-									type="text"
-									placeholder="192.168.1.100"
-									value={plotterStore.config.ipAddress ?? "192.168.1.100"}
-									oninput={(e) => plotterStore.update({ ipAddress: (e.target as HTMLInputElement).value })}
-								/>
-								<span class="prop-input-sep">:</span>
-								<input
-									class="prop-input prop-input--port"
-									type="number"
-									placeholder="9100"
-									min="1"
-									max="65535"
-									value={plotterStore.config.port ?? 9100}
-									oninput={(e) => plotterStore.update({ port: parseInt((e.target as HTMLInputElement).value) || 9100 })}
-								/>
+					{#if isConnected || showConfig}
+						{#if !isConnected}
+							<div class="config-preview-notice">
+								<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+								Not connected — preview only
 							</div>
-							<p class="prop-note">Port 9100 = HP JetDirect (most network plotters).</p>
-						</div>
-						<!-- Network scan via agent -->
-						<div class="prop-section">
-							<div class="prop-label">Discover on LAN</div>
-							<button
-								class="prop-btn prop-btn--ghost scan-btn"
-								class:scanning={networkScan === "scanning"}
-								onclick={handleNetworkScan}
-								disabled={networkScan === "scanning"}
-							>
-								{#if networkScan === "scanning"}
-									<span class="ai-spinner" aria-hidden="true"></span>
-									Scanning network…
-								{:else}
-									<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M1.42 9a16 16 0 0121.16 0M5 12.55a11 11 0 0114.08 0M10.5 16a6 6 0 013 0M12 20h.01"/></svg>
-									Scan via Cut Agent
+						{/if}
+
+						<!-- ── Cut Settings ───────────────────────── -->
+						<div class="prop-section" style="margin-top: 12px;">
+							<div class="prop-label-row">
+								<span class="prop-label">Cut Settings</span>
+								{#if isConnected}
+									<span class="info-tip" data-tip="Blade force and speed sync to your plotter in real-time. The front-panel display may not update — this is a hardware limitation. Commands are applied internally.">
+										<span class="live-badge">Live</span>
+									</span>
 								{/if}
-							</button>
-							<p class="prop-note">Requires Cut Agent running on this machine. Scans the local LAN for plotters on port 9100.</p>
-							{#if networkScan === "done" && networkDevices.length > 0}
-								<div class="network-results">
-									{#each networkDevices as dev}
-										<button
-											class="network-device"
-											onclick={() => {
-												plotterStore.update({ ipAddress: dev.ip, port: dev.port });
-												networkScan = "idle";
-											}}
-										>
-											<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-											<span class="network-device__ip">{dev.ip}</span>
-											<span class="network-device__port">:{dev.port}</span>
-											<span class="network-device__ms">{dev.responseMs}ms</span>
-										</button>
-									{/each}
+							</div>
+							{#each [["Blade force", "bladeForce", 10, 400, "g", "Pressure applied by the blade in grams. Higher = deeper cuts. Start low and test on scrap material first."], ["Speed mm/s", "cuttingSpeed", 10, 1200, "mm/s", "Cutting head speed. Slower = cleaner curves on tight corners. Syncs to plotter in real-time."], ["Passes", "passes", 1, 4, "×", "Number of times each path is traced. Use 2+ for thick materials. Applied at cut time — not a live command."], ["Overcut mm", "overcut", 0, 2, "mm", "Extra distance past path endpoints to prevent uncut corners. 0.3–0.5mm for most materials. Applied at cut time."]] as const as [label, key, min, max, unit, tip]}
+								<div class="prop-slider-row">
+									<span class="prop-slider-name">
+										{label}
+										{#if key === "passes" || key === "overcut"}
+											<span class="cut-time-badge">Cut-time</span>
+										{/if}
+									</span>
+									<input
+										type="range"
+										class="prop-slider"
+										{min}
+										{max}
+										step={key === "overcut" ? 0.1 : 1}
+										value={plotterStore.config[key]}
+										aria-label={label}
+										oninput={(e) => {
+											plotterStore.update({ [key]: parseFloat((e.target as HTMLInputElement).value) });
+											if (key === "bladeForce" || key === "cuttingSpeed") scheduleSettingsSend();
+										}}
+									/>
+									<span class="prop-slider-val">{key === "overcut" ? plotterStore.config[key].toFixed(1) : plotterStore.config[key]}{unit}</span>
+									<span class="info-tip" data-tip={tip}>
+										<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+									</span>
 								</div>
-							{:else if networkScan === "done"}
-								<p class="prop-note" style="color: var(--color-warning)">No plotter-compatible devices found on this LAN.</p>
-							{/if}
+							{/each}
 						</div>
 
-					<!-- Cut Agent fields -->
-					{:else if plotterStore.config.connection === "cut-agent"}
-						<div class="prop-section">
-							<div class="prop-label">Agent URL</div>
-							<input
-								class="prop-input prop-input--full"
-								type="text"
-								placeholder="http://localhost:7878"
-								value={plotterStore.config.agentUrl ?? "http://localhost:7878"}
-								oninput={(e) => plotterStore.update({ agentUrl: (e.target as HTMLInputElement).value })}
-							/>
-							<p class="prop-note">Run the OmniPlot Cut Agent on this machine to send over USB without browser limitations.</p>
-						</div>
-						<div class="prop-section">
-							<div class="prop-label">Baud Rate</div>
-							<select
-								class="prop-select"
-								aria-label="Baud rate"
-								onchange={(e) => plotterStore.update({ baudRate: parseInt((e.target as HTMLSelectElement).value) })}
-							>
-								{#each [9600, 19200, 38400, 57600, 115200] as rate}
-									<option value={rate} selected={plotterStore.config.baudRate === rate}>{rate}</option>
-								{/each}
-							</select>
-						</div>
+						<!-- ── Origin Offset ───────────────────────── -->
 						<div class="prop-section">
 							<div class="prop-label-row">
-								<span class="prop-label">Serial Port</span>
-								<button
-									class="prop-btn-inline"
-									onclick={fetchAgentPorts}
-									disabled={agentPortsLoading}
-									aria-label="Refresh port list"
-									title="Refresh"
-								>
-									{#if agentPortsLoading}
-										<span class="ai-spinner" style="width:10px;height:10px;" aria-hidden="true"></span>
-									{:else}
-										<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
-									{/if}
-								</button>
+								<span class="prop-label">Origin Offset</span>
+								<span class="info-tip" data-tip="Shifts the cut start position in the HPGL output. Useful for aligning cuts to a specific roll position. Applied at cut time, not a live command.">
+									<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+								</span>
 							</div>
-							<select
-								class="prop-select"
-								aria-label="Serial port"
-								onchange={(e) => plotterStore.update({ serialPort: (e.target as HTMLSelectElement).value })}
-							>
-								<option value="auto" selected={!plotterStore.config.serialPort || plotterStore.config.serialPort === "auto"}>Auto-detect</option>
-								{#each agentPortsList as p}
-									<option value={p.name} selected={plotterStore.config.serialPort === p.name}>
-										{p.name}{p.manufacturer ? ` — ${p.manufacturer}` : ""}
-									</option>
-								{/each}
-							</select>
-							{#if !agentPortsList.length && !agentPortsLoading}
-								<p class="prop-note">No USB ports found — connect a plotter to this machine and click refresh.</p>
-							{/if}
+							{#each [["X offset (in)", "originX", 0, 48, 0.1], ["Y offset (in)", "originY", 0, 24, 0.1]] as const as [label, key, min, max, step]}
+								<div class="prop-slider-row">
+									<span class="prop-slider-name">{label}</span>
+									<input
+										type="range"
+										class="prop-slider"
+										{min}
+										{max}
+										{step}
+										value={plotterStore.config[key]}
+										aria-label={label}
+										oninput={(e) => plotterStore.update({ [key]: parseFloat((e.target as HTMLInputElement).value) })}
+									/>
+									<span class="prop-slider-val">{plotterStore.config[key].toFixed(1)}"</span>
+								</div>
+							{/each}
 						</div>
+
+						<div class="plotter-divider"></div>
 					{/if}
 
 					<!-- ── Output Format ───────────────────────── -->
 					<div class="prop-section">
-						<div class="prop-label">Output Format</div>
+						<div class="prop-label-row">
+							<span class="prop-label">Output Format</span>
+							<span class="info-tip" data-tip="HPGL protocol variant. Standard HPGL and Roland use different speed units internally. Select the format matching your plotter for correctly scaled cut speeds.">
+								<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+							</span>
+						</div>
 						<select
 							class="prop-select"
 							aria-label="Output format"
@@ -2132,7 +2215,6 @@
 								<option value={val} selected={plotterStore.config.protocol === val}>{label}</option>
 							{/each}
 						</select>
-						<p class="prop-note">Standard HPGL and Roland use different speed units internally — selecting the right format ensures your plotter receives correctly scaled commands.</p>
 					</div>
 
 				{/if}
@@ -3644,4 +3726,258 @@
 	.network-device__ip   { flex: 1; font-weight: 600; }
 	.network-device__port { color: var(--text-tertiary); }
 	.network-device__ms   { font-size: 0.5625rem; color: var(--text-tertiary); margin-left: auto; }
+
+	/* ─── Connection method cards ────── */
+	.conn-method-cards {
+		display: flex;
+		gap: 6px;
+		margin-bottom: 10px;
+	}
+
+	.conn-method-card {
+		flex: 1;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 10px;
+		background: var(--bg-surface-2);
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-md);
+		cursor: pointer;
+		text-align: left;
+		transition: background 0.12s, border-color 0.12s;
+		min-width: 0;
+	}
+	.conn-method-card:hover:not(:disabled) {
+		background: var(--bg-surface-3);
+	}
+	.conn-method-card.selected {
+		border-color: var(--color-brand-dim);
+		background: color-mix(in srgb, var(--color-brand-dim) 8%, var(--bg-surface-2));
+	}
+	.conn-method-card:disabled {
+		cursor: default;
+	}
+
+	.conn-method-card__dot {
+		width: 7px;
+		height: 7px;
+		border-radius: 50%;
+		background: var(--border-default);
+		flex-shrink: 0;
+		transition: background 0.2s;
+	}
+	.conn-method-card__dot.online {
+		background: var(--color-success, #00D68F);
+		animation: pulse-dot 2s ease-in-out infinite;
+	}
+	.conn-method-card__dot.probing {
+		background: var(--text-tertiary);
+		animation: pulse-dot 1.2s ease-in-out infinite;
+	}
+
+	.conn-method-card__body {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 1px;
+	}
+	.conn-method-card__name {
+		font-size: 0.75rem;
+		font-weight: 600;
+		color: var(--text-primary);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.conn-method-card__status {
+		font-family: var(--font-mono);
+		font-size: 0.5625rem;
+		color: var(--text-tertiary);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.conn-method-settings {
+		padding-top: 10px;
+		border-top: 1px solid var(--border-subtle);
+		margin-bottom: 10px;
+	}
+
+	/* ─── Active plotter bar ────── */
+	.plotter-active-bar {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 8px 10px;
+		margin-top: 10px;
+		background: color-mix(in srgb, var(--color-success, #00D68F) 7%, var(--bg-surface-2));
+		border: 1px solid color-mix(in srgb, var(--color-success, #00D68F) 22%, transparent);
+		border-radius: var(--radius-md);
+	}
+	.plotter-active-bar__dot {
+		width: 7px;
+		height: 7px;
+		border-radius: 50%;
+		background: var(--color-success, #00D68F);
+		flex-shrink: 0;
+		animation: pulse-dot 2s ease-in-out infinite;
+	}
+	.plotter-active-bar__info {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 1px;
+	}
+	.plotter-active-bar__label {
+		font-size: 0.75rem;
+		font-weight: 600;
+		color: var(--text-primary);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.plotter-active-bar__sub {
+		font-family: var(--font-mono);
+		font-size: 0.5625rem;
+		color: var(--text-tertiary);
+	}
+
+	.plotter-disconnect-btn {
+		padding: 4px 10px;
+		font-size: 0.7rem;
+		font-weight: 600;
+		font-family: var(--font-body);
+		background: transparent;
+		border: 1px solid color-mix(in srgb, var(--color-danger, #FF4D6D) 50%, transparent);
+		border-radius: var(--radius-sm);
+		color: var(--color-danger, #FF4D6D);
+		cursor: pointer;
+		transition: background 0.1s;
+		flex-shrink: 0;
+		white-space: nowrap;
+	}
+	.plotter-disconnect-btn:hover {
+		background: color-mix(in srgb, var(--color-danger, #FF4D6D) 10%, transparent);
+	}
+
+	/* ─── Connect button ────── */
+	.plotter-connect-btn {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 6px;
+		width: 100%;
+		padding: 9px 12px;
+		margin-top: 10px;
+		font-size: 0.8rem;
+		font-weight: 600;
+		font-family: var(--font-body);
+		background: var(--color-brand);
+		border: none;
+		border-radius: var(--radius-md);
+		color: #000;
+		cursor: pointer;
+		transition: opacity 0.15s;
+	}
+	.plotter-connect-btn:hover:not(:disabled) { opacity: 0.88; }
+	.plotter-connect-btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+		background: var(--bg-surface-2);
+		color: var(--text-secondary);
+	}
+	.plotter-connect-btn.connecting {
+		opacity: 0.7;
+		cursor: wait;
+	}
+
+	@keyframes pulse-dot {
+		0%, 100% { opacity: 1; }
+		50% { opacity: 0.4; }
+	}
+
+	.plotter-divider {
+		height: 1px;
+		background: var(--border-subtle);
+		margin: 14px -14px;
+	}
+
+	.config-reveal-btn {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 5px;
+		width: 100%;
+		padding: 7px;
+		background: transparent;
+		border: 1px dashed var(--border-default);
+		border-radius: var(--radius-md);
+		font-size: 0.75rem;
+		font-weight: 500;
+		font-family: var(--font-body);
+		color: var(--text-tertiary);
+		cursor: pointer;
+		transition: border-color 0.12s, color 0.12s, background 0.12s;
+	}
+	.config-reveal-btn:hover {
+		border-color: var(--text-tertiary);
+		color: var(--text-secondary);
+		background: var(--interactive-hover);
+	}
+
+	.config-preview-notice {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 7px 10px;
+		margin-top: 10px;
+		background: var(--bg-surface-2);
+		border: 1px solid var(--border-subtle);
+		border-radius: var(--radius-md);
+		font-size: 0.72rem;
+		color: var(--text-tertiary);
+		margin-bottom: 2px;
+	}
+
+	.info-tip {
+		position: relative;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		cursor: help;
+		color: var(--text-tertiary);
+		flex-shrink: 0;
+		vertical-align: middle;
+	}
+	.info-tip:hover { color: var(--text-secondary); }
+	.info-tip svg { display: block; }
+	.info-tip::before {
+		content: attr(data-tip);
+		position: absolute;
+		bottom: calc(100% + 6px);
+		right: 0;
+		width: 210px;
+		padding: 7px 10px;
+		background: var(--bg-surface);
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-md);
+		box-shadow: 0 4px 16px rgba(0,0,0,0.28);
+		font-size: 0.695rem;
+		font-family: var(--font-body);
+		font-weight: 400;
+		color: var(--text-secondary);
+		line-height: 1.45;
+		white-space: normal;
+		text-transform: none;
+		letter-spacing: 0;
+		pointer-events: none;
+		z-index: 300;
+		opacity: 0;
+		transition: opacity 0.1s;
+	}
+	.info-tip:hover::before { opacity: 1; }
 </style>
