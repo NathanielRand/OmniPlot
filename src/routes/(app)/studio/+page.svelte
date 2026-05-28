@@ -31,7 +31,7 @@
 		formatCutTime,
 		formatEfficiency,
 	} from "$lib/utils";
-	import { DEFAULT_MATERIALS, PLOTTER_PRESETS } from "$lib/config";
+	import { DEFAULT_MATERIALS, PLOTTER_PRESETS, CURRENT_AGENT_VERSION } from "$lib/config";
 	import {
 		detectUsbPlotters,
 		detectAgentPorts,
@@ -357,24 +357,25 @@
 		calPhase = 'probe-done';
 	}
 
-	function buildCalCut(offsetIn: number, widthIn: number): string {
-		const U = 1016;
-		const pad = Math.round(0.3 * U);
-		const len = Math.round(0.8 * U);
-		const y0  = Math.round(0.5 * U);
-		const xL  = Math.round(offsetIn * U) + pad;
-		const xR  = Math.round((offsetIn + widthIn) * U) - pad;
+	function buildCalCut(): string {
+		const U  = 1016;
+		const x0 = Math.round(0.25 * U);
+		const y0 = Math.round(0.25 * U);
+		const x1 = Math.round(1.25 * U);
+		const y1 = Math.round(1.25 * U);
+		const cx = Math.round(0.75 * U);
+		const cy = Math.round(0.75 * U);
+		const r  = Math.round(0.30 * U);
 		return [
-			'IN;', 'SP1;', 'PA;',
-			`PU${xL},${y0};PD${xL},${y0 + len};`,
-			`PU${xR},${y0};PD${xR},${y0 + len};`,
-			`PU${xL},${y0 + Math.round(0.4 * U)};PD${xR},${y0 + Math.round(0.4 * U)};`,
-			'PU0,0;', 'SP0;', 'IN;',
+			'IN;SP1;PA;',
+			`PU${x0},${y0};PD${x0},${y1};PD${x1},${y1};PD${x1},${y0};PD${x0},${y0};`,
+			`PU${cx},${cy};CI${r};`,
+			'PU0,0;SP0;IN;',
 		].join('\n');
 	}
 
 	async function sendCalCut() {
-		const hpgl = buildCalCut(plotterStore.config.originX, rollWidthIn);
+		const hpgl = buildCalCut();
 		await sendToPlotter(hpgl, plotterStore.config);
 	}
 
@@ -411,6 +412,21 @@
 	const pltLocked = $derived(!cutCheck.allowed);
 	const dxfLocked = $derived(isFree);
 
+	// ─── Agent update helpers ────────────────────
+	let stoppingOldAgent = $state(false);
+
+	async function stopOldAgent() {
+		stoppingOldAgent = true;
+		const base = (plotterStore.config.agentUrl ?? "http://localhost:7878").replace(/\/$/, "");
+		try {
+			await fetch(`${base}/api/shutdown`, { method: "POST", signal: AbortSignal.timeout(3000) });
+		} catch { /* expected — agent closes connection on shutdown */ }
+		await new Promise(r => setTimeout(r, 800));
+		agentStore.reset();
+		stoppingOldAgent = false;
+		runDiscovery();
+	}
+
 	// ─── Plotter discovery ───────────────────────
 	// Polls all sources (Cut Agent USB ports + Web Serial granted ports),
 	// merges results, auto-connects agent devices, and updates live status.
@@ -429,9 +445,17 @@
 		const base = (plotterStore.config.agentUrl ?? "http://localhost:7878").replace(/\/$/, "");
 		try {
 			const r = await fetch(`${base}/api/status`, { signal: AbortSignal.timeout(2500) });
-			agentProbeStatus = r.ok ? "online" : "offline";
+			if (r.ok) {
+				agentProbeStatus = "online";
+				const body: { version?: string } = await r.json().catch(() => ({}));
+				agentStore.setOnline(body.version ?? "");
+			} else {
+				agentProbeStatus = "offline";
+				agentStore.setOffline();
+			}
 		} catch {
 			agentProbeStatus = "offline";
+			agentStore.setOffline();
 		}
 
 		if (agentProbeStatus === "online") {
@@ -491,7 +515,7 @@
 			if (!next.find(d => d.id === prev.id) && prev.status === "connected") {
 				merged.push({ ...prev, status: "offline" });
 				if (prev.source === "usb") { disconnectSerialPort(); serialPortInfo = null; }
-				if (prev.source === "agent") { plotterStore.switchConnection("download"); autoConnectedAgent = false; }
+				if (prev.source === "agent") { plotterStore.switchConnection("download", { save: false }); autoConnectedAgent = false; }
 			}
 		}
 
@@ -511,8 +535,8 @@
 					plotterStore.applyPreset(target.preset);
 					if (target.portPath) plotterStore.update({ serialPort: target.portPath });
 				}
-				// Auto-connect single agent device (no browser dialog needed)
-				if (online.length === 1 && target.source === "agent" && !autoConnectedAgent && !isConnected) {
+				// Auto-connect single agent device (no browser dialog needed; skip if outdated)
+				if (online.length === 1 && target.source === "agent" && !autoConnectedAgent && !isConnected && !agentStore.needsUpdate) {
 					plotterStore.switchConnection("cut-agent");
 					sendSettings(plotterStore.config).catch(() => {});
 					autoConnectedAgent = true;
@@ -1071,7 +1095,7 @@
 			disconnectSerialPort();
 			serialPortInfo = null;
 		}
-		plotterStore.switchConnection("download");
+		plotterStore.switchConnection("download", { save: false });
 		autoConnectedAgent = false;
 		showConfig = false;
 		discoveredDevices = discoveredDevices.map(d =>
@@ -2037,8 +2061,30 @@
 						{#if discoveredDevices.length > 0}
 							{#if agentStore.needsUpdate}
 								<div class="discovery-update-warn">
-									<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-									<span>Agent v{agentStore.version} is outdated — <a href="/studio/agent" class="discovery-update-warn__link">update required</a> before connecting.</span>
+									<div class="discovery-update-warn__header">
+										<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+										<strong>Agent update required</strong> — running v{agentStore.version}, need v{CURRENT_AGENT_VERSION}
+									</div>
+									<div class="discovery-update-warn__steps">
+										<div class="discovery-update-warn__step">
+											<span class="discovery-update-warn__num">1</span>
+											<span>Stop the running agent</span>
+											<button
+												class="discovery-update-warn__action"
+												onclick={stopOldAgent}
+												disabled={stoppingOldAgent}
+											>{stoppingOldAgent ? "Stopping…" : "Stop agent"}</button>
+										</div>
+										<div class="discovery-update-warn__step">
+											<span class="discovery-update-warn__num">2</span>
+											<span>Delete the old <code>omniplot-agent-*</code> file from your computer</span>
+										</div>
+										<div class="discovery-update-warn__step">
+											<span class="discovery-update-warn__num">3</span>
+											<span>Download and run v{CURRENT_AGENT_VERSION}</span>
+											<a href="/studio/agent" class="discovery-update-warn__action">Get v{CURRENT_AGENT_VERSION} →</a>
+										</div>
+									</div>
 								</div>
 							{/if}
 							<div class="device-list">
@@ -2190,7 +2236,7 @@
 										type="text"
 										placeholder="http://localhost:7878"
 										value={plotterStore.config.agentUrl ?? "http://localhost:7878"}
-										oninput={(e) => { plotterStore.update({ agentUrl: (e.target as HTMLInputElement).value }); runDiscovery(); }}
+										oninput={(e) => { plotterStore.update({ agentUrl: (e.target as HTMLInputElement).value }); agentStore.reset(); runDiscovery(); }}
 									/>
 								</label>
 								<label class="discovery-adv-label" style="margin-top:8px">
@@ -4599,9 +4645,9 @@
 	}
 	.discovery-update-warn {
 		display: flex;
-		align-items: center;
-		gap: 7px;
-		padding: 7px 10px;
+		flex-direction: column;
+		gap: 8px;
+		padding: 10px 12px;
 		margin: 0 0 8px;
 		background: rgba(245, 158, 11, 0.08);
 		border: 1px solid rgba(245, 158, 11, 0.35);
@@ -4610,13 +4656,66 @@
 		color: var(--text-secondary);
 		line-height: 1.4;
 	}
-	.discovery-update-warn svg { color: #f59e0b; flex-shrink: 0; }
-	.discovery-update-warn__link {
-		color: #f59e0b;
-		font-weight: 600;
-		text-decoration: none;
+	.discovery-update-warn__header {
+		display: flex;
+		align-items: center;
+		gap: 7px;
+		color: var(--text-primary);
+		font-weight: 500;
 	}
-	.discovery-update-warn__link:hover { text-decoration: underline; }
+	.discovery-update-warn__header svg { color: #f59e0b; flex-shrink: 0; }
+	.discovery-update-warn__header strong { color: #f59e0b; }
+	.discovery-update-warn__steps {
+		display: flex;
+		flex-direction: column;
+		gap: 5px;
+		padding-left: 4px;
+	}
+	.discovery-update-warn__step {
+		display: flex;
+		align-items: center;
+		gap: 7px;
+		color: var(--text-secondary);
+	}
+	.discovery-update-warn__step code {
+		font-family: var(--font-mono);
+		font-size: 0.8em;
+		background: var(--bg-surface-3);
+		padding: 1px 4px;
+		border-radius: 3px;
+		color: var(--text-primary);
+	}
+	.discovery-update-warn__num {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 16px;
+		height: 16px;
+		border-radius: 50%;
+		background: rgba(245, 158, 11, 0.25);
+		color: #f59e0b;
+		font-size: 0.6rem;
+		font-weight: 700;
+		flex-shrink: 0;
+	}
+	.discovery-update-warn__action {
+		display: inline-flex;
+		align-items: center;
+		padding: 2px 8px;
+		border-radius: var(--radius-sm);
+		font-size: 0.6875rem;
+		font-weight: 600;
+		cursor: pointer;
+		border: 1px solid rgba(245, 158, 11, 0.5);
+		background: rgba(245, 158, 11, 0.1);
+		color: #f59e0b;
+		text-decoration: none;
+		white-space: nowrap;
+		margin-left: auto;
+		transition: background 0.12s;
+	}
+	.discovery-update-warn__action:hover { background: rgba(245, 158, 11, 0.2); }
+	.discovery-update-warn__action:disabled { opacity: 0.5; cursor: not-allowed; }
 
 	/* ── Offline message ─────────────────────── */
 
