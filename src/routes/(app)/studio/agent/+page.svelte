@@ -125,7 +125,7 @@
 	let testPorts = $state<PortInfo[]>([]);
 	let testPort = $state("auto");
 	let testBaud = $state(9600);
-	let testHPGL = $state("IN;SP1;PU0,0;PD500,0,500,500,0,500,0,0;PU;SP0;");
+	let testHPGL = $state("IN;SP1;VS10;FS80;PU0,0;PD1016,0,1016,1016,0,1016,0,0;PU508,508;CI250;PU;SP0;");
 	let testLoading = $state(false);
 	let testResult = $state<{ ok: boolean; message: string } | null>(null);
 
@@ -302,7 +302,7 @@
 							<span class="version-badge version-badge--current">Up to date</span>
 						{/if}
 					{:else}
-						OmniPlot Cut Agent
+						OmniPlot Cut Agent <span class="version version--latest">v{AGENT_VERSION}</span>
 					{/if}
 				</h1>
 				<p class="agent-header__sub">
@@ -595,7 +595,7 @@
 							{/if}
 							<p class="step__desc">
 								Single file — no installer, no setup, no admin rights needed.
-								{#if !agentStore.needsUpdate}Pick your platform:&nbsp;{/if}
+								{#if !agentStore.needsUpdate}Pick your platform for <strong>v{AGENT_VERSION}</strong>:&nbsp;{/if}
 							</p>
 							<div class="download-row">
 								{#each Object.entries(DOWNLOADS) as [pid, d]}
@@ -825,8 +825,8 @@
 						<h3 class="step__title">Send a test job</h3>
 						<p class="step__desc">
 							Use the <strong>Manual Test</strong> panel above to send a small HPGL payload before cutting real film.
-							The default payload draws a 500-unit square — safe to run dry (no film loaded) to confirm
-							the cutter receives commands. Watch the Live Log for the cut event and confirmed byte count.
+							The default payload cuts a 1″ × 1″ box with a circle in the center — safe to run dry (no film loaded)
+							to confirm the cutter receives commands. Watch the Live Log for the cut event and confirmed byte count.
 						</p>
 						<div class="tip-box">
 							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
@@ -1704,6 +1704,9 @@
 	}
 
 	/* ── Version badges ────────────────────────── */
+	.version--latest {
+		color: var(--text-tertiary);
+	}
 	.version--outdated {
 		color: #f59e0b;
 	}
