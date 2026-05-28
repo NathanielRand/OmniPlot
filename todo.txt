@@ -10,7 +10,6 @@
 - Verify/refactor User request of a pattern to be sourced by admin or community, not themselves. Maybe other community members will respond. Upvote system seems like a nice touch in case its a bade design.
 - Add flagging for review/report for all patterns (platform or community provided) in case of inaccuracies that warn the users when a pattern is flagged for review when selected to add to the canvas.
 - The patterns are wrong. None of the windows are accurate. Our system didnt seem to take the curvature of the windows into consideration.
-- make sure any exported filenames have omniplot prefix for branding.
 - HEAT SHRINKAGE: add option/setting for user to add internal buffer to each design to intentional give excess inside the cut zone line a 1cm-ish default (can be changed by user) for user's placements and make up from HEAT SHRINKAGE
 - VERIFY CLAUDE THEN TEST: When we start a new test job, how can we flush the previous from plotter to ensure that there are no traces/cache/fragmented measure instructions from the previous job send. If the user want to resume an interrupted job they will resend the job request. The reflush for each new send seems ideal but im open to new ideals to prevent other conflicts in the future.
 
