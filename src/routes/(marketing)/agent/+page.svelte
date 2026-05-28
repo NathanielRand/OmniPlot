@@ -687,16 +687,20 @@
 	}
 	.steps {
 		display: flex;
-		align-items: flex-start;
+		flex-direction: column;
 		gap: 0;
 		margin-top: 48px;
+		max-width: 720px;
 	}
 	.step {
-		flex: 1;
-		display: flex;
-		flex-direction: column;
-		gap: 14px;
+		display: grid;
+		grid-template-columns: 40px 1fr;
+		gap: 0 18px;
+		padding: 24px 0;
+		border-bottom: 1px solid var(--border-subtle);
 	}
+	.step:last-child { border-bottom: none; padding-bottom: 0; }
+	.step:first-child { padding-top: 0; }
 	.step__num {
 		width: 40px;
 		height: 40px;
@@ -709,6 +713,7 @@
 		align-items: center;
 		justify-content: center;
 		flex-shrink: 0;
+		margin-top: 2px;
 	}
 	.step__body {}
 	.step__title {
@@ -723,11 +728,7 @@
 		margin: 0;
 	}
 	.step__connector {
-		width: 48px;
-		height: 1px;
-		background: var(--border-default);
-		margin-top: 19px;
-		flex-shrink: 0;
+		display: none;
 	}
 
 	/* ── Downloads ─────────────────────────────── */
@@ -927,8 +928,8 @@
 		color: var(--text-primary);
 	}
 
-	/* Wide step variant for step 2 */
-	.step--wide { align-items: flex-start; }
+	/* Wide step variant for step 2 — inherits grid layout from .step */
+	.step--wide {}
 
 	/* Mini visual steps for marketing page */
 	.mkt-vsteps {
@@ -1030,15 +1031,6 @@
 		}
 		.methods-grid {
 			grid-template-columns: repeat(2, 1fr);
-		}
-		.steps {
-			flex-direction: column;
-			gap: 24px;
-		}
-		.step__connector {
-			width: 1px;
-			height: 20px;
-			margin: 0 0 0 19px;
 		}
 		.trust-section__inner {
 			flex-wrap: wrap;

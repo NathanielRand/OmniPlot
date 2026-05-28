@@ -247,7 +247,7 @@
 		}
 	}
 
-	const TEST_HPGL = "IN;SP1;VS10;FS80;PU0,0;PD1016,0,1016,1016,0,1016,0,0;PU;SP0;"; // 1" × 1" square
+	const TEST_HPGL = "IN;SP1;VS10;FS80;PU0,0;PD1016,0,1016,1016,0,1016,0,0;PU508,508;CI250;PU;SP0;"; // 1" × 1" box + circle
 
 	function deviceToConfig(plotter: PlotterDevice): PlotterConfig {
 		return {
@@ -279,7 +279,7 @@
 	async function handleTestCut(plotter: PlotterDevice) {
 		const result = await sendToPlotter(TEST_HPGL, deviceToConfig(plotter));
 		if (result.ok) {
-			toastStore.success("Test cut sent", `1" × 1" square → ${plotter.name}`);
+			toastStore.success("Test cut sent", `1" × 1" box + circle → ${plotter.name}`);
 		} else {
 			diagPlotter  = plotter;
 			diagData     = result.diagnostic;
