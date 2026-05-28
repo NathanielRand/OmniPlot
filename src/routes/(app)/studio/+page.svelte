@@ -773,10 +773,11 @@
 		const sheetArea = canvasStore.sheet.widthInches * usedLength;
 		const eff       = sheetArea > 0 ? Math.min(1, patternArea / sheetArea) : 0;
 		const jobName   = `Job ${new Date().toLocaleDateString()}`;
+		const fileSlug  = `omniplot-${new Date().toISOString().slice(0, 10)}`;
 
 		// ── Download mode: synchronous, no loading state needed ──────────
 		if (plotterStore.config.connection === "download") {
-			downloadHpgl(canvasStore.state, plotterStore.config, jobName);
+			downloadHpgl(canvasStore.state, plotterStore.config, fileSlug);
 			const connLabel = `PLT file downloaded (${inBounds.length} paths)`;
 			toastStore.success("Cut job ready", connLabel);
 			persistJob({ user, inBounds, eff, usedLength, patternArea, sheetArea, jobName });
@@ -954,15 +955,16 @@
 			uiStore.openPricing();
 			return;
 		}
+		const exportSlug = `omniplot-${new Date().toISOString().slice(0, 10)}`;
 		if (format === "hpgl") {
-			downloadHpgl(canvasStore.state, plotterStore.config);
+			downloadHpgl(canvasStore.state, plotterStore.config, exportSlug);
 			if (userStore.user) {
 				incrementCutUsage(userStore.user.uid, userStore.user.usage.monthResetAt).catch(() => {});
 			}
 		} else if (format === "dxf") {
-			downloadDxf(canvasStore.state);
+			downloadDxf(canvasStore.state, exportSlug);
 		} else {
-			downloadSvg(canvasStore.state);
+			downloadSvg(canvasStore.state, exportSlug);
 		}
 		uiStore.closeExport();
 		toastStore.success("Exported", `Downloaded as .${format}`);
