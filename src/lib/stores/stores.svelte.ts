@@ -12,6 +12,7 @@ import {
 	DEFAULT_MATERIALS,
 	PLOTTER_PRESETS,
 	DEFAULT_CANVAS_STATE,
+	CURRENT_AGENT_VERSION,
 } from "$lib/config";
 
 // ─── Theme ────────────────────────────────────
@@ -429,6 +430,19 @@ const CONNECTION_PERSIST: Partial<Record<string, Array<keyof PlotterConfig>>> = 
 
 function _connStorageKey(type: string) { return `omniplot-conn:${type}`; }
 
+const ACTIVE_CONN_KEY = "omniplot-conn:active";
+
+function _saveActiveConnection(type: string) {
+	if (typeof localStorage === "undefined") return;
+	localStorage.setItem(ACTIVE_CONN_KEY, type);
+}
+
+function _loadActiveConnection(): PlotterConfig["connection"] {
+	if (typeof localStorage === "undefined") return "download";
+	const saved = localStorage.getItem(ACTIVE_CONN_KEY) as PlotterConfig["connection"] | null;
+	return saved ?? "download";
+}
+
 function _saveConnSettings(type: string, config: PlotterConfig) {
 	if (typeof localStorage === "undefined") return;
 	const keys = CONNECTION_PERSIST[type] ?? [];
@@ -468,13 +482,17 @@ function createPlotterStore() {
 	// Start from preset defaults, then layer in any saved user customisations
 	const _savedDefaults = _loadPresetSettings(defaultPreset.name!) ?? {};
 
+	// Restore last-used connection type and its per-type settings
+	const _savedConnType = _loadActiveConnection();
+	const _savedConnSettings = _loadConnSettings(_savedConnType);
+
 	let config = $state<PlotterConfig>({
 		id: "default",
 		name: defaultPreset.name!,
 		manufacturer: defaultPreset.manufacturer!,
 		model: defaultPreset.model!,
 		protocol: defaultPreset.protocol!,
-		connection: "download",
+		connection: _savedConnType,
 		bladeForce: _savedDefaults.bladeForce ?? defaultPreset.bladeForce!,
 		cuttingSpeed: _savedDefaults.cuttingSpeed ?? defaultPreset.cuttingSpeed!,
 		passes: _savedDefaults.passes ?? defaultPreset.passes!,
@@ -486,10 +504,11 @@ function createPlotterStore() {
 		originY: 0,
 		flipH: false,
 		flipV: false,
-		agentUrl: "http://localhost:7878",
-		baudRate: _savedDefaults.baudRate ?? defaultPreset.baudRate ?? 9600,
-		ipAddress: "192.168.1.100",
-		port: 9100,
+		agentUrl: (_savedConnSettings.agentUrl as string | undefined) ?? "http://localhost:7878",
+		baudRate: (_savedConnSettings.baudRate as number | undefined) ?? _savedDefaults.baudRate ?? defaultPreset.baudRate ?? 9600,
+		ipAddress: (_savedConnSettings.ipAddress as string | undefined) ?? "192.168.1.100",
+		port: (_savedConnSettings.port as number | undefined) ?? 9100,
+		serialPort: (_savedConnSettings.serialPort as string | undefined),
 	});
 
 	return {
@@ -521,10 +540,13 @@ function createPlotterStore() {
 		// Saves the current connection's specific settings, then restores the saved
 		// settings for the new connection type before switching. This ensures IP
 		// addresses, agent URLs, and baud rates are remembered per connection type.
-		switchConnection(newType: PlotterConfig["connection"]) {
+		// Pass { save: false } for automatic/internal disconnects that should not
+		// overwrite the user's saved active connection preference.
+		switchConnection(newType: PlotterConfig["connection"], opts?: { save?: boolean }) {
 			_saveConnSettings(config.connection, config);
 			const saved = _loadConnSettings(newType);
 			config = { ...config, ...saved, connection: newType };
+			if (opts?.save !== false) _saveActiveConnection(newType);
 		},
 	};
 }
@@ -534,11 +556,21 @@ export const plotterStore = createPlotterStore();
 // ─── Cut Agent shared state ───────────────────
 // Single source of truth for agent connectivity so any page can read
 // current status without independently polling.
+
+function semverLt(a: string, b: string): boolean {
+	const ap = a.split(".").map(Number);
+	const bp = b.split(".").map(Number);
+	for (let i = 0; i < 3; i++) {
+		const av = ap[i] ?? 0, bv = bp[i] ?? 0;
+		if (av < bv) return true;
+		if (av > bv) return false;
+	}
+	return false;
+}
+
 function createAgentStore() {
 	let status  = $state<"unknown" | "online" | "offline">("unknown");
 	let version = $state<string | null>(null);
-	// Imported inline to avoid circular imports through the config barrel
-	const REQUIRED_VERSION = "1.0.1";
 	let stats   = $state<{
 		jobsTotal?: number;
 		jobsToday?: number;
@@ -552,11 +584,11 @@ function createAgentStore() {
 		get status()           { return status;  },
 		get version()          { return version; },
 		get stats()            { return stats;   },
-		/** True when agent is running but reports a version older than REQUIRED_VERSION. */
-		get needsUpdate()      { return status === "online" && version !== null && version !== REQUIRED_VERSION; },
-		/** True when agent is running and is the expected version. */
-		get isCurrentVersion() { return status === "online" && version === REQUIRED_VERSION; },
-		get requiredVersion()  { return REQUIRED_VERSION; },
+		/** True when agent is running but its version is below the required version. */
+		get needsUpdate()      { return status === "online" && version !== null && semverLt(version, CURRENT_AGENT_VERSION); },
+		/** True when agent is running and meets or exceeds the required version. */
+		get isCurrentVersion() { return status === "online" && version !== null && !semverLt(version, CURRENT_AGENT_VERSION); },
+		get requiredVersion()  { return CURRENT_AGENT_VERSION; },
 		setOnline(v: string) {
 			status  = "online";
 			version = v;
@@ -564,6 +596,12 @@ function createAgentStore() {
 		setOffline() {
 			status  = "offline";
 			version = null;
+		},
+		/** Resets to unknown — call when agent URL changes or a clean probe is needed. */
+		reset() {
+			status  = "unknown";
+			version = null;
+			stats   = null;
 		},
 		setStats(s: typeof stats) {
 			stats = s;
