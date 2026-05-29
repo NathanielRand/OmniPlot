@@ -247,6 +247,33 @@ export async function getPatternsByVehicle(
 }
 
 // ─── Job queries ──────────────────────────────
+export function subscribeUserJobs(
+	uid: string,
+	onNext: (jobs: CutJob[]) => void,
+	limitCount = 100,
+): Unsubscribe {
+	const q = query(
+		collection(db, Collections.JOBS),
+		where("userId", "==", uid),
+		limit(limitCount),
+	);
+	return onSnapshot(q, (snap) => {
+		const jobs = snap.docs
+			.map((d) => {
+				const data = d.data();
+				return {
+					id: d.id,
+					...data,
+					createdAt:   data.createdAt?.toDate?.()   ?? data.createdAt   ?? new Date(),
+					updatedAt:   data.updatedAt?.toDate?.()   ?? data.updatedAt   ?? new Date(),
+					completedAt: data.completedAt?.toDate?.() ?? data.completedAt ?? null,
+				} as CutJob;
+			})
+			.sort((a, b) => (b.updatedAt as Date).getTime() - (a.updatedAt as Date).getTime());
+		onNext(jobs);
+	});
+}
+
 export async function getUserJobs(
 	uid: string,
 	limitCount = 100,

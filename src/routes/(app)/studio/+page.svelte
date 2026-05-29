@@ -20,7 +20,8 @@
 		generateHpglSegments,
 	} from "$lib/utils/hpgl";
 	import { sendToPlotter, sendToPlotterSegmented, sendSettings, connectSerialPort, disconnectSerialPort, isSerialConnected, queryPlotter, type SerialPortInfo, type CutProgress } from "$lib/utils/plotter-connection";
-	import { saveJob, logPlotterError, incrementCutUsage } from "$lib/firebase/firestore";
+	import { logPlotterError, incrementCutUsage } from "$lib/firebase/firestore";
+	import { cutJobStore } from "$lib/stores";
 	import type { PlotterDiagnostic } from "$lib/utils/plotter-errors";
 	import PlotterDiagPanel from "$lib/components/ui/PlotterDiagPanel.svelte";
 	import {
@@ -931,7 +932,7 @@
 			completedAt: status === "complete" ? new Date() : null,
 			exportUrl: null,
 		};
-		saveJob(job).catch(() => {});
+		cutJobStore.addJob(job);
 		// Only count usage increments for completed jobs
 		if (status === "complete") {
 			incrementCutUsage(opts.user.uid, opts.user.usage.monthResetAt).catch(() => {});

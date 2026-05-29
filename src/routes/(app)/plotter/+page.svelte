@@ -5,13 +5,12 @@
 <script lang="ts">
 	import { onMount, onDestroy } from "svelte";
 	import Button from "$lib/components/ui/Button.svelte";
-	import { userStore, toastStore, plotterStore, agentStore } from "$lib/stores";
+	import { userStore, toastStore, plotterStore, agentStore, cutJobStore } from "$lib/stores";
 	import { PLOTTER_PRESETS } from "$lib/config";
 	import {
 		getUserPlotters,
 		savePlotter,
 		deletePlotter,
-		getUserJobs,
 		logPlotterError,
 	} from "$lib/firebase/firestore";
 	import {
@@ -19,15 +18,14 @@
 		detectAgentPorts,
 		scanNetworkViaAgent,
 	} from "$lib/utils/plotter-detect";
-	import { sendToPlotter } from "$lib/utils/plotter-connection";
+	import { sendToPlotter, flushPlotter } from "$lib/utils/plotter-connection";
 	import type { PlotterDiagnostic } from "$lib/utils/plotter-errors";
 	import PlotterDiagPanel from "$lib/components/ui/PlotterDiagPanel.svelte";
-	import type { PlotterDevice, CutJob, PlotterConnection, PlotterConfig } from "$lib/types";
+	import type { PlotterDevice, PlotterConnection, PlotterConfig, CutJob } from "$lib/types";
 	import type { NetworkDevice } from "$lib/utils/plotter-detect";
 
 	// ─── Core state ──────────────────────────────
 	let plotters  = $state<PlotterDevice[]>([]);
-	let jobs      = $state<CutJob[]>([]);
 	let loading   = $state(true);
 	let loadError = $state("");
 
@@ -67,6 +65,7 @@
 	});
 
 	// ─── Derived ─────────────────────────────────
+	const jobs       = $derived(cutJobStore.jobs);
 	const activeJobs = $derived(jobs.filter(j => j.status === "cutting" || j.status === "ready"));
 	const recentJobs = $derived(jobs.filter(j => j.status === "complete" || j.status === "error").slice(0, 10));
 	const failedJobs = $derived(jobs.filter(j => j.status === "error").slice(0, 5));
@@ -145,7 +144,7 @@
 		loading   = true;
 		loadError = "";
 		try {
-			[plotters, jobs] = await Promise.all([getUserPlotters(uid), getUserJobs(uid, 30)]);
+			plotters = await getUserPlotters(uid);
 		} catch (e) {
 			loadError = e instanceof Error ? e.message : "Failed to load data.";
 		} finally {
@@ -300,6 +299,19 @@
 					autoReported:  true,
 				}).catch(() => {});
 			}
+		}
+	}
+
+	let flushing = $state<string | null>(null); // plotter id being flushed
+
+	async function handleFlush(plotter: PlotterDevice) {
+		flushing = plotter.id;
+		const result = await flushPlotter(deviceToConfig(plotter));
+		flushing = null;
+		if (result.ok) {
+			toastStore.success("Plotter flushed", `Buffer cleared → ${plotter.name}`);
+		} else {
+			toastStore.warning("Flush failed", result.diagnostic.message);
 		}
 	}
 
@@ -498,6 +510,9 @@
 								<div class="card-actions">
 									<button class="card-btn" onclick={() => handleSetActive(plotter)}>Set active</button>
 									<button class="card-btn" onclick={() => handleTestCut(plotter)}>Test cut</button>
+									<button class="card-btn" onclick={() => handleFlush(plotter)} disabled={flushing === plotter.id}>
+										{flushing === plotter.id ? "Flushing…" : "Flush"}
+									</button>
 									{#if confirmDelete === plotter.id}
 										<button class="card-btn card-btn--danger" onclick={() => handleDelete(plotter.id)}>Confirm</button>
 										<button class="card-btn" onclick={() => confirmDelete = null}>Cancel</button>

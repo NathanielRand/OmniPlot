@@ -38,6 +38,13 @@ export async function sendToPlotterSegmented(
     config: PlotterConfig,
     onProgress?: ProgressCallback,
 ): Promise<SendResult & { completedCount: number }> {
+    // Flush any leftover state from a previous or interrupted job before starting.
+    // Best-effort: don't block the new job if the plotter isn't responding yet.
+    if (config.connection !== "download") {
+        await sendToPlotter(ABORT_HPGL, config).catch(() => {});
+        await new Promise((r) => setTimeout(r, 150));
+    }
+
     if (config.connection !== "usb-serial") {
         // Non-USB connections don't support streaming — fall back to monolithic send
         const { generateHpgl } = await import("./hpgl");
@@ -143,6 +150,17 @@ export async function sendSettings(config: PlotterConfig): Promise<SendResult> {
     const hpgl = buildSettingsHpgl(config);
     if (!hpgl) return { ok: true };
     return sendToPlotter(hpgl, config);
+}
+
+// ─── Abort / flush ────────────────────────────
+// CAN (\x18) clears the plotter's pending input buffer; IN; re-initializes.
+// Sent before every new job via sendToPlotterSegmented, and available as a
+// standalone call from the Plotter page's "Flush" button.
+const ABORT_HPGL = "\x18IN;\n";
+
+export async function flushPlotter(config: PlotterConfig): Promise<SendResult> {
+    if (config.connection === "download") return { ok: true };
+    return sendToPlotter(ABORT_HPGL, config);
 }
 
 // ─── Main dispatch ────────────────────────────
