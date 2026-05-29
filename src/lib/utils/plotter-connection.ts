@@ -63,6 +63,32 @@ let _cachedPort: any | null = null;
 
 export type SerialPortInfo = { label: string; vendorId?: number; productId?: number };
 
+// Silently reconnects to the first previously-authorized port without showing
+// the browser selection dialog. Called on page mount to restore a USB connection
+// that was active before navigation. Returns null if no port is available.
+export async function reconnectSerialPort(baudRate: number): Promise<SerialPortInfo | null> {
+    if (!("serial" in navigator)) return null;
+    try {
+        const serial = (navigator as any).serial;
+        const ports: any[] = await serial.getPorts();
+        if (!ports.length) return null;
+        const port = ports[0];
+        _cachedPort = port;
+        await _ensurePortOpen(port, baudRate);
+        const info = port.getInfo?.() ?? {};
+        return {
+            label: info.usbVendorId
+                ? `USB ${info.usbVendorId.toString(16).padStart(4, "0")}:${(info.usbProductId ?? 0).toString(16).padStart(4, "0")}`
+                : "Serial port",
+            vendorId: info.usbVendorId,
+            productId: info.usbProductId,
+        };
+    } catch {
+        _cachedPort = null;
+        return null;
+    }
+}
+
 // Requests a port (shows browser dialog) and caches it.
 // Returns the port info for display. Call from a user-gesture handler.
 export async function connectSerialPort(baudRate: number): Promise<SerialPortInfo> {

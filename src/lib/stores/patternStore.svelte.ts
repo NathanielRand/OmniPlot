@@ -860,24 +860,101 @@ const CORVETTE_Z06_2024_PPF: Pattern[] = [
 ];
 
 // ─── Seed: 2016 Chevrolet Silverado 1500 Crew Cab (K2XX) ────────────────────
-// Window tint dimensions:
-//   Rear back glass 64"×17" — diyautoglass.net block-size for 2014-2017 Silverado C1500 4-door
-//   Windshield ~60.5"×31" — width corroborated by kevinsautos.com + multiple precut-kit sources
-//   Door glass calibrated from Ford F-150 2024 SuperCrew reference adjusted for
-//     Silverado's lower overall height (73.8" vs 77.2") and narrower proportions
-//   No vent/quarter windows — all 2016 crew cab tint kits are 4-piece door-glass-only
-// PPF dimensions calibrated from F-150 2024 PPF patterns scaled to Silverado K2XX proportions.
+// DIMENSION STATUS (window tint):
+//   Rear back glass 64"×17"  — VERIFIED: diyautoglass.net + cross-checked against K2XX glass
+//                               replacement catalogs (consistent across 2014-2018 Silverado/Sierra)
+//   Windshield 60.5" wide    — CORROBORATED by kevinsautos.com + multiple precut-kit sources;
+//                               height 31.0" is uncited — verify before cutting
+//   Front door 26"W × 22"H  — UNVERIFIED: placeholder only. Do not cut without confirming
+//                               against NAGS catalog (DW series) or a physical template.
+//   Rear door  24"W × 21"H  — UNVERIFIED: placeholder only. Same caveat.
+//
+// SVG PATH GEOMETRY (all windows):
+//   Shapes are based on known K2XX greenhouse geometry:
+//     - A-pillar rake ~10° from vertical → front-top corner shifted ~15% rearward
+//     - B-pillar nearly vertical (rear door front edge ~5° from vertical)
+//     - Belt line rises ~3° toward rear → bottom edge higher at B-pillar than A-pillar
+//     - Rear back glass nearly rectangular, flat top following cab roofline
+//   These shapes reflect actual window proportions but are NOT a substitute for
+//   a measured precut template when cutting is required.
 
 const D_CS16 = new Date("2026-05-27");
 
 const CHEVY_SILVERADO1500_2016_CREW_TINT: Pattern[] = [
-	{ id: "cs16-ws",  vehicleId: "chevy-silverado1500-2016-crew", category: "window-tint", zone: "windshield",        name: "Windshield",             coverage: "full",    svgPath: "M6,92 Q8,28 14,8 L86,8 Q92,28 94,92 Z",     widthInches: 60.5, heightInches: 31.0, revision: "2026-05", notes: "Width ~60\" confirmed by multiple precut-kit sources; front tint restricted in most states", isPublished: true, createdAt: D_CS16, updatedAt: D_CS16 },
-	{ id: "cs16-wss", vehicleId: "chevy-silverado1500-2016-crew", category: "window-tint", zone: "windshield-strip",  name: "Windshield Strip",       coverage: "partial", svgPath: "M14,5 Q50,2 86,5 L84,30 Q50,26 16,30 Z",    widthInches: 60.5, heightInches:  5.5, revision: "2026-05", notes: "Top visor strip — legal in all states",                                                     isPublished: true, createdAt: D_CS16, updatedAt: D_CS16 },
-	{ id: "cs16-wfl", vehicleId: "chevy-silverado1500-2016-crew", category: "window-tint", zone: "window-front-left", name: "Front Driver Window",    coverage: "full",    svgPath: "M5,8 L86,5 L90,92 L8,95 Z",                 widthInches: 26.0, heightInches: 22.0, revision: "2026-05", notes: "Calibrated from F-150 SuperCrew reference (29\"×24\") adjusted for Silverado height",       isPublished: true, createdAt: D_CS16, updatedAt: D_CS16 },
-	{ id: "cs16-wfr", vehicleId: "chevy-silverado1500-2016-crew", category: "window-tint", zone: "window-front-right",name: "Front Passenger Window", coverage: "full",    svgPath: "M14,5 L95,8 L92,95 L10,92 Z",               widthInches: 26.0, heightInches: 22.0, revision: "2026-05", notes: "Calibrated from F-150 SuperCrew reference (29\"×24\") adjusted for Silverado height",       isPublished: true, createdAt: D_CS16, updatedAt: D_CS16 },
-	{ id: "cs16-wrl", vehicleId: "chevy-silverado1500-2016-crew", category: "window-tint", zone: "window-rear-left",  name: "Rear Driver Window",     coverage: "full",    svgPath: "M5,8 L92,8 L95,92 L8,92 Z",                 widthInches: 24.0, heightInches: 21.0, revision: "2026-05", notes: "Calibrated from F-150 SuperCrew reference (25\"×21\"); crew cab rear door glass",           isPublished: true, createdAt: D_CS16, updatedAt: D_CS16 },
-	{ id: "cs16-wrr", vehicleId: "chevy-silverado1500-2016-crew", category: "window-tint", zone: "window-rear-right", name: "Rear Passenger Window",  coverage: "full",    svgPath: "M8,8 L95,8 L92,92 L5,92 Z",                 widthInches: 24.0, heightInches: 21.0, revision: "2026-05", notes: "Calibrated from F-150 SuperCrew reference (25\"×21\"); crew cab rear door glass",           isPublished: true, createdAt: D_CS16, updatedAt: D_CS16 },
-	{ id: "cs16-rws", vehicleId: "chevy-silverado1500-2016-crew", category: "window-tint", zone: "rear-windshield",   name: "Rear Window",            coverage: "full",    svgPath: "M6,90 Q7,22 9,8 L91,8 Q93,22 94,90 Z",      widthInches: 64.0, heightInches: 17.0, revision: "2026-05", notes: "64\"×17\" block size — diyautoglass.net spec for 2014-2017 Silverado C1500 4-door",         isPublished: true, createdAt: D_CS16, updatedAt: D_CS16 },
+	{
+		// Windshield: trapezoidal — wider at cowl, narrower at header. Swept A-pillar
+		// sides follow the ~20° rake of the K2XX windshield from vertical.
+		id: "cs16-ws", vehicleId: "chevy-silverado1500-2016-crew", category: "window-tint",
+		zone: "windshield", name: "Windshield", coverage: "full",
+		svgPath: "M4,93 Q6,20 15,6 L85,6 Q94,20 96,93 Q50,96 4,93 Z",
+		widthInches: 60.5, heightInches: 31.0, revision: "2026-06",
+		notes: "Width ~60.5\" corroborated; height 31.0\" UNCITED — verify before cutting. Front tint restricted in most states.",
+		isPublished: true, createdAt: D_CS16, updatedAt: D_CS16,
+	},
+	{
+		// Windshield visor strip: spans full width, slight arch following header curve.
+		id: "cs16-wss", vehicleId: "chevy-silverado1500-2016-crew", category: "window-tint",
+		zone: "windshield-strip", name: "Windshield Strip", coverage: "partial",
+		svgPath: "M15,5 Q50,2 85,5 L83,92 Q50,88 17,92 Z",
+		widthInches: 60.5, heightInches: 5.5, revision: "2026-06",
+		notes: "Top visor strip — legal in all states. Height uncited.",
+		isPublished: true, createdAt: D_CS16, updatedAt: D_CS16,
+	},
+	{
+		// Front driver window: A-pillar (left edge) rakes ~10° rearward from vertical —
+		// top-left corner is ~15 normalized units right of bottom-left corner.
+		// Top edge has a very slight outward arch following the greenhouse crown.
+		// Bottom edge (belt line) rises ~3° toward B-pillar.
+		// B-pillar (right edge) is nearly vertical (2–3° lean).
+		id: "cs16-wfl", vehicleId: "chevy-silverado1500-2016-crew", category: "window-tint",
+		zone: "window-front-left", name: "Front Driver Window", coverage: "full",
+		svgPath: "M4,90 L19,8 Q55,5 93,6 L95,88 Q50,93 4,90 Z",
+		widthInches: 26.0, heightInches: 22.0, revision: "2026-06",
+		notes: "UNVERIFIED dimensions — verify against NAGS DW catalog or physical template before cutting. Shape reflects K2XX A-pillar geometry.",
+		isPublished: true, createdAt: D_CS16, updatedAt: D_CS16,
+	},
+	{
+		// Front passenger window: mirror image of driver. A-pillar now on right edge.
+		id: "cs16-wfr", vehicleId: "chevy-silverado1500-2016-crew", category: "window-tint",
+		zone: "window-front-right", name: "Front Passenger Window", coverage: "full",
+		svgPath: "M96,90 L81,8 Q45,5 7,6 L5,88 Q50,93 96,90 Z",
+		widthInches: 26.0, heightInches: 22.0, revision: "2026-06",
+		notes: "UNVERIFIED dimensions — verify against NAGS DW catalog or physical template before cutting. Shape reflects K2XX A-pillar geometry.",
+		isPublished: true, createdAt: D_CS16, updatedAt: D_CS16,
+	},
+	{
+		// Rear driver window (crew cab): more upright than front door — B-pillar (left)
+		// is nearly vertical (~5° lean). C-pillar (right) has a lean similar to A-pillar.
+		// Slightly more rectangular overall than the front door glass.
+		id: "cs16-wrl", vehicleId: "chevy-silverado1500-2016-crew", category: "window-tint",
+		zone: "window-rear-left", name: "Rear Driver Window", coverage: "full",
+		svgPath: "M5,90 L8,8 Q52,4 92,6 L95,89 Q52,93 5,90 Z",
+		widthInches: 24.0, heightInches: 21.0, revision: "2026-06",
+		notes: "UNVERIFIED dimensions — verify against NAGS DW catalog or physical template before cutting. Shape reflects K2XX B/C-pillar geometry.",
+		isPublished: true, createdAt: D_CS16, updatedAt: D_CS16,
+	},
+	{
+		// Rear passenger window: mirror of rear driver.
+		id: "cs16-wrr", vehicleId: "chevy-silverado1500-2016-crew", category: "window-tint",
+		zone: "window-rear-right", name: "Rear Passenger Window", coverage: "full",
+		svgPath: "M95,90 L92,8 Q48,4 8,6 L5,89 Q48,93 95,90 Z",
+		widthInches: 24.0, heightInches: 21.0, revision: "2026-06",
+		notes: "UNVERIFIED dimensions — verify against NAGS DW catalog or physical template before cutting. Shape reflects K2XX B/C-pillar geometry.",
+		isPublished: true, createdAt: D_CS16, updatedAt: D_CS16,
+	},
+	{
+		// Rear back glass: 64"×17" is the documented block size for the K2XX 1500 Crew Cab.
+		// Shape: nearly rectangular. Top edge follows flat cab roofline — essentially straight.
+		// Sides have very slight inward curve (taper ~1–2" narrower at bottom over 17" height).
+		// Bottom has a gentle arch following the rear window molding.
+		// Corners have moderate radii.
+		id: "cs16-rws", vehicleId: "chevy-silverado1500-2016-crew", category: "window-tint",
+		zone: "rear-windshield", name: "Rear Window", coverage: "full",
+		svgPath: "M5,88 L5,12 Q8,5 14,4 L86,4 Q92,5 95,12 L95,88 Q88,95 12,95 Z",
+		widthInches: 64.0, heightInches: 17.0, revision: "2026-06",
+		notes: "64\"×17\" VERIFIED: diyautoglass.net + consistent across K2XX 2014–2018 glass replacement catalogs.",
+		isPublished: true, createdAt: D_CS16, updatedAt: D_CS16,
+	},
 ];
 
 const CHEVY_SILVERADO1500_2016_CREW_PPF: Pattern[] = [

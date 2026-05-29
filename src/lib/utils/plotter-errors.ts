@@ -113,12 +113,13 @@ const CATALOG: Catalog = {
 	},
 	AGENT_PORT_BUSY: {
 		title: "Serial port in use",
-		message: "The configured serial port is already held open by another application.",
+		message: "The serial port is already held open. This often happens when a plotter auto-probe query timed out without releasing the port — it is an agent-side limitation, not a third-party application conflict.",
 		steps: [
-			"Close any other software that communicates with the plotter (e.g., Roland VersaWorks, Graphtec Studio, CutStudio, or a terminal emulator).",
-			"macOS/Linux: run lsof | grep ttyUSB or lsof | grep ttyACM in Terminal to identify the process holding the port.",
-			"Windows: open Device Manager → Ports, or use a tool like CurrPorts to find what has the COM port open.",
-			"Restart the Cut Agent after freeing the port.",
+			"Restart the OmniPlot Cut Agent — this is the fastest fix and releases any port the agent left open after a failed probe or timed-out query.",
+			"If that doesn't resolve it, close any other software that talks to the plotter (Roland VersaWorks, Graphtec Studio, CutStudio, or a terminal emulator).",
+			"macOS/Linux: run lsof | grep ttyUSB or lsof | grep ttyACM in Terminal to see which process holds the port.",
+			"Windows: open Device Manager → Ports (COM & LPT), or use CurrPorts to identify the locking process.",
+			"Unplug and replug the USB cable as a last resort — this forces the OS to destroy the open handle.",
 		],
 		escalate: false,
 	},

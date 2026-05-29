@@ -242,6 +242,11 @@
 		const preset = PLOTTER_PRESETS.find(p => p.name === plotter.presetName);
 		if (preset) {
 			plotterStore.applyPreset(preset);
+			plotterStore.switchConnection(plotter.connection);
+			if (plotter.serialPort) plotterStore.update({ serialPort: plotter.serialPort });
+			if (plotter.agentUrl)   plotterStore.update({ agentUrl: plotter.agentUrl });
+			if (plotter.ipAddress)  plotterStore.update({ ipAddress: plotter.ipAddress });
+			if (plotter.port)       plotterStore.update({ port: plotter.port });
 			toastStore.success("Active plotter set", `${plotter.name} is now active in Studio.`);
 		}
 	}

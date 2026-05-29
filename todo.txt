@@ -1,4 +1,4 @@
-// TODO
+// UPCOMING
 - Create a local plotter emulator/simulator to verify the communication between plotter and agent (or other method) is bidirectional and valid throughout each expected communication event with proper processing and response. we need to test without having the quipment in person.
 - investors page
 - offer cutting services with simple user flow to select from ddb of cars and submit order. we cut at our shop and send to customer in hardened tube. priced material cost +
@@ -8,12 +8,19 @@
 - fully custom pattern upload for custom shapes/logos/icons/etc.. with option to submit to community under a more fitting category than vehicles.
 - User should be able to upload and use any vehicles pattern they want with the option to submit to community. if they want to submit to the community they must provide any missing information before submission to gurantee it matches our other pattern datap points.
 - Verify/refactor User request of a pattern to be sourced by admin or community, not themselves. Maybe other community members will respond. Upvote system seems like a nice touch in case its a bade design.
+- User uploaded 2d scanning tool data output as a pattern.
+- turn users phone camera into web-based 2d scanning tool.
 - Add flagging for review/report for all patterns (platform or community provided) in case of inaccuracies that warn the users when a pattern is flagged for review when selected to add to the canvas.
 - The patterns are wrong. None of the windows are accurate. Our system didnt seem to take the curvature of the windows into consideration.
 - HEAT SHRINKAGE: add option/setting for user to add internal buffer to each design to intentional give excess inside the cut zone line a 1cm-ish default (can be changed by user) for user's placements and make up from HEAT SHRINKAGE
-- VERIFY CLAUDE THEN TEST: When we start a new test job, how can we flush the previous from plotter to ensure that there are no traces/cache/fragmented measure instructions from the previous job send. If the user want to resume an interrupted job they will resend the job request. The reflush for each new send seems ideal but im open to new ideals to prevent other conflicts in the future.
-- Flush jobs command to printer to reset its state. we already do this automatically for each new job but why not also add the ability to do it without pushing a job.
+- When we start a new test job, how can we flush the previous from plotter to ensure that there are no traces/cache/fragmented measure instructions from the previous job send. If the user want to resume an interrupted job they will resend the job request. The reflush for each new send seems ideal but im open to new ideals to prevent other conflicts in the future.
+- Flush jobs command to printer to reset its current job state. we already do this automatically for each new job (should also verify this is wired up & working correctly) but also add the ability to do manually from the ui it without pushing a job.
 
+// IN PROGRESS
+- the user "selected" connection does persist as being selected between page navigation.
+- usb direct connection doesnt persist between page navigation or show probe prompt
+- the roll measurements displayed and used on the grid ui doesn't is confusingly presented. it says for example 40" in multiple places. the roll size once on the grid is ideal and the amount used. Increase the text size of both to be more prominent.
+- Disclaim to user the cutter has to be in manual/offline mode in order to receive jobs.
 
 // NEEDS TESTING
 - DOWNLOAD NEW AGENT FIRST
