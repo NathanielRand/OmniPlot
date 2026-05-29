@@ -2,30 +2,16 @@
 	import Badge from "$lib/components/ui/Badge.svelte";
 	import Button from "$lib/components/ui/Button.svelte";
 	import { formatDate, formatRelativeTime } from "$lib/utils";
-	import { userStore } from "$lib/stores";
-	import { getUserJobs } from "$lib/firebase/firestore";
-	import type { CutJob, JobStatus } from "$lib/types";
+	import { cutJobStore } from "$lib/stores";
+	import type { JobStatus } from "$lib/types";
 
-	let jobs = $state<CutJob[]>([]);
-	let loading = $state(true);
-	let error = $state("");
 	let search = $state("");
 	let filterStatus = $state<"all" | JobStatus>("all");
 	let selected = $state<Set<string>>(new Set());
 
-	// Use $effect so the fetch fires as soon as auth resolves, rather than
-	// racing against onMount which runs before userStore.user is populated.
-	let _fetched = $state(false);
-	$effect(() => {
-		const uid = userStore.user?.uid;
-		if (!uid || _fetched) return;
-		_fetched = true;
-		loading = true;
-		getUserJobs(uid, 100)
-			.then((r) => { jobs = r; })
-			.catch((e) => { error = e instanceof Error ? e.message : "Failed to load jobs."; })
-			.finally(() => { loading = false; });
-	});
+	const jobs    = $derived(cutJobStore.jobs);
+	const loading = $derived(cutJobStore.loading);
+	const error   = $derived(cutJobStore.error);
 
 	const filtered = $derived(
 		jobs.filter((j) => {
@@ -197,7 +183,7 @@
 		<div class="jobs-error">
 			<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
 			{error}
-			<button class="link-btn" onclick={() => { error = ""; loading = true; _fetched = false; }}>Retry</button>
+			<button class="link-btn" onclick={() => location.reload()}>Retry</button>
 		</div>
 	{/if}
 
