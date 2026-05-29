@@ -19,7 +19,7 @@
 		generateHpgl,
 		generateHpglSegments,
 	} from "$lib/utils/hpgl";
-	import { sendToPlotter, sendToPlotterSegmented, sendSettings, connectSerialPort, disconnectSerialPort, isSerialConnected, queryPlotter, type SerialPortInfo, type CutProgress } from "$lib/utils/plotter-connection";
+	import { sendToPlotter, sendToPlotterSegmented, sendSettings, connectSerialPort, reconnectSerialPort, disconnectSerialPort, isSerialConnected, queryPlotter, type SerialPortInfo, type CutProgress } from "$lib/utils/plotter-connection";
 	import { logPlotterError, incrementCutUsage } from "$lib/firebase/firestore";
 	import { cutJobStore } from "$lib/stores";
 	import type { PlotterDiagnostic } from "$lib/utils/plotter-errors";
@@ -303,10 +303,15 @@
 
 	// ─── Roll alignment calibration ───────────────
 	type CalPhase = 'idle' | 'probe-wait' | 'probe-busy' | 'probe-done' | 'probe-error';
-	let calPhase    = $state<CalPhase>('idle');
-	let calCapture  = $state<{ offsetIn: number; raw: string } | null>(null);
-	let calError    = $state<string | null>(null);
-	let calCustomX  = $state(0);
+	// 'oa-unsupported' = plotter didn't respond to OA (firmware doesn't implement it)
+	// 'port-busy'      = agent left the serial port locked after a previous query timeout
+	// 'generic'        = any other error
+	type CalErrorKind = 'oa-unsupported' | 'port-busy' | 'generic';
+	let calPhase     = $state<CalPhase>('idle');
+	let calCapture   = $state<{ offsetIn: number; raw: string } | null>(null);
+	let calError     = $state<string | null>(null);
+	let calErrorKind = $state<CalErrorKind>('generic');
+	let calCustomX   = $state(0);
 
 	const plotterMaxIn  = $derived(plotterStore.config.maxMediaWidthMm / 25.4);
 	const rollWidthIn   = $derived(plotterStore.config.mediaWidthMm   / 25.4);
@@ -336,18 +341,38 @@
 	}
 
 	async function runProbe() {
-		calPhase = 'probe-busy';
-		calError = null;
+		calPhase     = 'probe-busy';
+		calError     = null;
+		calErrorKind = 'generic';
 		const res = await queryPlotter('OA;', plotterStore.config, 3000);
-		if (!res.ok || !res.response) {
-			calError = res.error ?? 'No response — plotter may not support OA query';
+
+		if (!res.ok) {
+			const msg = (res.error ?? '').toLowerCase();
+			if (msg.includes('busy') || msg.includes('in use') || msg.includes('cannot open')) {
+				// Agent left the port open from the previous query timeout.
+				calErrorKind = 'port-busy';
+				calError = res.error ?? 'Serial port busy';
+			} else {
+				calErrorKind = 'generic';
+				calError = res.error ?? 'Agent error';
+			}
 			calPhase = 'probe-error';
 			return;
 		}
+
+		if (!res.response) {
+			// Plotter returned nothing — it doesn't implement OA.
+			calErrorKind = 'oa-unsupported';
+			calError = null;
+			calPhase = 'probe-error';
+			return;
+		}
+
 		// Parse HPGL OA response: "{x},{y};" or "{x},{y}\r\n"
 		const clean = res.response.replace(/[;\r\n\s]/g, '');
 		const parts = clean.split(',').map(Number);
 		if (parts.length < 1 || isNaN(parts[0])) {
+			calErrorKind = 'generic';
 			calError = `Unexpected response: "${res.response}"`;
 			calPhase = 'probe-error';
 			return;
@@ -1126,6 +1151,22 @@
 		// Initial plotter discovery
 		runDiscovery();
 
+		// If the user had a USB-serial connection before navigation, try to restore it
+		// silently using the already-authorized port (no browser dialog required).
+		if (plotterStore.config.connection === "usb-serial") {
+			reconnectSerialPort(plotterStore.config.baudRate ?? 9600).then((info) => {
+				if (info) {
+					serialPortInfo = info;
+					discoveredDevices = discoveredDevices.map(d =>
+						d.source === "usb" ? { ...d, status: "connected" } : d,
+					);
+				} else {
+					// Port no longer available — fall back to download so cut button doesn't lie
+					plotterStore.switchConnection("download", { save: false });
+				}
+			});
+		}
+
 		// Web Serial connect/disconnect events — re-scan immediately on cable change
 		const cleanup: Array<() => void> = [];
 		if (typeof navigator !== "undefined" && "serial" in navigator) {
@@ -1481,6 +1522,14 @@
 			Export
 		</button>
 
+		<!-- Manual mode reminder — shown whenever a live connection is active -->
+		{#if plotterStore.config.connection !== "download"}
+			<span class="offline-tip" title="Most cutters must be in Manual or Offline mode on their front panel before they will accept serial commands.">
+				<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+				Set cutter to <strong>Manual / Offline</strong> mode first
+			</span>
+		{/if}
+
 		<!-- Cut button -->
 		<button
 			class="cut-btn"
@@ -1639,13 +1688,12 @@
             height: {displaySheetH * 48 * canvasStore.zoom / 100}px;
           "
 				>
-					<span class="sheet-label"
-						>{canvasStore.sheet.name} · {canvasStore.sheet
-							.widthInches}" wide</span
-					>
-					<span class="sheet-dim"
-						>{canvasStore.sheet.widthInches}" roll · {displaySheetW.toFixed(0)}" used</span
-					>
+					<span class="sheet-label">{canvasStore.sheet.name}</span>
+					<span class="sheet-dim">
+						<span class="sheet-dim__roll">{canvasStore.sheet.widthInches}"<span class="sheet-dim__unit"> roll</span></span>
+						<span class="sheet-dim__sep">·</span>
+						<span class="sheet-dim__used">{displaySheetW.toFixed(1)}"<span class="sheet-dim__unit"> used</span></span>
+					</span>
 					<!-- Roll-width boundary line: shows the edge of the cut zone -->
 					{#if canvasStore.sheet.widthInches <= displaySheetH}
 						<div
@@ -2417,11 +2465,27 @@
 									{/if}
 
 									{#if calPhase === 'probe-error'}
-										<div class="cal-probe-error">
-											<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-											{calError}
-										</div>
-										<button class="cal-probe-btn" onclick={() => { calPhase = 'idle'; calError = null; }}>Retry</button>
+										{#if calErrorKind === 'oa-unsupported'}
+											<div class="cal-probe-error">
+												<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+												No response — plotter may not support OA query
+											</div>
+											<p class="cal-probe-hint" style="margin-top:6px">Most budget cutters don't implement the OA position command. Use <strong>manual offset entry</strong> above instead.</p>
+											<button class="cal-probe-btn" onclick={() => { calPhase = 'idle'; calError = null; }}>Dismiss</button>
+										{:else if calErrorKind === 'port-busy'}
+											<div class="cal-probe-error">
+												<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+												{calError}
+											</div>
+											<p class="cal-probe-hint" style="margin-top:6px">The previous probe attempt left {plotterStore.config.serialPort ?? 'the serial port'} open in the Cut Agent. <strong>Restart the Cut Agent</strong> to release it, then retry.</p>
+											<button class="cal-probe-btn" onclick={() => { calPhase = 'probe-wait'; calError = null; }}>Retry</button>
+										{:else}
+											<div class="cal-probe-error">
+												<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+												{calError}
+											</div>
+											<button class="cal-probe-btn" onclick={() => { calPhase = 'probe-wait'; calError = null; }}>Retry</button>
+										{/if}
 									{/if}
 								</div>
 							{/if}
@@ -2771,6 +2835,20 @@
 		background: var(--bg-surface-3);
 	}
 
+	.offline-tip {
+		display: flex;
+		align-items: center;
+		gap: 5px;
+		font-size: 0.7rem;
+		color: var(--color-warning, #e6a817);
+		background: color-mix(in srgb, var(--color-warning, #e6a817) 8%, transparent);
+		border: 1px solid color-mix(in srgb, var(--color-warning, #e6a817) 25%, transparent);
+		border-radius: var(--radius-md);
+		padding: 5px 9px;
+		cursor: help;
+		line-height: 1.3;
+	}
+
 	.cut-btn {
 		display: flex;
 		align-items: center;
@@ -3058,22 +3136,50 @@
 
 	.sheet-label {
 		position: absolute;
-		top: -20px;
+		top: -22px;
 		left: 0;
 		font-family: var(--font-mono);
-		font-size: 0.625rem;
-		color: var(--text-tertiary);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 		white-space: nowrap;
 	}
 
 	.sheet-dim {
 		position: absolute;
-		bottom: -18px;
+		bottom: -26px;
 		right: 0;
 		font-family: var(--font-mono);
-		font-size: 0.625rem;
-		color: var(--text-tertiary);
+		font-size: 0.8rem;
+		color: var(--text-primary);
 		white-space: nowrap;
+		display: flex;
+		align-items: baseline;
+		gap: 6px;
+	}
+
+	.sheet-dim__roll {
+		font-size: 0.9rem;
+		font-weight: 600;
+		letter-spacing: -0.02em;
+	}
+
+	.sheet-dim__used {
+		font-size: 0.9rem;
+		font-weight: 600;
+		letter-spacing: -0.02em;
+		color: var(--color-brand);
+	}
+
+	.sheet-dim__unit {
+		font-size: 0.65rem;
+		font-weight: 400;
+		color: var(--text-tertiary);
+		letter-spacing: 0;
+	}
+
+	.sheet-dim__sep {
+		color: var(--text-tertiary);
+		font-size: 0.65rem;
 	}
 
 	/* Cut items */
