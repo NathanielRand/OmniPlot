@@ -19,7 +19,7 @@
 		generateHpgl,
 		generateHpglSegments,
 	} from "$lib/utils/hpgl";
-	import { sendToPlotter, sendToPlotterSegmented, sendSettings, connectSerialPort, reconnectSerialPort, disconnectSerialPort, isSerialConnected, queryPlotter, type SerialPortInfo, type CutProgress } from "$lib/utils/plotter-connection";
+	import { sendToPlotter, sendToPlotterSegmented, sendSettings, connectSerialPort, reconnectSerialPort, disconnectSerialPort, isSerialConnected, queryPlotter, releaseAgentPort, type SerialPortInfo, type CutProgress } from "$lib/utils/plotter-connection";
 	import { logPlotterError, incrementCutUsage } from "$lib/firebase/firestore";
 	import { cutJobStore } from "$lib/stores";
 	import type { PlotterDiagnostic } from "$lib/utils/plotter-errors";
@@ -235,10 +235,11 @@
 	let cutting          = $state(false);
 	let serialPortInfo   = $state<SerialPortInfo | null>(null);
 
-	// ─── Cut progress + resume checkpoint ────────
-	// Progress is shown in the toolbar during a segmented USB send.
-	// Checkpoint lets the user resume if the job was interrupted mid-job.
-	let cutProgress = $state<CutProgress | null>(null);
+	// ─── Cut progress + abort + resume checkpoint ─
+	// Progress is shown in the toolbar during a segmented send.
+	// cutAbortController lets the user cancel mid-job.
+	let cutProgress        = $state<CutProgress | null>(null);
+	let cutAbortController = $state<AbortController | null>(null);
 
 	interface ResumeCheckpoint {
 		remainingItemIds: string[];
@@ -724,6 +725,8 @@
 			return;
 		}
 
+		const abortCtrl = new AbortController();
+		cutAbortController = abortCtrl;
 		cutting = true;
 		cutProgress = null;
 		let lastCompletedIdx = -1;
@@ -737,11 +740,26 @@
 					cutProgress = progress;
 					lastCompletedIdx = progress.lastCompletedIndex;
 				},
+				abortCtrl.signal,
 			);
 
 			cutProgress = null;
 
-			if (result.ok) {
+			if (result.aborted) {
+				const done = lastCompletedIdx + 1;
+				toastStore.warning("Cut cancelled", `${done} of ${remainingItems.length} patterns sent.`);
+				if (done > 0 && done < remainingItems.length) {
+					const sortedRemaining = [...remainingItems].sort((a, b) => a.layer - b.layer || a.y - b.y);
+					const newCheckpoint: ResumeCheckpoint = {
+						remainingItemIds: sortedRemaining.slice(done).map((i) => i.id),
+						completedCount: checkpoint.completedCount + done,
+						totalCount: checkpoint.totalCount,
+						presetName: plotterStore.config.name,
+					};
+					localStorage.setItem("omniplot-resume-checkpoint", JSON.stringify(newCheckpoint));
+					resumeCheckpoint = newCheckpoint;
+				}
+			} else if (result.ok) {
 				localStorage.removeItem("omniplot-resume-checkpoint");
 				resumeCheckpoint = null;
 				toastStore.success(
@@ -749,7 +767,6 @@
 					`${remainingItems.length} remaining pattern${remainingItems.length !== 1 ? "s" : ""} sent.`,
 				);
 			} else {
-				// Advance the checkpoint past any newly completed patterns
 				if (lastCompletedIdx >= 0) {
 					const sortedRemaining = [...remainingItems].sort((a, b) => a.layer - b.layer || a.y - b.y);
 					const newCheckpoint: ResumeCheckpoint = {
@@ -767,6 +784,7 @@
 		} finally {
 			cutting = false;
 			cutProgress = null;
+			cutAbortController = null;
 		}
 	}
 
@@ -814,6 +832,8 @@
 		// USB uses per-pattern segmented send so progress is tracked and the job
 		// can be resumed from a known pattern index if the connection drops.
 		// Network and Cut Agent use monolithic send (the agent/server handles serial).
+		const abortCtrl = new AbortController();
+		cutAbortController = abortCtrl;
 		cutting = true;
 		cutProgress = null;
 
@@ -829,18 +849,31 @@
 					cutProgress = progress;
 					lastCompletedIdx = progress.lastCompletedIndex;
 				},
+				abortCtrl.signal,
 			);
 
 			cutProgress = null;
 
-			if (result.ok) {
-				// Clear any stale resume checkpoint — job completed fully
+			if (result.aborted) {
+				// User cancelled — save a resume checkpoint if any patterns sent
+				const doneSoFar = lastCompletedIdx + 1;
+				toastStore.warning("Cut cancelled", `${doneSoFar} of ${inBounds.length} pattern${inBounds.length !== 1 ? "s" : ""} sent.`);
+				if (doneSoFar > 0 && doneSoFar < sortedInBounds.length) {
+					const checkpoint: ResumeCheckpoint = {
+						remainingItemIds: sortedInBounds.slice(doneSoFar).map((i) => i.id),
+						completedCount: doneSoFar,
+						totalCount: sortedInBounds.length,
+						presetName: plotterStore.config.name,
+					};
+					localStorage.setItem("omniplot-resume-checkpoint", JSON.stringify(checkpoint));
+					resumeCheckpoint = checkpoint;
+				}
+			} else if (result.ok) {
 				localStorage.removeItem("omniplot-resume-checkpoint");
 				resumeCheckpoint = null;
 				toastStore.success("Sent to plotter", `${inBounds.length} pattern${inBounds.length !== 1 ? "s" : ""} sent successfully.`);
 				persistJob({ user, inBounds, eff, usedLength, patternArea, sheetArea, jobName });
 			} else {
-				// Save resume checkpoint if at least one pattern completed
 				const completedSoFar = lastCompletedIdx + 1;
 				if (lastCompletedIdx >= 0 && lastCompletedIdx < sortedInBounds.length - 1) {
 					const checkpoint: ResumeCheckpoint = {
@@ -852,10 +885,6 @@
 					localStorage.setItem("omniplot-resume-checkpoint", JSON.stringify(checkpoint));
 					resumeCheckpoint = checkpoint;
 				}
-
-				// Persist an error job record so admin can see interrupted jobs.
-				// Only saved when at least one pattern cut (completedSoFar > 0) so
-				// total failures before any progress don't produce a misleading record.
 				if (completedSoFar > 0) {
 					persistJob({
 						user,
@@ -869,7 +898,6 @@
 						patternsCompleted: completedSoFar,
 					});
 				}
-
 				diagData     = result.diagnostic;
 				diagReported = result.diagnostic.escalate;
 				if (userStore.user) {
@@ -892,6 +920,7 @@
 		} finally {
 			cutting = false;
 			cutProgress = null;
+			cutAbortController = null;
 		}
 	}
 
@@ -1530,10 +1559,24 @@
 			</span>
 		{/if}
 
+		<!-- Abort button — replaces cut button while a job is in progress -->
+		{#if cutting}
+			<button
+				class="abort-btn"
+				onclick={() => cutAbortController?.abort()}
+				title="Stop the current cut job. The plotter finishes its current move, then stops."
+				aria-label="Abort cut job"
+			>
+				<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+				Abort
+			</button>
+		{/if}
+
 		<!-- Cut button -->
 		<button
 			class="cut-btn"
 			class:cut-btn--locked={!cutCheck.allowed}
+			class:cut-btn--hidden={cutting}
 			data-tour="cut-btn"
 			onclick={handleCut}
 			disabled={cutting || !cutCheck.allowed}
@@ -2477,8 +2520,12 @@
 												<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
 												{calError}
 											</div>
-											<p class="cal-probe-hint" style="margin-top:6px">The previous probe attempt left {plotterStore.config.serialPort ?? 'the serial port'} open in the Cut Agent. <strong>Restart the Cut Agent</strong> to release it, then retry.</p>
-											<button class="cal-probe-btn" onclick={() => { calPhase = 'probe-wait'; calError = null; }}>Retry</button>
+											<p class="cal-probe-hint" style="margin-top:6px">The port is held open from the previous query. Click Release to close it in the agent, then retry.</p>
+											<button class="cal-probe-btn" onclick={async () => {
+												await releaseAgentPort(plotterStore.config);
+												calPhase = 'probe-wait';
+												calError = null;
+											}}>Release &amp; Retry</button>
 										{:else}
 											<div class="cal-probe-error">
 												<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
@@ -2833,6 +2880,36 @@
 
 	.export-btn:hover {
 		background: var(--bg-surface-3);
+	}
+
+	.abort-btn {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 0 14px;
+		height: 34px;
+		font-size: 0.8125rem;
+		font-weight: 600;
+		font-family: var(--font-body);
+		background: rgba(255, 77, 109, 0.12);
+		border: 1px solid rgba(255, 77, 109, 0.4);
+		border-radius: var(--radius-md);
+		color: var(--color-danger);
+		cursor: pointer;
+		transition: all 0.12s;
+		white-space: nowrap;
+		flex-shrink: 0;
+	}
+	.abort-btn:hover {
+		background: rgba(255, 77, 109, 0.2);
+		border-color: rgba(255, 77, 109, 0.6);
+	}
+	.abort-btn:active {
+		background: rgba(255, 77, 109, 0.28);
+	}
+
+	.cut-btn--hidden {
+		display: none;
 	}
 
 	.offline-tip {

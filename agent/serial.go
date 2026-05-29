@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"go.bug.st/serial"
@@ -50,6 +51,90 @@ type portInfo struct {
 	ProductID    string `json:"productId,omitempty"`
 	Product      string `json:"product,omitempty"`
 	Manufacturer string `json:"manufacturer,omitempty"`
+}
+
+// ─── Port manager ─────────────────────────────
+// Keeps a single serial port open across requests so that:
+//   - DTR stays asserted (high) between patterns — no mid-job plotter reset
+//   - No open/close latency on consecutive segment requests
+//   - No "port busy" races between /api/cut and /api/query
+//
+// The mutex is held for the ENTIRE duration of a send or query so that
+// concurrent HTTP requests are serialized and never interleave bytes.
+// Auto-releases after portIdleTimeout of inactivity.
+
+const portIdleTimeout = 10 * time.Second
+
+type portManager struct {
+	mu       sync.Mutex
+	port     serial.Port
+	portName string
+	baudRate int
+	lastUsed time.Time
+}
+
+// Global singleton — all handlers share one port.
+var pm = &portManager{}
+
+// withPort acquires the port (opening or reusing) and calls fn with it.
+// The mutex is held for the full duration of fn. On any error inside fn,
+// the port is closed and cleared so the next call starts fresh.
+func (m *portManager) withPort(portName string, baudRate int, fn func(serial.Port) error) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Open or reuse based on config match
+	if m.port == nil || m.portName != portName || m.baudRate != baudRate {
+		if m.port != nil {
+			_ = m.port.Close()
+			m.port = nil
+		}
+		mode := &serial.Mode{
+			BaudRate: baudRate,
+			DataBits: 8,
+			Parity:   serial.NoParity,
+			StopBits: serial.OneStopBit,
+		}
+		p, err := serial.Open(portName, mode)
+		if err != nil {
+			return fmt.Errorf("cannot open %s: %w", portName, err)
+		}
+		m.port = p
+		m.portName = portName
+		m.baudRate = baudRate
+	}
+	m.lastUsed = time.Now()
+
+	if err := fn(m.port); err != nil {
+		// Tear down on any I/O error — next request opens fresh
+		_ = m.port.Close()
+		m.port = nil
+		return err
+	}
+	return nil
+}
+
+// release closes the port immediately and clears the manager.
+// Called by /api/release-port and on agent shutdown.
+func (m *portManager) release() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.port != nil {
+		_ = m.port.Close()
+		m.port = nil
+	}
+}
+
+// releaseIfIdle closes the port only if it has been idle for at least d.
+// Run periodically from a background goroutine.
+func (m *portManager) releaseIfIdle(d time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.port != nil && time.Since(m.lastUsed) >= d {
+		log.Printf("agent: serial port %s idle for %v — releasing", m.portName, d)
+		_ = m.port.Close()
+		m.port = nil
+	}
 }
 
 // ─── /api/ports ───────────────────────────────
@@ -108,7 +193,6 @@ func handleCut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Apply defaults
 	if req.Config.BaudRate == 0 {
 		req.Config.BaudRate = 9600
 	}
@@ -157,9 +241,27 @@ func handleCut(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, cutResponse{OK: true, BytesWritten: n, Port: portName})
 }
 
+// ─── /api/release-port ────────────────────────
+// Explicitly releases the persistent serial port so it can be claimed by
+// other software or re-opened with different settings.
+// Call from the web app on explicit disconnect or before a port reconfiguration.
+
+func handleReleasePort(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonError(w, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+	released := pm.portName // capture before release clears it
+	pm.release()
+	msg := "serial port released"
+	if released != "" {
+		msg = fmt.Sprintf("serial port %s released", released)
+	}
+	bus.emit(AgentEvent{Type: EvtInfo, Method: "POST", Path: "/api/release-port", Status: 200, Message: msg})
+	jsonOK(w, map[string]bool{"ok": true})
+}
+
 // ─── Port resolution ──────────────────────────
-// "auto" picks the first USB-serial port, falling back to the first available.
-// An explicit name is passed through unchanged (validated by the OS on open).
 
 func resolvePort(name string) (string, error) {
 	if name != "" && name != "auto" {
@@ -168,7 +270,6 @@ func resolvePort(name string) (string, error) {
 
 	detailed, err := enumerator.GetDetailedPortsList()
 	if err == nil {
-		// Prefer USB ports — vinyl cutters are almost always USB-serial
 		for _, p := range detailed {
 			if p.IsUSB {
 				return p.Name, nil
@@ -179,7 +280,6 @@ func resolvePort(name string) (string, error) {
 		}
 	}
 
-	// Last resort: simple list (no USB metadata)
 	simple, err := serial.GetPortsList()
 	if err != nil || len(simple) == 0 {
 		return "", fmt.Errorf("no serial ports found — is the cutter connected and powered on?")
@@ -188,9 +288,9 @@ func resolvePort(name string) (string, error) {
 }
 
 // ─── /api/query ───────────────────────────────
-// Bidirectional serial: sends a command string to the plotter and reads back
-// the response. Used for HPGL queries such as OA (Output Actual Position)
-// during roll-alignment calibration.
+// Bidirectional serial: writes a command and reads back the response.
+// Uses the port manager so the port stays open between cut and query calls,
+// and so a timed-out query cannot leave the port stuck open.
 
 func handleQuery(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -234,91 +334,74 @@ func handleQuery(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, queryResponse{OK: true, Response: response, Port: portName})
 }
 
-// querySerial opens portName, writes command, then reads until a response
-// terminator (\r, \n, or trailing ;) is seen or timeoutMs elapses.
-// Uses 100 ms read slices so the outer deadline can interrupt cleanly.
-func querySerial(portName string, baudRate int, command string, timeoutMs int) (string, error) {
-	mode := &serial.Mode{
-		BaudRate: baudRate,
-		DataBits: 8,
-		Parity:   serial.NoParity,
-		StopBits: serial.OneStopBit,
-	}
-	port, err := serial.Open(portName, mode)
-	if err != nil {
-		return "", fmt.Errorf("cannot open %s: %w", portName, err)
-	}
-	defer port.Close()
-
-	// Short per-read timeout so we can check the overall deadline between slices.
-	port.SetReadTimeout(100 * time.Millisecond)
-
-	if _, err := port.Write([]byte(command)); err != nil {
-		return "", fmt.Errorf("write error on %s: %w", portName, err)
-	}
-
-	var buf []byte
-	deadline := time.Now().Add(time.Duration(timeoutMs) * time.Millisecond)
-	tmp := make([]byte, 256)
-
-	for time.Now().Before(deadline) {
-		n, _ := port.Read(tmp)
-		if n > 0 {
-			buf = append(buf, tmp[:n]...)
-			s := string(buf)
-			// Common HPGL response terminators: CR, LF, or trailing semicolon
-			if strings.ContainsAny(s, "\r\n") || strings.HasSuffix(strings.TrimRight(s, " "), ";") {
-				break
-			}
-		}
-	}
-
-	return strings.TrimSpace(string(buf)), nil
-}
-
-// ─── Serial write ─────────────────────────────
-// Opens the port, writes HPGL in 4 KB chunks, drains the OS TX buffer, then
-// closes. Drain is critical: close() on a TTY does NOT wait for the kernel
-// serial TX buffer to empty, so patterns beyond the first are discarded if
-// the buffer hasn't been physically transmitted before the FD is released.
+// ─── Serial operations ────────────────────────
+// Both sendHPGL and querySerial go through pm.withPort so that:
+//   - The port stays open between calls (DTR held high, no reset)
+//   - Concurrent requests are serialized (no interleaved bytes)
+//   - An I/O error releases the port cleanly for the next attempt
 
 func sendHPGL(portName string, baudRate int, hpgl string) (int, error) {
-	mode := &serial.Mode{
-		BaudRate: baudRate,
-		DataBits: 8,
-		Parity:   serial.NoParity,
-		StopBits: serial.OneStopBit,
-	}
-
-	port, err := serial.Open(portName, mode)
-	if err != nil {
-		return 0, fmt.Errorf("cannot open %s: %w", portName, err)
-	}
-	defer port.Close()
-
-	data := []byte(hpgl)
-	const chunk = 4096
 	total := 0
-
-	for len(data) > 0 {
-		end := chunk
-		if end > len(data) {
-			end = len(data)
+	err := pm.withPort(portName, baudRate, func(port serial.Port) error {
+		data := []byte(hpgl)
+		const chunk = 4096
+		for len(data) > 0 {
+			end := chunk
+			if end > len(data) {
+				end = len(data)
+			}
+			n, err := port.Write(data[:end])
+			total += n
+			if err != nil {
+				return fmt.Errorf("write error after %d bytes on %s: %w", total, portName, err)
+			}
+			data = data[end:]
 		}
-		n, err := port.Write(data[:end])
-		total += n
-		if err != nil {
-			return total, fmt.Errorf("write error after %d bytes on %s: %w", total, portName, err)
+		// Drain: wait for the OS kernel TX buffer to flush into the USB chip.
+		// Critical: without this, the kernel may discard buffered bytes if the
+		// port is later closed before physical transmission completes.
+		if err := port.Drain(); err != nil {
+			log.Printf("agent: drain warning on %s: %v (job may be incomplete)", portName, err)
 		}
-		data = data[end:]
+		return nil
+	})
+	if err != nil {
+		return total, err
 	}
-
-	// Block until every byte in the OS serial TX buffer has been physically
-	// transmitted to the cutter. Without this, Close() discards buffered data
-	// and the cutter only sees the first pattern of a multi-pattern job.
-	if err := port.Drain(); err != nil {
-		log.Printf("agent: drain warning on %s: %v (job may be incomplete)", portName, err)
-	}
-
 	return total, nil
+}
+
+// querySerial sends command and reads until a response terminator or timeout.
+// 100 ms read slices let the outer deadline interrupt cleanly.
+func querySerial(portName string, baudRate int, command string, timeoutMs int) (string, error) {
+	var response string
+	err := pm.withPort(portName, baudRate, func(port serial.Port) error {
+		if err := port.SetReadTimeout(100 * time.Millisecond); err != nil {
+			// Non-fatal: some platforms don't support per-read timeouts
+			log.Printf("agent: SetReadTimeout warning: %v", err)
+		}
+
+		if _, err := port.Write([]byte(command)); err != nil {
+			return fmt.Errorf("write error on %s: %w", portName, err)
+		}
+
+		var buf []byte
+		deadline := time.Now().Add(time.Duration(timeoutMs) * time.Millisecond)
+		tmp := make([]byte, 256)
+
+		for time.Now().Before(deadline) {
+			n, _ := port.Read(tmp)
+			if n > 0 {
+				buf = append(buf, tmp[:n]...)
+				s := string(buf)
+				if strings.ContainsAny(s, "\r\n") || strings.HasSuffix(strings.TrimRight(s, " "), ";") {
+					break
+				}
+			}
+		}
+
+		response = strings.TrimSpace(string(buf))
+		return nil
+	})
+	return response, err
 }

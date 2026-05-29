@@ -520,3 +520,12 @@ export function estimateCutTime(items: CanvasItem[], speedMmPerSec: number): num
 		}, 0);
 	return Math.round(totalMm / speedMmPerSec);
 }
+
+// Milliseconds to wait after sending one pattern before sending the next.
+// 1.35× estimated cut time gives headroom for acceleration, tight curves,
+// and passes. The flat 600ms lets the plotter's UART receive buffer fully
+// drain even on very short patterns.
+export function patternDelayMs(item: CanvasItem, speedMmPerSec: number): number {
+	const estimatedSec = estimateCutTime([item], speedMmPerSec);
+	return Math.round(estimatedSec * 1350) + 600;
+}

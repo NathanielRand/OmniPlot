@@ -16,9 +16,13 @@
 // ─────────────────────────────────────────────
 import type { PlotterConfig, CanvasState } from "$lib/types";
 import { classifyError, type PlotterDiagnostic } from "./plotter-errors";
-import { generateHpglSegments } from "./hpgl";
+import { generateHpglSegments, patternDelayMs } from "./hpgl";
 
 export type SendResult = { ok: true } | { ok: false; diagnostic: PlotterDiagnostic };
+
+// Extended result for segmented sends — includes how many patterns completed
+// and whether the job was deliberately cancelled by the user.
+export type SegmentedResult = SendResult & { completedCount: number; aborted?: true };
 
 // Progress reported after each pattern segment is sent to the plotter.
 export interface CutProgress {
@@ -29,15 +33,45 @@ export interface CutProgress {
 }
 export type ProgressCallback = (p: CutProgress) => void;
 
-// Segmented send for USB-serial: sends preamble + each pattern individually.
-// Correctly avoids splitting HPGL commands across write boundaries.
-// onProgress is called after each pattern is flushed so the caller can checkpoint.
-// Returns { completedCount } so the caller knows exactly where to resume on failure.
+// Resolves after ms — rejects immediately (AbortError) if signal fires first.
+// Used by segmented sends to interrupt inter-pattern delays on user cancel.
+function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
+    if (signal.aborted) return Promise.reject(new DOMException("Aborted", "AbortError"));
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(resolve, ms);
+        signal.addEventListener("abort", () => { clearTimeout(timer); reject(new DOMException("Aborted", "AbortError")); }, { once: true });
+    });
+}
+
+// Sends the HPGL abort sequence and marks the result as user-cancelled.
+// Called from all three segmented send paths when the AbortSignal fires.
+async function _abortedResult(config: PlotterConfig, completedCount: number): Promise<SegmentedResult> {
+    await sendToPlotter(ABORT_HPGL, config).catch(() => {});
+    return {
+        ok: false,
+        aborted: true,
+        completedCount,
+        diagnostic: {
+            code:     "UNKNOWN",
+            title:    "Job cancelled",
+            message:  "Cut cancelled by user.",
+            steps:    [],
+            escalate: false,
+        },
+    };
+}
+
+// Sends preamble + each pattern individually, one at a time with progress callbacks.
+// Pass an AbortSignal to allow mid-job cancellation; the plotter will receive
+// the HPGL abort sequence (CAN + IN;) to stop current motion immediately.
 export async function sendToPlotterSegmented(
     state: CanvasState,
     config: PlotterConfig,
     onProgress?: ProgressCallback,
-): Promise<SendResult & { completedCount: number }> {
+    signal?: AbortSignal,
+): Promise<SegmentedResult> {
+    if (signal?.aborted) return _abortedResult(config, 0);
+
     // Flush any leftover state from a previous or interrupted job before starting.
     // Best-effort: don't block the new job if the plotter isn't responding yet.
     if (config.connection !== "download") {
@@ -45,15 +79,15 @@ export async function sendToPlotterSegmented(
         await new Promise((r) => setTimeout(r, 150));
     }
 
-    if (config.connection !== "usb-serial") {
-        // Non-USB connections don't support streaming — fall back to monolithic send
-        const { generateHpgl } = await import("./hpgl");
-        const hpgl = generateHpgl(state, config);
-        const result = await sendToPlotter(hpgl, config);
-        const total = state.items.filter((i) => !i.outOfBounds).length;
-        return { ...result, completedCount: result.ok ? total : 0 };
+    switch (config.connection) {
+        case "usb-serial":  return _sendViaSerialSegmented(state, config, onProgress, signal);
+        case "cut-agent":   return _sendViaAgentSegmented(state, config, onProgress, signal);
+        case "network":     return _sendViaNetworkSegmented(state, config, onProgress, signal);
+        default: {
+            const total = state.items.filter((i) => !i.outOfBounds).length;
+            return { ok: true, completedCount: total };
+        }
     }
-    return _sendViaSerialSegmented(state, config, onProgress);
 }
 
 // ─── Web Serial port cache ────────────────────
@@ -189,6 +223,19 @@ export async function flushPlotter(config: PlotterConfig): Promise<SendResult> {
     return sendToPlotter(ABORT_HPGL, config);
 }
 
+// Calls /api/release-port on the Cut Agent to explicitly close the persistent
+// serial port. Use this on disconnect, before a port reconfiguration, or when
+// the probe left the port stuck. No-op if the connection is not cut-agent.
+export async function releaseAgentPort(config: PlotterConfig): Promise<void> {
+    if (config.connection !== "cut-agent") return;
+    const base = (config.agentUrl ?? "http://localhost:7878").replace(/\/$/, "");
+    try {
+        await fetch(`${base}/api/release-port`, { method: "POST" });
+    } catch {
+        // Best-effort — if the agent is already down, nothing to release
+    }
+}
+
 // ─── Main dispatch ────────────────────────────
 export async function sendToPlotter(
     hpgl: string,
@@ -242,7 +289,8 @@ async function _sendViaSerialSegmented(
     state: CanvasState,
     config: PlotterConfig,
     onProgress?: ProgressCallback,
-): Promise<SendResult & { completedCount: number }> {
+    signal?: AbortSignal,
+): Promise<SegmentedResult> {
     if (!("serial" in navigator)) {
         return {
             ok: false,
@@ -261,27 +309,23 @@ async function _sendViaSerialSegmented(
         const total = stream.segments.length;
         let completedCount = 0;
 
-        // Send preamble (setup commands: IN, VS, FS/FC, SP1, PA, [IP])
         await _writeString(port.writable, stream.preamble + "\n");
 
         for (let i = 0; i < stream.segments.length; i++) {
+            if (signal?.aborted) return _abortedResult(config, completedCount);
+
             const seg = stream.segments[i];
-            // Each segment is a complete HPGL sequence for one pattern — no command splits
             await _writeString(port.writable, `\n; --- ${seg.label} ---\n${seg.hpgl}\n`);
             completedCount = i + 1;
-            onProgress?.({
-                sent: completedCount,
-                total,
-                label: seg.label,
-                lastCompletedIndex: i,
-            });
+            onProgress?.({ sent: completedCount, total, label: seg.label, lastCompletedIndex: i });
+
             // 60ms pause lets the plotter finish buffering before the next pattern arrives.
-            // This prevents buffer overflow on plotters without hardware flow control.
             if (i < stream.segments.length - 1) {
                 await new Promise((r) => setTimeout(r, 60));
             }
         }
 
+        if (signal?.aborted) return _abortedResult(config, completedCount);
         await _writeString(port.writable, "\n" + stream.epilogue + "\n");
         return { ok: true, completedCount };
     } catch (err: any) {
@@ -309,6 +353,167 @@ async function _writeString(writable: WritableStream<Uint8Array>, str: string): 
     } finally {
         writer.releaseLock();
     }
+}
+
+// ─── Agent segmented send ─────────────────────
+// Sends one pattern at a time via sequential /api/cut requests, with a
+// timing gap between each based on the estimated cut duration.
+//
+// Why: budget plotters have small UART receive buffers (64–256 bytes on
+// many MCUs). While the plotter is physically cutting (motors running),
+// its firmware may not service the UART fast enough. A monolithic HPGL
+// dump causes bytes to be dropped; the parser jumps to the epilogue and
+// the tool parks after the first pattern.
+//
+// Pattern 1:  preamble + pattern_1_hpgl  (sets speed/force/origin once)
+// Pattern N:  pattern_N_hpgl             (no IN; — avoids mid-job reset)
+// After last: epilogue
+//
+// Between each pair, we wait ≥ estimated cut time so the plotter finishes
+// cutting before the next pattern arrives. Errors are per-segment, so the
+// checkpoint system can resume from the last confirmed pattern.
+async function _sendViaAgentSegmented(
+    state: CanvasState,
+    config: PlotterConfig,
+    onProgress?: ProgressCallback,
+    signal?: AbortSignal,
+): Promise<SegmentedResult> {
+    const stream    = generateHpglSegments(state, config);
+    const segments  = stream.segments;
+    const total     = segments.length;
+    const itemsById = new Map(state.items.map((i) => [i.id, i]));
+    const speed     = config.cuttingSpeed ?? 200;
+    let completedCount = 0;
+
+    async function postChunk(hpgl: string): Promise<SendResult> {
+        const base = (config.agentUrl ?? "http://localhost:7878").replace(/\/$/, "");
+        try {
+            const res = await fetch(`${base}/api/cut`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    hpgl,
+                    config: { baudRate: config.baudRate ?? 9600, serialPort: config.serialPort ?? "auto" },
+                }),
+            });
+            if (!res.ok) {
+                const body = await res.json().catch(() => ({ error: `Agent error ${res.status}` }));
+                return { ok: false, diagnostic: classifyError(body.error ?? `Agent error ${res.status}`, "cut-agent", res.status) };
+            }
+            return { ok: true };
+        } catch (err: any) {
+            const msg =
+                err?.message?.includes("fetch") || err?.name === "TypeError"
+                    ? `OmniPlot Cut Agent not reachable at ${base}. Is the agent running?`
+                    : (err?.message ?? "Agent send failed.");
+            return { ok: false, diagnostic: classifyError(msg, "cut-agent") };
+        }
+    }
+
+    if (signal?.aborted) return _abortedResult(config, 0);
+    const firstResult = await postChunk(stream.preamble + "\n" + segments[0].hpgl);
+    if (!firstResult.ok) return { ...firstResult, completedCount: 0 };
+    completedCount = 1;
+    onProgress?.({ sent: 1, total, label: segments[0].label, lastCompletedIndex: 0 });
+
+    for (let i = 1; i < segments.length; i++) {
+        const prevItem = itemsById.get(segments[i - 1].itemId);
+        const delayMs  = prevItem ? patternDelayMs(prevItem, speed) : 1000;
+        try {
+            await abortableDelay(delayMs, signal ?? new AbortController().signal);
+        } catch {
+            return _abortedResult(config, completedCount);
+        }
+        if (signal?.aborted) return _abortedResult(config, completedCount);
+
+        const result = await postChunk(segments[i].hpgl);
+        if (!result.ok) return { ...result, completedCount };
+        completedCount = i + 1;
+        onProgress?.({ sent: completedCount, total, label: segments[i].label, lastCompletedIndex: i });
+    }
+
+    const lastItem = itemsById.get(segments[segments.length - 1].itemId);
+    const epilogueDelay = lastItem ? patternDelayMs(lastItem, speed) : 1000;
+    try {
+        await abortableDelay(epilogueDelay, signal ?? new AbortController().signal);
+    } catch {
+        return _abortedResult(config, completedCount);
+    }
+
+    const epiResult = await postChunk(stream.epilogue);
+    return { ...(epiResult.ok ? { ok: true as const } : epiResult), completedCount };
+}
+
+// ─── Network segmented send ───────────────────
+// For network/TCP plotters: sends each pattern as a separate request to the
+// SvelteKit TCP proxy, each on its own connection. Gaps between requests
+// let the plotter finish cutting before the next data arrives.
+// The first request carries the preamble; patterns 2+ are bare HPGL.
+async function _sendViaNetworkSegmented(
+    state: CanvasState,
+    config: PlotterConfig,
+    onProgress?: ProgressCallback,
+    signal?: AbortSignal,
+): Promise<SegmentedResult> {
+    const stream    = generateHpglSegments(state, config);
+    const segments  = stream.segments;
+    const total     = segments.length;
+    const itemsById = new Map(state.items.map((i) => [i.id, i]));
+    const speed     = config.cuttingSpeed ?? 200;
+    let completedCount = 0;
+
+    const host = config.ipAddress?.trim() || "192.168.1.100";
+    const port = config.port ?? 9100;
+
+    async function postChunk(hpgl: string): Promise<SendResult> {
+        try {
+            const res = await fetch("/api/plotter/send", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ hpgl, host, port }),
+            });
+            if (!res.ok) {
+                const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+                return { ok: false, diagnostic: classifyError(body.error ?? `HTTP ${res.status}`, "network", res.status) };
+            }
+            return { ok: true };
+        } catch (err: any) {
+            return { ok: false, diagnostic: classifyError(err?.message ?? "Network send failed.", "network") };
+        }
+    }
+
+    if (signal?.aborted) return _abortedResult(config, 0);
+    const firstResult = await postChunk(stream.preamble + "\n" + segments[0].hpgl);
+    if (!firstResult.ok) return { ...firstResult, completedCount: 0 };
+    completedCount = 1;
+    onProgress?.({ sent: 1, total, label: segments[0].label, lastCompletedIndex: 0 });
+
+    for (let i = 1; i < segments.length; i++) {
+        const prevItem = itemsById.get(segments[i - 1].itemId);
+        const delayMs  = prevItem ? patternDelayMs(prevItem, speed) : 1000;
+        try {
+            await abortableDelay(delayMs, signal ?? new AbortController().signal);
+        } catch {
+            return _abortedResult(config, completedCount);
+        }
+        if (signal?.aborted) return _abortedResult(config, completedCount);
+
+        const result = await postChunk(segments[i].hpgl);
+        if (!result.ok) return { ...result, completedCount };
+        completedCount = i + 1;
+        onProgress?.({ sent: completedCount, total, label: segments[i].label, lastCompletedIndex: i });
+    }
+
+    const lastItem = itemsById.get(segments[segments.length - 1].itemId);
+    const epilogueDelay = lastItem ? patternDelayMs(lastItem, speed) : 1000;
+    try {
+        await abortableDelay(epilogueDelay, signal ?? new AbortController().signal);
+    } catch {
+        return _abortedResult(config, completedCount);
+    }
+
+    const epiResult = await postChunk(stream.epilogue);
+    return { ...(epiResult.ok ? { ok: true as const } : epiResult), completedCount };
 }
 
 // ─── Network / TCP ────────────────────────────

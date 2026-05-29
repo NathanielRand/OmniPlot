@@ -66,10 +66,10 @@
 			<h2 class="roadmap__title">On the roadmap</h2>
 			<div class="roadmap-items">
 				{#each [
-					["Cut Agent: port auto-detection UI in studio", "Q2 2026"],
 					["Window tint pattern library expansion", "Q2 2026"],
+					["macOS Cut Agent download", "Q2 2026"],
+					["Heat shrinkage buffer — add margin to patterns for stretch film installation", "Q3 2026"],
 					["Multi-plotter queue — send to multiple cutters in parallel", "Q3 2026"],
-					["Mobile cut agent companion app", "Q3 2026"],
 					["Offline mode — studio works without internet", "Q4 2026"],
 				] as [item, eta]}
 					<div class="roadmap-item">

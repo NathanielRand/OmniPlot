@@ -25,11 +25,15 @@
 	}
 
 	const downloads: Record<Exclude<Platform, "unknown">, { label: string; file: string; badge: string }> = {
-		"windows":   { label: "Windows",       file: `omniplot-agent-windows-amd64.exe`, badge: "x64" },
-		"mac-arm":   { label: "macOS (Apple Silicon)", file: `omniplot-agent-darwin-arm64`,        badge: "M1 · M2 · M3" },
-		"mac-intel": { label: "macOS (Intel)", file: `omniplot-agent-darwin-amd64`,       badge: "Intel" },
-		"linux":     { label: "Linux",         file: `omniplot-agent-linux-amd64`,        badge: "x64" },
+		"windows":   { label: "Windows",              file: `omniplot-agent-windows-amd64.exe`, badge: "x64"         },
+		"mac-arm":   { label: "macOS (Apple Silicon)", file: `omniplot-agent-darwin-arm64`,      badge: "M1 · M2 · M3" },
+		"mac-intel": { label: "macOS (Intel)",         file: `omniplot-agent-darwin-amd64`,      badge: "Intel"        },
+		"linux":     { label: "Linux",                 file: `omniplot-agent-linux-amd64`,       badge: "x64"          },
 	};
+
+	// macOS binaries are not yet available — requires macOS build host for CGO serial lib.
+	const MAC_COMING_SOON = true;
+	const isMac = (p: KnownPlatform) => p === "mac-arm" || p === "mac-intel";
 
 	let detected: Platform = $state("unknown");
 	let selectedOS = $state<KnownPlatform>("windows");
@@ -41,11 +45,12 @@
 			detected = "windows";
 			selectedOS = "windows";
 		} else if (/Mac/.test(platform) || /Mac/.test(ua)) {
-			// Rough M-chip detection: 72 hardware concurrency or ARM arch
 			const arm = (navigator as any).userAgentData?.architecture === "arm" ||
 				(navigator.hardwareConcurrency >= 8 && /Mac OS X 1[1-9]/.test(ua));
 			detected = arm ? "mac-arm" : "mac-intel";
-			selectedOS = detected as KnownPlatform;
+			// Don't auto-select the macOS tab while it's coming soon — default to windows
+			// so the user can still read the instructions for other platforms
+			selectedOS = MAC_COMING_SOON ? "windows" : (detected as KnownPlatform);
 		} else if (/Linux/.test(platform) || /Linux/.test(ua)) {
 			detected = "linux";
 			selectedOS = "linux";
@@ -68,12 +73,17 @@
 				no Chrome required. Free, forever.
 			</p>
 			<div class="agent-hero__actions">
-				{#if detected !== "unknown"}
+				{#if detected !== "unknown" && !(MAC_COMING_SOON && isMac(detected as KnownPlatform))}
 					{@const d = downloads[detected]}
 					<a href={dlUrl(d.file, detected)} class="cta-btn cta-btn--primary">
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
-						Download for {d.label}
+						Download for {downloads[detected].label}
 					</a>
+				{:else if detected !== "unknown" && MAC_COMING_SOON && isMac(detected as KnownPlatform)}
+					<span class="cta-btn cta-btn--coming-soon">
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
+						macOS — Coming Soon
+					</span>
 				{:else}
 					<a href="#downloads" class="cta-btn cta-btn--primary">Choose your platform</a>
 				{/if}
@@ -235,7 +245,14 @@
 						<!-- OS selector tabs -->
 						<div class="os-tabs">
 							<button class="os-tab" class:os-tab--active={selectedOS === "windows"} onclick={() => selectedOS = "windows"}>Windows</button>
-							<button class="os-tab" class:os-tab--active={selectedOS === "mac-arm" || selectedOS === "mac-intel"} onclick={() => selectedOS = detected === "mac-intel" ? "mac-intel" : "mac-arm"}>macOS</button>
+							{#if MAC_COMING_SOON}
+								<button class="os-tab os-tab--soon" disabled title="macOS download coming soon">
+									macOS
+									<span class="os-tab__soon">Soon</span>
+								</button>
+							{:else}
+								<button class="os-tab" class:os-tab--active={selectedOS === "mac-arm" || selectedOS === "mac-intel"} onclick={() => selectedOS = detected === "mac-intel" ? "mac-intel" : "mac-arm"}>macOS</button>
+							{/if}
 							<button class="os-tab" class:os-tab--active={selectedOS === "linux"} onclick={() => selectedOS = "linux"}>Linux</button>
 						</div>
 
@@ -259,21 +276,12 @@
 								</div>
 
 							{:else if selectedOS === "mac-arm" || selectedOS === "mac-intel"}
-								<div class="mvstep">
-									<span class="mvstep__num">1</span>
-									<div class="mvstep__body">Open <strong>Finder → Downloads</strong> and find the file named <code>{selectedOS === "mac-arm" ? "omniplot-agent-darwin-arm64" : "omniplot-agent-darwin-amd64"}</code></div>
-								</div>
-								<div class="mvstep mvstep--highlight">
-									<span class="mvstep__num">2</span>
-									<div class="mvstep__body"><strong>Right-click</strong> the file → click <strong>"Open"</strong> (don't just double-click — right-click is important on Mac)</div>
-								</div>
-								<div class="mvstep mvstep--highlight">
-									<span class="mvstep__num">3</span>
-									<div class="mvstep__body">A dialog appears — click <strong>"Open"</strong> again to confirm. macOS asks once for new apps.</div>
-								</div>
-								<div class="mvstep mvstep--success">
-									<span class="mvstep__num">4</span>
-									<div class="mvstep__body">A <strong>terminal window</strong> opens showing the agent is running. Leave it open while cutting.</div>
+								<div class="mvstep-coming-soon">
+									<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
+									<div>
+										<strong>macOS support is coming soon.</strong>
+										<p>The macOS binary requires a signed build — we're working on it. Windows and Linux are available now.</p>
+									</div>
 								</div>
 
 							{:else}
@@ -300,10 +308,6 @@
 							<summary class="mkt-advanced__summary">Terminal / advanced users</summary>
 							{#if selectedOS === "windows"}
 								<code class="mkt-cmd">omniplot-agent-windows-amd64.exe</code>
-							{:else if selectedOS === "mac-arm"}
-								<code class="mkt-cmd">xattr -c omniplot-agent-darwin-arm64 &amp;&amp; chmod +x omniplot-agent-darwin-arm64 &amp;&amp; ./omniplot-agent-darwin-arm64</code>
-							{:else if selectedOS === "mac-intel"}
-								<code class="mkt-cmd">xattr -c omniplot-agent-darwin-amd64 &amp;&amp; chmod +x omniplot-agent-darwin-amd64 &amp;&amp; ./omniplot-agent-darwin-amd64</code>
 							{:else}
 								<code class="mkt-cmd">chmod +x omniplot-agent-linux-amd64 &amp;&amp; ./omniplot-agent-linux-amd64</code>
 							{/if}
@@ -340,38 +344,52 @@
 			<div class="download-grid">
 				{#each platformOrder as pid}
 					{@const d = downloads[pid]}
-					<a
-						href={dlUrl(d.file, pid)}
-						class="download-card"
-						class:download-card--detected={detected === pid}
-					>
-						<div class="download-card__icon">
-							{#if pid === "windows"}
-								<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
-							{:else if pid === "mac-arm" || pid === "mac-intel"}
+					{#if MAC_COMING_SOON && isMac(pid)}
+						<!-- macOS binary not yet available — show coming soon card -->
+						<div class="download-card download-card--soon">
+							<div class="download-card__icon">
 								<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/></svg>
-							{:else}
-								<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 00-.11.135c-.26.268-.45.6-.663.839-.199.199-.485.267-.797.4-.313.136-.658.269-.864.68-.09.189-.136.394-.132.602 0 .199.027.4.055.536.058.399.116.728.04.97-.249.68-.28 1.145-.106 1.484.174.334.535.47.94.601.81.2 1.91.135 2.774.6.926.466 1.866.67 2.616.47.526-.116.97-.464 1.208-.946.587-.003 1.23-.269 2.26-.334.699-.058 1.574.267 2.577.2.025.134.063.198.114.333l.003.003c.391.778.828 1.288 1.459 1.425.901.196 2.209-.373 3.277-1.229 1.124-.resolved 1.95-2.171 2.245-3.404.005-.02.012-.04.012-.06.16-1.099-.483-2.26-1.52-2.843zm.005 1.09c.033.014.065.032.096.054.88.516 1.454 1.437 1.46 2.487-.001.084-.016.165-.031.245-.126.724-.55 1.336-1.104 1.773-.35.28-.738.485-1.151.617-.055.018-.11.031-.167.044.015.06.03.12.044.182.054.26.071.53.05.803-.02.26-.08.524-.186.785-.19.474-.548.867-.97 1.126-.233.144-.49.25-.762.316a3.1 3.1 0 01-.44.062c-.038.004-.076.006-.112.006-.257 0-.517-.058-.773-.165-.42-.174-.793-.47-1.07-.834a3.45 3.45 0 01-.543-1.173c-.11-.433-.132-.88-.069-1.32l.003-.02c.125-.757.497-1.408 1.024-1.845.34-.28.738-.474 1.165-.573.223-.052.453-.079.683-.079.24 0 .479.028.714.082.14.033.28.077.417.132.046-.297.128-.573.251-.826z"/></svg>
-							{/if}
+							</div>
+							<div class="download-card__info">
+								<span class="download-card__name">{d.label}</span>
+								<span class="download-card__meta">
+									{d.badge}
+									{#if detected === pid}<span class="download-card__yours">Your device</span>{/if}
+								</span>
+								<span class="download-card__soon-badge">Coming soon</span>
+							</div>
 						</div>
-						<div class="download-card__info">
-							<span class="download-card__name">{d.label}</span>
-							<span class="download-card__meta">
-								v{AGENT_VERSION} &nbsp;·&nbsp; {d.badge}
-								{#if detected === pid}<span class="download-card__yours">Your device</span>{/if}
-							</span>
-							<span class="download-card__file">{d.file}</span>
-						</div>
-						<div class="download-card__arrow">
-							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
-						</div>
-					</a>
+					{:else}
+						<a
+							href={dlUrl(d.file, pid)}
+							class="download-card"
+							class:download-card--detected={detected === pid}
+						>
+							<div class="download-card__icon">
+								{#if pid === "windows"}
+									<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
+								{:else}
+									<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 00-.11.135c-.26.268-.45.6-.663.839-.199.199-.485.267-.797.4-.313.136-.658.269-.864.68-.09.189-.136.394-.132.602 0 .199.027.4.055.536.058.399.116.728.04.97-.249.68-.28 1.145-.106 1.484.174.334.535.47.94.601.81.2 1.91.135 2.774.6.926.466 1.866.67 2.616.47.526-.116.97-.464 1.208-.946.587-.003 1.23-.269 2.26-.334.699-.058 1.574.267 2.577.2.025.134.063.198.114.333l.003.003c.391.778.828 1.288 1.459 1.425.901.196 2.209-.373 3.277-1.229 1.124-.resolved 1.95-2.171 2.245-3.404.005-.02.012-.04.012-.06.16-1.099-.483-2.26-1.52-2.843zm.005 1.09c.033.014.065.032.096.054.88.516 1.454 1.437 1.46 2.487-.001.084-.016.165-.031.245-.126.724-.55 1.336-1.104 1.773-.35.28-.738.485-1.151.617-.055.018-.11.031-.167.044.015.06.03.12.044.182.054.26.071.53.05.803-.02.26-.08.524-.186.785-.19.474-.548.867-.97 1.126-.233.144-.49.25-.762.316a3.1 3.1 0 01-.44.062c-.038.004-.076.006-.112.006-.257 0-.517-.058-.773-.165-.42-.174-.793-.47-1.07-.834a3.45 3.45 0 01-.543-1.173c-.11-.433-.132-.88-.069-1.32l.003-.02c.125-.757.497-1.408 1.024-1.845.34-.28.738-.474 1.165-.573.223-.052.453-.079.683-.079.24 0 .479.028.714.082.14.033.28.077.417.132.046-.297.128-.573.251-.826z"/></svg>
+								{/if}
+							</div>
+							<div class="download-card__info">
+								<span class="download-card__name">{d.label}</span>
+								<span class="download-card__meta">
+									v{AGENT_VERSION} &nbsp;·&nbsp; {d.badge}
+									{#if detected === pid}<span class="download-card__yours">Your device</span>{/if}
+								</span>
+								<span class="download-card__file">{d.file}</span>
+							</div>
+							<div class="download-card__arrow">
+								<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+							</div>
+						</a>
+					{/if}
 				{/each}
 			</div>
 
 			<p class="download-note">
 				<strong>Windows:</strong> Double-click the .exe, then click "More info" → "Run anyway" if prompted. &nbsp;
-				<strong>Mac:</strong> Right-click → Open → Open (needed once for unsigned apps). &nbsp;
 				<strong>Linux:</strong> Right-click → Properties → Permissions → tick "Allow executing as program", then double-click. Full instructions in Step 2 above.
 			</p>
 		</div>
@@ -486,6 +504,20 @@
 		background: var(--bg-surface-2);
 		border: 1px solid var(--border-default);
 		color: var(--text-primary);
+	}
+	.cta-btn--coming-soon {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		padding: 13px 28px;
+		border-radius: var(--radius-lg);
+		font-size: 1rem;
+		font-weight: 600;
+		font-family: var(--font-body);
+		cursor: default;
+		background: var(--bg-surface-2);
+		border: 1px dashed var(--border-default);
+		color: var(--text-tertiary);
 	}
 
 	/* ── Hero ──────────────────────────────────── */
@@ -819,6 +851,33 @@
 		transition: color 0.12s;
 	}
 	.download-card:hover .download-card__arrow { color: var(--color-brand-dim); }
+
+	.download-card--soon {
+		cursor: default;
+		opacity: 0.55;
+		border-style: dashed;
+	}
+	.download-card--soon:hover {
+		background: var(--bg-surface);
+		border-color: var(--border-subtle);
+		transform: none;
+		box-shadow: none;
+	}
+	.download-card__soon-badge {
+		display: inline-block;
+		padding: 2px 8px;
+		font-size: 0.6875rem;
+		font-weight: 600;
+		font-family: var(--font-mono);
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		border-radius: var(--radius-sm);
+		background: color-mix(in srgb, var(--color-brand-dim) 12%, transparent);
+		border: 1px solid color-mix(in srgb, var(--color-brand-dim) 30%, transparent);
+		color: var(--color-brand-dim);
+		margin-top: 2px;
+	}
+
 	.download-note {
 		font-size: 0.8125rem;
 		color: var(--text-tertiary);
@@ -927,6 +986,40 @@
 		background: color-mix(in srgb, var(--color-brand-dim) 10%, transparent);
 		color: var(--text-primary);
 	}
+	.os-tab--soon {
+		opacity: 0.5;
+		cursor: default;
+		gap: 6px;
+		display: inline-flex;
+		align-items: center;
+	}
+	.os-tab--soon:hover { background: transparent; border-color: var(--border-subtle); }
+	.os-tab__soon {
+		font-size: 0.6rem;
+		font-weight: 700;
+		font-family: var(--font-mono);
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		padding: 1px 5px;
+		border-radius: 3px;
+		background: var(--bg-surface-3);
+		color: var(--text-tertiary);
+	}
+
+	.mvstep-coming-soon {
+		display: flex;
+		align-items: flex-start;
+		gap: 12px;
+		padding: 16px;
+		background: var(--bg-surface-2);
+		border: 1px dashed var(--border-default);
+		border-radius: var(--radius-lg);
+		color: var(--text-secondary);
+		font-size: 0.875rem;
+		max-width: 560px;
+	}
+	.mvstep-coming-soon svg { flex-shrink: 0; margin-top: 2px; color: var(--text-tertiary); }
+	.mvstep-coming-soon p { margin: 4px 0 0; color: var(--text-tertiary); font-size: 0.8125rem; }
 
 	/* Wide step variant for step 2 — inherits grid layout from .step */
 	.step--wide {}

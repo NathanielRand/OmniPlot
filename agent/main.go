@@ -24,7 +24,7 @@ import (
 	"time"
 )
 
-const agentVersion = "1.1.0"
+const agentVersion = "1.2.0"
 
 func main() {
 	port    := flag.Int("port", 7878, "HTTP port to listen on (default 7878)")
@@ -32,14 +32,15 @@ func main() {
 	flag.Parse()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/status",       withCORS(handleStatus))
-	mux.HandleFunc("/api/ports",        withCORS(handlePorts))
-	mux.HandleFunc("/api/cut",          withCORS(handleCut))
-	mux.HandleFunc("/api/query",        withCORS(handleQuery))
-	mux.HandleFunc("/api/events",       withCORS(handleEvents))
-	mux.HandleFunc("/api/stats",        withCORS(handleStats))
-	mux.HandleFunc("/api/shutdown",     withCORS(handleShutdown))
-	mux.HandleFunc("/api/network-scan", withCORS(handleNetworkScan))
+	mux.HandleFunc("/api/status",        withCORS(handleStatus))
+	mux.HandleFunc("/api/ports",         withCORS(handlePorts))
+	mux.HandleFunc("/api/cut",           withCORS(handleCut))
+	mux.HandleFunc("/api/query",         withCORS(handleQuery))
+	mux.HandleFunc("/api/release-port",  withCORS(handleReleasePort))
+	mux.HandleFunc("/api/events",        withCORS(handleEvents))
+	mux.HandleFunc("/api/stats",         withCORS(handleStats))
+	mux.HandleFunc("/api/shutdown",      withCORS(handleShutdown))
+	mux.HandleFunc("/api/network-scan",  withCORS(handleNetworkScan))
 	// Catch-all: handle CORS preflight for any path
 	mux.HandleFunc("/", withCORS(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodOptions {
@@ -60,6 +61,17 @@ func main() {
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("agent: server error: %v", err)
+		}
+	}()
+
+	// Release the persistent serial port after it has been idle for portIdleTimeout.
+	// This lets other software claim the port between jobs without needing an explicit
+	// /api/release-port call.
+	go func() {
+		ticker := time.NewTicker(portIdleTimeout / 2)
+		defer ticker.Stop()
+		for range ticker.C {
+			pm.releaseIfIdle(portIdleTimeout)
 		}
 	}()
 
@@ -89,6 +101,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(ctx)
+	pm.release() // ensure serial port is released before process exits
 	log.Println("agent: shut down cleanly")
 }
 
