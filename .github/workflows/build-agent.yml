@@ -8,9 +8,25 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Extract the version string from main.go once and share it with build jobs.
+  setup:
+    name: Read version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract version
+        id: ver
+        working-directory: agent
+        run: echo "version=$(grep 'const agentVersion' main.go | sed 's/.*\"\(.*\)\".*/\1/')" >> $GITHUB_OUTPUT
+
   build-linux-windows:
     name: Build Linux + Windows
+    needs: setup
     runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.setup.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -21,11 +37,14 @@ jobs:
 
       - name: Build Linux amd64
         working-directory: agent
-        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ../static/downloads/agent/v1.0.0/omniplot-agent-linux-amd64 .
+        run: |
+          mkdir -p ../static/downloads/agent/v$VERSION
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ../static/downloads/agent/v$VERSION/omniplot-agent-linux-amd64 .
 
       - name: Build Windows amd64
         working-directory: agent
-        run: CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o ../static/downloads/agent/v1.0.0/omniplot-agent-windows-amd64.exe .
+        run: |
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o ../static/downloads/agent/v$VERSION/omniplot-agent-windows-amd64.exe .
 
       - uses: actions/upload-artifact@v4
         with:
@@ -34,7 +53,10 @@ jobs:
 
   build-macos:
     name: Build macOS (arm64 + amd64)
+    needs: setup
     runs-on: macos-latest
+    env:
+      VERSION: ${{ needs.setup.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -45,11 +67,14 @@ jobs:
 
       - name: Build macOS Apple Silicon (arm64)
         working-directory: agent
-        run: CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o ../static/downloads/agent/v1.0.0/omniplot-agent-darwin-arm64 .
+        run: |
+          mkdir -p ../static/downloads/agent/v$VERSION
+          CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o ../static/downloads/agent/v$VERSION/omniplot-agent-darwin-arm64 .
 
       - name: Build macOS Intel (amd64)
         working-directory: agent
-        run: CGO_ENABLED=1 GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o ../static/downloads/agent/v1.0.0/omniplot-agent-darwin-amd64 .
+        run: |
+          CGO_ENABLED=1 GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o ../static/downloads/agent/v$VERSION/omniplot-agent-darwin-amd64 .
 
       - uses: actions/upload-artifact@v4
         with:
@@ -58,10 +83,12 @@ jobs:
 
   commit:
     name: Commit binaries to repo
-    needs: [build-linux-windows, build-macos]
+    needs: [setup, build-linux-windows, build-macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      VERSION: ${{ needs.setup.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -76,7 +103,7 @@ jobs:
           path: static/downloads/
 
       - name: Mark macOS binaries executable
-        run: chmod +x static/downloads/agent/v1.0.0/omniplot-agent-darwin-*
+        run: chmod +x static/downloads/agent/v$VERSION/omniplot-agent-darwin-*
 
       - name: Commit binaries
         run: |
@@ -84,5 +111,5 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add static/downloads/
           git diff --staged --quiet && echo "no changes" && exit 0
-          git commit -m "chore: update cut agent binaries v1.0.0"
+          git commit -m "chore: update cut agent binaries v$VERSION"
           git push
