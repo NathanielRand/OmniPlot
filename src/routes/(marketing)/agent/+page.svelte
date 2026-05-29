@@ -32,7 +32,7 @@
 	};
 
 	// macOS binaries are not yet available — requires macOS build host for CGO serial lib.
-	const MAC_COMING_SOON = true;
+	const MAC_COMING_SOON = false;
 	const isMac = (p: KnownPlatform) => p === "mac-arm" || p === "mac-intel";
 
 	let detected: Platform = $state("unknown");
