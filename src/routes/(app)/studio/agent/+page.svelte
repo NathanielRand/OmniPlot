@@ -321,9 +321,14 @@
 			{#if showKillConfirm}
 				<span class="kill-confirm-text">Stop the agent?</span>
 				<button class="btn btn--danger" onclick={killAgent} disabled={killing}>
-					{killing ? "Stopping…" : "Confirm"}
+					{#if killing}
+						<span class="kill-spinner" aria-hidden="true"></span>
+						Stopping…
+					{:else}
+						Confirm
+					{/if}
 				</button>
-				<button class="btn btn--ghost" onclick={() => (showKillConfirm = false)}>Cancel</button>
+				<button class="btn btn--ghost" onclick={() => (showKillConfirm = false)} disabled={killing}>Cancel</button>
 			{:else if status}
 				<button class="btn btn--danger-outline" onclick={() => (showKillConfirm = true)}>
 					Stop Agent
@@ -960,6 +965,20 @@
 		transition: opacity 0.12s, background 0.12s;
 	}
 	.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+	.kill-spinner {
+		display: inline-block;
+		width: 12px;
+		height: 12px;
+		border: 2px solid rgba(255, 255, 255, 0.35);
+		border-top-color: #fff;
+		border-radius: 50%;
+		animation: kill-spin 0.65s linear infinite;
+		flex-shrink: 0;
+	}
+	@keyframes kill-spin {
+		to { transform: rotate(360deg); }
+	}
 	.btn--primary {
 		background: var(--color-brand-dim);
 		color: #fff;

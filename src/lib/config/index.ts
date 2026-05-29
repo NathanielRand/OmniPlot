@@ -6,7 +6,7 @@ import type { PricingPlan, MaterialSheet, TintFilm, PlotterConfig, ShopPlan } fr
 // ─── Cut Agent version ────────────────────────
 // Single source of truth. Bump here when a new agent binary is deployed.
 // Any running agent that reports a different version triggers the update badge + block.
-export const CURRENT_AGENT_VERSION = "1.1.0";
+export const CURRENT_AGENT_VERSION = "1.2.0";
 
 // ─── Plotter preset type ──────────────────────
 // Extends PlotterConfig with hardware metadata used for detection and compatibility.
@@ -765,6 +765,68 @@ export const FAQ_ITEMS = [
 
 // ─── Changelog ────────────────────────────────
 export const CHANGELOG = [
+	{
+		version: "1.9.0",
+		date: "2026-05-28",
+		label: "Cut Agent 1.2",
+		changes: [
+			{
+				type: "feature",
+				text: "Cancel mid-job — an Abort button now appears while a cut is in progress. Click it and the plotter finishes its current move, stops, and saves a resume point so you can pick up where you left off.",
+			},
+			{
+				type: "feature",
+				text: "Cut Agent v1.2.0 — the serial port now stays open between patterns, eliminating a class of mid-job plotter resets. Previously, opening and closing the port between each pattern could trigger a hardware reset on some devices.",
+			},
+			{
+				type: "improvement",
+				text: "Patterns are now sent one at a time to the cutter with automatic pacing — the app waits for each piece to finish cutting before sending the next. This fixes the long-standing issue where only the first pattern would cut and the rest were skipped.",
+			},
+			{
+				type: "improvement",
+				text: "Auto-probe port error improved — if the serial port is left locked after a failed probe attempt, a \"Release & Retry\" button now releases it from the agent in one click instead of requiring an agent restart.",
+			},
+			{
+				type: "improvement",
+				text: "Agent stop button on the Agent page now shows a spinner and disables while the agent is shutting down, preventing double-clicks.",
+			},
+			{
+				type: "fix",
+				text: "macOS agent download temporarily shows \"Coming Soon\" while we prepare a signed build. Windows and Linux are fully available.",
+			},
+		],
+	},
+	{
+		version: "1.8.0",
+		date: "2026-05-27",
+		label: "Plotter Connection",
+		changes: [
+			{
+				type: "improvement",
+				text: "USB connection now restores automatically when navigating between pages — no more having to reconnect every time you leave the Studio.",
+			},
+			{
+				type: "improvement",
+				text: "\"Set Active\" on the Plotters page now fully restores the connection type (USB, Agent, Network) in the Studio, not just the plotter settings.",
+			},
+			{
+				type: "improvement",
+				text: "Roll width and material used are now shown larger and more clearly on the canvas — both numbers are labeled so it's obvious which is the roll size and which is how much you've used.",
+			},
+			{
+				type: "improvement",
+				text: "A reminder now appears above the Cut button whenever a live connection is active: your cutter must be in Manual or Offline mode on its front panel before it will accept jobs.",
+			},
+			{
+				type: "feature",
+				text: "Pre-job flush — an abort sequence is sent to the plotter before every new job to clear any leftover state from a previous interrupted cut. Also available as a standalone Flush button on each plotter card.",
+			},
+			{
+				type: "feature",
+				text: "Cut job history in the Jobs page and Plotter page updates in real time — completed and failed jobs appear immediately without needing a page refresh.",
+			},
+		],
+	},
 	{
 		version: "1.7.0",
 		date: "2026-05-26",
