@@ -418,6 +418,47 @@ export interface InsightPost {
 	updatedAt: Date;
 }
 
+// ─── User Patterns (private + community upload) ──
+export type UserPatternStatus = "private" | "pending" | "approved" | "rejected";
+
+export interface UserPattern {
+	id: string;
+	ownerId: string;           // uid of creator
+	createdAt: Date;
+	updatedAt: Date;
+	submitToCommunity: boolean; // user wants this reviewed for public library
+	isPublished: boolean;       // admin approved — visible in public library
+	status: UserPatternStatus;
+	adminNotes?: string;
+	// Vehicle (embedded — may not exist in public catalog)
+	vehicleId?: string;        // set if linking to existing public vehicle
+	make: string;
+	model: string;
+	year: number;
+	bodyStyle: "sedan" | "coupe" | "suv" | "truck" | "convertible" | "wagon" | "hatchback";
+	// Pattern geometry
+	category: PatternCategory;
+	zone: PatternZone;
+	name: string;
+	coverage: PatternCoverage;
+	widthInches: number;
+	heightInches: number;
+	svgPath: string;
+	notes?: string;
+}
+
+// ─── Pattern Adjustment Requests ─────────────
+// Submitted by a user when they want to change an approved (locked) community pattern.
+export interface PatternAdjustmentRequest {
+	id: string;
+	patternId: string;    // userPattern doc id
+	requestedBy: string;  // uid
+	notes: string;        // what the user wants changed
+	status: "pending" | "approved" | "rejected";
+	adminResponse?: string;
+	createdAt: Date;
+}
+
 // ─── Plotter Error Reports ────────────────────
 export interface PlotterErrorReport {
 	id: string;

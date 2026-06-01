@@ -32,7 +32,7 @@
 		formatCutTime,
 		formatEfficiency,
 	} from "$lib/utils";
-	import { DEFAULT_MATERIALS, PLOTTER_PRESETS, CURRENT_AGENT_VERSION } from "$lib/config";
+	import { DEFAULT_MATERIALS, PLOTTER_PRESETS, CURRENT_AGENT_VERSION, type PlotterPreset } from "$lib/config";
 	import {
 		detectUsbPlotters,
 		detectAgentPorts,
@@ -1537,6 +1537,12 @@
 			</div>
 		{/if}
 
+		<!-- Community template upload -->
+		<a class="community-btn" href="/library/upload" data-tour="community-upload" title="Upload a cut pattern to the community library" aria-label="Upload a cut pattern to the community library">
+			<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+			<span class="community-btn__label">Upload Pattern</span>
+		</a>
+
 		<!-- Export button -->
 		<button class="export-btn" onclick={() => (showExport = !showExport)}>
 			<svg
@@ -2115,6 +2121,18 @@
 						class="mt-3">Browse Library →</Button
 					>
 
+					<!-- Community upload CTA -->
+					<a href="/library/upload" class="community-panel-cta">
+						<div class="community-panel-cta__icon" aria-hidden="true">
+							<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+						</div>
+						<div class="community-panel-cta__body">
+							<span class="community-panel-cta__title">Upload Your Pattern</span>
+							<span class="community-panel-cta__sub">Contribute a verified cut pattern to the community library</span>
+						</div>
+						<svg class="community-panel-cta__arrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+					</a>
+
 					<!-- Plotter tab -->
 				{:else}
 
@@ -2226,7 +2244,7 @@
 												</span>
 											{/if}
 											<span class="device-spec-chip">{(device.preset.maxMediaWidthMm / 25.4).toFixed(0)}" max</span>
-											<span class="device-spec-chip">{device.preset.protocol.toUpperCase()}</span>
+											<span class="device-spec-chip">{device.preset.protocol?.toUpperCase() ?? "HPGL"}</span>
 											<span class="device-spec-chip">{device.preset.baudRate ?? 9600} baud</span>
 										</div>
 
@@ -2865,6 +2883,82 @@
 		min-width: 46px;
 		text-align: center;
 		color: var(--text-primary);
+	}
+
+	/* ── Community upload button (toolbar) ── */
+	.community-btn {
+		display: flex;
+		align-items: center;
+		gap: 5px;
+		padding: 5px 11px;
+		font-size: 0.8125rem;
+		font-weight: 600;
+		border-radius: var(--radius-md);
+		border: 1px solid color-mix(in srgb, var(--color-brand) 45%, transparent);
+		background: color-mix(in srgb, var(--color-brand) 10%, transparent);
+		color: var(--color-brand);
+		text-decoration: none;
+		cursor: pointer;
+		white-space: nowrap;
+		transition: background 0.12s, border-color 0.12s, color 0.12s;
+		flex-shrink: 0;
+	}
+	.community-btn:hover {
+		background: color-mix(in srgb, var(--color-brand) 18%, transparent);
+		border-color: var(--color-brand);
+	}
+
+	/* ── Community upload CTA (patterns panel) ── */
+	.community-panel-cta {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		margin-top: 12px;
+		padding: 12px 14px;
+		background: color-mix(in srgb, var(--color-brand) 8%, var(--bg-surface-2));
+		border: 1px solid color-mix(in srgb, var(--color-brand) 30%, transparent);
+		border-radius: var(--radius-lg);
+		text-decoration: none;
+		cursor: pointer;
+		transition: background 0.12s, border-color 0.12s;
+	}
+	.community-panel-cta:hover {
+		background: color-mix(in srgb, var(--color-brand) 14%, var(--bg-surface-2));
+		border-color: color-mix(in srgb, var(--color-brand) 55%, transparent);
+	}
+	.community-panel-cta__icon {
+		width: 36px;
+		height: 36px;
+		border-radius: var(--radius-md);
+		background: color-mix(in srgb, var(--color-brand) 14%, var(--bg-surface-3));
+		border: 1px solid color-mix(in srgb, var(--color-brand) 30%, transparent);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		color: var(--color-brand);
+		flex-shrink: 0;
+	}
+	.community-panel-cta__body {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		min-width: 0;
+	}
+	.community-panel-cta__title {
+		font-size: 0.8125rem;
+		font-weight: 700;
+		color: var(--text-primary);
+	}
+	.community-panel-cta__sub {
+		font-size: 0.6875rem;
+		color: var(--text-secondary);
+		line-height: 1.4;
+	}
+	.community-panel-cta__arrow {
+		color: var(--color-brand);
+		flex-shrink: 0;
+		opacity: 0.7;
 	}
 
 	.export-btn {
@@ -3867,6 +3961,16 @@
 	}
 
 	/* ─── Responsive ────── */
+	@media (max-width: 1280px) {
+		/* Collapse community upload button to icon-only to keep toolbar compact */
+		.community-btn__label {
+			display: none;
+		}
+		.community-btn {
+			padding: 5px 8px;
+		}
+	}
+
 	@media (max-width: 1024px) {
 		.studio__body {
 			grid-template-columns: 1fr 300px;

@@ -56,6 +56,28 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
+    // ─── User patterns ────────────────────────────────────────────────────
+    // Each user can create and read their own patterns immediately.
+    // isPublished is set only by admins — owners cannot self-approve.
+    // Publicly visible once isPublished == true (community-approved).
+    match /userPatterns/{patternId} {
+      allow read:   if resource.data.ownerId == uid() || resource.data.isPublished == true;
+      allow create: if signedIn()
+                     && request.resource.data.ownerId == uid()
+                     && request.resource.data.isPublished == false;
+      allow update: if (resource.data.ownerId == uid()
+                        && request.resource.data.isPublished == resource.data.isPublished)
+                     || isAdmin();
+      allow delete: if resource.data.ownerId == uid() || isAdmin();
+    }
+
+    // ─── Pattern adjustment requests ──────────────────────────────────────
+    // Users request changes to approved community patterns; admin reviews.
+    match /patternAdjustments/{adjId} {
+      allow create: if signedIn() && request.resource.data.requestedBy == uid();
+      allow read, update, delete: if isAdmin();
+    }
+
     // ─── Cut jobs ─────────────────────────────────────────────────────────
     match /jobs/{jobId} {
       allow read:   if signedIn() && (resource.data.userId == uid() || isAdmin());

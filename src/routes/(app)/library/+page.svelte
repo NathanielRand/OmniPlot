@@ -1,11 +1,13 @@
 <script lang="ts">
-	import { toastStore, canvasStore } from "$lib/stores";
+	import { onMount } from "svelte";
+	import { toastStore, canvasStore, userStore } from "$lib/stores";
 	import { patternStore, TINT_ZONE_GROUP, PPF_ZONE_GROUP } from "$lib/stores/patternStore.svelte";
 	import Badge from "$lib/components/ui/Badge.svelte";
 	import Button from "$lib/components/ui/Button.svelte";
 	import { uid, getItemColor } from "$lib/utils";
 	import { autoNest } from "$lib/utils/nesting";
-	import type { CanvasItem, Pattern, PatternZone } from "$lib/types";
+	import { getUserPatterns, updateUserPattern, addPatternAdjustmentRequest } from "$lib/firebase/firestore";
+	import type { CanvasItem, Pattern, PatternZone, UserPattern } from "$lib/types";
 	import type { VehicleEntry } from "$lib/stores/patternStore.svelte";
 
 	// ─── Zone filter lists ────────────────────────
@@ -55,6 +57,7 @@
 	];
 
 	// ─── State ────────────────────────────────────
+	let tab            = $state<"library" | "mine">("library");
 	let mode           = $state<"ppf" | "tint">("ppf");
 	let search         = $state("");
 	let activeMake     = $state("All");
@@ -63,6 +66,83 @@
 	let view           = $state<"grid" | "list">("grid");
 	let selectedZones  = $state<Set<string>>(new Set()); // generic zone selection (zone name)
 	let selectedPatternIds = $state<Set<string>>(new Set()); // store pattern selection (pattern.id)
+
+	// My Patterns
+	let myPatterns       = $state<UserPattern[]>([]);
+	let myPatternsLoading = $state(false);
+	let myPatternsError  = $state("");
+
+	onMount(async () => {
+		if (!userStore.user) return;
+		myPatternsLoading = true;
+		try {
+			myPatterns = await getUserPatterns(userStore.user.uid);
+		} catch {
+			myPatternsError = "Could not load your patterns.";
+		} finally {
+			myPatternsLoading = false;
+		}
+	});
+
+	async function toggleCommunitySubmit(p: UserPattern) {
+		const next = !p.submitToCommunity;
+		myPatterns = myPatterns.map((m) =>
+			m.id === p.id ? { ...m, submitToCommunity: next, status: next ? "pending" : "private" } : m,
+		);
+		try {
+			await updateUserPattern(p.id, { submitToCommunity: next });
+		} catch {
+			// revert on failure
+			myPatterns = myPatterns.map((m) =>
+				m.id === p.id ? { ...m, submitToCommunity: p.submitToCommunity, status: p.status } : m,
+			);
+			toastStore.error("Update failed", "Could not update community setting.");
+		}
+	}
+
+	// Convert a UserPattern to a Pattern for canvas
+	function userPatternToPattern(up: UserPattern): Pattern {
+		return {
+			id:           up.id,
+			vehicleId:    up.vehicleId ?? `user_${up.ownerId}`,
+			category:     up.category,
+			zone:         up.zone,
+			name:         up.name,
+			coverage:     up.coverage,
+			svgPath:      up.svgPath,
+			widthInches:  up.widthInches,
+			heightInches: up.heightInches,
+			revision:     new Date(up.createdAt).toISOString().slice(0, 7),
+			notes:        up.notes,
+			isPublished:  up.isPublished,
+			createdAt:    up.createdAt,
+			updatedAt:    up.updatedAt,
+		};
+	}
+
+	// ─── Adjustment request modal ────────────────
+	let adjustTarget = $state<UserPattern | null>(null);
+	let adjustNotes  = $state("");
+	let adjustSending = $state(false);
+
+	async function submitAdjustmentRequest() {
+		if (!adjustTarget || !adjustNotes.trim() || !userStore.user) return;
+		adjustSending = true;
+		try {
+			await addPatternAdjustmentRequest({
+				patternId:   adjustTarget.id,
+				requestedBy: userStore.user.uid,
+				notes:       adjustNotes.trim(),
+			});
+			toastStore.success("Request sent", "Admin will review your adjustment request.");
+			adjustTarget = null;
+			adjustNotes  = "";
+		} catch {
+			toastStore.error("Failed", "Could not send request. Please try again.");
+		} finally {
+			adjustSending = false;
+		}
+	}
 
 	// Request vehicle modal
 	let showRequestModal = $state(false);
@@ -395,6 +475,31 @@
 
 	<!-- ─── Main ─── -->
 	<div class="library__main">
+
+		<!-- Library / My Patterns tab bar -->
+		<div class="lib-tabs" role="tablist">
+			<button
+				class="lib-tab"
+				class:lib-tab--active={tab === "library"}
+				role="tab"
+				aria-selected={tab === "library"}
+				onclick={() => (tab = "library")}
+			>Library</button>
+			<button
+				class="lib-tab"
+				class:lib-tab--active={tab === "mine"}
+				role="tab"
+				aria-selected={tab === "mine"}
+				onclick={() => (tab = "mine")}
+			>
+				My Patterns
+				{#if myPatterns.length}
+					<span class="lib-tab__badge">{myPatterns.length}</span>
+				{/if}
+			</button>
+		</div>
+
+		{#if tab === "library"}
 		<!-- Mode switcher -->
 		<div class="mode-switcher" role="group" aria-label="Pattern mode">
 			<button
@@ -430,6 +535,11 @@
 				</p>
 			</div>
 			<div class="library__header-actions">
+				<a href="/library/upload" class="upload-cta" title="Save a pattern to your library">
+					<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+					Upload Pattern
+				</a>
+				<div class="view-divider" aria-hidden="true"></div>
 				<button class="view-btn" class:active={view === "grid"} onclick={() => (view = "grid")} aria-label="Grid view">
 					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
 				</button>
@@ -638,6 +748,95 @@
 				</div>
 			</div>
 		{/if}
+
+		{:else}
+
+		<!-- ─── My Patterns tab ─── -->
+		<div class="my-patterns">
+			{#if myPatternsLoading}
+				<div class="my-patterns__empty">
+					<span class="ai-spinner" style="width:18px;height:18px" aria-hidden="true"></span>
+				</div>
+			{:else if myPatternsError}
+				<p class="my-patterns__empty">{myPatternsError}</p>
+			{:else if myPatterns.length === 0}
+				<div class="my-patterns__empty">
+					<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+					<p>No patterns yet. <a href="/library/upload">Upload your first pattern →</a></p>
+				</div>
+			{:else}
+				<div class="my-patterns__list">
+					{#each myPatterns as p (p.id)}
+						{@const pat = userPatternToPattern(p)}
+						<div class="my-pattern-card">
+							<div class="my-pattern-card__preview" aria-hidden="true">
+								<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet">
+									<path d={p.svgPath} fill="none" stroke="var(--color-brand)" stroke-width="2"/>
+								</svg>
+							</div>
+							<div class="my-pattern-card__body">
+								<div class="my-pattern-card__name">{p.name}</div>
+								<div class="my-pattern-card__meta">{p.year} {p.make} {p.model} · {p.widthInches}" × {p.heightInches}"</div>
+								<div class="my-pattern-card__badges">
+									<span class="mpbadge mpbadge--{p.category === 'ppf' ? 'ppf' : 'tint'}">{p.category === 'ppf' ? 'PPF' : 'Tint'}</span>
+									{#if p.isPublished}
+										<span class="mpbadge mpbadge--published">Published</span>
+									{:else if p.status === 'pending'}
+										<span class="mpbadge mpbadge--pending">Review Pending</span>
+									{:else}
+										<span class="mpbadge mpbadge--private">Private</span>
+									{/if}
+								</div>
+							</div>
+							<div class="my-pattern-card__actions">
+								<!-- Always: Add to canvas -->
+								<button
+									class="my-pattern-card__add"
+									onclick={() => addPatternToCanvas(pat)}
+									title="Add to canvas"
+									aria-label="Add {p.name} to canvas"
+								>
+									<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+									Add
+								</button>
+
+								{#if p.isPublished}
+									<!-- Locked — approved community pattern -->
+									<button
+										class="my-pattern-card__locked"
+										onclick={() => { adjustTarget = p; adjustNotes = ""; }}
+										title="Request a change to this community pattern"
+										aria-label="Request changes to {p.name}"
+									>
+										<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+										Request Changes
+									</button>
+								{:else}
+									<!-- Private/pending — user can toggle community submission -->
+									<button
+										class="my-pattern-card__share"
+										class:my-pattern-card__share--on={p.submitToCommunity}
+										onclick={() => toggleCommunitySubmit(p)}
+										title={p.submitToCommunity ? "Remove from community queue" : "Submit for community review"}
+										aria-label={p.submitToCommunity ? "Remove from community queue" : "Submit for community review"}
+									>
+										<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+										{p.submitToCommunity ? "Submitted" : "Submit"}
+									</button>
+								{/if}
+							</div>
+						</div>
+					{/each}
+				</div>
+				<a href="/library/upload" class="my-patterns__upload-cta">
+					<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+					Upload another pattern
+				</a>
+			{/if}
+		</div>
+
+		{/if}
+
 	</div>
 </div>
 
@@ -684,6 +883,51 @@
 					<button type="submit" class="btn-primary">Submit Request</button>
 				</div>
 			</form>
+		</div>
+	</div>
+{/if}
+
+<!-- ─── Pattern Adjustment Request Modal ──── -->
+{#if adjustTarget}
+	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<div class="modal-overlay" onclick={() => (adjustTarget = null)}>
+		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+		<div class="modal" onclick={(e) => e.stopPropagation()}>
+			<div class="modal__header">
+				<div>
+					<h2 class="modal__title">Request Pattern Changes</h2>
+					<p class="modal__sub">
+						<strong>{adjustTarget.name}</strong> is a published community pattern.
+						Describe the change needed — admin will review and update it.
+					</p>
+				</div>
+				<button class="modal__close" onclick={() => (adjustTarget = null)} aria-label="Close">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>
+				</button>
+			</div>
+			<div class="modal__body">
+				<div class="form-group">
+					<label class="form-label" for="adj-notes">What needs to change?</label>
+					<textarea
+						id="adj-notes"
+						class="form-input"
+						style="resize:vertical;min-height:100px"
+						bind:value={adjustNotes}
+						placeholder="e.g. Hood width should be 62.5&quot; not 60.5&quot; — verified against physical vehicle 2026-06-01"
+					></textarea>
+				</div>
+				<div class="modal__actions">
+					<button type="button" class="btn-ghost" onclick={() => (adjustTarget = null)}>Cancel</button>
+					<button
+						type="button"
+						class="btn-primary"
+						disabled={adjustSending || !adjustNotes.trim()}
+						onclick={submitAdjustmentRequest}
+					>
+						{adjustSending ? "Sending…" : "Send Request"}
+					</button>
+				</div>
+			</div>
 		</div>
 	</div>
 {/if}
@@ -872,7 +1116,34 @@
 	.library__title { font-size: 1.25rem; margin-bottom: 3px; }
 	.library__sub   { font-size: 0.8125rem; color: var(--text-secondary); }
 
-	.library__header-actions { display: flex; gap: 4px; }
+	.library__header-actions { display: flex; align-items: center; gap: 4px; }
+
+	.upload-cta {
+		display: flex;
+		align-items: center;
+		gap: 5px;
+		padding: 5px 11px;
+		font-size: 0.8125rem;
+		font-weight: 600;
+		border-radius: var(--radius-md);
+		border: 1px solid color-mix(in srgb, var(--color-brand) 45%, transparent);
+		background: color-mix(in srgb, var(--color-brand) 10%, transparent);
+		color: var(--color-brand);
+		text-decoration: none;
+		white-space: nowrap;
+		transition: background 0.12s, border-color 0.12s;
+	}
+	.upload-cta:hover {
+		background: color-mix(in srgb, var(--color-brand) 18%, transparent);
+		border-color: var(--color-brand);
+	}
+
+	.view-divider {
+		width: 1px;
+		height: 18px;
+		background: var(--border-default);
+		margin: 0 4px;
+	}
 
 	.view-btn {
 		width: 30px;
@@ -1182,5 +1453,201 @@
 	@media (max-width: 768px) {
 		.library { grid-template-columns: 1fr; }
 		.library__sidebar { display: none; }
+	}
+
+	/* ─── Library / My Patterns tab bar ─── */
+	.lib-tabs {
+		display: flex;
+		gap: 2px;
+		border-bottom: 1px solid var(--border-subtle);
+		margin-bottom: 16px;
+	}
+	.lib-tab {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 8px 16px;
+		font-size: 0.875rem;
+		font-weight: 500;
+		color: var(--text-tertiary);
+		background: transparent;
+		border: none;
+		border-bottom: 2px solid transparent;
+		margin-bottom: -1px;
+		cursor: pointer;
+		transition: color 0.12s, border-color 0.12s;
+	}
+	.lib-tab:hover { color: var(--text-secondary); }
+	.lib-tab--active {
+		color: var(--text-primary);
+		border-bottom-color: var(--color-brand);
+		font-weight: 600;
+	}
+	.lib-tab__badge {
+		background: var(--color-brand);
+		color: #fff;
+		font-size: 0.6875rem;
+		font-weight: 700;
+		padding: 1px 6px;
+		border-radius: 10px;
+		line-height: 1.4;
+	}
+
+	/* ─── My Patterns panel ─── */
+	.my-patterns {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+	}
+	.my-patterns__empty {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 12px;
+		padding: 48px 24px;
+		color: var(--text-tertiary);
+		font-size: 0.9375rem;
+		text-align: center;
+	}
+	.my-patterns__empty a {
+		color: var(--color-brand);
+		text-decoration: none;
+	}
+	.my-patterns__list {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+	.my-patterns__upload-cta {
+		display: flex;
+		align-items: center;
+		gap: 7px;
+		padding: 10px 14px;
+		border: 1px dashed var(--border-default);
+		border-radius: var(--radius-md);
+		font-size: 0.8125rem;
+		color: var(--text-tertiary);
+		text-decoration: none;
+		transition: border-color 0.12s, color 0.12s;
+	}
+	.my-patterns__upload-cta:hover {
+		border-color: var(--color-brand);
+		color: var(--color-brand);
+	}
+
+	/* ─── My Pattern card ─── */
+	.my-pattern-card {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		padding: 10px 12px;
+		background: var(--bg-surface);
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-md);
+	}
+	.my-pattern-card__preview {
+		width: 48px;
+		height: 48px;
+		border-radius: var(--radius-sm);
+		background: var(--bg-surface-2);
+		border: 1px solid var(--border-subtle);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		flex-shrink: 0;
+		padding: 6px;
+	}
+	.my-pattern-card__preview svg { width: 100%; height: 100%; }
+	.my-pattern-card__body {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 3px;
+	}
+	.my-pattern-card__name {
+		font-size: 0.875rem;
+		font-weight: 600;
+		color: var(--text-primary);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.my-pattern-card__meta {
+		font-size: 0.75rem;
+		color: var(--text-tertiary);
+	}
+	.my-pattern-card__badges {
+		display: flex;
+		gap: 5px;
+		flex-wrap: wrap;
+	}
+	.mpbadge {
+		font-size: 0.6875rem;
+		font-weight: 600;
+		padding: 1px 6px;
+		border-radius: 4px;
+	}
+	.mpbadge--ppf  { background: color-mix(in srgb, #00e5ff 12%, transparent); color: #00e5ff; }
+	.mpbadge--tint { background: color-mix(in srgb, #a78bfa 12%, transparent); color: #a78bfa; }
+	.mpbadge--published { background: color-mix(in srgb, #22c55e 12%, transparent); color: #4ade80; }
+	.mpbadge--pending   { background: color-mix(in srgb, #f59e0b 12%, transparent); color: #fbbf24; }
+	.mpbadge--private   { background: var(--bg-surface-3); color: var(--text-tertiary); }
+	.my-pattern-card__actions {
+		display: flex;
+		gap: 6px;
+		flex-shrink: 0;
+	}
+	.my-pattern-card__add,
+	.my-pattern-card__share {
+		display: flex;
+		align-items: center;
+		gap: 5px;
+		padding: 5px 10px;
+		font-size: 0.75rem;
+		font-weight: 600;
+		font-family: var(--font-body);
+		border-radius: var(--radius-md);
+		border: 1px solid var(--border-default);
+		background: var(--bg-surface-2);
+		color: var(--text-secondary);
+		cursor: pointer;
+		transition: background 0.12s, color 0.12s, border-color 0.12s;
+		white-space: nowrap;
+	}
+	.my-pattern-card__add:hover {
+		background: var(--color-brand);
+		border-color: var(--color-brand);
+		color: #fff;
+	}
+	.my-pattern-card__share--on {
+		border-color: color-mix(in srgb, var(--color-brand) 50%, transparent);
+		color: var(--color-brand);
+		background: color-mix(in srgb, var(--color-brand) 10%, var(--bg-surface-2));
+	}
+	.my-pattern-card__share:hover {
+		border-color: var(--color-brand);
+		color: var(--color-brand);
+	}
+	.my-pattern-card__locked {
+		display: flex;
+		align-items: center;
+		gap: 5px;
+		padding: 5px 10px;
+		font-size: 0.75rem;
+		font-weight: 600;
+		font-family: var(--font-body);
+		border-radius: var(--radius-md);
+		border: 1px solid var(--border-default);
+		background: var(--bg-surface-2);
+		color: var(--text-tertiary);
+		cursor: pointer;
+		transition: background 0.12s, color 0.12s, border-color 0.12s;
+		white-space: nowrap;
+	}
+	.my-pattern-card__locked:hover {
+		border-color: color-mix(in srgb, #f59e0b 50%, transparent);
+		color: #fbbf24;
+		background: color-mix(in srgb, #f59e0b 10%, var(--bg-surface-2));
 	}
 </style>

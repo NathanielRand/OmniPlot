@@ -38,6 +38,8 @@ import type {
 	PlotterDevice,
 	InsightPost,
 	PlotterErrorReport,
+	UserPattern,
+	PatternAdjustmentRequest,
 } from "$lib/types";
 
 // ─── Collection refs ──────────────────────────
@@ -53,6 +55,8 @@ export const Collections = {
 	SHOP_INVITES: "shopInvites",
 	INSIGHTS: "insights",
 	PLOTTER_ERRORS: "plotterErrors",
+	USER_PATTERNS: "userPatterns",
+	PATTERN_ADJUSTMENTS: "patternAdjustments",
 } as const;
 
 // ─── Converters ───────────────────────────────
@@ -508,6 +512,132 @@ export async function updatePatternDoc(
 
 export async function deletePatternDoc(id: string): Promise<void> {
 	await deleteDoc(doc(db, Collections.PATTERNS, id));
+}
+
+// ─── User Patterns ────────────────────────────
+function toUserPattern(id: string, data: DocumentData): UserPattern {
+	return {
+		id,
+		ownerId:           data.ownerId          ?? "",
+		submitToCommunity: data.submitToCommunity ?? false,
+		isPublished:       data.isPublished       ?? false,
+		status:            data.status            ?? "private",
+		adminNotes:        data.adminNotes,
+		vehicleId:         data.vehicleId,
+		make:              data.make              ?? "",
+		model:             data.model             ?? "",
+		year:              data.year              ?? 0,
+		bodyStyle:         data.bodyStyle         ?? "sedan",
+		category:          data.category          ?? "ppf",
+		zone:              data.zone              ?? "hood",
+		name:              data.name              ?? "",
+		coverage:          data.coverage          ?? "full",
+		widthInches:       data.widthInches       ?? 0,
+		heightInches:      data.heightInches      ?? 0,
+		svgPath:           data.svgPath           ?? "",
+		notes:             data.notes,
+		createdAt:         fromTimestamp(data.createdAt),
+		updatedAt:         fromTimestamp(data.updatedAt),
+	};
+}
+
+export async function addUserPattern(
+	data: Omit<UserPattern, "id" | "createdAt" | "updatedAt" | "status" | "isPublished">,
+): Promise<string> {
+	const ref = doc(collection(db, Collections.USER_PATTERNS));
+	const { vehicleId, notes, adminNotes, ...rest } = data;
+	await setDoc(ref, {
+		...rest,
+		...(vehicleId  ? { vehicleId }  : {}),
+		...(notes      ? { notes }      : {}),
+		...(adminNotes ? { adminNotes } : {}),
+		isPublished: false,
+		status: data.submitToCommunity ? "pending" : "private",
+		createdAt: serverTimestamp(),
+		updatedAt: serverTimestamp(),
+	});
+	return ref.id;
+}
+
+export async function getUserPatterns(ownerId: string): Promise<UserPattern[]> {
+	const q = query(
+		collection(db, Collections.USER_PATTERNS),
+		where("ownerId", "==", ownerId),
+	);
+	const snap = await getDocs(q);
+	return snap.docs
+		.map((d) => toUserPattern(d.id, d.data()))
+		.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+}
+
+export async function updateUserPattern(
+	id: string,
+	patch: Partial<Pick<UserPattern, "submitToCommunity" | "name" | "notes" | "svgPath" | "widthInches" | "heightInches" | "coverage">>,
+): Promise<void> {
+	const update: Record<string, unknown> = { ...patch, updatedAt: serverTimestamp() };
+	if (patch.submitToCommunity !== undefined) {
+		update.status = patch.submitToCommunity ? "pending" : "private";
+	}
+	await updateDoc(doc(db, Collections.USER_PATTERNS, id), update);
+}
+
+export async function adminUpdateUserPattern(
+	id: string,
+	patch: Partial<UserPattern>,
+): Promise<void> {
+	await updateDoc(doc(db, Collections.USER_PATTERNS, id), {
+		...patch,
+		updatedAt: serverTimestamp(),
+	});
+}
+
+export async function getSubmissions(): Promise<UserPattern[]> {
+	const q = query(
+		collection(db, Collections.USER_PATTERNS),
+		where("submitToCommunity", "==", true),
+	);
+	const snap = await getDocs(q);
+	return snap.docs
+		.map((d) => toUserPattern(d.id, d.data()))
+		.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+}
+
+export async function getAdjustmentRequests(): Promise<PatternAdjustmentRequest[]> {
+	const q = query(collection(db, Collections.PATTERN_ADJUSTMENTS));
+	const snap = await getDocs(q);
+	return snap.docs
+		.map((d) => ({
+			id: d.id,
+			patternId:   d.data().patternId   ?? "",
+			requestedBy: d.data().requestedBy ?? "",
+			notes:       d.data().notes       ?? "",
+			status:      d.data().status      ?? "pending",
+			adminResponse: d.data().adminResponse,
+			createdAt:   fromTimestamp(d.data().createdAt),
+		} as PatternAdjustmentRequest))
+		.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+}
+
+export async function resolveAdjustmentRequest(
+	id: string,
+	status: "approved" | "rejected",
+	adminResponse?: string,
+): Promise<void> {
+	await updateDoc(doc(db, Collections.PATTERN_ADJUSTMENTS, id), {
+		status,
+		...(adminResponse ? { adminResponse } : {}),
+	});
+}
+
+export async function addPatternAdjustmentRequest(
+	data: Pick<PatternAdjustmentRequest, "patternId" | "requestedBy" | "notes">,
+): Promise<void> {
+	const ref = doc(collection(db, Collections.PATTERN_ADJUSTMENTS));
+	await setDoc(ref, {
+		...data,
+		status: "pending",
+		createdAt: serverTimestamp(),
+	});
 }
 
 // ─── PatternRequest CRUD ──────────────────────
