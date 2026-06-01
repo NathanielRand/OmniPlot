@@ -13,7 +13,7 @@
 - Add flagging for review/report for all patterns (platform or community provided) in case of inaccuracies that warn the users when a pattern is flagged for review when selected to add to the canvas.
 - The patterns are wrong. None of the windows are accurate. Our system didnt seem to take the curvature of the windows into consideration.
 - HEAT SHRINKAGE: add option/setting for user to add internal buffer to each design to intentional give excess inside the cut zone line a 1cm-ish default (can be changed by user) for user's placements and make up from HEAT SHRINKAGE
-- One known limitation: If the cut agent closes and reopens the serial port between segment requests and the plotter's firmware asserts DTR-low as a hardware reset signal, the plotter will reset between patterns. This is a hardware flow control issue that can't be fixed without a persistent-port endpoint in the agent. In practice, most CH340/FTDI adapters and budget plotters don't assert DTR on port close, so this path should work. If it doesn't for a specific device, the agent needs a streaming endpoint — which is the long-term right answer.
+
 
 // IN PROGRESS
 

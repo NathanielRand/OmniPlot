@@ -520,8 +520,6 @@
 				const pid = info.usbProductId;
 				const matched = matchPortToPreset(vid, pid);
 				const id = `usb:${vid?.toString(16).padStart(4, "0") ?? "??"}:${pid?.toString(16).padStart(4, "0") ?? "??"}`;
-				// Skip if this port is already listed via agent (avoid duplicates)
-				if (next.find(d => d.source === "agent" && d.vendorId === vid && d.productId === pid)) continue;
 				const isActive = plotterStore.config.connection === "usb-serial" && !!serialPortInfo;
 				next.push({
 					id,
@@ -552,18 +550,22 @@
 
 		// 4. Auto-select + auto-connect
 		const online = merged.filter(d => d.status !== "offline");
+		const onlineAgents = online.filter(d => d.source === "agent");
 		if (online.length >= 1) {
-			// Pick selection: prefer existing, fall back to single or first
+			// Pick selection: prefer existing selection, then single device, then prefer agent over USB
 			const target = (selectedDeviceId ? online.find(d => d.id === selectedDeviceId) : null)
-				?? (online.length === 1 ? online[0] : null);
+				?? (online.length === 1 ? online[0] : null)
+				?? (onlineAgents.length === 1 ? onlineAgents[0] : null);
 			if (target) {
 				if (selectedDeviceId !== target.id) {
 					selectedDeviceId = target.id;
 					plotterStore.applyPreset(target.preset);
 					if (target.portPath) plotterStore.update({ serialPort: target.portPath });
 				}
-				// Auto-connect single agent device (no browser dialog needed; skip if outdated)
-				if (online.length === 1 && target.source === "agent" && !autoConnectedAgent && !isConnected && !agentStore.needsUpdate) {
+				// Auto-connect a single agent device (no browser dialog needed; skip if outdated).
+				// Check onlineAgents.length === 1 (not online.length) so USB Direct cards alongside
+				// the agent don't suppress auto-connect.
+				if (onlineAgents.length === 1 && target.source === "agent" && !autoConnectedAgent && !isConnected && !agentStore.needsUpdate) {
 					plotterStore.switchConnection("cut-agent");
 					sendSettings(plotterStore.config).catch(() => {});
 					autoConnectedAgent = true;
@@ -1148,7 +1150,10 @@
 	// ─── Canvas persistence ───────────────────────
 	let _mounted = false;
 	function handleDisconnect() {
-		if (plotterStore.config.connection === "usb-serial") {
+		// Always release the Web Serial port if one is open, regardless of which
+		// connection type is currently active (USB reconnect on mount may have left
+		// a port open even after the UI switched to cut-agent).
+		if (serialPortInfo) {
 			disconnectSerialPort();
 			serialPortInfo = null;
 		}
