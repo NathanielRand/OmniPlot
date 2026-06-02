@@ -1158,7 +1158,13 @@
 			serialPortInfo = null;
 		}
 		plotterStore.switchConnection("download", { save: false });
-		autoConnectedAgent = false;
+		// Mark as already-auto-connected so the 8s silent poll does NOT immediately
+		// re-connect the agent after a manual disconnect. The user just chose to
+		// disconnect — both method cards should stay in "Detected" state so they can
+		// pick a new method. autoConnectedAgent resets to false on next onMount.
+		// (The only correct place to reset it to false is line 543: when the agent
+		// device physically vanishes from a scan, allowing reconnect when it returns.)
+		autoConnectedAgent = true;
 		showConfig = false;
 		discoveredDevices = discoveredDevices.map(d =>
 			d.status === "connected" ? { ...d, status: "detected" } : d

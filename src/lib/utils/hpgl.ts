@@ -29,54 +29,91 @@ function escAttr(s: string): string {
 	return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 }
 
-// ─── Sample SVG path → inch-space points ─────
-// Uses SVGPathElement.getPointAtLength for accurate curve sampling.
-// The hidden off-screen SVG prevents any visible DOM flash.
-// Falls back to a bounding-box rectangle when DOM is unavailable.
+// ─── Split SVG path d-string into subpaths ───
+// Each M/m command after the first begins a new subpath (a distinct closed or
+// open contour). The cutter must lift its blade between them.
+export function splitSubpaths(d: string): string[] {
+	// Split before every M or m that is preceded by at least one non-whitespace char
+	// (i.e. every M/m except the very first command in the string).
+	return d.split(/(?<=[^\s])(?=[Mm])/).map(s => s.trim()).filter(Boolean);
+}
+
+// ─── Sample SVG path → per-subpath inch-space points ─────────────────────────
+// Returns one array of points per subpath. Each subpath is sampled
+// independently so the blade lift position between them is known.
+// All subpaths are normalised against the FULL path's bounding box so their
+// relative spatial positions are preserved when scaled to inch space.
+function sampleSvgPathSubpaths(
+	pathData: string,
+	widthInches: number,
+	heightInches: number,
+	samplesPerSubpath = 200,
+): Array<Array<{ x: number; y: number }>> {
+	if (typeof document === "undefined") {
+		return [rectPoints(widthInches, heightInches)];
+	}
+	try {
+		const ns  = "http://www.w3.org/2000/svg";
+		const svg = document.createElementNS(ns, "svg") as SVGSVGElement;
+		svg.style.cssText =
+			"position:absolute;top:-9999px;left:-9999px;visibility:hidden;pointer-events:none;";
+
+		// Full path — used only to obtain the combined bounding box so that
+		// each subpath's points are normalised against the same origin/scale.
+		const fullEl = document.createElementNS(ns, "path") as SVGPathElement;
+		fullEl.setAttribute("d", pathData);
+		svg.appendChild(fullEl);
+		document.body.appendChild(svg);
+
+		const bbox = fullEl.getBBox();
+		if (bbox.width === 0 || bbox.height === 0) {
+			document.body.removeChild(svg);
+			return [rectPoints(widthInches, heightInches)];
+		}
+
+		const scaleX = widthInches  / bbox.width;
+		const scaleY = heightInches / bbox.height;
+
+		const subpathStrings = splitSubpaths(pathData);
+		const result: Array<Array<{ x: number; y: number }>> = [];
+
+		for (const spData of subpathStrings) {
+			const spEl = document.createElementNS(ns, "path") as SVGPathElement;
+			spEl.setAttribute("d", spData);
+			svg.appendChild(spEl);
+
+			const total = spEl.getTotalLength();
+			if (total > 0) {
+				const pts: Array<{ x: number; y: number }> = [];
+				for (let i = 0; i <= samplesPerSubpath; i++) {
+					const pt = spEl.getPointAtLength((i / samplesPerSubpath) * total);
+					pts.push({
+						x: (pt.x - bbox.x) * scaleX,
+						y: (pt.y - bbox.y) * scaleY,
+					});
+				}
+				result.push(pts);
+			}
+			svg.removeChild(spEl);
+		}
+
+		document.body.removeChild(svg);
+		return result.length > 0 ? result : [rectPoints(widthInches, heightInches)];
+	} catch {
+		return [rectPoints(widthInches, heightInches)];
+	}
+}
+
+// Legacy single-array helper — retained for DXF/nesting callers that do not
+// need subpath-awareness (nesting, efficiency, SVG export).
 function sampleSvgPath(
 	pathData: string,
 	widthInches: number,
 	heightInches: number,
 	samples = 200,
 ): Array<{ x: number; y: number }> {
-	if (typeof document === "undefined") {
-		return rectPoints(widthInches, heightInches);
-	}
-	try {
-		const ns = "http://www.w3.org/2000/svg";
-		const svg = document.createElementNS(ns, "svg") as SVGSVGElement;
-		svg.style.cssText =
-			"position:absolute;top:-9999px;left:-9999px;visibility:hidden;pointer-events:none;";
-		const path = document.createElementNS(ns, "path") as SVGPathElement;
-		path.setAttribute("d", pathData);
-		svg.appendChild(path);
-		document.body.appendChild(svg);
-
-		const total = path.getTotalLength();
-		const bbox  = path.getBBox();
-
-		if (total === 0 || bbox.width === 0 || bbox.height === 0) {
-			document.body.removeChild(svg);
-			return rectPoints(widthInches, heightInches);
-		}
-
-		const scaleX = widthInches  / bbox.width;
-		const scaleY = heightInches / bbox.height;
-		const pts: Array<{ x: number; y: number }> = [];
-
-		for (let i = 0; i <= samples; i++) {
-			const pt = path.getPointAtLength((i / samples) * total);
-			pts.push({
-				x: (pt.x - bbox.x) * scaleX,
-				y: (pt.y - bbox.y) * scaleY,
-			});
-		}
-
-		document.body.removeChild(svg);
-		return pts;
-	} catch {
-		return rectPoints(widthInches, heightInches);
-	}
+	const subpaths = sampleSvgPathSubpaths(pathData, widthInches, heightInches, samples);
+	return subpaths.flat();
 }
 
 function rectPoints(w: number, h: number): Array<{ x: number; y: number }> {
@@ -173,31 +210,38 @@ function overcutPoint(
 }
 
 function itemToHpgl(item: CanvasItem, config: PlotterConfig): string {
-	const pts = sampleSvgPath(item.pattern.svgPath, item.width, item.height);
-	const transformed = transformPoints(item, pts);
-	if (transformed.length === 0) return "";
+	// Sample each subpath independently — this is the critical step that prevents
+	// the blade from dragging across the fill between disconnected contours.
+	const subpaths = sampleSvgPathSubpaths(item.pattern.svgPath, item.width, item.height);
+	const transformedSubpaths = subpaths
+		.map(pts => transformPoints(item, pts))
+		.filter(pts => pts.length > 0);
+
+	if (transformedSubpaths.length === 0) return "";
 
 	const toU = (v: number) => Math.round(v * HPGL_UNITS_PER_INCH);
 	const lines: string[] = [];
 	const overcutInches = config.overcut / MM_PER_INCH;
 
-	// Lift blade and move to path start
-	lines.push(`PU${toU(transformed[0].x)},${toU(transformed[0].y)};`);
+	// Lift to the start of the first subpath before cutting begins
+	lines.push(`PU${toU(transformedSubpaths[0][0].x)},${toU(transformedSubpaths[0][0].y)};`);
 
 	for (let pass = 0; pass < config.passes; pass++) {
-		// Alternate direction on even/odd passes (bidirectional — reduces travel)
-		const seq = pass % 2 === 0 ? transformed : [...transformed].reverse();
-		const [first, ...rest] = seq;
+		for (const transformed of transformedSubpaths) {
+			// Alternate direction on even/odd passes (bidirectional — reduces travel)
+			const seq = pass % 2 === 0 ? transformed : [...transformed].reverse();
+			const [first, ...rest] = seq;
 
-		lines.push(`PU${toU(first.x)},${toU(first.y)};`);
-		if (rest.length > 0) {
-			lines.push(`PD${rest.map((p) => `${toU(p.x)},${toU(p.y)}`).join(",")};`);
-		}
-		// Overcut: advance the configured distance past the seam to prevent a lift gap.
-		// Walk along the path from the start until overcutInches is consumed.
-		const oc = overcutPoint(transformed, overcutInches);
-		if (oc) {
-			lines.push(`PD${toU(oc.x)},${toU(oc.y)};`);
+			// PU lifts the blade and moves to this subpath's start — no cut between subpaths
+			lines.push(`PU${toU(first.x)},${toU(first.y)};`);
+			if (rest.length > 0) {
+				lines.push(`PD${rest.map((p) => `${toU(p.x)},${toU(p.y)}`).join(",")};`);
+			}
+			// Overcut: advance the configured distance past the seam to close the cut loop.
+			const oc = overcutPoint(transformed, overcutInches);
+			if (oc) {
+				lines.push(`PD${toU(oc.x)},${toU(oc.y)};`);
+			}
 		}
 	}
 
@@ -397,32 +441,34 @@ export function generateDxf(state: CanvasState): string {
 	const entities: string[] = [];
 
 	for (const item of inBounds) {
-		const pts = sampleSvgPath(item.pattern.svgPath, item.width, item.height);
-		const transformed = transformPoints(item, pts);
-		if (transformed.length < 2) continue;
-
+		// Each subpath becomes its own LWPOLYLINE so the cutter software knows
+		// not to connect between them (avoids cutting through the fill).
+		const subpaths = sampleSvgPathSubpaths(item.pattern.svgPath, item.width, item.height);
 		const label = item.label ?? item.pattern.name;
 
-		entities.push(
-			"0", "LWPOLYLINE",
-			"5", entities.length.toString(16).padStart(4, "0"), // handle
-			"100", "AcDbEntity",
-			"8", "0",             // layer 0
-			"62", "7",            // color: black
-			"100", "AcDbPolyline",
-			`90`, `${transformed.length}`,
-			"70", "0",            // open polyline (points already close back to start)
-			"43", "0",            // constant width = 0 (hairline)
-		);
+		for (const pts of subpaths) {
+			const transformed = transformPoints(item, pts);
+			if (transformed.length < 2) continue;
 
-		for (const pt of transformed) {
 			entities.push(
-				"10", (pt.x * MM_PER_INCH).toFixed(4),
-				"20", (pt.y * MM_PER_INCH).toFixed(4),
+				"0", "LWPOLYLINE",
+				"5", entities.length.toString(16).padStart(4, "0"),
+				"100", "AcDbEntity",
+				"8", "0",
+				"62", "7",
+				"100", "AcDbPolyline",
+				`90`, `${transformed.length}`,
+				"70", "0",
+				"43", "0",
 			);
+			for (const pt of transformed) {
+				entities.push(
+					"10", (pt.x * MM_PER_INCH).toFixed(4),
+					"20", (pt.y * MM_PER_INCH).toFixed(4),
+				);
+			}
+			entities.push("1001", "OmniPlot", "1000", label);
 		}
-		// Entity-level label as extended data (informational, ignored by cutters)
-		entities.push("1001", "OmniPlot", "1000", label);
 	}
 
 	const lines: string[] = [

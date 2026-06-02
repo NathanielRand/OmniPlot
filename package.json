@@ -31,6 +31,7 @@
 		"@stripe/stripe-js": "^9.6.0",
 		"firebase": "^12.13.0",
 		"firebase-admin": "^13.10.0",
+		"potrace": "^2.1.8",
 		"stripe": "^22.1.1"
 	}
 }

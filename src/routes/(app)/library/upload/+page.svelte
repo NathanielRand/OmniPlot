@@ -3,6 +3,7 @@
 	import { userStore, toastStore } from "$lib/stores";
 	import { patternStore, PPF_ZONES_LIST, TINT_ZONES_LIST } from "$lib/stores/patternStore.svelte";
 	import { addUserPattern } from "$lib/firebase/firestore";
+	import SvgPathInput from "$lib/components/ui/SvgPathInput.svelte";
 	import type { PatternCategory, PatternZone, PatternCoverage } from "$lib/types";
 	import type { VehicleEntry } from "$lib/stores/patternStore.svelte";
 
@@ -71,7 +72,6 @@
 		pattern.zone = val;
 	}
 
-	const svgPreviewPath = $derived(pattern.svgPath.trim() || "");
 
 	// ─── Validation ───────────────────────────────
 	function validate(): boolean {
@@ -329,24 +329,9 @@
 					<div class="field" class:field--error={errors.svgPath}>
 						<label class="field__label" for="svgPath">
 							SVG Path Data
-							<span class="field__hint">Paste the <code>d="…"</code> attribute from your design file</span>
 						</label>
-						<div class="svg-field">
-							<textarea id="svgPath" class="field__textarea field__textarea--mono" bind:value={pattern.svgPath} rows="5" spellcheck="false" placeholder="M 0,0 L 100,0 L 100,100 L 0,100 Z"></textarea>
-							<div class="svg-preview" aria-label="SVG path preview">
-								{#if svgPreviewPath}
-									<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
-										<path d={svgPreviewPath} fill="none" stroke="var(--color-brand)" stroke-width="1.5"/>
-									</svg>
-								{:else}
-									<span class="svg-preview__empty">Preview</span>
-								{/if}
-							</div>
-						</div>
+						<SvgPathInput id="svgPath" bind:value={pattern.svgPath} error={!!errors.svgPath} />
 						{#if errors.svgPath}<span class="field__error">{errors.svgPath}</span>{/if}
-						<p class="field__note">
-							Coordinates must be in <strong>0–100 normalized space</strong> — the nesting engine scales to inches using your width/height. Raw artboard units from Illustrator/Inkscape will not render correctly.
-						</p>
 					</div>
 
 					<div class="field">

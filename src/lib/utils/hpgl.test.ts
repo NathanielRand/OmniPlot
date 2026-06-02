@@ -147,8 +147,9 @@ describe('generateHpgl', () => {
 		expect(hpgl).toContain('PA;');
 	});
 	it('contains speed command VS for hpgl protocol', () => {
+		// baseConfig.cuttingSpeed = 400 mm/s; HPGL VS is in cm/s → 400/10 = 40
 		const hpgl = generateHpgl(makeState(), baseConfig);
-		expect(hpgl).toContain('VS400;');
+		expect(hpgl).toContain('VS40;');
 	});
 	it('contains force command FS for generic hpgl', () => {
 		const hpgl = generateHpgl(makeState(), baseConfig);

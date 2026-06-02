@@ -1,8 +1,11 @@
 // UPCOMING
 - Create a local plotter emulator/simulator to verify the communication between plotter and agent (or other method) is bidirectional and valid throughout each expected communication event with proper processing and response. we need to test without having the quipment in person.
 - investors page
-- offer cutting services with simple user flow to select from ddb of cars and submit order. we cut at our shop and send to customer in hardened tube. priced material cost +
+- verify only after disconnecting usb connection method, agent option card/status show on plotter tab in studio as should with the usb connection method card/status as if to choose a new method now. Since the user disconnects one method, they'll likely want to see the others like in whatever state (if any) they are in.
+- Patterns: https://www.thetinteffect.com/precut-window-tint-kits/2014-2018-2019-limited-chevrolet-silverado-1500-truck-visor-eye-brow-precut-tint-kit-automotive-window-film/?srsltid=AfmBOooS3aialyaNfEgmkpu9aVOmeudAYHUx4fMVRufxybaruT3WlFOB
+- offer cutting services with simple user flow to select from db of patterns or submit own then submit order. we cut at our shop and send to customer in hardened tube. priced material cost +
 - offline mode
+- vertical preference for pattern placement to reduce width consumption when the longest size of the pattern fits within the width of the roll.
 - custom material selection for unique dimensions (i.e user has some crazy jagged material to use idk)
 - Community pattern uploaded need to 1:1 match our admin added patterns. community patterns needs to show unverified until approved by admin or community method. request need to be approved/rejected by admin in under a few hours.
 - fully custom pattern upload for custom shapes/logos/icons/etc.. with option to submit to community under a more fitting category than vehicles.

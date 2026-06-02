@@ -198,8 +198,9 @@
 	// ─── Edit Patterns panel ──────────────────────
 	let editingVehicle  = $state<VehicleEntry | null>(null);
 	let editPanelTab    = $state<PatternCategory>("window-tint");
-	let showAddPattern  = $state(false);
-	let editPatternId   = $state<string | null>(null);
+	let showAddPattern    = $state(false);
+	let editPatternId     = $state<string | null>(null);
+	let pendingDeleteId   = $state<string | null>(null);
 
 	let newPattern = $state({
 		zone: "windshield" as PatternZone, name: "", coverage: "full" as PatternCoverage,
@@ -211,7 +212,7 @@
 		editingVehicle = v; editPanelTab = "window-tint";
 		showAddPattern = false; editPatternId = null;
 	}
-	function closeEditPanel() { editingVehicle = null; showAddPattern = false; editPatternId = null; }
+	function closeEditPanel() { editingVehicle = null; showAddPattern = false; editPatternId = null; pendingDeleteId = null; }
 
 	const panelPatterns = $derived(
 		editingVehicle ? patternStore.getPatterns(editingVehicle.id, editPanelTab) : [],
@@ -252,7 +253,7 @@
 		editPatternId = null;
 	}
 
-	onMount(() => {
+onMount(() => {
 		loadSubmissions();
 		loadAdjustments();
 	});
@@ -752,7 +753,28 @@
 								<span class="ep-toggle__dot"></span>
 							</button>
 							<button class="row-btn" onclick={() => startEditPattern(pat.id)}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
-							<button class="row-btn row-btn--danger" onclick={() => patternStore.deletePattern(pat.id)}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></button>
+							{#if pendingDeleteId === pat.id}
+								<div class="delete-confirm">
+									<span class="delete-confirm__label">Delete?</span>
+									<button
+										class="delete-confirm__yes"
+										onclick={() => { patternStore.deletePattern(pat.id); pendingDeleteId = null; }}
+										aria-label="Confirm delete"
+									>Yes</button>
+									<button
+										class="delete-confirm__no"
+										onclick={() => (pendingDeleteId = null)}
+										aria-label="Cancel delete"
+									>No</button>
+								</div>
+							{:else}
+								<button
+									class="row-btn row-btn--danger"
+									onclick={() => (pendingDeleteId = pat.id)}
+									title="Delete pattern"
+									aria-label="Delete {pat.name}"
+								><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></button>
+							{/if}
 						</div>
 					</div>
 				{/if}
@@ -914,6 +936,47 @@
 	.row-btn { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; background: var(--bg-surface-2); border: 1px solid var(--border-default); border-radius: var(--radius-md); color: var(--text-secondary); cursor: pointer; transition: all 0.12s; }
 	.row-btn:hover { background: var(--bg-surface-3); color: var(--text-primary); }
 	.row-btn--danger:hover { background: var(--color-error); color: #fff; border-color: transparent; }
+
+	.delete-confirm {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		animation: confirm-in 0.1s ease;
+	}
+	@keyframes confirm-in {
+		from { opacity: 0; transform: scale(0.95); }
+		to   { opacity: 1; transform: scale(1); }
+	}
+	.delete-confirm__label {
+		font-size: 0.6875rem;
+		font-weight: 600;
+		color: var(--color-danger, #f44);
+		white-space: nowrap;
+		font-family: var(--font-mono);
+	}
+	.delete-confirm__yes,
+	.delete-confirm__no {
+		padding: 2px 7px;
+		font-size: 0.6875rem;
+		font-weight: 600;
+		font-family: var(--font-body);
+		border-radius: var(--radius-sm);
+		border: 1px solid transparent;
+		cursor: pointer;
+		transition: background 0.1s, color 0.1s;
+	}
+	.delete-confirm__yes {
+		background: color-mix(in srgb, #f44 12%, transparent);
+		border-color: color-mix(in srgb, #f44 35%, transparent);
+		color: #f66;
+	}
+	.delete-confirm__yes:hover { background: #f44; color: #fff; border-color: #f44; }
+	.delete-confirm__no {
+		background: var(--bg-surface-2);
+		border-color: var(--border-default);
+		color: var(--text-tertiary);
+	}
+	.delete-confirm__no:hover { background: var(--bg-surface-3); color: var(--text-primary); }
 
 	.action-btn { padding: 4px 10px; font-size: 0.75rem; font-weight: 500; font-family: var(--font-body); background: var(--bg-surface-2); border: 1px solid var(--border-default); border-radius: var(--radius-md); color: var(--text-secondary); cursor: pointer; transition: all 0.12s; white-space: nowrap; }
 	.action-btn:hover { background: var(--bg-surface-3); color: var(--text-primary); }

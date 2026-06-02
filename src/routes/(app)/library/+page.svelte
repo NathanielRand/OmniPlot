@@ -18,54 +18,18 @@
 		"All zones", "Windshield", "Side Windows", "Rear Window", "Sunroof", "Quarter / Vent",
 	];
 
-	// Generic fallback zone lists (shown when vehicle has no patterns in the store)
-	const PPF_ZONE_PATTERNS = [
-		{ zone: "Hood",        pieces: 3, size: '60" × 48"', coverage: "full",    group: "Hood",         patternZone: "hood" as PatternZone },
-		{ zone: "Hood Edges",  pieces: 2, size: '12" × 36"', coverage: "partial", group: "Hood",         patternZone: "hood-edge-left" as PatternZone },
-		{ zone: "Front Bumper",pieces: 1, size: '62" × 22"', coverage: "full",    group: "Bumpers",      patternZone: "bumper-front" as PatternZone },
-		{ zone: "Rear Bumper", pieces: 1, size: '60" × 18"', coverage: "full",    group: "Bumpers",      patternZone: "bumper-rear" as PatternZone },
-		{ zone: "Fender FL",   pieces: 1, size: '28" × 42"', coverage: "full",    group: "Fenders",      patternZone: "fender-front-left" as PatternZone },
-		{ zone: "Fender FR",   pieces: 1, size: '28" × 42"', coverage: "full",    group: "Fenders",      patternZone: "fender-front-right" as PatternZone },
-		{ zone: "Mirror L",    pieces: 1, size: '10" × 8"',  coverage: "full",    group: "Mirrors",      patternZone: "mirror-left" as PatternZone },
-		{ zone: "Mirror R",    pieces: 1, size: '10" × 8"',  coverage: "full",    group: "Mirrors",      patternZone: "mirror-right" as PatternZone },
-		{ zone: "Door FL",     pieces: 1, size: '38" × 52"', coverage: "full",    group: "Doors",        patternZone: "door-front-left" as PatternZone },
-		{ zone: "Door FR",     pieces: 1, size: '38" × 52"', coverage: "full",    group: "Doors",        patternZone: "door-front-right" as PatternZone },
-		{ zone: "Door RL",     pieces: 1, size: '36" × 50"', coverage: "full",    group: "Doors",        patternZone: "door-rear-left" as PatternZone },
-		{ zone: "Door RR",     pieces: 1, size: '36" × 50"', coverage: "full",    group: "Doors",        patternZone: "door-rear-right" as PatternZone },
-		{ zone: "Rocker L",    pieces: 1, size: '72" × 8"',  coverage: "full",    group: "Rocker Panels",patternZone: "rocker-left" as PatternZone },
-		{ zone: "Rocker R",    pieces: 1, size: '72" × 8"',  coverage: "full",    group: "Rocker Panels",patternZone: "rocker-right" as PatternZone },
-		{ zone: "A-Pillar L",  pieces: 1, size: '4" × 28"',  coverage: "partial", group: "Roof",         patternZone: "a-pillar-left" as PatternZone },
-		{ zone: "A-Pillar R",  pieces: 1, size: '4" × 28"',  coverage: "partial", group: "Roof",         patternZone: "a-pillar-right" as PatternZone },
-		{ zone: "Roof",        pieces: 1, size: '60" × 68"', coverage: "full",    group: "Roof",         patternZone: "roof" as PatternZone },
-		{ zone: "Trunk",       pieces: 1, size: '56" × 40"', coverage: "full",    group: "Trunk",        patternZone: "trunk" as PatternZone },
-	];
-
-	const TINT_ZONE_PATTERNS = [
-		{ zone: "Windshield",       pieces: 1, size: '66" × 30"', coverage: "full",    group: "Windshield",    patternZone: "windshield" as PatternZone,       vltNote: "Usually front strip only in legal states" },
-		{ zone: "Windshield Strip", pieces: 1, size: '66" × 6"',  coverage: "partial", group: "Windshield",    patternZone: "windshield-strip" as PatternZone,  vltNote: "Top visor strip — legal in all states" },
-		{ zone: "Rear Window",      pieces: 1, size: '58" × 26"', coverage: "full",    group: "Rear Window",   patternZone: "rear-windshield" as PatternZone,   vltNote: "" },
-		{ zone: "Sunroof",          pieces: 1, size: '32" × 28"', coverage: "full",    group: "Sunroof",       patternZone: "sunroof" as PatternZone,           vltNote: "Panoramic roof — check fit per model" },
-		{ zone: "Moonroof",         pieces: 1, size: '24" × 20"', coverage: "full",    group: "Sunroof",       patternZone: "moonroof" as PatternZone,          vltNote: "" },
-		{ zone: "Window Front L",   pieces: 1, size: '28" × 24"', coverage: "full",    group: "Side Windows",  patternZone: "window-front-left" as PatternZone, vltNote: "" },
-		{ zone: "Window Front R",   pieces: 1, size: '28" × 24"', coverage: "full",    group: "Side Windows",  patternZone: "window-front-right" as PatternZone, vltNote: "" },
-		{ zone: "Window Rear L",    pieces: 1, size: '26" × 22"', coverage: "full",    group: "Side Windows",  patternZone: "window-rear-left" as PatternZone,  vltNote: "" },
-		{ zone: "Window Rear R",    pieces: 1, size: '26" × 22"', coverage: "full",    group: "Side Windows",  patternZone: "window-rear-right" as PatternZone, vltNote: "" },
-		{ zone: "Quarter Window L", pieces: 1, size: '10" × 14"', coverage: "full",    group: "Quarter / Vent",patternZone: "quarter-window-left" as PatternZone, vltNote: "" },
-		{ zone: "Quarter Window R", pieces: 1, size: '10" × 14"', coverage: "full",    group: "Quarter / Vent",patternZone: "quarter-window-right" as PatternZone, vltNote: "" },
-		{ zone: "Vent Window L",    pieces: 1, size: '6" × 10"',  coverage: "full",    group: "Quarter / Vent",patternZone: "vent-window-left" as PatternZone,  vltNote: "" },
-		{ zone: "Vent Window R",    pieces: 1, size: '6" × 10"',  coverage: "full",    group: "Quarter / Vent",patternZone: "vent-window-right" as PatternZone, vltNote: "" },
-	];
 
 	// ─── State ────────────────────────────────────
 	let tab            = $state<"library" | "mine">("library");
 	let mode           = $state<"ppf" | "tint">("ppf");
 	let search         = $state("");
 	let activeMake     = $state("All");
+	let activeYear     = $state("All");
 	let activeZone     = $state("All zones");
 	let selectedVehicle = $state<VehicleEntry | null>(null);
 	let view           = $state<"grid" | "list">("grid");
-	let selectedZones  = $state<Set<string>>(new Set()); // generic zone selection (zone name)
-	let selectedPatternIds = $state<Set<string>>(new Set()); // store pattern selection (pattern.id)
+	let selectedPatternIds = $state<Set<string>>(new Set());
+	let openNotes          = $state<Set<string>>(new Set());
 
 	// My Patterns
 	let myPatterns       = $state<UserPattern[]>([]);
@@ -149,34 +113,63 @@
 	let requestForm = $state({ year: new Date().getFullYear(), make: "", model: "", notes: "" });
 
 	const ZONES = $derived(mode === "ppf" ? PPF_ZONES : TINT_ZONES);
-	const ZONE_PATTERNS = $derived(mode === "ppf" ? PPF_ZONE_PATTERNS : TINT_ZONE_PATTERNS);
 
-	// Makes list derived from store (published vehicles only)
+	const totalPPF  = $derived(patternStore.vehicles.reduce((n, v) => n + patternStore.getPatterns(v.id, "ppf").length, 0));
+	const totalTint = $derived(patternStore.vehicles.reduce((n, v) => n + patternStore.getPatterns(v.id, "window-tint").length, 0));
+
+	const vehiclesWithPPF  = $derived(patternStore.vehicles.filter(v => v.status === "published" && patternStore.getPatterns(v.id, "ppf").length > 0).length);
+	const vehiclesWithTint = $derived(patternStore.vehicles.filter(v => v.status === "published" && patternStore.getPatterns(v.id, "window-tint").length > 0).length);
+
+	const avgPPFZones  = $derived(vehiclesWithPPF  > 0 ? Math.round(totalPPF  / vehiclesWithPPF)  : 0);
+	const avgTintZones = $derived(vehiclesWithTint > 0 ? Math.round(totalTint / vehiclesWithTint) : 0);
+
+	// Makes list — all published vehicles with patterns for current mode
 	const MAKES = $derived(
 		["All", ...new Set(
 			patternStore.vehicles
 				.filter((v) => v.status === "published")
+				.filter((v) => patternStore.getPatterns(v.id, mode === "ppf" ? "ppf" : "window-tint").length > 0)
 				.map((v) => v.make)
 				.sort()
 		)],
 	);
 
+	// Years list — scoped to current make selection, newest first
+	const YEARS = $derived(
+		["All", ...new Set(
+			patternStore.vehicles
+				.filter((v) => v.status === "published")
+				.filter((v) => patternStore.getPatterns(v.id, mode === "ppf" ? "ppf" : "window-tint").length > 0)
+				.filter((v) => activeMake === "All" || v.make === activeMake)
+				.map((v) => String(v.year))
+				.sort((a, b) => Number(b) - Number(a))
+		)],
+	);
+
 	function switchMode(m: "ppf" | "tint") {
 		mode      = m;
+		activeYear = "All";
 		activeZone = "All zones";
-		selectedZones = new Set();
 		selectedPatternIds = new Set();
 	}
+
+	// Reset year when make changes (year options are scoped to make)
+	$effect(() => {
+		activeMake; // track
+		activeYear = "All";
+	});
 
 	// ─── Filtered vehicles (published only) ───────
 	const filtered = $derived(
 		patternStore.vehicles
 			.filter((v) => v.status === "published")
+			.filter((v) => patternStore.getPatterns(v.id, mode === "ppf" ? "ppf" : "window-tint").length > 0)
 			.filter((v) => {
 				const q = search.toLowerCase();
 				const matchSearch = !q || `${v.year} ${v.make} ${v.model}`.toLowerCase().includes(q);
 				const matchMake   = activeMake === "All" || v.make === activeMake;
-				return matchSearch && matchMake;
+				const matchYear   = activeYear === "All" || String(v.year) === activeYear;
+				return matchSearch && matchMake && matchYear;
 			}),
 	);
 
@@ -192,13 +185,6 @@
 
 	// Zone group map for the active mode
 	const zoneGroupMap = $derived(mode === "ppf" ? PPF_ZONE_GROUP : TINT_ZONE_GROUP);
-
-	// Generic fallback visible zones
-	const visibleGenericZones = $derived(
-		activeZone === "All zones"
-			? ZONE_PATTERNS
-			: ZONE_PATTERNS.filter((z) => z.group === activeZone),
-	);
 
 	// Store patterns visible under the current zone filter
 	const visibleStorePatterns = $derived(
@@ -246,71 +232,15 @@
 		}
 	}
 
-	// ─── Add generic zone to canvas ───────────────
-	function addToCanvas(zone: (typeof PPF_ZONE_PATTERNS)[0]) {
-		if (!selectedVehicle) return;
-		const idx = canvasStore.items.length;
-		const w = parseFloat(zone.size.split('"')[0]);
-		const h = parseFloat(zone.size.split("×")[1]);
-
-		const newItem: CanvasItem = {
-			id:        uid("item_"),
-			patternId: `${selectedVehicle.id}_${zone.zone.toLowerCase().replace(/\s+/g, "-")}`,
-			pattern: {
-				id:          uid("pat_"),
-				vehicleId:   selectedVehicle.id,
-				category:    (mode === "ppf" ? "ppf" : "window-tint") as import("$lib/types").PatternCategory,
-				zone:        zone.patternZone,
-				name:        zone.zone,
-				coverage:    zone.coverage as "full" | "partial",
-				svgPath:     "M10,90 Q15,20 50,5 Q85,20 90,90",
-				widthInches: w,
-				heightInches:h,
-				revision:    "2024-11",
-				isPublished: true,
-				createdAt:   new Date(),
-				updatedAt:   new Date(),
-			},
-			x: 0, y: 0, width: w, height: h, rotation: 0,
-			outOfBounds: false, flippedH: false, flippedV: false,
-			scale: 1, layer: idx, locked: false,
-			color: getItemColor(idx), label: zone.zone,
-		};
-
-		const ts = {
-			...canvasStore.sheet,
-			widthInches:  canvasStore.sheet.heightInches,
-			heightInches: canvasStore.sheet.widthInches,
-		};
-		const nested = autoNest([...canvasStore.items, newItem], ts);
-		canvasStore.setItems(nested);
-
-		const placed = nested.find((i) => i.id === newItem.id);
-		if (placed?.outOfBounds) {
-			toastStore.warning("Added — won't cut", `${zone.zone} exceeds the ${canvasStore.sheet.widthInches}" roll width.`);
-		} else {
-			toastStore.success("Added to canvas", `${zone.zone} — ${zone.size}${placed?.rotation ? " (rotated)" : ""}`);
-		}
-	}
-
-	// ─── Batch add (selected zones / patterns) ────
+	// ─── Batch add (selected patterns) ──────────
 	function addAllSelected() {
-		if (!selectedVehicle) return;
-		if (useStorePatterns) {
-			const toAdd = vehiclePatterns.filter((p) => selectedPatternIds.has(p.id));
-			toAdd.forEach(addPatternToCanvas);
-			if (toAdd.length > 1) {
-				toastStore.success(`${toAdd.length} patterns added`, "Open Studio to arrange and cut.");
-			}
-			selectedPatternIds = new Set();
-		} else {
-			const toAdd = ZONE_PATTERNS.filter((z) => selectedZones.has(z.zone));
-			toAdd.forEach(addToCanvas);
-			if (toAdd.length > 1) {
-				toastStore.success(`${toAdd.length} patterns added`, "Open Studio to arrange and cut.");
-			}
-			selectedZones = new Set();
+		if (!selectedVehicle || !useStorePatterns) return;
+		const toAdd = vehiclePatterns.filter((p) => selectedPatternIds.has(p.id));
+		toAdd.forEach(addPatternToCanvas);
+		if (toAdd.length > 1) {
+			toastStore.success(`${toAdd.length} patterns added`, "Open Studio to arrange and cut.");
 		}
+		selectedPatternIds = new Set();
 	}
 
 	function togglePattern(patternId: string) {
@@ -319,23 +249,13 @@
 		selectedPatternIds = next;
 	}
 
-	function toggleZone(zone: string) {
-		const next = new Set(selectedZones);
-		next.has(zone) ? next.delete(zone) : next.add(zone);
-		selectedZones = next;
-	}
-
 	function selectAll() {
 		if (useStorePatterns) {
 			selectedPatternIds = new Set(visibleStorePatterns.map((p) => p.id));
-		} else {
-			selectedZones = new Set(visibleGenericZones.map((z) => z.zone));
 		}
 	}
 
-	const selectedCount = $derived(
-		useStorePatterns ? selectedPatternIds.size : selectedZones.size,
-	);
+	const selectedCount = $derived(selectedPatternIds.size);
 
 	// ─── Request vehicle ──────────────────────────
 	function submitRequest() {
@@ -349,41 +269,6 @@
 		showRequestModal = false;
 		requestForm = { year: new Date().getFullYear(), make: "", model: "", notes: "" };
 	}
-
-	// ─── SVG preview paths (generic zones) ────────
-	const ZONE_PATHS: Record<string, string> = {
-		Hood:              "M5,85 Q10,20 50,5 Q90,20 95,85 Z",
-		"Hood Edges":      "M5,85 Q10,60 50,55 Q90,60 95,85 L90,85 Q50,65 10,85 Z",
-		"Front Bumper":    "M5,85 Q50,5 95,85 Z",
-		"Rear Bumper":     "M5,15 Q50,85 95,15 Z",
-		"Fender FL":       "M5,85 Q5,10 40,5 L45,85 Z",
-		"Fender FR":       "M95,85 Q95,10 60,5 L55,85 Z",
-		"Door FL":         "M5,5 L45,5 L45,95 L5,95 Z",
-		"Door FR":         "M55,5 L95,5 L95,95 L55,95 Z",
-		"Door RL":         "M5,5 L45,5 L45,95 L5,95 Z",
-		"Door RR":         "M55,5 L95,5 L95,95 L55,95 Z",
-		"Rocker L":        "M5,45 L95,45 L95,55 L5,55 Z",
-		"Rocker R":        "M5,45 L95,45 L95,55 L5,55 Z",
-		"Mirror L":        "M5,20 Q5,5 30,5 L35,30 Q20,40 5,35 Z",
-		"Mirror R":        "M95,20 Q95,5 70,5 L65,30 Q80,40 95,35 Z",
-		"A-Pillar L":      "M5,5 L20,5 L15,95 L5,95 Z",
-		"A-Pillar R":      "M95,5 L80,5 L85,95 L95,95 Z",
-		Roof:              "M10,5 L90,5 L90,95 L10,95 Z",
-		Trunk:             "M10,10 Q50,5 90,10 L90,90 Q50,95 10,90 Z",
-		Windshield:        "M8,90 Q12,30 32,8 L68,8 Q88,30 92,90 Z",
-		"Windshield Strip":"M8,90 L92,90 L90,78 L10,78 Z",
-		"Rear Window":     "M10,10 Q50,5 90,10 L88,90 Q50,95 12,90 Z",
-		Sunroof:           "M15,15 Q50,10 85,15 L85,85 Q50,90 15,85 Z",
-		Moonroof:          "M20,20 L80,20 L80,80 L20,80 Z",
-		"Window Front L":  "M8,8 Q8,50 12,92 L48,88 L48,12 Z",
-		"Window Front R":  "M92,8 Q92,50 88,92 L52,88 L52,12 Z",
-		"Window Rear L":   "M8,8 Q8,50 12,92 L44,88 L44,12 Z",
-		"Window Rear R":   "M92,8 Q92,50 88,92 L56,88 L56,12 Z",
-		"Quarter Window L":"M5,15 L35,10 L40,90 L5,85 Z",
-		"Quarter Window R":"M95,15 L65,10 L60,90 L95,85 Z",
-		"Vent Window L":   "M5,10 L25,5 L28,45 L5,50 Z",
-		"Vent Window R":   "M95,10 L75,5 L72,45 L95,50 Z",
-	};
 
 	const BODY_STYLE_ICON: Record<string, string> = {
 		sedan:       "M2 14 L6 8 L18 8 L22 14 Z",
@@ -425,6 +310,17 @@
 			{/each}
 		</div>
 
+		<div class="lib-section-label">Year</div>
+		<div class="lib-filter-pills">
+			{#each YEARS as year}
+				<button
+					class="lib-pill"
+					class:active={activeYear === year}
+					onclick={() => (activeYear = year)}
+					aria-pressed={activeYear === year}>{year}</button>
+			{/each}
+		</div>
+
 		<div class="lib-section-label">Zone</div>
 		<div class="lib-filter-pills">
 			{#each ZONES as zone}
@@ -440,29 +336,29 @@
 		<div class="lib-stats">
 			{#if mode === "ppf"}
 				<div class="lib-stat">
-					<span class="lib-stat__val">12,400+</span>
+					<span class="lib-stat__val">{totalPPF}</span>
 					<span class="lib-stat__label">PPF Patterns</span>
 				</div>
 				<div class="lib-stat">
-					<span class="lib-stat__val">{patternStore.vehicles.filter(v => v.status === "published").length}+</span>
+					<span class="lib-stat__val">{vehiclesWithPPF}</span>
 					<span class="lib-stat__label">Vehicles</span>
 				</div>
 				<div class="lib-stat">
-					<span class="lib-stat__val">Weekly</span>
-					<span class="lib-stat__label">Updates</span>
+					<span class="lib-stat__val">{avgPPFZones}</span>
+					<span class="lib-stat__label">Avg Zones</span>
 				</div>
 			{:else}
 				<div class="lib-stat">
-					<span class="lib-stat__val">9,200+</span>
+					<span class="lib-stat__val">{totalTint}</span>
 					<span class="lib-stat__label">Tint Patterns</span>
 				</div>
 				<div class="lib-stat">
-					<span class="lib-stat__val">{patternStore.vehicles.filter(v => v.status === "published").length}+</span>
+					<span class="lib-stat__val">{vehiclesWithTint}</span>
 					<span class="lib-stat__label">Vehicles</span>
 				</div>
 				<div class="lib-stat">
-					<span class="lib-stat__val">11</span>
-					<span class="lib-stat__label">Zones/Vehicle</span>
+					<span class="lib-stat__val">{avgTintZones}</span>
+					<span class="lib-stat__label">Avg Zones</span>
 				</div>
 			{/if}
 		</div>
@@ -510,6 +406,7 @@
 			>
 				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M5 17H3a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v5"/><path d="M14 17a3 3 0 100 6 3 3 0 000-6z"/><path d="M8 17a3 3 0 100 6 3 3 0 000-6z"/></svg>
 				PPF
+				{#if totalPPF > 0}<span class="mode-count">{totalPPF}</span>{/if}
 			</button>
 			<button
 				class="mode-btn"
@@ -519,6 +416,7 @@
 			>
 				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="3"/><path d="M7 6v12M12 6v12M17 6v12" opacity="0.4"/></svg>
 				Window Tint
+				{#if totalTint > 0}<span class="mode-count">{totalTint}</span>{/if}
 			</button>
 		</div>
 
@@ -567,15 +465,24 @@
 							</svg>
 						</div>
 						<div class="vehicle-card__body">
-							<div class="vehicle-card__year-make">{vehicle.year} {vehicle.make}</div>
+							<div class="vehicle-card__year-make">{vehicle.make}</div>
 							<div class="vehicle-card__model">{vehicle.model}</div>
 							<div class="vehicle-card__meta">
+								<span
+									class="year-badge"
+									class:year-badge--active={activeYear === String(vehicle.year)}
+									role="button"
+									tabindex="0"
+									aria-pressed={activeYear === String(vehicle.year)}
+									aria-label="Filter by {vehicle.year}"
+									title="Filter by {vehicle.year}"
+									onclick={(e) => { e.stopPropagation(); activeYear = activeYear === String(vehicle.year) ? "All" : String(vehicle.year); }}
+									onkeydown={(e: KeyboardEvent) => { e.stopPropagation(); if (e.key === "Enter" || e.key === " ") activeYear = activeYear === String(vehicle.year) ? "All" : String(vehicle.year); }}
+								>{vehicle.year}</span>
 								{#if storeCount > 0}
 									<Badge variant="default" size="sm">
 										{storeCount} {mode === "tint" ? "windows" : "patterns"}
 									</Badge>
-								{:else}
-									<Badge variant="default" size="sm">{ZONE_PATTERNS.length} zones</Badge>
 								{/if}
 								{#if vehicle.popular}
 									<Badge variant="brand" size="sm">Popular</Badge>
@@ -609,12 +516,8 @@
 							<Badge variant="success" size="sm" dot>
 								{visibleStorePatterns.length} {mode === "tint" ? "windows" : "zones"} · verified
 							</Badge>
-						{:else}
-							<Badge variant={mode === "tint" ? "info" : "default"}>
-								{visibleGenericZones.length} {mode === "tint" ? "windows" : "zones"} · generic
-							</Badge>
+							<button class="lib-pill active" onclick={selectAll}>Select all</button>
 						{/if}
-						<button class="lib-pill active" onclick={selectAll}>Select all</button>
 						{#if selectedCount > 0}
 							<Button variant="primary" size="sm" onclick={addAllSelected}>
 								Add {selectedCount} to canvas →
@@ -659,12 +562,33 @@
 									<div class="zone-card__meta">
 										1 piece · {pattern.widthInches}" × {pattern.heightInches}"
 									</div>
-									{#if pattern.notes}
-										<div class="zone-card__vlt-note">{pattern.notes}</div>
+									<div class="zone-card__badges">
+										<Badge variant={pattern.coverage === "full" ? "success" : "warning"} size="sm">
+											{pattern.coverage}
+										</Badge>
+										{#if pattern.notes}
+											<button
+												class="notes-toggle"
+												class:notes-toggle--open={openNotes.has(pattern.id)}
+												onclick={(e) => {
+													e.stopPropagation();
+													const next = new Set(openNotes);
+													next.has(pattern.id) ? next.delete(pattern.id) : next.add(pattern.id);
+													openNotes = next;
+												}}
+												title="View disclosure"
+												aria-label="View pattern disclosure"
+												aria-expanded={openNotes.has(pattern.id)}
+											>
+												<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+											</button>
+										{/if}
+									</div>
+									{#if pattern.notes && openNotes.has(pattern.id)}
+										<div class="zone-card__disclosure">
+											{pattern.notes}
+										</div>
 									{/if}
-									<Badge variant={pattern.coverage === "full" ? "success" : "warning"} size="sm">
-										{pattern.coverage}
-									</Badge>
 								</div>
 
 								<div
@@ -681,69 +605,16 @@
 							</button>
 						{/each}
 
-					<!-- ─ Generic fallback zones ─ -->
+					<!-- ─ No verified patterns yet ─ -->
 					{:else}
-						{#if mode === "tint"}
-							<div class="zone-generic-notice">
-								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
-								Vehicle-specific patterns coming soon. Using generic tint zone templates.
-							</div>
-						{/if}
-
-						{#each visibleGenericZones as zone}
-							{@const selected = selectedZones.has(zone.zone)}
-							<button
-								class="zone-card"
-								class:selected
-								class:zone-card--tint={mode === "tint"}
-								onclick={() => toggleZone(zone.zone)}
-								aria-pressed={selected}
-								aria-label="Select {zone.zone}"
-							>
-								{#if selected}
-									<div class="zone-card__check" aria-hidden="true">
-										<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg>
-									</div>
-								{/if}
-
-								<div class="zone-card__preview">
-									<svg width="60" height="50" viewBox="0 0 100 100" fill="none" aria-hidden="true">
-										<path
-											d={ZONE_PATHS[zone.zone] ?? ZONE_PATHS["Hood"]}
-											fill={mode === "tint" ? "rgba(0,112,255,0.08)" : "rgba(0,229,255,0.06)"}
-											stroke={mode === "tint" ? "var(--color-brand-dim)" : "var(--color-brand)"}
-											stroke-width="2"
-											stroke-linecap="round"
-										/>
-									</svg>
-								</div>
-
-								<div class="zone-card__info">
-									<div class="zone-card__name">{zone.zone}</div>
-									<div class="zone-card__meta">
-										{zone.pieces} piece{zone.pieces !== 1 ? "s" : ""} · {zone.size}
-									</div>
-									{#if mode === "tint" && "vltNote" in zone && zone.vltNote}
-										<div class="zone-card__vlt-note">{zone.vltNote}</div>
-									{/if}
-									<Badge variant={zone.coverage === "full" ? "success" : "warning"} size="sm">
-										{zone.coverage}
-									</Badge>
-								</div>
-
-								<div
-									class="zone-card__add"
-									role="button"
-									tabindex="0"
-									onclick={(e) => { e.stopPropagation(); addToCanvas(zone); }}
-									onkeydown={(e) => { if (e.key === "Enter") { e.stopPropagation(); addToCanvas(zone); } }}
-									aria-label="Add {zone.zone} to canvas"
-									title="Add to canvas"
-								>
-									<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-								</div>
-							</button>
-						{/each}
+						<div class="zone-empty">
+							<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M9 12h6M9 16h6M9 8h6M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2z"/></svg>
+							<p>No verified {mode === "ppf" ? "PPF" : "window tint"} patterns for this vehicle yet.</p>
+							<a href="/library/upload" class="zone-empty__cta">
+								<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+								Upload a pattern for this vehicle
+							</a>
+						</div>
 					{/if}
 				</div>
 			</div>
@@ -812,7 +683,16 @@
 										Request Changes
 									</button>
 								{:else}
-									<!-- Private/pending — user can toggle community submission -->
+									<!-- Private/pending — edit + community submit toggle -->
+									<a
+										href="/library/edit/{p.id}"
+										class="my-pattern-card__edit"
+										title="Edit this pattern"
+										aria-label="Edit {p.name}"
+									>
+										<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4z"/></svg>
+										Edit
+									</a>
 									<button
 										class="my-pattern-card__share"
 										class:my-pattern-card__share--on={p.submitToCommunity}
@@ -1106,6 +986,26 @@
 	.mode-btn:hover { color: var(--text-primary); }
 	.mode-btn.active { background: var(--bg-surface-3); color: var(--text-primary); box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
 
+	.mode-count {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		min-width: 18px;
+		height: 18px;
+		padding: 0 5px;
+		border-radius: 9px;
+		background: var(--bg-surface-3);
+		font-size: 0.6875rem;
+		font-weight: 700;
+		font-family: var(--font-mono);
+		color: var(--text-tertiary);
+		line-height: 1;
+	}
+	.mode-btn.active .mode-count {
+		background: var(--color-brand);
+		color: #fff;
+	}
+
 	.library__header {
 		display: flex;
 		align-items: flex-start;
@@ -1202,8 +1102,34 @@
 
 	.vehicle-card__body { flex: 1; }
 	.vehicle-card__year-make { font-size: 0.6875rem; color: var(--text-tertiary); margin-bottom: 2px; }
-	.vehicle-card__model { font-size: 0.9375rem; font-weight: 600; color: var(--text-primary); margin-bottom: 8px; font-family: var(--font-display); }
-	.vehicle-card__meta { display: flex; gap: 4px; flex-wrap: wrap; }
+	.vehicle-card__model { font-size: 0.9375rem; font-weight: 600; color: var(--text-primary); margin-bottom: 6px; font-family: var(--font-display); }
+	.vehicle-card__meta { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
+
+	.year-badge {
+		display: inline-flex;
+		align-items: center;
+		padding: 2px 7px;
+		border-radius: 5px;
+		font-size: 0.6875rem;
+		font-weight: 700;
+		font-family: var(--font-mono);
+		background: var(--bg-surface-3);
+		color: var(--text-tertiary);
+		border: 1px solid var(--border-subtle);
+		cursor: pointer;
+		transition: background 0.12s, color 0.12s, border-color 0.12s;
+		user-select: none;
+	}
+	.year-badge:hover {
+		background: color-mix(in srgb, var(--color-brand) 12%, var(--bg-surface-3));
+		border-color: color-mix(in srgb, var(--color-brand) 35%, transparent);
+		color: var(--color-brand);
+	}
+	.year-badge--active {
+		background: color-mix(in srgb, var(--color-brand) 15%, var(--bg-surface-2));
+		border-color: color-mix(in srgb, var(--color-brand) 50%, transparent);
+		color: var(--color-brand);
+	}
 
 	/* Empty */
 	.lib-empty { grid-column: 1 / -1; text-align: center; padding: 48px 0; color: var(--text-tertiary); }
@@ -1243,18 +1169,33 @@
 	}
 	.back-btn:hover { color: var(--text-primary); background: var(--bg-surface-3); }
 
-	.zone-generic-notice {
+	.zone-empty {
 		grid-column: 1 / -1;
 		display: flex;
+		flex-direction: column;
 		align-items: center;
-		gap: 8px;
-		padding: 10px 14px;
-		background: rgba(0, 112, 255, 0.05);
-		border: 1px solid rgba(0, 112, 255, 0.15);
-		border-radius: var(--radius-md);
-		font-size: 0.8125rem;
-		color: var(--text-secondary);
+		gap: 12px;
+		padding: 48px 24px;
+		color: var(--text-tertiary);
+		font-size: 0.9375rem;
+		text-align: center;
 	}
+	.zone-empty p { margin: 0; }
+	.zone-empty__cta {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		padding: 7px 14px;
+		font-size: 0.8125rem;
+		font-weight: 600;
+		border-radius: var(--radius-md);
+		border: 1px solid color-mix(in srgb, var(--color-brand) 45%, transparent);
+		background: color-mix(in srgb, var(--color-brand) 10%, transparent);
+		color: var(--color-brand);
+		text-decoration: none;
+		transition: background 0.12s;
+	}
+	.zone-empty__cta:hover { background: color-mix(in srgb, var(--color-brand) 18%, transparent); }
 
 	.zone-grid {
 		display: grid;
@@ -1311,7 +1252,36 @@
 
 	.zone-card__name { font-size: 0.875rem; font-weight: 600; color: var(--text-primary); }
 	.zone-card__meta { font-family: var(--font-mono); font-size: 0.625rem; color: var(--text-tertiary); margin-bottom: 2px; }
-	.zone-card__vlt-note { font-size: 0.6875rem; color: var(--color-warning); margin-bottom: 4px; line-height: 1.3; }
+	.zone-card__badges { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+
+	.notes-toggle {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 16px;
+		height: 16px;
+		border-radius: 50%;
+		border: none;
+		background: transparent;
+		color: var(--text-muted);
+		cursor: pointer;
+		padding: 0;
+		transition: color 0.12s, background 0.12s;
+		flex-shrink: 0;
+	}
+	.notes-toggle:hover { color: var(--text-secondary); background: var(--bg-surface-3); }
+	.notes-toggle--open { color: var(--color-brand); }
+
+	.zone-card__disclosure {
+		font-size: 0.6875rem;
+		color: var(--text-tertiary);
+		line-height: 1.45;
+		margin-top: 6px;
+		padding: 6px 8px;
+		background: var(--bg-surface-2);
+		border-left: 2px solid var(--border-default);
+		border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+	}
 
 	.zone-card__add {
 		position: absolute;
@@ -1484,8 +1454,8 @@
 		font-weight: 600;
 	}
 	.lib-tab__badge {
-		background: var(--color-brand);
-		color: #fff;
+		background: var(--bg-surface-3);
+		color: var(--text-primary);
 		font-size: 0.6875rem;
 		font-weight: 700;
 		padding: 1px 6px;
@@ -1599,6 +1569,7 @@
 		flex-shrink: 0;
 	}
 	.my-pattern-card__add,
+	.my-pattern-card__edit,
 	.my-pattern-card__share {
 		display: flex;
 		align-items: center;
@@ -1619,6 +1590,11 @@
 		background: var(--color-brand);
 		border-color: var(--color-brand);
 		color: #fff;
+	}
+	.my-pattern-card__edit:hover {
+		background: var(--bg-surface-3);
+		border-color: var(--border-strong, var(--border-default));
+		color: var(--text-primary);
 	}
 	.my-pattern-card__share--on {
 		border-color: color-mix(in srgb, var(--color-brand) 50%, transparent);

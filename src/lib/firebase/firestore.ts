@@ -570,15 +570,28 @@ export async function getUserPatterns(ownerId: string): Promise<UserPattern[]> {
 		.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 }
 
+export async function getUserPatternById(id: string): Promise<UserPattern | null> {
+	const snap = await getDoc(doc(db, Collections.USER_PATTERNS, id));
+	return snap.exists() ? toUserPattern(snap.id, snap.data()) : null;
+}
+
 export async function updateUserPattern(
 	id: string,
-	patch: Partial<Pick<UserPattern, "submitToCommunity" | "name" | "notes" | "svgPath" | "widthInches" | "heightInches" | "coverage">>,
+	patch: Partial<Pick<UserPattern,
+		| "submitToCommunity" | "name" | "notes" | "svgPath"
+		| "widthInches" | "heightInches" | "coverage"
+		| "category" | "zone" | "make" | "model" | "year" | "bodyStyle"
+	>>,
 ): Promise<void> {
 	const update: Record<string, unknown> = { ...patch, updatedAt: serverTimestamp() };
 	if (patch.submitToCommunity !== undefined) {
 		update.status = patch.submitToCommunity ? "pending" : "private";
 	}
 	await updateDoc(doc(db, Collections.USER_PATTERNS, id), update);
+}
+
+export async function deleteUserPattern(id: string): Promise<void> {
+	await deleteDoc(doc(db, Collections.USER_PATTERNS, id));
 }
 
 export async function adminUpdateUserPattern(

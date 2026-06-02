@@ -246,10 +246,9 @@
 						href={item.href}
 						class="sidebar__item"
 						class:active={currentPath === item.href}
-						aria-current={currentPath === item.href
-							? "page"
-							: undefined}
+						aria-current={currentPath === item.href ? "page" : undefined}
 						data-tour={item.href === "/library" ? "sidebar-library" : undefined}
+						title={!uiStore.sidebarOpen ? item.label : undefined}
 					>
 						<span class="sidebar__icon" aria-hidden="true">
 							{#if item.icon === "scissors"}
@@ -358,18 +357,39 @@
 
 			<div class="sidebar__footer">
 				{#if user && user.tier === "free"}
-					<div class="sidebar__upsell">
+					<div class="sidebar__upsell" class:sidebar__upsell--hidden={!uiStore.sidebarOpen}>
 						<p class="sidebar__upsell-text">
 							1 cut / 30 days on Free
 						</p>
-						<button
-							class="sidebar__upsell-btn"
-							onclick={uiStore.openPricing}
-						>
+						<button class="sidebar__upsell-btn" onclick={uiStore.openPricing}>
 							Upgrade for more →
 						</button>
 					</div>
 				{/if}
+
+				<button
+					class="sidebar__collapse-btn"
+					onclick={uiStore.toggleSidebar}
+					aria-label={uiStore.sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+					title={uiStore.sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+				>
+					<svg
+						width="14"
+						height="14"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						class="sidebar__collapse-icon"
+						class:sidebar__collapse-icon--flipped={!uiStore.sidebarOpen}
+						aria-hidden="true"
+					>
+						<path d="M15 18l-6-6 6-6"/>
+					</svg>
+					<span class="sidebar__collapse-label">Collapse</span>
+				</button>
 			</div>
 		</aside>
 
@@ -702,11 +722,11 @@
 		display: grid;
 		grid-template-columns: 200px 1fr;
 		overflow: hidden;
-		transition: grid-template-columns 0.2s var(--ease-smooth);
+		transition: grid-template-columns 0.22s var(--ease-smooth);
 	}
 
 	.sidebar-collapsed .app-body {
-		grid-template-columns: 0px 1fr;
+		grid-template-columns: 52px 1fr;
 	}
 
 	.sidebar {
@@ -715,33 +735,43 @@
 		display: flex;
 		flex-direction: column;
 		overflow: hidden;
-		transition: width 0.2s var(--ease-smooth);
+		width: 200px;
+		transition: width 0.22s var(--ease-smooth);
+	}
+
+	.sidebar-collapsed .sidebar {
+		width: 52px;
 	}
 
 	.sidebar__nav {
 		display: flex;
 		flex-direction: column;
 		gap: 2px;
-		padding: 12px 8px;
+		padding: 10px 8px;
 		flex: 1;
 		overflow-y: auto;
+		overflow-x: hidden;
 	}
 
 	.sidebar__item {
 		display: flex;
 		align-items: center;
 		gap: 9px;
-		padding: 8px 10px;
+		padding: 9px 10px;
 		border-radius: var(--radius-md);
 		font-size: 0.8125rem;
 		font-weight: 500;
 		color: var(--text-tertiary);
 		text-decoration: none;
-		transition:
-			background 0.12s,
-			color 0.12s;
 		white-space: nowrap;
 		overflow: hidden;
+		transition: background 0.12s, color 0.12s, padding 0.22s;
+	}
+
+	.sidebar-collapsed .sidebar__item {
+		padding: 9px;
+		justify-content: center;
+		gap: 0;
 	}
 
 	.sidebar__item:hover {
@@ -758,13 +788,23 @@
 		flex-shrink: 0;
 		display: flex;
 	}
+
 	.sidebar__label {
+		flex: 1;
 		overflow: hidden;
 		text-overflow: ellipsis;
-		flex: 1;
+		opacity: 1;
+		max-width: 140px;
+		transition: opacity 0.15s, max-width 0.22s;
 	}
 
-	/* "Update" pill badge shown in sidebar next to Agent link */
+	.sidebar-collapsed .sidebar__label {
+		opacity: 0;
+		max-width: 0;
+		pointer-events: none;
+	}
+
+	/* "Update" pill badge */
 	.sidebar__update-badge {
 		flex-shrink: 0;
 		padding: 1px 6px;
@@ -776,11 +816,20 @@
 		background: var(--color-warning, #f59e0b);
 		color: #000;
 		animation: update-pulse 2s ease-in-out infinite;
+		transition: opacity 0.15s;
+	}
+
+	.sidebar-collapsed .sidebar__update-badge {
+		opacity: 0;
+		pointer-events: none;
 	}
 
 	.sidebar__footer {
-		padding: 12px 8px;
+		padding: 8px 8px 10px;
 		border-top: 1px solid var(--border-subtle);
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
 	}
 
 	.sidebar__upsell {
@@ -788,6 +837,18 @@
 		border: 1px solid var(--border-default);
 		border-radius: var(--radius-md);
 		padding: 10px 12px;
+		overflow: hidden;
+		transition: opacity 0.15s, max-height 0.22s, padding 0.22s, margin 0.22s;
+		max-height: 120px;
+		opacity: 1;
+	}
+
+	.sidebar__upsell--hidden {
+		opacity: 0;
+		max-height: 0;
+		padding-top: 0;
+		padding-bottom: 0;
+		pointer-events: none;
 	}
 
 	.sidebar__upsell-text {
@@ -808,6 +869,58 @@
 		font-family: var(--font-body);
 	}
 
+	/* ─── Collapse toggle button ─── */
+	.sidebar__collapse-btn {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		width: 100%;
+		padding: 7px 10px;
+		border-radius: var(--radius-md);
+		border: none;
+		background: transparent;
+		color: var(--text-tertiary);
+		cursor: pointer;
+		font-size: 0.8125rem;
+		font-family: var(--font-body);
+		font-weight: 500;
+		transition: background 0.12s, color 0.12s, padding 0.22s;
+		white-space: nowrap;
+		overflow: hidden;
+	}
+
+	.sidebar__collapse-btn:hover {
+		background: var(--interactive-hover);
+		color: var(--text-primary);
+	}
+
+	.sidebar-collapsed .sidebar__collapse-btn {
+		padding: 7px;
+		justify-content: center;
+	}
+
+	.sidebar__collapse-icon {
+		flex-shrink: 0;
+		transition: transform 0.22s var(--ease-smooth);
+	}
+
+	.sidebar__collapse-icon--flipped {
+		transform: rotate(180deg);
+	}
+
+	.sidebar__collapse-label {
+		opacity: 1;
+		max-width: 100px;
+		overflow: hidden;
+		transition: opacity 0.15s, max-width 0.22s;
+	}
+
+	.sidebar-collapsed .sidebar__collapse-label {
+		opacity: 0;
+		max-width: 0;
+		pointer-events: none;
+	}
+
 	.app-main {
 		overflow-y: auto;
 		display: flex;
@@ -816,20 +929,12 @@
 
 	/* ─── Mobile ────── */
 	@media (max-width: 768px) {
-		.topbar__nav {
-			display: none;
-		}
+		.topbar__nav { display: none; }
 
-		.app-body {
-			grid-template-columns: 1fr;
-		}
+		.app-body { grid-template-columns: 1fr; }
 
-		.sidebar {
-			display: none;
-		}
+		.sidebar { display: none; }
 
-		.sidebar-collapsed .app-body {
-			grid-template-columns: 1fr;
-		}
+		.sidebar-collapsed .app-body { grid-template-columns: 1fr; }
 	}
 </style>

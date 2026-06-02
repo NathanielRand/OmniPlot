@@ -1,34 +1,11 @@
 <script lang="ts">
-	import { onMount } from "svelte";
+	import { updated } from "$app/stores";
 
-	declare const __BUILD_VERSION__: string;
-
-	const POLL_MS = 5 * 60 * 1000;
-
-	let visible = $state(false);
-
-	async function checkVersion() {
-		try {
-			const res = await fetch(`/version.json?t=${Date.now()}`, { cache: "no-store" });
-			if (!res.ok) return;
-			const { version } = await res.json();
-			if (version !== __BUILD_VERSION__) visible = true;
-		} catch {
-			// network error — silently ignore
-		}
-	}
-
-	onMount(() => {
-		const id = setInterval(checkVersion, POLL_MS);
-
-		// Dev helper: edit static/version.json to a different value, then run
-		// window.__checkForUpdate() in the console to test without waiting 5 min
-		if (import.meta.env.DEV) {
-			(window as Window & { __checkForUpdate?: () => void }).__checkForUpdate = checkVersion;
-		}
-
-		return () => clearInterval(id);
-	});
+	// `$updated` becomes true when SvelteKit detects that /_app/version.json
+	// on the server has a newer `name` than what is baked into the running bundle.
+	// Polling interval is configured via kit.version.pollInterval in svelte.config.js.
+	let dismissed = $state(false);
+	const visible = $derived($updated && !dismissed);
 </script>
 
 {#if visible}
@@ -46,7 +23,7 @@
 					<p class="update-card__title">Update available</p>
 					<p class="update-card__sub">A new version of OmniPlot is ready.</p>
 				</div>
-				<button class="update-card__close" onclick={() => (visible = false)} aria-label="Dismiss">
+				<button class="update-card__close" onclick={() => (dismissed = true)} aria-label="Dismiss">
 					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
 						<path d="M18 6L6 18M6 6l12 12" />
 					</svg>

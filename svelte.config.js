@@ -7,7 +7,14 @@ const config = {
 		runes: ({ filename }) => (filename.split(/[/\\]/).includes('node_modules') ? undefined : true)
 	},
 	kit: {
-		adapter: adapter()
+		adapter: adapter(),
+		version: {
+			// Unique per build — SvelteKit writes this to /_app/version.json and
+			// exposes it via the `updated` store, which becomes true when the
+			// deployed version.name differs from the one baked into the client bundle.
+			name: Date.now().toString(),
+			pollInterval: 5 * 60 * 1000,  // check every 5 min
+		},
 	}
 };
 

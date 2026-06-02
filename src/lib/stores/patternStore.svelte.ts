@@ -35,7 +35,12 @@ export type { PatternStatus, RequestStatus, VehicleEntry, PatternRequest };
 // ─── Seed: Vehicles ───────────────────────────
 
 const INITIAL_VEHICLES: VehicleEntry[] = [
-	{ id: "chevy-silverado1500-2016-crew", make: "Chevrolet", model: "Silverado 1500 Crew Cab", year: 2016, bodyStyle: "truck", tags: ["truck", "popular"], popular: true, status: "published", updatedAt: "2026-05-27" },
+	{ id: "chevy-silverado1500-2014", make: "Chevrolet", model: "Silverado 1500", year: 2014, bodyStyle: "truck", tags: ["truck", "k2xx"], popular: false, status: "published", updatedAt: "2026-06-01" },
+	{ id: "chevy-silverado1500-2015", make: "Chevrolet", model: "Silverado 1500", year: 2015, bodyStyle: "truck", tags: ["truck", "k2xx"], popular: false, status: "published", updatedAt: "2026-06-01" },
+	{ id: "chevy-silverado1500-2016-crew", make: "Chevrolet", model: "Silverado 1500 Crew Cab", year: 2016, bodyStyle: "truck", tags: ["truck", "popular", "k2xx"], popular: true, status: "published", updatedAt: "2026-06-01" },
+	{ id: "chevy-silverado1500-2017", make: "Chevrolet", model: "Silverado 1500", year: 2017, bodyStyle: "truck", tags: ["truck", "k2xx"], popular: false, status: "published", updatedAt: "2026-06-01" },
+	{ id: "chevy-silverado1500-2018", make: "Chevrolet", model: "Silverado 1500", year: 2018, bodyStyle: "truck", tags: ["truck", "k2xx"], popular: false, status: "published", updatedAt: "2026-06-01" },
+	{ id: "chevy-silverado1500-2019-limited", make: "Chevrolet", model: "Silverado 1500 Limited", year: 2019, bodyStyle: "truck", tags: ["truck", "k2xx", "limited"], popular: false, status: "published", updatedAt: "2026-06-01" },
 ];
 
 // ─── Seed: Pattern Requests ───────────────────
@@ -164,31 +169,72 @@ const CHEVY_SILVERADO1500_2016_CREW_TINT: Pattern[] = [
 	},
 ];
 
-const CHEVY_SILVERADO1500_2016_CREW_PPF: Pattern[] = [
-	{ id: "cs16-ppf-hd",  vehicleId: "chevy-silverado1500-2016-crew", category: "ppf", zone: "hood",               name: "Hood",               coverage: "full", svgPath: "M5,4 L95,4 L97,96 L3,96 Z",                                 widthInches: 72.0, heightInches: 52.0, revision: "2026-05", notes: "Calibrated from F-150 (74\"×60\"); K2XX hood shorter due to lower cowl height",          isPublished: true, createdAt: D_CS16, updatedAt: D_CS16 },
-	{ id: "cs16-ppf-bf",  vehicleId: "chevy-silverado1500-2016-crew", category: "ppf", zone: "bumper-front",       name: "Front Bumper",       coverage: "full", svgPath: "M4,15 Q8,4 92,4 Q96,15 96,85 Q92,96 8,96 Q4,85 4,15 Z",   widthInches: 76.0, heightInches: 15.0, revision: "2026-05", notes: "Silverado full-width painted bumper cover; width from 80\" overall minus fender returns", isPublished: true, createdAt: D_CS16, updatedAt: D_CS16 },
-	{ id: "cs16-ppf-br",  vehicleId: "chevy-silverado1500-2016-crew", category: "ppf", zone: "bumper-rear",        name: "Rear Bumper",        coverage: "full", svgPath: "M4,15 Q8,4 92,4 Q96,15 96,85 Q92,96 8,96 Q4,85 4,15 Z",   widthInches: 74.0, heightInches: 13.0, revision: "2026-05",                                                                                               isPublished: true, createdAt: D_CS16, updatedAt: D_CS16 },
-	{ id: "cs16-ppf-ffl", vehicleId: "chevy-silverado1500-2016-crew", category: "ppf", zone: "fender-front-left",  name: "Front Fender Left",  coverage: "full", svgPath: "M5,12 Q10,4 40,2 L95,4 L96,88 Q70,96 5,82 Z",             widthInches: 36.0, heightInches: 25.0, revision: "2026-05", notes: "Calibrated from F-150 (38\"×28\") adjusted for Silverado proportions",                   isPublished: true, createdAt: D_CS16, updatedAt: D_CS16 },
-	{ id: "cs16-ppf-ffr", vehicleId: "chevy-silverado1500-2016-crew", category: "ppf", zone: "fender-front-right", name: "Front Fender Right", coverage: "full", svgPath: "M4,4 L60,2 Q90,4 95,12 L95,82 Q30,96 4,88 Z",             widthInches: 36.0, heightInches: 25.0, revision: "2026-05", notes: "Calibrated from F-150 (38\"×28\") adjusted for Silverado proportions",                   isPublished: true, createdAt: D_CS16, updatedAt: D_CS16 },
-	{ id: "cs16-ppf-hl",  vehicleId: "chevy-silverado1500-2016-crew", category: "ppf", zone: "headlight-left",     name: "Headlight Left",     coverage: "full", svgPath: "M4,18 Q8,4 88,5 Q96,18 96,82 Q88,96 8,95 Q4,82 4,18 Z",   widthInches: 22.0, heightInches:  9.0, revision: "2026-05", notes: "K2XX horizontal composite headlight unit",                                              isPublished: true, createdAt: D_CS16, updatedAt: D_CS16 },
-	{ id: "cs16-ppf-hr",  vehicleId: "chevy-silverado1500-2016-crew", category: "ppf", zone: "headlight-right",    name: "Headlight Right",    coverage: "full", svgPath: "M4,18 Q12,4 92,5 Q96,18 96,82 Q92,96 12,95 Q4,82 4,18 Z", widthInches: 22.0, heightInches:  9.0, revision: "2026-05", notes: "K2XX horizontal composite headlight unit",                                              isPublished: true, createdAt: D_CS16, updatedAt: D_CS16 },
-	{ id: "cs16-ppf-fgl", vehicleId: "chevy-silverado1500-2016-crew", category: "ppf", zone: "foglight-left",      name: "Fog Light Left",     coverage: "full", svgPath: "M5,50 Q5,5 50,5 Q95,5 95,50 Q95,95 50,95 Q5,95 5,50 Z",   widthInches:  5.0, heightInches:  5.0, revision: "2026-05", notes: "Round fog light in bumper corner; most trims equipped",                                 isPublished: true, createdAt: D_CS16, updatedAt: D_CS16 },
-	{ id: "cs16-ppf-fgr", vehicleId: "chevy-silverado1500-2016-crew", category: "ppf", zone: "foglight-right",     name: "Fog Light Right",    coverage: "full", svgPath: "M5,50 Q5,5 50,5 Q95,5 95,50 Q95,95 50,95 Q5,95 5,50 Z",   widthInches:  5.0, heightInches:  5.0, revision: "2026-05", notes: "Round fog light in bumper corner; most trims equipped",                                 isPublished: true, createdAt: D_CS16, updatedAt: D_CS16 },
-	{ id: "cs16-ppf-ml",  vehicleId: "chevy-silverado1500-2016-crew", category: "ppf", zone: "mirror-left",        name: "Mirror Left",        coverage: "full", svgPath: "M4,18 Q12,4 72,4 Q92,12 95,55 L90,92 Q65,98 4,88 Z",       widthInches: 12.0, heightInches:  7.0, revision: "2026-05", notes: "Standard power heated mirror; Silverado tow mirrors are larger — use 14\"×9\" if equipped", isPublished: true, createdAt: D_CS16, updatedAt: D_CS16 },
-	{ id: "cs16-ppf-mr",  vehicleId: "chevy-silverado1500-2016-crew", category: "ppf", zone: "mirror-right",       name: "Mirror Right",       coverage: "full", svgPath: "M4,18 Q12,4 72,4 Q92,12 95,55 L90,92 Q65,98 4,88 Z",       widthInches: 12.0, heightInches:  7.0, revision: "2026-05", notes: "Standard power heated mirror; Silverado tow mirrors are larger — use 14\"×9\" if equipped", isPublished: true, createdAt: D_CS16, updatedAt: D_CS16 },
-	{ id: "cs16-ppf-dfl", vehicleId: "chevy-silverado1500-2016-crew", category: "ppf", zone: "door-front-left",    name: "Front Door Left",    coverage: "full", svgPath: "M4,4 L96,4 L96,96 L4,96 Z",                                 widthInches: 40.0, heightInches: 50.0, revision: "2026-05", notes: "Calibrated from F-150 (42\"×54\") adjusted for Silverado's 73.8\" overall height",       isPublished: true, createdAt: D_CS16, updatedAt: D_CS16 },
-	{ id: "cs16-ppf-dfr", vehicleId: "chevy-silverado1500-2016-crew", category: "ppf", zone: "door-front-right",   name: "Front Door Right",   coverage: "full", svgPath: "M4,4 L96,4 L96,96 L4,96 Z",                                 widthInches: 40.0, heightInches: 50.0, revision: "2026-05", notes: "Calibrated from F-150 (42\"×54\") adjusted for Silverado's 73.8\" overall height",       isPublished: true, createdAt: D_CS16, updatedAt: D_CS16 },
-	{ id: "cs16-ppf-drl", vehicleId: "chevy-silverado1500-2016-crew", category: "ppf", zone: "door-rear-left",     name: "Rear Door Left",     coverage: "full", svgPath: "M4,4 L96,4 L96,96 L4,96 Z",                                 widthInches: 36.0, heightInches: 50.0, revision: "2026-05", notes: "Calibrated from F-150 (38\"×54\"); crew cab rear door is slightly narrower",             isPublished: true, createdAt: D_CS16, updatedAt: D_CS16 },
-	{ id: "cs16-ppf-drr", vehicleId: "chevy-silverado1500-2016-crew", category: "ppf", zone: "door-rear-right",    name: "Rear Door Right",    coverage: "full", svgPath: "M4,4 L96,4 L96,96 L4,96 Z",                                 widthInches: 36.0, heightInches: 50.0, revision: "2026-05", notes: "Calibrated from F-150 (38\"×54\"); crew cab rear door is slightly narrower",             isPublished: true, createdAt: D_CS16, updatedAt: D_CS16 },
-	{ id: "cs16-ppf-rkl", vehicleId: "chevy-silverado1500-2016-crew", category: "ppf", zone: "rocker-left",        name: "Rocker Left",        coverage: "full", svgPath: "M2,8 Q6,2 94,2 Q98,8 98,92 Q94,98 6,98 Q2,92 2,8 Z",       widthInches: 78.0, heightInches:  6.0, revision: "2026-05", notes: "Full-length rocker panel — crew cab spans all 4 doors; chrome or body-color depending on trim", isPublished: true, createdAt: D_CS16, updatedAt: D_CS16 },
-	{ id: "cs16-ppf-rkr", vehicleId: "chevy-silverado1500-2016-crew", category: "ppf", zone: "rocker-right",       name: "Rocker Right",       coverage: "full", svgPath: "M2,8 Q6,2 94,2 Q98,8 98,92 Q94,98 6,98 Q2,92 2,8 Z",       widthInches: 78.0, heightInches:  6.0, revision: "2026-05", notes: "Full-length rocker panel — crew cab spans all 4 doors; chrome or body-color depending on trim", isPublished: true, createdAt: D_CS16, updatedAt: D_CS16 },
-	{ id: "cs16-ppf-apl", vehicleId: "chevy-silverado1500-2016-crew", category: "ppf", zone: "a-pillar-left",      name: "A-Pillar Left",      coverage: "full", svgPath: "M15,5 L85,5 L88,95 L12,95 Z",                               widthInches:  4.5, heightInches: 26.0, revision: "2026-05",                                                                                               isPublished: true, createdAt: D_CS16, updatedAt: D_CS16 },
-	{ id: "cs16-ppf-apr", vehicleId: "chevy-silverado1500-2016-crew", category: "ppf", zone: "a-pillar-right",     name: "A-Pillar Right",     coverage: "full", svgPath: "M12,5 L88,5 L85,95 L15,95 Z",                               widthInches:  4.5, heightInches: 26.0, revision: "2026-05",                                                                                               isPublished: true, createdAt: D_CS16, updatedAt: D_CS16 },
+
+// ─── Seed: Silverado 1500 Windshield Visor Strip Kit (2014-2019) ─────────────
+// Source: precut tint kit dimensions, "2014-2018 & (2019 Limited) Chevrolet
+// Silverado 1500 Visor/Eyebrow Precut Tint Kit". Fits all cab styles.
+// 2014-2016: symmetric two-piece kit (L = R dimensions, both arch-cut from same path).
+// 2017-2019 Limited: asymmetric two-piece kit (driver side wider than passenger).
+// SVG paths in 0-100 normalized coordinate space.
+
+const D_K2XX_VISOR = new Date("2026-06-01");
+const REV_K2XX     = "2026-06";
+
+// Shared SVG paths
+// Symmetric arch/crescent — used for both pieces on 2014-2016 (identical cut)
+const SVG_VISOR_ARCH = "M 3,88 Q 50,8 97,88 L 95,98 Q 50,74 5,98 Z";
+// Asymmetric driver (left) — tall on left, tapers toward center-right
+const SVG_VISOR_L    = "M 3,92 L 3,22 Q 50,5 97,38 L 97,92 Z";
+// Asymmetric passenger (right) — mirror: low on left center, tall toward right A-pillar
+const SVG_VISOR_R    = "M 3,38 Q 50,5 97,22 L 97,92 L 3,92 Z";
+
+const NOTE_SYM  = "Symmetric 2-piece kit — cut two identical pieces. Fits all cab styles (Regular, Double, Crew). Verify against physical vehicle before cutting.";
+const NOTE_ASYM = "Asymmetric 2-piece kit — driver side wider than passenger. Fits all cab styles. Verify against physical vehicle before cutting.";
+
+// 2014 — symmetric, 26.58" × 6.07"
+const CHEVY_SILVERADO1500_2014_VISOR: Pattern[] = [
+	{ id: "cs14-wsvl", vehicleId: "chevy-silverado1500-2014", category: "window-tint", zone: "windshield-strip", name: "Windshield Visor Strip Left",  coverage: "partial", svgPath: SVG_VISOR_ARCH, widthInches: 26.58, heightInches: 6.07, revision: REV_K2XX, notes: NOTE_SYM,  isPublished: true, createdAt: D_K2XX_VISOR, updatedAt: D_K2XX_VISOR },
+	{ id: "cs14-wsvr", vehicleId: "chevy-silverado1500-2014", category: "window-tint", zone: "windshield-strip", name: "Windshield Visor Strip Right", coverage: "partial", svgPath: SVG_VISOR_ARCH, widthInches: 26.58, heightInches: 6.07, revision: REV_K2XX, notes: NOTE_SYM,  isPublished: true, createdAt: D_K2XX_VISOR, updatedAt: D_K2XX_VISOR },
+];
+
+// 2015 — symmetric, 27.01" × 7.31"
+const CHEVY_SILVERADO1500_2015_VISOR: Pattern[] = [
+	{ id: "cs15-wsvl", vehicleId: "chevy-silverado1500-2015", category: "window-tint", zone: "windshield-strip", name: "Windshield Visor Strip Left",  coverage: "partial", svgPath: SVG_VISOR_ARCH, widthInches: 27.01, heightInches: 7.31, revision: REV_K2XX, notes: NOTE_SYM,  isPublished: true, createdAt: D_K2XX_VISOR, updatedAt: D_K2XX_VISOR },
+	{ id: "cs15-wsvr", vehicleId: "chevy-silverado1500-2015", category: "window-tint", zone: "windshield-strip", name: "Windshield Visor Strip Right", coverage: "partial", svgPath: SVG_VISOR_ARCH, widthInches: 27.01, heightInches: 7.31, revision: REV_K2XX, notes: NOTE_SYM,  isPublished: true, createdAt: D_K2XX_VISOR, updatedAt: D_K2XX_VISOR },
+];
+
+// 2016 — symmetric, 27.36" × 8.77" (added to existing 2016 Crew Cab vehicle)
+const CHEVY_SILVERADO1500_2016_VISOR: Pattern[] = [
+	{ id: "cs16-wsvl", vehicleId: "chevy-silverado1500-2016-crew", category: "window-tint", zone: "windshield-strip", name: "Windshield Visor Strip Left",  coverage: "partial", svgPath: SVG_VISOR_ARCH, widthInches: 27.36, heightInches: 8.77, revision: REV_K2XX, notes: NOTE_SYM,  isPublished: true, createdAt: D_K2XX_VISOR, updatedAt: D_K2XX_VISOR },
+	{ id: "cs16-wsvr", vehicleId: "chevy-silverado1500-2016-crew", category: "window-tint", zone: "windshield-strip", name: "Windshield Visor Strip Right", coverage: "partial", svgPath: SVG_VISOR_ARCH, widthInches: 27.36, heightInches: 8.77, revision: REV_K2XX, notes: NOTE_SYM,  isPublished: true, createdAt: D_K2XX_VISOR, updatedAt: D_K2XX_VISOR },
+];
+
+// 2017 — asymmetric, driver 25.83" × 5.86" / passenger 21.82" × 5.86"
+const CHEVY_SILVERADO1500_2017_VISOR: Pattern[] = [
+	{ id: "cs17-wsvl", vehicleId: "chevy-silverado1500-2017", category: "window-tint", zone: "windshield-strip", name: "Windshield Visor Strip Driver",    coverage: "partial", svgPath: SVG_VISOR_L,    widthInches: 25.83, heightInches: 5.86, revision: REV_K2XX, notes: NOTE_ASYM, isPublished: true, createdAt: D_K2XX_VISOR, updatedAt: D_K2XX_VISOR },
+	{ id: "cs17-wsvr", vehicleId: "chevy-silverado1500-2017", category: "window-tint", zone: "windshield-strip", name: "Windshield Visor Strip Passenger", coverage: "partial", svgPath: SVG_VISOR_R,    widthInches: 21.82, heightInches: 5.86, revision: REV_K2XX, notes: NOTE_ASYM, isPublished: true, createdAt: D_K2XX_VISOR, updatedAt: D_K2XX_VISOR },
+];
+
+// 2018 — asymmetric, driver 27.09" × 7.90" / passenger 23.01" × 7.90"
+const CHEVY_SILVERADO1500_2018_VISOR: Pattern[] = [
+	{ id: "cs18-wsvl", vehicleId: "chevy-silverado1500-2018", category: "window-tint", zone: "windshield-strip", name: "Windshield Visor Strip Driver",    coverage: "partial", svgPath: SVG_VISOR_L,    widthInches: 27.09, heightInches: 7.90, revision: REV_K2XX, notes: NOTE_ASYM, isPublished: true, createdAt: D_K2XX_VISOR, updatedAt: D_K2XX_VISOR },
+	{ id: "cs18-wsvr", vehicleId: "chevy-silverado1500-2018", category: "window-tint", zone: "windshield-strip", name: "Windshield Visor Strip Passenger", coverage: "partial", svgPath: SVG_VISOR_R,    widthInches: 23.01, heightInches: 7.90, revision: REV_K2XX, notes: NOTE_ASYM, isPublished: true, createdAt: D_K2XX_VISOR, updatedAt: D_K2XX_VISOR },
+];
+
+// 2019 Limited — asymmetric, driver 27.44" × 9.30" / passenger 23.37" × 9.30"
+const CHEVY_SILVERADO1500_2019_LIMITED_VISOR: Pattern[] = [
+	{ id: "cs19l-wsvl", vehicleId: "chevy-silverado1500-2019-limited", category: "window-tint", zone: "windshield-strip", name: "Windshield Visor Strip Driver",    coverage: "partial", svgPath: SVG_VISOR_L, widthInches: 27.44, heightInches: 9.30, revision: REV_K2XX, notes: NOTE_ASYM, isPublished: true, createdAt: D_K2XX_VISOR, updatedAt: D_K2XX_VISOR },
+	{ id: "cs19l-wsvr", vehicleId: "chevy-silverado1500-2019-limited", category: "window-tint", zone: "windshield-strip", name: "Windshield Visor Strip Passenger", coverage: "partial", svgPath: SVG_VISOR_R, widthInches: 23.37, heightInches: 9.30, revision: REV_K2XX, notes: NOTE_ASYM, isPublished: true, createdAt: D_K2XX_VISOR, updatedAt: D_K2XX_VISOR },
 ];
 
 // ─── Seed map (used as fallback and for seeding Firestore) ───
 const SEED_PATTERNS: Record<string, Pattern[]> = {
-	"chevy-silverado1500-2016-crew": [...CHEVY_SILVERADO1500_2016_CREW_TINT, ...CHEVY_SILVERADO1500_2016_CREW_PPF],
+	"chevy-silverado1500-2014":         CHEVY_SILVERADO1500_2014_VISOR,
+	"chevy-silverado1500-2015":         CHEVY_SILVERADO1500_2015_VISOR,
+	"chevy-silverado1500-2016-crew":    [...CHEVY_SILVERADO1500_2016_CREW_TINT, ...CHEVY_SILVERADO1500_2016_VISOR],
+	"chevy-silverado1500-2017":         CHEVY_SILVERADO1500_2017_VISOR,
+	"chevy-silverado1500-2018":         CHEVY_SILVERADO1500_2018_VISOR,
+	"chevy-silverado1500-2019-limited": CHEVY_SILVERADO1500_2019_LIMITED_VISOR,
 };
 
 // ─── Store Factory ────────────────────────────
