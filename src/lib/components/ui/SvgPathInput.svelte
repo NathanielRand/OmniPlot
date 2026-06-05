@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { traceImageData } from '$lib/utils/trace';
+
 	// ─── Props ────────────────────────────────────
 	interface Props {
 		value: string;
@@ -19,6 +21,43 @@
 
 	// Preview live from value
 	const previewPath = $derived(value.trim());
+
+	// ─── Dynamic preview viewBox ──────────────────
+	// Computes tight bbox of the current path and adds a small buffer so the
+	// stroke (1.5px) never clips at the edge. Uses a hidden off-DOM SVG so the
+	// browser's geometry engine handles all path types correctly.
+	let previewViewBox = $state("0 0 100 100");
+	let previewAspect  = $state("1");
+
+	$effect(() => {
+		const path = previewPath;
+		if (!path || typeof document === 'undefined') {
+			previewViewBox = "0 0 100 100";
+			previewAspect  = "1";
+			return;
+		}
+		try {
+			const ns  = "http://www.w3.org/2000/svg";
+			const svg = document.createElementNS(ns, "svg") as SVGSVGElement;
+			svg.style.cssText = "position:absolute;visibility:hidden;width:0;height:0;";
+			const el = document.createElementNS(ns, "path") as SVGPathElement;
+			el.setAttribute("d", path);
+			svg.appendChild(el);
+			document.body.appendChild(svg);
+			let bbox: SVGRect;
+			try { bbox = el.getBBox(); } finally { document.body.removeChild(svg); }
+			if (!bbox.width || !bbox.height) { previewViewBox = "0 0 100 100"; previewAspect = "1"; return; }
+			// buf > stroke-width/2 so stroke never clips
+			const buf = 4;
+			previewViewBox = `${bbox.x - buf} ${bbox.y - buf} ${bbox.width + buf * 2} ${bbox.height + buf * 2}`;
+			// Clamp aspect ratio so extremely long/tall patterns don't break the layout
+			const ratio = Math.max(0.4, Math.min(2.5, (bbox.width + buf * 2) / (bbox.height + buf * 2)));
+			previewAspect = String(ratio);
+		} catch {
+			previewViewBox = "0 0 100 100";
+			previewAspect  = "1";
+		}
+	});
 
 	// Warn when a path contains multiple subpaths (multiple M/m commands).
 	// The cutter handles them correctly (blade lifts between contours), but the
@@ -178,7 +217,8 @@
 		}
 	}
 
-	// ── Core tracing pipeline ─────────────────────
+	// Handles the DOM glue (file → image → canvas → pixel data).
+	// All pure tracing logic lives in src/lib/utils/trace.ts.
 	async function traceImage(file: File): Promise<string> {
 		const url = URL.createObjectURL(file);
 		const img = await new Promise<HTMLImageElement>((res, rej) => {
@@ -188,120 +228,17 @@
 			el.src = url;
 		});
 		URL.revokeObjectURL(url);
-		return traceFromImage(img);
-	}
 
-	async function traceFromImage(img: HTMLImageElement): Promise<string> {
 		const W = img.naturalWidth || 512, H = img.naturalHeight || 512;
-		if (W < 8 || H < 8) throw new Error("Image too small — minimum 8×8 px.");
-
-		// Draw to offscreen canvas; white fill ensures SVG stroke-only paths
-		// (transparent interior) render against a known background colour.
 		const canvas = document.createElement("canvas");
 		canvas.width = W; canvas.height = H;
 		const ctx = canvas.getContext("2d")!;
+		// White fill so stroke-only SVG shapes render against a known background.
 		ctx.fillStyle = "#fff";
 		ctx.fillRect(0, 0, W, H);
 		ctx.drawImage(img, 0, 0, W, H);
 		const { data } = ctx.getImageData(0, 0, W, H);
-
-		// 3. Convert to binary grid (1 = shape, 0 = background)
-		//    Auto-detect polarity by sampling the four corners
-		const corners = [0, (W - 1), (H - 1) * W, (H - 1) * W + (W - 1)];
-		const cornerLuma = corners.reduce((s, i) =>
-			s + (0.299 * data[i * 4] + 0.587 * data[i * 4 + 1] + 0.114 * data[i * 4 + 2]) / 4, 0);
-		const darkBg = cornerLuma < 128; // corners dark → light shape on dark bg → invert
-
-		const grid = new Uint8Array(W * H);
-		for (let i = 0; i < W * H; i++) {
-			const alpha = data[i * 4 + 3];
-			if (alpha < 128) { grid[i] = 0; continue; } // transparent = background
-			const luma = 0.299 * data[i * 4] + 0.587 * data[i * 4 + 1] + 0.114 * data[i * 4 + 2];
-			grid[i] = darkBg ? (luma > 128 ? 1 : 0) : (luma < 128 ? 1 : 0);
-		}
-
-		// 4. Scanline outline — left/right edge per row
-		//    Works correctly for convex and mildly concave shapes (all standard tint/PPF patterns)
-		const leftPts: [number, number][] = [];
-		const rightPts: [number, number][] = [];
-		for (let y = 0; y < H; y++) {
-			let lx = -1, rx = -1;
-			for (let x = 0; x < W; x++) {
-				if (grid[y * W + x]) { if (lx < 0) lx = x; rx = x; }
-			}
-			if (lx >= 0) {
-				leftPts.push([lx, y]);
-				if (rx !== lx) rightPts.push([rx, y]);
-			}
-		}
-		if (leftPts.length === 0) throw new Error("No shape detected. Make sure the image is black and white with a clear outline.");
-
-		// Closed contour: left edge top→bottom, right edge bottom→top
-		const contour: [number, number][] = [...leftPts, ...[...rightPts].reverse()];
-
-		// 5. RDP simplification — tolerance scales with image size
-		const tolerance = Math.max(W, H) * 0.012;
-		const simplified = rdp(contour, tolerance);
-		if (simplified.length < 3) throw new Error("Shape too simple or too small to trace.");
-
-		// 6. Normalize to 0-100 coordinate space with uniform (aspect-preserving) scale
-		const xs = simplified.map(p => p[0]), ys = simplified.map(p => p[1]);
-		const minX = Math.min(...xs), maxX = Math.max(...xs);
-		const minY = Math.min(...ys), maxY = Math.max(...ys);
-		const rangeX = maxX - minX || 1, rangeY = maxY - minY || 1;
-		const margin = 3, size = 100 - margin * 2;
-		const scale  = size / Math.max(rangeX, rangeY);
-		const norm = simplified.map(([x, y]): [number, number] => [
-			(x - minX) * scale + margin + (size - rangeX * scale) / 2,
-			(y - minY) * scale + margin + (size - rangeY * scale) / 2,
-		]);
-
-		// 7. Smooth path via Catmull-Rom → Cubic Bezier
-		return toCubicSVGPath(norm);
-	}
-
-	// ── Ramer-Douglas-Peucker simplification ─────
-	function rdp(pts: [number, number][], eps: number): [number, number][] {
-		if (pts.length <= 2) return pts;
-		const [p1, pn] = [pts[0], pts[pts.length - 1]];
-		let maxD = 0, maxI = 0;
-		for (let i = 1; i < pts.length - 1; i++) {
-			const d = perpDist(pts[i], p1, pn);
-			if (d > maxD) { maxD = d; maxI = i; }
-		}
-		if (maxD > eps) {
-			const L = rdp(pts.slice(0, maxI + 1), eps);
-			const R = rdp(pts.slice(maxI), eps);
-			return [...L.slice(0, -1), ...R];
-		}
-		return [p1, pn];
-	}
-
-	function perpDist([px, py]: [number, number], [x1, y1]: [number, number], [x2, y2]: [number, number]) {
-		const dx = x2 - x1, dy = y2 - y1;
-		const len = Math.hypot(dx, dy);
-		if (len === 0) return Math.hypot(px - x1, py - y1);
-		return Math.abs((py - y1) * dx - (px - x1) * dy) / len;
-	}
-
-	// ── Catmull-Rom → Cubic Bezier SVG path ──────
-	function toCubicSVGPath(pts: [number, number][]): string {
-		const n = pts.length;
-		const r = (v: number) => Math.round(v * 10) / 10;
-		let d = `M ${r(pts[0][0])},${r(pts[0][1])}`;
-		for (let i = 0; i < n; i++) {
-			const p0 = pts[(i - 1 + n) % n];
-			const p1 = pts[i];
-			const p2 = pts[(i + 1) % n];
-			const p3 = pts[(i + 2) % n];
-			// Catmull-Rom control points
-			const cp1x = p1[0] + (p2[0] - p0[0]) / 6;
-			const cp1y = p1[1] + (p2[1] - p0[1]) / 6;
-			const cp2x = p2[0] - (p3[0] - p1[0]) / 6;
-			const cp2y = p2[1] - (p3[1] - p1[1]) / 6;
-			d += ` C ${r(cp1x)},${r(cp1y)} ${r(cp2x)},${r(cp2y)} ${r(p2[0])},${r(p2[1])}`;
-		}
-		return d + " Z";
+		return traceImageData(data, W, H);
 	}
 </script>
 
@@ -392,10 +329,10 @@
 
 		</div>
 
-		<!-- Live SVG preview — always visible -->
-		<div class="spi__preview" aria-label="SVG path preview">
+		<!-- Live SVG preview — always visible; viewBox and aspect-ratio track the traced bbox -->
+		<div class="spi__preview" style="aspect-ratio: {previewAspect}" aria-label="SVG path preview">
 			{#if previewPath}
-				<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+				<svg viewBox={previewViewBox} preserveAspectRatio="xMidYMid meet" aria-hidden="true">
 					<path d={previewPath} fill="rgba(0,229,255,0.08)" stroke="var(--color-brand)" stroke-width="1.5" stroke-linecap="round"/>
 				</svg>
 			{:else}
@@ -565,8 +502,12 @@
 	}
 
 	/* ─── Preview ─── */
+	/* aspect-ratio is set inline and derived from the path's bounding box.
+	   min/max-height prevent layout disruption from extreme (sliver) patterns. */
 	.spi__preview {
-		aspect-ratio: 1;
+		width: 120px;
+		min-height: 60px;
+		max-height: 200px;
 		border: 1px solid var(--border-default);
 		border-radius: var(--radius-md);
 		background: var(--bg-surface-3);
@@ -575,6 +516,7 @@
 		justify-content: center;
 		padding: 8px;
 		overflow: hidden;
+		box-sizing: border-box;
 	}
 	.spi__preview svg { width: 100%; height: 100%; }
 	.spi__preview-empty { font-size: 0.6875rem; color: var(--text-muted); }
