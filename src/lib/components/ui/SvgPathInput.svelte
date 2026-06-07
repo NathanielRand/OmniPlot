@@ -10,14 +10,16 @@
 	let { value = $bindable(""), id = "svgPath", error = false }: Props = $props();
 
 	// ─── Tab state ────────────────────────────────
-	type Tab = "paste" | "svg" | "trace";
+	type Tab = "paste" | "svg" | "trace" | "vectorize";
 	let tab = $state<Tab>("paste");
 
 	// ─── Per-tab state ────────────────────────────
-	let svgErr     = $state("");
-	let svgTracing = $state(false);
-	let traceErr   = $state("");
-	let tracing    = $state(false);
+	let svgErr        = $state("");
+	let svgTracing    = $state(false);
+	let traceErr      = $state("");
+	let tracing       = $state(false);
+	let vectorizeErr  = $state("");
+	let vectorizing   = $state(false);
 
 	// Preview live from value
 	const previewPath = $derived(value.trim());
@@ -66,6 +68,40 @@
 		previewPath ? (previewPath.match(/(?<=[^\s])[Mm]/g)?.length ?? 0) + 1 : 0
 	);
 
+	// ─── Shared SVG processing ───────────────────
+	// Used by both the SVG file upload and the vectorize (image → SVG) paths.
+	// Finds the longest <path> in the SVG text, resolves the full ancestor CTM
+	// (catches Y-flips from tools like Illustrator), then normalises to 0–100.
+	function processSvgText(svgText: string): string {
+		const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
+		if (doc.querySelector("parseerror")) throw new Error("Invalid SVG.");
+
+		const paths = Array.from(doc.querySelectorAll("path"));
+		if (paths.length === 0) throw new Error("No <path> elements found.");
+
+		let mainIdx = 0;
+		for (let i = 1; i < paths.length; i++) {
+			if ((paths[i].getAttribute("d")?.length ?? 0) > (paths[mainIdx].getAttribute("d")?.length ?? 0))
+				mainIdx = i;
+		}
+		const d = paths[mainIdx].getAttribute("d");
+		if (!d) throw new Error("Path element has no d attribute.");
+
+		const container = document.createElement("div");
+		container.style.cssText = "position:absolute;visibility:hidden;pointer-events:none;width:0;height:0;overflow:hidden;";
+		container.innerHTML = svgText;
+		document.body.appendChild(container);
+		let ctm: DOMMatrix | null = null;
+		try {
+			const livePath = container.querySelectorAll("path")[mainIdx] as SVGPathElement | undefined;
+			ctm = livePath?.getCTM() ?? null;
+		} finally {
+			document.body.removeChild(container);
+		}
+
+		return normalizeSvgPath(d, 3, ctm);
+	}
+
 	// ─── SVG file upload ─────────────────────────
 	// Extracts the path directly from the SVG DOM — no rasterisation, no lossy trace.
 	// Coordinates are mathematically normalised to 0-100 space using the browser's
@@ -76,21 +112,7 @@
 		svgErr = "";
 		svgTracing = true;
 		try {
-			const text = await file.text();
-			const doc  = new DOMParser().parseFromString(text, "image/svg+xml");
-			if (doc.querySelector("parseerror")) throw new Error("Invalid SVG file.");
-
-			const paths = Array.from(doc.querySelectorAll("path"));
-			if (paths.length === 0) throw new Error("No <path> elements found in this SVG.");
-
-			// Take the path with the longest d attribute (most likely the main outline)
-			const main = paths.reduce((a, b) =>
-				(a.getAttribute("d")?.length ?? 0) >= (b.getAttribute("d")?.length ?? 0) ? a : b
-			);
-			const d = main.getAttribute("d");
-			if (!d) throw new Error("Path element has no d attribute.");
-
-			value = normalizeSvgPath(d);
+			value = processSvgText(await file.text());
 		} catch (err) {
 			svgErr = err instanceof Error ? err.message : "Could not process SVG file.";
 		} finally {
@@ -99,15 +121,53 @@
 		}
 	}
 
+	// ─── Vectorize (any image → SVG via potrace) ──
+	// Sends any raster image to the /api/vectorize server route, which runs potrace
+	// to produce smooth bezier curves. The returned SVG then goes through the same
+	// processSvgText pipeline as a direct SVG upload — CTM resolution + normalisation.
+	// Works on any image type (PNG, JPEG, WebP, BMP, GIF). For complex backgrounds,
+	// pre-remove the background in another tool first for best results.
+	async function handleVectorize(e: Event) {
+		const file = (e.target as HTMLInputElement).files?.[0];
+		if (!file) return;
+		vectorizeErr = "";
+		vectorizing = true;
+		try {
+			const fd = new FormData();
+			fd.append("image", file);
+			const res = await fetch("/api/vectorize", { method: "POST", body: fd });
+			if (!res.ok) {
+				const msg = await res.text().catch(() => "");
+				throw new Error(msg || `Server error ${res.status}`);
+			}
+			const { svg } = await res.json() as { svg: string };
+			value = processSvgText(svg);
+		} catch (err) {
+			vectorizeErr = err instanceof Error ? err.message : "Vectorization failed.";
+		} finally {
+			vectorizing = false;
+			(e.target as HTMLInputElement).value = "";
+		}
+	}
+
 	// Normalises an SVG path d-string to the 0-100 coordinate space used by the
 	// nesting engine, using uniform (aspect-ratio preserving) scaling so that an
 	// oval stays an oval. Uses the browser's getBBox() for exact geometry.
-	function normalizeSvgPath(d: string, margin = 3): string {
-		const ns = "http://www.w3.org/2000/svg";
-		const svg = document.createElementNS(ns, "svg");
+	// ctm: accumulated transform from path local coords → SVG viewport (from getCTM()).
+	// Applying it first corrects Y-axis flips and other ancestor transforms before
+	// the bbox-based normalisation is computed.
+	function normalizeSvgPath(d: string, margin = 3, ctm: DOMMatrix | null = null): string {
+		const svgNs = "http://www.w3.org/2000/svg";
+
+		// Apply CTM to get path in visual (SVG viewport) coordinate space.
+		const isIdentity = !ctm || (ctm.a === 1 && ctm.b === 0 && ctm.c === 0 && ctm.d === 1 && ctm.e === 0 && ctm.f === 0);
+		const dVis = isIdentity ? d : transformPathCoords(d, { a: ctm!.a, b: ctm!.b, c: ctm!.c, d: ctm!.d, e: ctm!.e, f: ctm!.f });
+
+		// Compute bbox of the visually-correct path.
+		const svg = document.createElementNS(svgNs, "svg") as SVGSVGElement;
 		svg.style.cssText = "position:absolute;visibility:hidden;width:0;height:0;";
-		const pathEl = document.createElementNS(ns, "path") as SVGPathElement;
-		pathEl.setAttribute("d", d);
+		const pathEl = document.createElementNS(svgNs, "path") as SVGPathElement;
+		pathEl.setAttribute("d", dVis);
 		svg.appendChild(pathEl);
 		document.body.appendChild(svg);
 		let bbox: SVGRect;
@@ -123,23 +183,43 @@
 		const tx    = margin + (size - bbox.width  * scale) / 2 - bbox.x * scale;
 		const ty    = margin + (size - bbox.height * scale) / 2 - bbox.y * scale;
 
-		return transformPathCoords(d, scale, tx, ty);
+		return transformPathCoords(dVis, { a: scale, b: 0, c: 0, d: scale, e: tx, f: ty });
 	}
 
-	// Applies a uniform scale+translate to every coordinate in an SVG path string,
-	// handling all SVG path commands (M L H V C S Q T A Z and their lowercase forms).
-	function transformPathCoords(d: string, sc: number, tx: number, ty: number): string {
+	// ─── Affine matrix type ───────────────────────
+	// Matches SVGMatrix / DOMMatrix: x' = a·x + c·y + e,  y' = b·x + d·y + f
+	type Mat = { a: number; b: number; c: number; d: number; e: number; f: number };
+
+	// Applies a 2-D affine matrix to every coordinate in an SVG path string.
+	// Handles all SVG path commands (M L H V C S Q T A Z and lowercase relatives).
+	// Arc sweep flags are inverted when the matrix is reflective (det < 0, e.g. Y-flip).
+	// H/V commands assume no shear (b=0, c=0); this holds for all scale/flip/translate
+	// matrices used in practice. Radii are scaled by the per-axis scale factor.
+	function transformPathCoords(d: string, mat: Mat): string {
 		const r  = (n: number) => Math.round(n * 100) / 100;
-		const ax = (x: number) => r(x * sc + tx);  // absolute coord
-		const ay = (y: number) => r(y * sc + ty);
-		const dx = (x: number) => r(x * sc);        // relative delta
-		const dy = (y: number) => r(y * sc);
-		const ra = (v: number) => r(v * sc);        // radius (scale only)
+		// Absolute point: full affine
+		const ta = (x: number, y: number) =>
+			`${r(mat.a * x + mat.c * y + mat.e)},${r(mat.b * x + mat.d * y + mat.f)}`;
+		// Relative delta: linear part only (no translation)
+		const tr = (x: number, y: number) =>
+			`${r(mat.a * x + mat.c * y)},${r(mat.b * x + mat.d * y)}`;
+		// H/h: x-only (assumes c=0 / no shear)
+		const ah = (x: number) => r(mat.a * x + mat.e);
+		const rh = (x: number) => r(mat.a * x);
+		// V/v: y-only (assumes b=0 / no shear)
+		const av = (y: number) => r(mat.d * y + mat.f);
+		const rv = (y: number) => r(mat.d * y);
+		// Arc radii: scale by per-axis magnitudes
+		const scX = Math.sqrt(mat.a * mat.a + mat.b * mat.b);
+		const scY = Math.sqrt(mat.c * mat.c + mat.d * mat.d);
+		const ra  = (rx: number, ry: number) => `${r(scX * Math.abs(rx))},${r(scY * Math.abs(ry))}`;
+		// Sweep flag inverts when the matrix is reflective (det < 0 → Y-flip, etc.)
+		const flipSweep = mat.a * mat.d - mat.b * mat.c < 0;
 
 		const re = /([MmLlHhVvCcSsQqTtAaZz])|([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)/g;
 		const tokens: string[] = [];
-		let m: RegExpExecArray | null;
-		while ((m = re.exec(d)) !== null) tokens.push(m[0]);
+		let tok: RegExpExecArray | null;
+		while ((tok = re.exec(d)) !== null) tokens.push(tok[0]);
 
 		let out = "";
 		let i = 0;
@@ -147,52 +227,56 @@
 			const cmd = tokens[i++];
 			if (!/^[MmLlHhVvCcSsQqTtAaZz]$/.test(cmd)) continue;
 
-			const ns: number[] = [];
+			const nums: number[] = [];
 			while (i < tokens.length && !/^[MmLlHhVvCcSsQqTtAaZz]$/.test(tokens[i]))
-				ns.push(parseFloat(tokens[i++]));
+				nums.push(parseFloat(tokens[i++]));
 
 			switch (cmd) {
 				case 'M': case 'L': case 'T':
 					out += cmd;
-					for (let j = 0; j < ns.length; j += 2) out += ` ${ax(ns[j])},${ay(ns[j+1])}`;
+					for (let j = 0; j < nums.length; j += 2) out += ` ${ta(nums[j], nums[j+1])}`;
 					break;
 				case 'm': case 'l': case 't':
 					out += cmd;
-					for (let j = 0; j < ns.length; j += 2) out += ` ${dx(ns[j])},${dy(ns[j+1])}`;
+					for (let j = 0; j < nums.length; j += 2) out += ` ${tr(nums[j], nums[j+1])}`;
 					break;
-				case 'H': out += cmd; for (const x of ns) out += ` ${ax(x)}`; break;
-				case 'h': out += cmd; for (const x of ns) out += ` ${dx(x)}`; break;
-				case 'V': out += cmd; for (const y of ns) out += ` ${ay(y)}`; break;
-				case 'v': out += cmd; for (const y of ns) out += ` ${dy(y)}`; break;
+				case 'H': out += cmd; for (const x of nums) out += ` ${ah(x)}`; break;
+				case 'h': out += cmd; for (const x of nums) out += ` ${rh(x)}`; break;
+				case 'V': out += cmd; for (const y of nums) out += ` ${av(y)}`; break;
+				case 'v': out += cmd; for (const y of nums) out += ` ${rv(y)}`; break;
 				case 'C':
 					out += cmd;
-					for (let j = 0; j < ns.length; j += 6)
-						out += ` ${ax(ns[j])},${ay(ns[j+1])} ${ax(ns[j+2])},${ay(ns[j+3])} ${ax(ns[j+4])},${ay(ns[j+5])}`;
+					for (let j = 0; j < nums.length; j += 6)
+						out += ` ${ta(nums[j], nums[j+1])} ${ta(nums[j+2], nums[j+3])} ${ta(nums[j+4], nums[j+5])}`;
 					break;
 				case 'c':
 					out += cmd;
-					for (let j = 0; j < ns.length; j += 6)
-						out += ` ${dx(ns[j])},${dy(ns[j+1])} ${dx(ns[j+2])},${dy(ns[j+3])} ${dx(ns[j+4])},${dy(ns[j+5])}`;
+					for (let j = 0; j < nums.length; j += 6)
+						out += ` ${tr(nums[j], nums[j+1])} ${tr(nums[j+2], nums[j+3])} ${tr(nums[j+4], nums[j+5])}`;
 					break;
 				case 'S': case 'Q':
 					out += cmd;
-					for (let j = 0; j < ns.length; j += 4)
-						out += ` ${ax(ns[j])},${ay(ns[j+1])} ${ax(ns[j+2])},${ay(ns[j+3])}`;
+					for (let j = 0; j < nums.length; j += 4)
+						out += ` ${ta(nums[j], nums[j+1])} ${ta(nums[j+2], nums[j+3])}`;
 					break;
 				case 's': case 'q':
 					out += cmd;
-					for (let j = 0; j < ns.length; j += 4)
-						out += ` ${dx(ns[j])},${dy(ns[j+1])} ${dx(ns[j+2])},${dy(ns[j+3])}`;
+					for (let j = 0; j < nums.length; j += 4)
+						out += ` ${tr(nums[j], nums[j+1])} ${tr(nums[j+2], nums[j+3])}`;
 					break;
 				case 'A':
 					out += cmd;
-					for (let j = 0; j < ns.length; j += 7)
-						out += ` ${ra(ns[j])},${ra(ns[j+1])} ${ns[j+2]} ${ns[j+3]},${ns[j+4]} ${ax(ns[j+5])},${ay(ns[j+6])}`;
+					for (let j = 0; j < nums.length; j += 7) {
+						const sw = flipSweep ? 1 - nums[j+4] : nums[j+4];
+						out += ` ${ra(nums[j], nums[j+1])} ${nums[j+2]} ${nums[j+3]},${sw} ${ta(nums[j+5], nums[j+6])}`;
+					}
 					break;
 				case 'a':
 					out += cmd;
-					for (let j = 0; j < ns.length; j += 7)
-						out += ` ${ra(ns[j])},${ra(ns[j+1])} ${ns[j+2]} ${ns[j+3]},${ns[j+4]} ${dx(ns[j+5])},${dy(ns[j+6])}`;
+					for (let j = 0; j < nums.length; j += 7) {
+						const sw = flipSweep ? 1 - nums[j+4] : nums[j+4];
+						out += ` ${ra(nums[j], nums[j+1])} ${nums[j+2]} ${nums[j+3]},${sw} ${tr(nums[j+5], nums[j+6])}`;
+					}
 					break;
 				case 'Z': case 'z': out += cmd; break;
 			}
@@ -260,6 +344,11 @@
 			<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
 			Trace Image
 		</button>
+		<button type="button" class="spi__tab" class:spi__tab--active={tab === "vectorize"}
+			role="tab" aria-selected={tab === "vectorize"} onclick={() => (tab = "vectorize")}>
+			<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+			Vectorize
+		</button>
 	</div>
 
 	<!-- ─── Content + preview ─── -->
@@ -301,7 +390,7 @@
 					{/if}
 				{/if}
 
-			{:else}
+			{:else if tab === "trace"}
 				<!-- Trace Image -->
 				{#if tracing}
 					<div class="spi__tracing">
@@ -322,6 +411,31 @@
 						<p class="spi__success">
 							<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
 							Shape traced — check preview, then adjust dimensions above.
+						</p>
+					{/if}
+				{/if}
+
+			{:else}
+				<!-- Vectorize: any image → potrace SVG → SVG upload pipeline -->
+				{#if vectorizing}
+					<div class="spi__tracing">
+						<span class="spi__spinner" aria-hidden="true"></span>
+						<span>Vectorizing…</span>
+					</div>
+				{:else}
+					<label class="spi__drop">
+						<input type="file" accept="image/*" onchange={handleVectorize} class="spi__file-input"/>
+						<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+						<span class="spi__drop-label">Click to upload any image</span>
+						<span class="spi__drop-sub">PNG, JPG, WebP, BMP, GIF — converted to smooth bezier SVG</span>
+					</label>
+					{#if vectorizeErr}
+						<p class="spi__err">{vectorizeErr}</p>
+					{/if}
+					{#if value && tab === "vectorize"}
+						<p class="spi__success">
+							<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+							Vectorized — preview on the right. For complex backgrounds, pre-remove them first.
 						</p>
 					{/if}
 				{/if}

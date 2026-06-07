@@ -712,7 +712,7 @@ describe('car-window IoU integration', () => {
 // Loads the original car-window reference image via jimp, runs the full v4
 // pipeline, and asserts IoU / Hausdorff / corner-position quality gates.
 
-const REAL_IMAGE_PATH = '/home/nathanielrand/.claude/image-cache/7af93154-f25d-4108-a4d5-b7d0acde3e10/2.png';
+const REAL_IMAGE_PATH = new URL('./__fixtures__/car-window-ref.png', import.meta.url).pathname;
 
 describe('real-image end-to-end verification', () => {
 	it('loads and decodes the reference PNG successfully', async () => {

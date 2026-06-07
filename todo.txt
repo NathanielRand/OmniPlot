@@ -1,25 +1,6 @@
 // ONGOING
-Here's what changed and why it works:
-
-  Root cause: normalizePts(fitSmooth) — the σ=3.0 Gaussian applied to the full contour (circularly)
-  moved corner pixel coordinates 2–3px inward, and also biased the tangent estimation at corners
-  to point along the "rounded" direction. The bezier arrived at and departed from each corner along
-  the rounded path.
-
-  Fix (3-line change to traceImageData): Use normalizePts(lightSmooth) (σ=1.5) instead. Corner
-  coordinates are now only ~0.5px off the true geometric corner. The multiPointTangent calls at
-  span endpoints read from the σ=1.5 contour, so the leaving/arriving directions at a 90° corner
-  diverge naturally — producing a cusp in the SVG path — while smooth transitions (A-pillar, top
-  arc) naturally stay smooth because their tangents align.
-
-  The sqTol of 1.5px absorbs the residual σ=1.5 staircase noise without extra segments. No per-span
-  smoothing pass needed.
-
-  Results:
-  - IoU: 99.3% (↑ from 98.7%)
-  - Hausdorff: 0.848 path-units (↓ from 0.867)
-  - Corners: [1, 72, 311, 462] — same structural transitions
-  - 63/63 tests passing
+- any img type -> rm background -> convert to svg -  inherit svg upload functionality
+- claude --resume 31f50029-b621-492c-a461-ea4bd37790f6
 
 // UPCOMING
 https://www.rvinyl.com/collections/chevrolet-precut-window-tint/products/chevrolet-silverado-2007-2013-2-door-avery-dennison-nr-nano-ceramic-ir-precut-window-tint?metaobject_handle=chevrolet-silverado-precut-window-tint
