@@ -174,6 +174,31 @@ export function smoothContour(pts: Point[], sigma: number): Point[] {
 	return out;
 }
 
+// ── Open Gaussian smoothing for a span with anchored endpoints ───────────────
+// Unlike smoothContour (circular wrap), this clamps at boundaries and pins
+// the first and last points exactly — so corner positions are never displaced.
+function smoothSpanInterior(pts: Point[], sigma: number): Point[] {
+	if (sigma <= 0 || pts.length <= 2) return pts;
+	const n = pts.length;
+	const r = Math.round(sigma * 2.5);
+	const kernel: number[] = [];
+	for (let i = -r; i <= r; i++) kernel.push(Math.exp(-0.5 * (i / sigma) ** 2));
+	const out = new Array<Point>(n);
+	out[0] = pts[0];
+	out[n - 1] = pts[n - 1];
+	for (let i = 1; i < n - 1; i++) {
+		let sx = 0, sy = 0, wsum = 0;
+		for (let d = 0; d < kernel.length; d++) {
+			const j = Math.max(0, Math.min(n - 1, i + d - r));
+			sx += pts[j][0] * kernel[d];
+			sy += pts[j][1] * kernel[d];
+			wsum += kernel[d];
+		}
+		out[i] = [sx / wsum, sy / wsum];
+	}
+	return out;
+}
+
 // ── Ramer-Douglas-Peucker ────────────────────────────────────────────────────
 export function rdp(pts: Point[], eps: number): Point[] {
 	if (pts.length <= 2) return pts;
@@ -553,7 +578,7 @@ function buildPathFromCorners(pts: Point[], cornerIdxs: number[], sqTolerance: n
 			if (seg.length > n + 1) break;
 		}
 
-		const spanSegs = fitCurvesSegs(seg, sqTolerance);
+		const spanSegs = fitCurvesSegs(smoothSpanInterior(seg, 3.0), sqTolerance);
 		const smoothedSegs = applyG1(spanSegs);
 
 		for (const [segP0, CP1, CP2, P3] of smoothedSegs) {
@@ -675,6 +700,98 @@ export function samplePathDense(pathD: string, samplesPerSeg = 20): Point[] {
 	return points;
 }
 
+// ── PCA line fit through a point set ─────────────────────────────────────────
+// Returns [cx, cy, dx, dy]: centroid + unit direction of principal axis.
+function fitLine(pts: Point[]): [number, number, number, number] | null {
+	const n = pts.length;
+	if (n < 2) return null;
+	let sx = 0, sy = 0;
+	for (const [x, y] of pts) { sx += x; sy += y; }
+	const cx = sx / n, cy = sy / n;
+	let sxx = 0, sxy = 0, syy = 0;
+	for (const [x, y] of pts) {
+		const dx = x - cx, dy = y - cy;
+		sxx += dx * dx; sxy += dx * dy; syy += dy * dy;
+	}
+	const angle = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+	return [cx, cy, Math.cos(angle), Math.sin(angle)];
+}
+
+// ── Line-line intersection (parametric) ──────────────────────────────────────
+function lineLineIntersect(
+	cx1: number, cy1: number, dx1: number, dy1: number,
+	cx2: number, cy2: number, dx2: number, dy2: number
+): Point | null {
+	const denom = dx1 * dy2 - dy1 * dx2;
+	if (Math.abs(denom) < 1e-8) return null;
+	const t = ((cx2 - cx1) * dy2 - (cy2 - cy1) * dx2) / denom;
+	return [cx1 + t * dx1, cy1 + t * dy1];
+}
+
+// ── Snap corners to adjacent edge-line intersections ─────────────────────────
+// For each corner, fits a line to a window of points sampled from WITHIN the
+// body of each adjacent span — skipping the near-corner transition zone so the
+// line accurately captures the edge direction, not the transition curve.
+// Moves the corner to where the two edge lines intersect.
+// Only accepts moves ≤ maxMove path-units to guard against bad fits.
+function refineCornerPositions(pts: Point[], cornerIdxs: number[], maxMove = 5.0): Point[] {
+	const n = pts.length;
+	const nc = cornerIdxs.length;
+	const out = pts.slice();
+
+	for (let ci = 0; ci < nc; ci++) {
+		const idx      = cornerIdxs[ci];
+		const prevIdx  = cornerIdxs[(ci - 1 + nc) % nc];
+		const nextIdx  = cornerIdxs[(ci + 1) % nc];
+
+		const spanBefore = ((idx - prevIdx + n) % n);
+		const spanAfter  = ((nextIdx - idx + n) % n);
+
+		// Before window: no skip — last wb points before the corner.
+		// Captures the incoming tangent direction at the actual corner location.
+		const wb = Math.max(3, Math.min(15, Math.floor(spanBefore * 0.15)));
+		const before: Point[] = [];
+		for (let k = wb; k >= 1; k--) before.push(pts[(idx - k + n) % n]);
+
+		// After window: skip the near-corner transition zone, then sample the span body.
+		// This lets the line fit accurately represent straight outgoing edges.
+		const skipA = Math.max(2, Math.floor(spanAfter * 0.05));
+		const wa    = Math.max(3, Math.min(15, Math.floor(spanAfter * 0.15)));
+		const after: Point[] = [];
+		for (let k = skipA + 1; k <= skipA + wa; k++) after.push(pts[(idx + k) % n]);
+
+		const lb = fitLine(before);
+		const la = fitLine(after);
+		if (!lb || !la) continue;
+
+		const inter = lineLineIntersect(lb[0], lb[1], lb[2], lb[3], la[0], la[1], la[2], la[3]);
+		if (!inter) continue;
+
+		const dist = Math.hypot(inter[0] - pts[idx][0], inter[1] - pts[idx][1]);
+		if (dist < maxMove) {
+			const Δx = inter[0] - pts[idx][0];
+			const Δy = inter[1] - pts[idx][1];
+			out[idx] = inter;
+			// Taper the displacement across both transition zones so the bezier
+			// fitter sees a smooth ramp into the refined corner, not a kink.
+			// Outgoing span: first skipA steps after the corner.
+			for (let k = 1; k <= skipA; k++) {
+				const frac = (skipA - k + 1) / (skipA + 1);
+				const j = (idx + k) % n;
+				out[j] = [pts[j][0] + frac * Δx, pts[j][1] + frac * Δy];
+			}
+			// Incoming span: last tapB steps before the corner.
+			const tapB = Math.min(skipA, Math.floor(spanBefore * 0.05));
+			for (let k = 1; k <= tapB; k++) {
+				const frac = (tapB - k + 1) / (tapB + 1);
+				const j = (idx - k + n) % n;
+				out[j] = [pts[j][0] + frac * Δx, pts[j][1] + frac * Δy];
+			}
+		}
+	}
+	return out;
+}
+
 // ── Bounding range of a contour ───────────────────────────────────────────────
 function contourRange(pts: Point[]): number {
 	if (pts.length === 0) return 1;
@@ -707,20 +824,23 @@ export function traceImageData(data: Uint8ClampedArray, W: number, H: number): s
 		const lightSmooth = smoothContour(contour, 1.5);
 		const fineCorners = detectCornersFromCurvature(lightSmooth);
 
-		// Normalize lightly-smoothed contour: corner coords stay close to true geometry
-		// (σ=1.5 vs σ=3.0 means <0.5px rounding at corners instead of 2–3px)
-		const norm = normalizePts(lightSmooth);
+		// Normalize lightly-smoothed contour, then snap corners to adjacent
+		// edge-line intersections (corrects the Moore-contour "notch" artifact).
+		const norm  = normalizePts(lightSmooth);
+		const normR = refineCornerPositions(norm, fineCorners);
 
-		// Tolerance: 1.5px in path units
+		// Tolerance: 2.0px in path units (span pre-smoothing removes staircase noise,
+		// so fitter no longer needs to subdivide to chase 1px artifacts)
 		const range   = contourRange(contour);
 		const pxToUnit = 94 / range;
-		const sqTol   = (1.5 * pxToUnit) ** 2;
+		const sqTol   = (2.0 * pxToUnit) ** 2;
 
-		const pathD = buildPathFromCorners(norm, fineCorners, sqTol);
+		const pathD = buildPathFromCorners(normR, fineCorners, sqTol);
 
-		// Bidirectional Hausdorff gate (2.0× accounts for lightSmooth reference
-		// being noisier than the per-span-smoothed fitting target)
-		const deviation = maxHausdorffDeviation(pathD, norm);
+		// Hausdorff gate vs refined contour (normR is the authoritative target after
+		// corner snapping; comparing vs normR keeps the fitter honest without penalising
+		// the intentional ≤5 path-unit corner shifts)
+		const deviation = maxHausdorffDeviation(pathD, normR);
 		if (deviation <= 2.0 * pxToUnit) return pathD;
 	}
 
@@ -731,7 +851,8 @@ export function traceImageData(data: Uint8ClampedArray, W: number, H: number): s
 	const lightSmooth = smoothContour(contour, 1.0);
 	const fineCorners = detectCornersFromCurvature(lightSmooth);
 	const norm        = normalizePts(lightSmooth);
+	const normR       = refineCornerPositions(norm, fineCorners);
 	const range       = contourRange(contour);
-	const sqTol       = (1.0 * 94 / range) ** 2;
-	return buildPathFromCorners(norm, fineCorners, sqTol);
+	const sqTol       = (1.5 * 94 / range) ** 2;
+	return buildPathFromCorners(normR, fineCorners, sqTol);
 }
