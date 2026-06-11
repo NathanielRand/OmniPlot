@@ -1821,18 +1821,20 @@
 								aria-hidden="true"
 							>
 								<g transform="rotate({item.rotation} {_bb.x + _bb.w / 2} {_bb.y + _bb.h / 2})">
-									<path
-										d={item.pattern.svgPath}
-										fill="{item.color}20"
-										stroke={item.color}
-										stroke-width="1.5"
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										vector-effect="non-scaling-stroke"
-										class:marching-ants={canvasStore.selected.includes(
-											item.id,
-										)}
-									/>
+									<g transform={item.flippedH ? `matrix(-1 0 0 1 ${2 * (_bb.x + _bb.w / 2)} 0)` : undefined}>
+										<path
+											d={item.pattern.svgPath}
+											fill="{item.color}20"
+											stroke={item.color}
+											stroke-width="1.5"
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											vector-effect="non-scaling-stroke"
+											class:marching-ants={canvasStore.selected.includes(
+												item.id,
+											)}
+										/>
+									</g>
 									<text
 										x={_bb.x + _bb.w / 2}
 										y={_bb.y + _bb.h / 2}

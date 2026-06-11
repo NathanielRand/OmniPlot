@@ -1,21 +1,24 @@
 <script lang="ts">
 	import { traceImageData } from '$lib/utils/trace';
+	import { smoothBezierJunctions } from '$lib/utils/bezier-smooth';
 
 	// ─── Props ────────────────────────────────────
 	interface Props {
 		value: string;
 		id?: string;
 		error?: boolean;
+		showMirror?: boolean;
+		mirrorOrigLabel?: string;
+		mirrorFlipLabel?: string;
+		onMultiExtract?: (paths: string[]) => void;
 	}
-	let { value = $bindable(""), id = "svgPath", error = false }: Props = $props();
+	let { value = $bindable(""), id = "svgPath", error = false, showMirror = false, mirrorOrigLabel, mirrorFlipLabel, onMultiExtract }: Props = $props();
 
 	// ─── Tab state ────────────────────────────────
-	type Tab = "paste" | "svg" | "trace" | "vectorize";
-	let tab = $state<Tab>("paste");
+	type Tab = "vectorize" | "paste" | "trace";
+	let tab = $state<Tab>("vectorize");
 
 	// ─── Per-tab state ────────────────────────────
-	let svgErr        = $state("");
-	let svgTracing    = $state(false);
 	let traceErr      = $state("");
 	let tracing       = $state(false);
 	let vectorizeErr  = $state("");
@@ -26,16 +29,14 @@
 
 	// ─── Dynamic preview viewBox ──────────────────
 	// Computes tight bbox of the current path and adds a small buffer so the
-	// stroke (1.5px) never clips at the edge. Uses a hidden off-DOM SVG so the
-	// browser's geometry engine handles all path types correctly.
+	// stroke never clips at the edge. Uses a hidden off-DOM SVG so the browser's
+	// geometry engine handles all path types correctly.
 	let previewViewBox = $state("0 0 100 100");
-	let previewAspect  = $state("1");
 
 	$effect(() => {
 		const path = previewPath;
 		if (!path || typeof document === 'undefined') {
 			previewViewBox = "0 0 100 100";
-			previewAspect  = "1";
 			return;
 		}
 		try {
@@ -48,18 +49,90 @@
 			document.body.appendChild(svg);
 			let bbox: SVGRect;
 			try { bbox = el.getBBox(); } finally { document.body.removeChild(svg); }
-			if (!bbox.width || !bbox.height) { previewViewBox = "0 0 100 100"; previewAspect = "1"; return; }
-			// buf > stroke-width/2 so stroke never clips
+			if (!bbox.width || !bbox.height) { previewViewBox = "0 0 100 100"; return; }
 			const buf = 4;
 			previewViewBox = `${bbox.x - buf} ${bbox.y - buf} ${bbox.width + buf * 2} ${bbox.height + buf * 2}`;
-			// Clamp aspect ratio so extremely long/tall patterns don't break the layout
-			const ratio = Math.max(0.4, Math.min(2.5, (bbox.width + buf * 2) / (bbox.height + buf * 2)));
-			previewAspect = String(ratio);
 		} catch {
 			previewViewBox = "0 0 100 100";
-			previewAspect  = "1";
 		}
 	});
+
+	// ─── Preview zoom / pan ───────────────────────
+	let zoom      = $state(1);
+	let panX      = $state(0);   // offset in viewBox units
+	let panY      = $state(0);
+	let isPanning = $state(false);
+
+	type DragOrigin = { clientX: number; clientY: number; panX: number; panY: number };
+	let dragOrigin: DragOrigin | null = null;
+
+	// Reset to fit whenever a new path is loaded.
+	$effect(() => {
+		previewPath;   // track
+		zoom = 1; panX = 0; panY = 0;
+	});
+
+	function parsedBase(): [number, number, number, number] {
+		const p = previewViewBox.split(' ').map(Number);
+		return [p[0], p[1], p[2], p[3]];
+	}
+
+	const zoomedViewBox = $derived((() => {
+		const [bx, by, bw, bh] = parsedBase();
+		if (!bw || !bh) return previewViewBox;
+		const zw = bw / zoom;
+		const zh = bh / zoom;
+		return `${bx + panX + (bw - zw) / 2} ${by + panY + (bh - zh) / 2} ${zw} ${zh}`;
+	})());
+
+	function onWheel(e: WheelEvent) {
+		e.preventDefault();
+		const factor  = e.deltaY < 0 ? 1.18 : 1 / 1.18;
+		const newZoom = Math.min(40, Math.max(0.5, zoom * factor));
+		const svgEl   = e.currentTarget as SVGSVGElement;
+		const rect    = svgEl.getBoundingClientRect();
+		const [bx, by, bw, bh] = parsedBase();
+		// Current visible window in viewBox space
+		const zw = bw / zoom,  zh = bh / zoom;
+		const zx = bx + panX + (bw - zw) / 2;
+		const zy = by + panY + (bh - zh) / 2;
+		// SVG-space coords of the cursor
+		const cx = zx + (e.clientX - rect.left)  / rect.width  * zw;
+		const cy = zy + (e.clientY - rect.top)   / rect.height * zh;
+		// Recompute pan so cx/cy stays under cursor after zoom
+		const nzw = bw / newZoom, nzh = bh / newZoom;
+		const nzx = cx - (e.clientX - rect.left)  / rect.width  * nzw;
+		const nzy = cy - (e.clientY - rect.top)   / rect.height * nzh;
+		panX  = nzx - bx - (bw - nzw) / 2;
+		panY  = nzy - by - (bh - nzh) / 2;
+		zoom  = newZoom;
+	}
+
+	function onPointerDown(e: PointerEvent) {
+		if (e.button !== 0) return;
+		(e.currentTarget as Element).setPointerCapture(e.pointerId);
+		isPanning  = true;
+		dragOrigin = { clientX: e.clientX, clientY: e.clientY, panX, panY };
+	}
+
+	function onPointerMove(e: PointerEvent) {
+		if (!isPanning || !dragOrigin) return;
+		const svgEl = e.currentTarget as SVGSVGElement;
+		const rect  = svgEl.getBoundingClientRect();
+		const [,, bw, bh] = parsedBase();
+		panX = dragOrigin.panX - (e.clientX - dragOrigin.clientX) / rect.width  * (bw / zoom);
+		panY = dragOrigin.panY - (e.clientY - dragOrigin.clientY) / rect.height * (bh / zoom);
+	}
+
+	function onPointerUp(e: PointerEvent) {
+		(e.currentTarget as Element).releasePointerCapture(e.pointerId);
+		isPanning  = false;
+		dragOrigin = null;
+	}
+
+	function zoomIn()    { zoom = Math.min(40,  zoom * 1.25); }
+	function zoomOut()   { zoom = Math.max(0.5, zoom / 1.25); }
+	function resetView() { zoom = 1; panX = 0; panY = 0; }
 
 	// Warn when a path contains multiple subpaths (multiple M/m commands).
 	// The cutter handles them correctly (blade lifts between contours), but the
@@ -102,46 +175,34 @@
 		return normalizeSvgPath(d, 3, ctm);
 	}
 
-	// ─── SVG file upload ─────────────────────────
-	// Extracts the path directly from the SVG DOM — no rasterisation, no lossy trace.
-	// Coordinates are mathematically normalised to 0-100 space using the browser's
-	// own geometry engine (getBBox), so bezier curves and arcs are preserved exactly.
-	async function handleSVGFile(e: Event) {
-		const file = (e.target as HTMLInputElement).files?.[0];
-		if (!file) return;
-		svgErr = "";
-		svgTracing = true;
-		try {
-			value = processSvgText(await file.text());
-		} catch (err) {
-			svgErr = err instanceof Error ? err.message : "Could not process SVG file.";
-		} finally {
-			svgTracing = false;
-			(e.target as HTMLInputElement).value = "";
-		}
-	}
-
-	// ─── Vectorize (any image → SVG via potrace) ──
-	// Sends any raster image to the /api/vectorize server route, which runs potrace
-	// to produce smooth bezier curves. The returned SVG then goes through the same
-	// processSvgText pipeline as a direct SVG upload — CTM resolution + normalisation.
-	// Works on any image type (PNG, JPEG, WebP, BMP, GIF). For complex backgrounds,
-	// pre-remove the background in another tool first for best results.
+	// ─── Vectorize (SVG or any raster image → normalized path) ──
+	// SVG files are extracted directly from the DOM — no rasterisation, bezier curves
+	// and arcs preserved exactly. Raster images (PNG, JPG, WebP, BMP, GIF) are sent
+	// to /api/vectorize which preprocesses (upsample → normalize contrast → threshold)
+	// then runs potrace to produce high-precision bezier curves.
 	async function handleVectorize(e: Event) {
 		const file = (e.target as HTMLInputElement).files?.[0];
 		if (!file) return;
 		vectorizeErr = "";
 		vectorizing = true;
 		try {
-			const fd = new FormData();
-			fd.append("image", file);
-			const res = await fetch("/api/vectorize", { method: "POST", body: fd });
-			if (!res.ok) {
-				const msg = await res.text().catch(() => "");
-				throw new Error(msg || `Server error ${res.status}`);
+			if (file.type === "image/svg+xml" || file.name.toLowerCase().endsWith(".svg")) {
+				// SVG: lossless direct path extraction — no rasterisation at all.
+				value = processSvgText(await file.text());
+			} else {
+				// Raster: server-side preprocessing + potrace → high-precision SVG.
+				const fd = new FormData();
+				fd.append("image", file);
+				const res = await fetch("/api/vectorize", { method: "POST", body: fd });
+				if (!res.ok) {
+					const msg = await res.text().catch(() => "");
+					throw new Error(msg || `Server error ${res.status}`);
+				}
+				const { svg } = await res.json() as { svg: string };
+				// Normalize coordinates first, then smooth junctions on the normalized path.
+				// Smoothing is raster-only — SVG uploads are already mathematically exact.
+				value = smoothBezierJunctions(processSvgText(svg));
 			}
-			const { svg } = await res.json() as { svg: string };
-			value = processSvgText(svg);
 		} catch (err) {
 			vectorizeErr = err instanceof Error ? err.message : "Vectorization failed.";
 		} finally {
@@ -285,6 +346,24 @@
 		return out.trim();
 	}
 
+	// ─── Subpath extraction for multi-pattern mode ──
+	// Splits a combined potrace path (multiple M…Z segments) into individually
+	// normalized 0-100 paths — one per contour. Degenerate or zero-extent
+	// contours are silently dropped. Only call this client-side (uses getBBox).
+	function extractSubpaths(fullPath: string): string[] {
+		const segs = fullPath.match(/M[^Mm]*/gi)?.map(s => s.trim()).filter(Boolean) ?? [fullPath];
+		const result: string[] = [];
+		for (const seg of segs) {
+			try {
+				const closed = /[Zz]\s*$/.test(seg) ? seg : seg + ' Z';
+				result.push(normalizeSvgPath(closed));
+			} catch {
+				// degenerate path — skip
+			}
+		}
+		return result;
+	}
+
 	// ─── Image trace ─────────────────────────────
 	async function handleImageFile(e: Event) {
 		const file = (e.target as HTMLInputElement).files?.[0];
@@ -329,25 +408,22 @@
 <div class="spi">
 	<!-- ─── Tab bar ─── -->
 	<div class="spi__tabs" role="tablist">
+		<button type="button" class="spi__tab" class:spi__tab--active={tab === "vectorize"}
+			role="tab" aria-selected={tab === "vectorize"} onclick={() => (tab = "vectorize")}>
+			<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+			Vectorize
+			<span class="spi__badge spi__badge--rec">Recommended</span>
+		</button>
 		<button type="button" class="spi__tab" class:spi__tab--active={tab === "paste"}
 			role="tab" aria-selected={tab === "paste"} onclick={() => (tab = "paste")}>
-			<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.1 2.1 0 013 3L12 15l-4 1 1-4z"/></svg>
+			<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.1 2.1 0 013 3L12 15l-4 1 1-4z"/></svg>
 			Paste
-		</button>
-		<button type="button" class="spi__tab" class:spi__tab--active={tab === "svg"}
-			role="tab" aria-selected={tab === "svg"} onclick={() => (tab = "svg")}>
-			<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-			SVG File
 		</button>
 		<button type="button" class="spi__tab" class:spi__tab--active={tab === "trace"}
 			role="tab" aria-selected={tab === "trace"} onclick={() => (tab = "trace")}>
-			<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
+			<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
 			Trace Image
-		</button>
-		<button type="button" class="spi__tab" class:spi__tab--active={tab === "vectorize"}
-			role="tab" aria-selected={tab === "vectorize"} onclick={() => (tab = "vectorize")}>
-			<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-			Vectorize
+			<span class="spi__badge spi__badge--exp">Experimental</span>
 		</button>
 	</div>
 
@@ -355,7 +431,32 @@
 	<div class="spi__body">
 		<div class="spi__input">
 
-			{#if tab === "paste"}
+			{#if tab === "vectorize"}
+				<!-- Vectorize: SVG (lossless) or any raster → preprocessed potrace → normalized path -->
+				{#if vectorizing}
+					<div class="spi__tracing">
+						<span class="spi__spinner" aria-hidden="true"></span>
+						<span>Vectorizing…</span>
+					</div>
+				{:else}
+					<label class="spi__drop">
+						<input type="file" accept=".svg,image/svg+xml,image/*" onchange={handleVectorize} class="spi__file-input"/>
+						<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+						<span class="spi__drop-label">Click to upload a file</span>
+						<span class="spi__drop-sub">SVG — extracted losslessly &nbsp;·&nbsp; PNG, JPG, WebP, BMP — converted to precise bezier curves</span>
+					</label>
+					{#if vectorizeErr}
+						<p class="spi__err">{vectorizeErr}</p>
+					{/if}
+					{#if value && tab === "vectorize"}
+						<p class="spi__success">
+							<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+							Vectorized — preview on the right. For raster images with complex backgrounds, pre-remove them first.
+						</p>
+					{/if}
+				{/if}
+
+			{:else if tab === "paste"}
 				<textarea
 					{id}
 					class="spi__textarea"
@@ -366,32 +467,8 @@
 					placeholder={"M 5,5 L 95,5 95,95 5,95 Z\nM 50,5 L 95,80 5,80 Z\nM 15,50 C 15,15 85,15 85,50 C 85,85 15,85 15,50 Z"}
 				></textarea>
 
-			{:else if tab === "svg"}
-				{#if svgTracing}
-					<div class="spi__tracing">
-						<span class="spi__spinner" aria-hidden="true"></span>
-						<span>Extracting shape…</span>
-					</div>
-				{:else}
-					<label class="spi__drop">
-						<input type="file" accept=".svg,image/svg+xml" onchange={handleSVGFile} class="spi__file-input"/>
-						<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-						<span class="spi__drop-label">Click to upload an SVG file</span>
-						<span class="spi__drop-sub">SVG shape is rendered and traced to 0–100 coordinates</span>
-					</label>
-					{#if svgErr}
-						<p class="spi__err">{svgErr}</p>
-					{/if}
-					{#if value && tab === "svg"}
-						<p class="spi__success">
-							<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
-							Shape traced — preview on the right.
-						</p>
-					{/if}
-				{/if}
-
-			{:else if tab === "trace"}
-				<!-- Trace Image -->
+			{:else}
+				<!-- Trace Image: in-browser B&W tracing -->
 				{#if tracing}
 					<div class="spi__tracing">
 						<span class="spi__spinner" aria-hidden="true"></span>
@@ -402,7 +479,7 @@
 						<input type="file" accept="image/png,image/jpeg,image/webp" onchange={handleImageFile} class="spi__file-input"/>
 						<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
 						<span class="spi__drop-label">Click to upload a B&W image</span>
-						<span class="spi__drop-sub">PNG, JPG or WebP — shape traced automatically</span>
+						<span class="spi__drop-sub">PNG, JPG or WebP — shape traced in-browser</span>
 					</label>
 					{#if traceErr}
 						<p class="spi__err">{traceErr}</p>
@@ -414,45 +491,86 @@
 						</p>
 					{/if}
 				{/if}
-
-			{:else}
-				<!-- Vectorize: any image → potrace SVG → SVG upload pipeline -->
-				{#if vectorizing}
-					<div class="spi__tracing">
-						<span class="spi__spinner" aria-hidden="true"></span>
-						<span>Vectorizing…</span>
-					</div>
-				{:else}
-					<label class="spi__drop">
-						<input type="file" accept="image/*" onchange={handleVectorize} class="spi__file-input"/>
-						<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-						<span class="spi__drop-label">Click to upload any image</span>
-						<span class="spi__drop-sub">PNG, JPG, WebP, BMP, GIF — converted to smooth bezier SVG</span>
-					</label>
-					{#if vectorizeErr}
-						<p class="spi__err">{vectorizeErr}</p>
-					{/if}
-					{#if value && tab === "vectorize"}
-						<p class="spi__success">
-							<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
-							Vectorized — preview on the right. For complex backgrounds, pre-remove them first.
-						</p>
-					{/if}
-				{/if}
 			{/if}
 
 		</div>
 
-		<!-- Live SVG preview — always visible; viewBox and aspect-ratio track the traced bbox -->
-		<div class="spi__preview" style="aspect-ratio: {previewAspect}" aria-label="SVG path preview">
-			{#if previewPath}
-				<svg viewBox={previewViewBox} preserveAspectRatio="xMidYMid meet" aria-hidden="true">
-					<path d={previewPath} fill="rgba(0,229,255,0.08)" stroke="var(--color-brand)" stroke-width="1.5" stroke-linecap="round"/>
-				</svg>
-			{:else}
-				<span class="spi__preview-empty">Preview</span>
-			{/if}
-		</div>
+	</div>
+
+	<!-- ─── Zoomable preview panel ─── -->
+	<div class="spi__pview">
+		{#if showMirror && previewPath}
+			<div class="spi__mirror-bar" aria-hidden="true">
+				<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 3H5a2 2 0 00-2 2v14a2 2 0 002 2h3"/><path d="M16 3h3a2 2 0 012 2v14a2 2 0 01-2 2h-3"/><line x1="12" y1="3" x2="12" y2="21"/></svg>
+				Mirror pair — both sides shown
+			</div>
+			<div class="spi__mirror-panels">
+				<div class="spi__mirror-panel">
+					<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" class="spi__pview-svg" aria-label="Original path orientation">
+						<defs>
+							<pattern id="spi-grid-l" width="10" height="10" patternUnits="userSpaceOnUse">
+								<path d="M 10 0 L 0 0 0 10" fill="none" stroke="var(--border-default)" stroke-width="0.3" opacity="0.5"/>
+							</pattern>
+						</defs>
+						<rect x="0" y="0" width="100" height="100" fill="url(#spi-grid-l)"/>
+						<path d={previewPath} fill="rgba(0,229,255,0.07)" stroke="var(--color-brand)" stroke-width="1.5" stroke-linecap="round"/>
+					</svg>
+					<span class="spi__mirror-lbl">{mirrorOrigLabel ?? "As uploaded"}</span>
+				</div>
+				<div class="spi__mirror-divider" aria-hidden="true"></div>
+				<div class="spi__mirror-panel">
+					<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" class="spi__pview-svg" aria-label="Mirrored path orientation">
+						<defs>
+							<pattern id="spi-grid-r" width="10" height="10" patternUnits="userSpaceOnUse">
+								<path d="M 10 0 L 0 0 0 10" fill="none" stroke="var(--border-default)" stroke-width="0.3" opacity="0.5"/>
+							</pattern>
+						</defs>
+						<rect x="0" y="0" width="100" height="100" fill="url(#spi-grid-r)"/>
+						<path d={previewPath} transform="matrix(-1 0 0 1 100 0)" fill="rgba(0,229,255,0.07)" stroke="var(--color-brand)" stroke-width="1.5" stroke-linecap="round"/>
+					</svg>
+					<span class="spi__mirror-lbl">{mirrorFlipLabel ?? "Mirrored"}</span>
+				</div>
+			</div>
+		{:else if previewPath}
+			<div class="spi__pview-toolbar">
+				<button type="button" class="spi__pview-btn" onclick={zoomOut} title="Zoom out">
+					<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+				</button>
+				<span class="spi__pview-zoom">{Math.round(zoom * 100)}%</span>
+				<button type="button" class="spi__pview-btn" onclick={zoomIn} title="Zoom in">
+					<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+				</button>
+				<button type="button" class="spi__pview-btn spi__pview-fit" onclick={resetView} title="Reset to fit">
+					<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+					Fit
+				</button>
+			</div>
+			<svg
+				class="spi__pview-svg"
+				viewBox={zoomedViewBox}
+				preserveAspectRatio="xMidYMid meet"
+				style="cursor: {isPanning ? 'grabbing' : 'grab'}"
+				onwheel={onWheel}
+				onpointerdown={onPointerDown}
+				onpointermove={onPointerMove}
+				onpointerup={onPointerUp}
+				aria-label="SVG path preview — scroll to zoom, drag to pan"
+				role="img"
+			>
+				<defs>
+					<pattern id="spi-grid" width="10" height="10" patternUnits="userSpaceOnUse">
+						<path d="M 10 0 L 0 0 0 10" fill="none" stroke="var(--border-default)" stroke-width="0.3" opacity="0.5"/>
+					</pattern>
+				</defs>
+				<rect x="-9999" y="-9999" width="19998" height="19998" fill="url(#spi-grid)"/>
+				<path d={previewPath} fill="rgba(0,229,255,0.07)" stroke="var(--color-brand)" stroke-width={1.5 / zoom} stroke-linecap="round"/>
+			</svg>
+		{:else}
+			<div class="spi__pview-empty">
+				<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+				<span>Preview appears here</span>
+			</div>
+		{/if}
 	</div>
 
 	<!-- Coordinate space note — shown for paste and after trace -->
@@ -461,10 +579,15 @@
 	</p>
 
 	{#if subpathCount > 1}
-		<p class="spi__subpath-warn">
-			<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-			This path has <strong>{subpathCount} separate contours</strong>. The cutter will lift the blade between them — verify the shape is intentionally multi-part.
-		</p>
+		<div class="spi__subpath-warn">
+			<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" style="flex-shrink:0;margin-top:1px"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+			<span>This path has <strong>{subpathCount} separate contours</strong>. The cutter will lift the blade between them — verify the shape is intentionally multi-part.</span>
+			{#if onMultiExtract}
+				<button type="button" class="spi__extract-btn" onclick={() => onMultiExtract!(extractSubpaths(value))}>
+					Split into {subpathCount} patterns →
+				</button>
+			{/if}
+		</div>
 	{/if}
 </div>
 
@@ -489,9 +612,9 @@
 	.spi__tab {
 		display: flex;
 		align-items: center;
-		gap: 5px;
-		padding: 4px 11px;
-		font-size: 0.75rem;
+		gap: 7px;
+		padding: 8px 16px;
+		font-size: 0.9375rem;
 		font-weight: 500;
 		font-family: var(--font-body);
 		color: var(--text-tertiary);
@@ -503,18 +626,49 @@
 		white-space: nowrap;
 	}
 	.spi__tab:hover { color: var(--text-secondary); }
+
+	/* Vertical divider between tabs */
+	.spi__tab + .spi__tab {
+		position: relative;
+	}
+	.spi__tab + .spi__tab::before {
+		content: '';
+		position: absolute;
+		left: -1px;
+		top: 18%;
+		height: 64%;
+		width: 1px;
+		background: var(--border-default);
+	}
+
 	.spi__tab--active {
 		background: var(--bg-surface);
 		color: var(--text-primary);
 		box-shadow: 0 1px 3px rgba(0,0,0,0.12);
 	}
 
-	/* ─── Body: input + preview ─── */
+	.spi__badge {
+		display: inline-block;
+		padding: 2px 7px;
+		font-size: 0.625rem;
+		font-weight: 700;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		border-radius: 99px;
+		line-height: 1.6;
+	}
+	.spi__badge--rec {
+		background: color-mix(in srgb, var(--color-brand) 16%, transparent);
+		color: var(--color-brand);
+	}
+	.spi__badge--exp {
+		background: color-mix(in srgb, #f59e0b 14%, transparent);
+		color: #f59e0b;
+	}
+
+	/* ─── Body: input only, full width ─── */
 	.spi__body {
-		display: grid;
-		grid-template-columns: 1fr 120px;
-		gap: 10px;
-		align-items: start;
+		display: block;
 	}
 
 	/* ─── Paste tab ─── */
@@ -568,12 +722,12 @@
 		pointer-events: none;
 	}
 	.spi__drop-label {
-		font-size: 0.8125rem;
+		font-size: 1rem;
 		font-weight: 600;
 		color: var(--text-secondary);
 	}
 	.spi__drop-sub {
-		font-size: 0.75rem;
+		font-size: 0.875rem;
 		color: var(--text-tertiary);
 		line-height: 1.4;
 	}
@@ -601,7 +755,7 @@
 
 	/* ─── Status messages ─── */
 	.spi__err {
-		font-size: 0.75rem;
+		font-size: 0.875rem;
 		color: var(--color-danger, #f44);
 		margin: 4px 0 0;
 		line-height: 1.4;
@@ -610,37 +764,154 @@
 		display: flex;
 		align-items: center;
 		gap: 5px;
-		font-size: 0.75rem;
+		font-size: 0.875rem;
 		color: #4ade80;
 		margin: 4px 0 0;
 	}
 
-	/* ─── Preview ─── */
-	/* aspect-ratio is set inline and derived from the path's bounding box.
-	   min/max-height prevent layout disruption from extreme (sliver) patterns. */
-	.spi__preview {
-		width: 120px;
-		min-height: 60px;
-		max-height: 200px;
+	/* ─── Zoomable preview panel ─── */
+	.spi__pview {
+		position: relative;
+		height: 280px;
 		border: 1px solid var(--border-default);
 		border-radius: var(--radius-md);
 		background: var(--bg-surface-3);
+		overflow: hidden;
+	}
+
+	.spi__pview-toolbar {
+		position: absolute;
+		top: 8px;
+		right: 8px;
+		z-index: 1;
 		display: flex;
 		align-items: center;
-		justify-content: center;
-		padding: 8px;
-		overflow: hidden;
-		box-sizing: border-box;
+		gap: 2px;
+		background: var(--bg-surface-2);
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-md);
+		padding: 3px 4px;
+		box-shadow: 0 1px 4px rgba(0,0,0,0.18);
 	}
-	.spi__preview svg { width: 100%; height: 100%; }
-	.spi__preview-empty { font-size: 0.6875rem; color: var(--text-muted); }
+
+	.spi__pview-btn {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		padding: 3px 6px;
+		font-size: 0.75rem;
+		font-family: var(--font-body);
+		font-weight: 500;
+		color: var(--text-secondary);
+		background: transparent;
+		border: none;
+		border-radius: calc(var(--radius-md) - 3px);
+		cursor: pointer;
+		transition: background 0.1s, color 0.1s;
+		line-height: 1;
+	}
+	.spi__pview-btn:hover {
+		background: var(--bg-surface);
+		color: var(--text-primary);
+	}
+
+	.spi__pview-zoom {
+		font-size: 0.75rem;
+		font-weight: 600;
+		color: var(--text-tertiary);
+		min-width: 34px;
+		text-align: center;
+		font-variant-numeric: tabular-nums;
+		padding: 0 2px;
+	}
+
+	.spi__pview-fit {
+		border-left: 1px solid var(--border-default);
+		margin-left: 2px;
+		padding-left: 8px;
+	}
+
+	.spi__pview-svg {
+		width: 100%;
+		height: 100%;
+		display: block;
+		touch-action: none;
+		user-select: none;
+	}
+
+	.spi__pview-empty {
+		width: 100%;
+		height: 100%;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 10px;
+		color: var(--text-muted);
+		font-size: 0.875rem;
+	}
+
+	/* ─── Mirror pair preview ─── */
+	.spi__mirror-bar {
+		position: absolute;
+		top: 8px;
+		left: 50%;
+		transform: translateX(-50%);
+		z-index: 1;
+		display: flex;
+		align-items: center;
+		gap: 5px;
+		font-size: 0.625rem;
+		font-weight: 700;
+		color: var(--text-tertiary);
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		pointer-events: none;
+		background: var(--bg-surface-2);
+		border: 1px solid var(--border-default);
+		border-radius: 99px;
+		padding: 3px 10px;
+	}
+
+	.spi__mirror-panels {
+		display: flex;
+		height: 100%;
+	}
+
+	.spi__mirror-panel {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		position: relative;
+		min-width: 0;
+	}
+
+	.spi__mirror-lbl {
+		position: absolute;
+		bottom: 8px;
+		left: 0;
+		right: 0;
+		text-align: center;
+		font-size: 0.625rem;
+		font-weight: 700;
+		color: var(--text-tertiary);
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		pointer-events: none;
+	}
+
+	.spi__mirror-divider {
+		width: 1px;
+		background: var(--border-default);
+		flex-shrink: 0;
+	}
 
 	/* ─── Multi-subpath warning ─── */
 	.spi__subpath-warn {
 		display: flex;
 		align-items: flex-start;
 		gap: 7px;
-		font-size: 0.6875rem;
+		font-size: 0.8125rem;
 		color: #fbbf24;
 		line-height: 1.5;
 		padding: 6px 10px;
@@ -648,12 +919,31 @@
 		border: 1px solid color-mix(in srgb, #f59e0b 30%, transparent);
 		border-radius: var(--radius-md);
 		margin: 0;
+		flex-wrap: wrap;
 	}
-	.spi__subpath-warn svg { flex-shrink: 0; margin-top: 1px; }
+
+	.spi__extract-btn {
+		margin-left: auto;
+		flex-shrink: 0;
+		background: color-mix(in srgb, var(--color-brand) 14%, transparent);
+		border: 1px solid color-mix(in srgb, var(--color-brand) 35%, transparent);
+		color: var(--color-brand);
+		font-size: 0.75rem;
+		font-weight: 700;
+		font-family: var(--font-body);
+		padding: 3px 10px;
+		border-radius: 99px;
+		cursor: pointer;
+		transition: background 0.12s;
+		white-space: nowrap;
+	}
+	.spi__extract-btn:hover {
+		background: color-mix(in srgb, var(--color-brand) 22%, transparent);
+	}
 
 	/* ─── Note ─── */
 	.spi__note {
-		font-size: 0.6875rem;
+		font-size: 0.8125rem;
 		color: var(--text-tertiary);
 		line-height: 1.5;
 		padding: 6px 10px;

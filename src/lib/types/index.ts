@@ -433,12 +433,12 @@ export interface UserPattern {
 	// Vehicle (embedded — may not exist in public catalog)
 	vehicleId?: string;        // set if linking to existing public vehicle
 	make: string;
-	model: string;
-	year: number;
+	models: string[];
+	years: string[];   // e.g. ["2018", "2020-2024"]
 	bodyStyle: "sedan" | "coupe" | "suv" | "truck" | "convertible" | "wagon" | "hatchback";
 	// Pattern geometry
 	category: PatternCategory;
-	zone: PatternZone;
+	zones: PatternZone[];
 	name: string;
 	coverage: PatternCoverage;
 	widthInches: number;

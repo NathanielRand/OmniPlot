@@ -495,6 +495,39 @@ export const PPF_ZONES_LIST: Array<{ value: PatternZone; label: string }> = [
 	{ value: "custom",            label: "Custom" },
 ];
 
+// Mirror pairs — selecting one side suggests adding the other.
+// Only zones that have a geometric mirror are listed; symmetric zones (hood, roof, etc.) are absent.
+export const MIRROR_PAIRS: Partial<Record<PatternZone, PatternZone>> = {
+	"hood-edge-left":       "hood-edge-right",
+	"hood-edge-right":      "hood-edge-left",
+	"fender-front-left":    "fender-front-right",
+	"fender-front-right":   "fender-front-left",
+	"fender-rear-left":     "fender-rear-right",
+	"fender-rear-right":    "fender-rear-left",
+	"door-front-left":      "door-front-right",
+	"door-front-right":     "door-front-left",
+	"door-rear-left":       "door-rear-right",
+	"door-rear-right":      "door-rear-left",
+	"rocker-left":          "rocker-right",
+	"rocker-right":         "rocker-left",
+	"mirror-left":          "mirror-right",
+	"mirror-right":         "mirror-left",
+	"a-pillar-left":        "a-pillar-right",
+	"a-pillar-right":       "a-pillar-left",
+	"headlight-left":       "headlight-right",
+	"headlight-right":      "headlight-left",
+	"foglight-left":        "foglight-right",
+	"foglight-right":       "foglight-left",
+	"window-front-left":    "window-front-right",
+	"window-front-right":   "window-front-left",
+	"window-rear-left":     "window-rear-right",
+	"window-rear-right":    "window-rear-left",
+	"quarter-window-left":  "quarter-window-right",
+	"quarter-window-right": "quarter-window-left",
+	"vent-window-left":     "vent-window-right",
+	"vent-window-right":    "vent-window-left",
+};
+
 export const TINT_ZONES_LIST: Array<{ value: PatternZone; label: string }> = [
 	{ value: "windshield",          label: "Windshield (Full)" },
 	{ value: "windshield-strip",    label: "Windshield Strip" },

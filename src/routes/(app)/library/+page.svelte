@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from "svelte";
 	import { toastStore, canvasStore, userStore } from "$lib/stores";
-	import { patternStore, TINT_ZONE_GROUP, PPF_ZONE_GROUP } from "$lib/stores/patternStore.svelte";
+	import { patternStore, TINT_ZONE_GROUP, PPF_ZONE_GROUP, PPF_ZONES_LIST, TINT_ZONES_LIST, MIRROR_PAIRS } from "$lib/stores/patternStore.svelte";
 	import Badge from "$lib/components/ui/Badge.svelte";
 	import Button from "$lib/components/ui/Button.svelte";
 	import { uid, getItemColor } from "$lib/utils";
@@ -64,13 +64,36 @@
 		}
 	}
 
+	// Collapses mirror pairs into compact labels, e.g. "Front Door (L/R)" instead of
+	// "Door Front Left + Door Front Right". Unpaired zones get their full label.
+	function compactZones(zones: PatternZone[], category: UserPattern["category"]): string {
+		const list = category === "ppf" ? PPF_ZONES_LIST : TINT_ZONES_LIST;
+		const getLabel = (z: PatternZone) => list.find(l => l.value === z)?.label ?? z;
+		const remaining = new Set(zones);
+		const parts: string[] = [];
+		for (const z of zones) {
+			if (!remaining.has(z)) continue;
+			const mirror = MIRROR_PAIRS[z];
+			if (mirror && remaining.has(mirror)) {
+				const base = getLabel(z).replace(/ Left$| Right$/, "");
+				parts.push(`${base} (L/R)`);
+				remaining.delete(z);
+				remaining.delete(mirror);
+			} else {
+				parts.push(getLabel(z));
+				remaining.delete(z);
+			}
+		}
+		return parts.join(" · ");
+	}
+
 	// Convert a UserPattern to a Pattern for canvas
 	function userPatternToPattern(up: UserPattern): Pattern {
 		return {
 			id:           up.id,
 			vehicleId:    up.vehicleId ?? `user_${up.ownerId}`,
 			category:     up.category,
-			zone:         up.zone,
+			zone:         up.zones[0] ?? "hood",
 			name:         up.name,
 			coverage:     up.coverage,
 			svgPath:      up.svgPath,
@@ -82,6 +105,35 @@
 			createdAt:    up.createdAt,
 			updatedAt:    up.updatedAt,
 		};
+	}
+
+	// ─── Mirror-add dialog ───────────────────────
+	let mirrorTarget  = $state<UserPattern | null>(null);
+	let mirrorAddOrig = $state(true);
+	let mirrorAddFlip = $state(true);
+
+	const mirrorPat = $derived(mirrorTarget ? userPatternToPattern(mirrorTarget) : null);
+	const mirrorSidePair = $derived.by(() => {
+		if (!mirrorTarget) return null;
+		const list = mirrorTarget.category === "ppf" ? PPF_ZONES_LIST : TINT_ZONES_LIST;
+		const getLabel = (z: PatternZone) => list.find(l => l.value === z)?.label ?? String(z);
+		for (const z of mirrorTarget.zones) {
+			const m = MIRROR_PAIRS[z];
+			if (m && mirrorTarget.zones.includes(m)) {
+				return {
+					orig: { zone: z, label: getLabel(z) },
+					flip: { zone: m, label: getLabel(m) },
+				};
+			}
+		}
+		return null;
+	});
+
+	function hasMirrorZones(p: UserPattern): boolean {
+		return p.zones.some(z => {
+			const m = MIRROR_PAIRS[z];
+			return m !== undefined && p.zones.includes(m);
+		});
 	}
 
 	// ─── Adjustment request modal ────────────────
@@ -194,7 +246,7 @@
 	);
 
 	// ─── Add store pattern to canvas ─────────────
-	function addPatternToCanvas(pattern: Pattern) {
+	function addPatternToCanvas(pattern: Pattern, flippedH = false) {
 		const idx = canvasStore.items.length;
 		const newItem: CanvasItem = {
 			id:        uid("item_"),
@@ -205,7 +257,7 @@
 			height:  pattern.heightInches,
 			rotation: 0,
 			outOfBounds: false,
-			flippedH: false, flippedV: false,
+			flippedH, flippedV: false,
 			scale:  1,
 			layer:  idx,
 			locked: false,
@@ -222,12 +274,13 @@
 		canvasStore.setItems(nested);
 
 		const placed = nested.find((i) => i.id === newItem.id);
+		const suffix = flippedH ? " (mirrored)" : "";
 		if (placed?.outOfBounds) {
-			toastStore.warning("Added — won't cut", `${pattern.name} exceeds the ${canvasStore.sheet.widthInches}" roll width.`);
+			toastStore.warning("Added — won't cut", `${pattern.name}${suffix} exceeds the ${canvasStore.sheet.widthInches}" roll width.`);
 		} else {
 			toastStore.success(
 				"Added to canvas",
-				`${pattern.name} — ${pattern.widthInches}" × ${pattern.heightInches}"${placed?.rotation ? " (rotated)" : ""}`,
+				`${pattern.name}${suffix} — ${pattern.widthInches}" × ${pattern.heightInches}"${placed?.rotation ? " (rotated)" : ""}`,
 			);
 		}
 	}
@@ -646,8 +699,8 @@
 								</svg>
 							</div>
 							<div class="my-pattern-card__body">
-								<div class="my-pattern-card__name">{p.name}</div>
-								<div class="my-pattern-card__meta">{p.year} {p.make} {p.model} · {p.widthInches}" × {p.heightInches}"</div>
+								<div class="my-pattern-card__name">{compactZones(p.zones, p.category)}</div>
+								<div class="my-pattern-card__meta">{p.years.join(", ")} {p.make} {p.models.join(" / ")} · {p.widthInches}" × {p.heightInches}"</div>
 								<div class="my-pattern-card__badges">
 									<span class="mpbadge mpbadge--{p.category === 'ppf' ? 'ppf' : 'tint'}">{p.category === 'ppf' ? 'PPF' : 'Tint'}</span>
 									{#if p.isPublished}
@@ -663,7 +716,15 @@
 								<!-- Always: Add to canvas -->
 								<button
 									class="my-pattern-card__add"
-									onclick={() => addPatternToCanvas(pat)}
+									onclick={() => {
+										if (hasMirrorZones(p)) {
+											mirrorTarget = p;
+											mirrorAddOrig = true;
+											mirrorAddFlip = true;
+										} else {
+											addPatternToCanvas(pat);
+										}
+									}}
 									title="Add to canvas"
 									aria-label="Add {p.name} to canvas"
 								>
@@ -763,6 +824,74 @@
 					<button type="submit" class="btn-primary">Submit Request</button>
 				</div>
 			</form>
+		</div>
+	</div>
+{/if}
+
+<!-- ─── Mirror Pair Add Dialog ───────────── -->
+{#if mirrorTarget}
+	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<div class="modal-overlay" onclick={() => (mirrorTarget = null)}>
+		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+		<div class="modal" onclick={(e) => e.stopPropagation()}>
+			<div class="modal__header">
+				<div>
+					<h2 class="modal__title">Add Mirror Pair</h2>
+					<p class="modal__sub">Both sides are selected — uncheck to add only one.</p>
+				</div>
+				<button class="modal__close" onclick={() => (mirrorTarget = null)} aria-label="Close">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>
+				</button>
+			</div>
+			<div class="modal__body">
+				<div class="mirror-opts">
+					<label class="mirror-opt">
+						<input type="checkbox" class="mirror-opt__check" bind:checked={mirrorAddOrig}/>
+						<div class="mirror-opt__preview" aria-hidden="true">
+							<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet">
+								<path d={mirrorTarget.svgPath} fill="rgba(0,229,255,0.07)" stroke="var(--color-brand)" stroke-width="2"/>
+							</svg>
+						</div>
+						<div class="mirror-opt__info">
+							<strong>{mirrorSidePair?.orig.label ?? "As uploaded"}</strong>
+							<span>Original orientation</span>
+						</div>
+					</label>
+					<label class="mirror-opt">
+						<input type="checkbox" class="mirror-opt__check" bind:checked={mirrorAddFlip}/>
+						<div class="mirror-opt__preview" aria-hidden="true">
+							<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet">
+								<path d={mirrorTarget.svgPath} transform="matrix(-1 0 0 1 100 0)" fill="rgba(0,229,255,0.07)" stroke="var(--color-brand)" stroke-width="2"/>
+							</svg>
+						</div>
+						<div class="mirror-opt__info">
+							<strong>{mirrorSidePair?.flip.label ?? "Mirrored"}</strong>
+							<span>Horizontally flipped</span>
+						</div>
+					</label>
+				</div>
+				<div class="modal__actions">
+					<button type="button" class="btn-ghost" onclick={() => (mirrorTarget = null)}>Cancel</button>
+					<button
+						type="button"
+						class="btn-primary"
+						disabled={!mirrorAddOrig && !mirrorAddFlip}
+						onclick={() => {
+							const pat = mirrorPat!;
+							const pair = mirrorSidePair;
+							if (mirrorAddOrig) addPatternToCanvas(pair
+								? { ...pat, zone: pair.orig.zone, name: pair.orig.label }
+								: pat);
+							if (mirrorAddFlip) addPatternToCanvas(pair
+								? { ...pat, zone: pair.flip.zone, name: pair.flip.label }
+								: pat, true);
+							mirrorTarget = null;
+						}}
+					>
+						Add to Canvas
+					</button>
+				</div>
+			</div>
 		</div>
 	</div>
 {/if}
@@ -1539,9 +1668,11 @@
 		font-size: 0.875rem;
 		font-weight: 600;
 		color: var(--text-primary);
-		white-space: nowrap;
+		display: -webkit-box;
+		-webkit-line-clamp: 2;
+		-webkit-box-orient: vertical;
 		overflow: hidden;
-		text-overflow: ellipsis;
+		line-height: 1.35;
 	}
 	.my-pattern-card__meta {
 		font-size: 0.75rem;
@@ -1626,4 +1757,54 @@
 		color: #fbbf24;
 		background: color-mix(in srgb, #f59e0b 10%, var(--bg-surface-2));
 	}
+
+	/* ─── Mirror pair add dialog ─── */
+	.mirror-opts {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		margin-bottom: 16px;
+	}
+	.mirror-opt {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		padding: 10px 12px;
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-md);
+		cursor: pointer;
+		transition: border-color 0.12s, background 0.12s;
+	}
+	.mirror-opt:hover {
+		border-color: color-mix(in srgb, var(--color-brand) 50%, transparent);
+		background: color-mix(in srgb, var(--color-brand) 4%, transparent);
+	}
+	.mirror-opt:has(.mirror-opt__check:checked) {
+		border-color: var(--color-brand);
+		background: color-mix(in srgb, var(--color-brand) 6%, transparent);
+	}
+	.mirror-opt__check {
+		flex-shrink: 0;
+		width: 16px;
+		height: 16px;
+		cursor: pointer;
+		accent-color: var(--color-brand);
+	}
+	.mirror-opt__preview {
+		width: 52px;
+		height: 52px;
+		background: var(--bg-surface-3);
+		border-radius: var(--radius-sm);
+		flex-shrink: 0;
+		padding: 4px;
+		box-sizing: border-box;
+	}
+	.mirror-opt__preview svg { width: 100%; height: 100%; }
+	.mirror-opt__info {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+	}
+	.mirror-opt__info strong { font-size: 0.875rem; color: var(--text-primary); font-weight: 600; }
+	.mirror-opt__info span   { font-size: 0.75rem;  color: var(--text-tertiary); }
 </style>

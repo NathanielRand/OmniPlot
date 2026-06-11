@@ -3,6 +3,9 @@
 - claude --resume 31f50029-b621-492c-a461-ea4bd37790f6
 
 // UPCOMING
+- the agent connection is thorwing serial port errors.
+- multiple usdb connections seemd to have popped up. idk of the same or if it just detected multiple but there was a lot of connections. we should find a way to compress the unactive connections box size to clerarly differiate the the active connected vs inactive methods.
+- need optional end cut that cut with enough force to cleanly cut both layers of the roll to separate the job from the master roll completely.
 https://www.rvinyl.com/collections/chevrolet-precut-window-tint/products/chevrolet-silverado-2007-2013-2-door-avery-dennison-nr-nano-ceramic-ir-precut-window-tint?metaobject_handle=chevrolet-silverado-precut-window-tint
 - Create a local plotter emulator/simulator to verify the communication between plotter and agent (or other method) is bidirectional and valid throughout each expected communication event with proper processing and response. we need to test without having the quipment in person.
 - investors page

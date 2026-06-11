@@ -524,12 +524,15 @@ function toUserPattern(id: string, data: DocumentData): UserPattern {
 		status:            data.status            ?? "private",
 		adminNotes:        data.adminNotes,
 		vehicleId:         data.vehicleId,
-		make:              data.make              ?? "",
-		model:             data.model             ?? "",
-		year:              data.year              ?? 0,
+		make:              data.make                                          ?? "",
+		models:            Array.isArray(data.models) ? data.models
+		                   : data.model ? [data.model as string] : [],
+		years:             Array.isArray(data.years) ? data.years
+		                   : data.year ? [String(data.year)] : [],
 		bodyStyle:         data.bodyStyle         ?? "sedan",
 		category:          data.category          ?? "ppf",
-		zone:              data.zone              ?? "hood",
+		zones:             Array.isArray(data.zones) ? data.zones
+		                   : data.zone ? [data.zone as string] : [],
 		name:              data.name              ?? "",
 		coverage:          data.coverage          ?? "full",
 		widthInches:       data.widthInches       ?? 0,
@@ -580,7 +583,7 @@ export async function updateUserPattern(
 	patch: Partial<Pick<UserPattern,
 		| "submitToCommunity" | "name" | "notes" | "svgPath"
 		| "widthInches" | "heightInches" | "coverage"
-		| "category" | "zone" | "make" | "model" | "year" | "bodyStyle"
+		| "category" | "zones" | "make" | "models" | "years" | "bodyStyle"
 	>>,
 ): Promise<void> {
 	const update: Record<string, unknown> = { ...patch, updatedAt: serverTimestamp() };
