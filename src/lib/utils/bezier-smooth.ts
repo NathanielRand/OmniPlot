@@ -45,6 +45,138 @@ function entryTangent(s: Seg): Pt {
 	return mag(t) > 1e-10 ? t : sub(s.p3, s.p0);
 }
 
+// ─── Chord-projection helpers ─────────────────────────────────────────────────
+
+function perpDistToChord(p: Pt, a: Pt, b: Pt): number {
+	const dx = b.x - a.x, dy = b.y - a.y;
+	const len = Math.sqrt(dx * dx + dy * dy);
+	if (len < 1e-10) return Math.hypot(p.x - a.x, p.y - a.y);
+	return Math.abs((p.y - a.y) * dx - (p.x - a.x) * dy) / len;
+}
+
+function projectOntoChord(p: Pt, a: Pt, b: Pt): Pt {
+	const dx = b.x - a.x, dy = b.y - a.y;
+	const lenSq = dx * dx + dy * dy;
+	if (lenSq < 1e-10) return { ...a };
+	const t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq;
+	return { x: a.x + t * dx, y: a.y + t * dy };
+}
+
+// For a curved run: apply 3 passes of a 0.25/0.5/0.25 weighted-average
+// smoothing to the intermediate junction positions (corner endpoints are
+// pinned).  Control points adjacent to each junction translate rigidly so
+// the exit/entry tangent directions are preserved — only the positional noise
+// in the endpoint coordinates is reduced, not the actual curve shape.
+function smoothCurvedRunEndpoints(segs: Seg[], run: number[]): void {
+	const m = run.length - 1; // number of internal junctions
+	if (m < 1) return;
+
+	const p0 = segs[run[0]].p0;
+	const pn = segs[run[run.length - 1]].p3;
+
+	// Collect current junction positions as mutable working copies.
+	let jx: Pt[] = run.slice(0, m).map(k => ({ ...segs[k].p3 }));
+
+	for (let pass = 0; pass < 3; pass++) {
+		jx = jx.map((j, i) => {
+			const prev = i === 0       ? p0          : jx[i - 1];
+			const next = i === m - 1   ? pn          : jx[i + 1];
+			return {
+				x: 0.25 * prev.x + 0.5 * j.x + 0.25 * next.x,
+				y: 0.25 * prev.y + 0.5 * j.y + 0.25 * next.y,
+			};
+		});
+	}
+
+	// Apply smoothed positions with rigid CP translation (preserves tangents).
+	for (let k = 0; k < m; k++) {
+		const s    = segs[run[k]];
+		const sNxt = segs[run[k + 1]];
+		const dx   = jx[k].x - s.p3.x;
+		const dy   = jx[k].y - s.p3.y;
+		s.p2    = { x: s.p2.x    + dx, y: s.p2.y    + dy };
+		s.p3    = jx[k];
+		sNxt.p0 = { x: jx[k].x,        y: jx[k].y        };
+		sNxt.p1 = { x: sNxt.p1.x + dx, y: sNxt.p1.y + dy };
+	}
+}
+
+// Partitions the segment chain into runs bounded by genuine corners (angle ≥
+// cornerThreshDeg), then for each run:
+//   • Collinear run (all endpoints within maxRunDevFrac of chord): replaced
+//     with a single straight segment p0→pn — zero intermediate joints means
+//     zero seam artifacts, and the result is immune to internal endpoint noise.
+//   • Curved run: mild Gaussian endpoint smoothing applied in place, then all
+//     original segments are kept.
+// Returns a new Seg[] (may be shorter than input when runs are collapsed).
+function collapseCollinearRuns(segs: Seg[], cornerThreshDeg: number, maxRunDevFrac = 0.02): Seg[] {
+	const n = segs.length;
+	if (n < 2) return segs.slice();
+
+	// Mark run-start indices (corner junctions or geometric gaps).
+	const isBoundary = new Uint8Array(n);
+	for (let i = 0; i < n; i++) {
+		const prev = (i - 1 + n) % n;
+		if (mag(sub(segs[prev].p3, segs[i].p0)) > 1e-6) { isBoundary[i] = 1; continue; }
+		if (angleBetween(exitTangent(segs[prev]), entryTangent(segs[i])) >= cornerThreshDeg) {
+			isBoundary[i] = 1;
+		}
+	}
+
+	const starts: number[] = [];
+	for (let i = 0; i < n; i++) if (isBoundary[i]) starts.push(i);
+	if (starts.length === 0) starts.push(0);
+
+	const nr     = starts.length;
+	const result: Seg[] = [];
+
+	for (let ri = 0; ri < nr; ri++) {
+		const runStart  = starts[ri];
+		const nextStart = starts[(ri + 1) % nr];
+
+		const run: number[] = [];
+		for (let i = runStart; ; i = (i + 1) % n) {
+			run.push(i);
+			if ((i + 1) % n === nextStart || run.length >= n) break;
+		}
+
+		const p0   = segs[run[0]].p0;
+		const pn   = segs[run[run.length - 1]].p3;
+		const span = Math.hypot(pn.x - p0.x, pn.y - p0.y);
+
+		if (span < 1e-10) { for (const k of run) result.push(segs[k]); continue; }
+
+		// Max perpendicular deviation of any endpoint from the run chord.
+		let maxDev = 0;
+		for (const k of run) {
+			const d = perpDistToChord(segs[k].p3, p0, pn);
+			if (d > maxDev) maxDev = d;
+		}
+		// Also check the run's own start point.
+		{
+			const d = perpDistToChord(p0, p0, pn);
+			if (d > maxDev) maxDev = d;
+		}
+
+		if (maxDev <= maxRunDevFrac * span) {
+			// Collinear: emit one straight segment for the whole run.
+			const dx = pn.x - p0.x, dy = pn.y - p0.y;
+			result.push({
+				p0,
+				p1: { x: p0.x + dx / 3,       y: p0.y + dy / 3       },
+				p2: { x: p0.x + dx * 2 / 3,    y: p0.y + dy * 2 / 3   },
+				p3: pn,
+			});
+		} else {
+			// Curved: smooth endpoint noise, keep all segments.
+			smoothCurvedRunEndpoints(segs, run);
+			for (const k of run) result.push(segs[k]);
+		}
+	}
+
+	return result;
+}
+
 // ─── G1 enforcement ───────────────────────────────────────────────────────────
 
 // Adjusts p2 of `cur` and p1 of `nxt` so both tangents align to their bisector.
@@ -211,7 +343,15 @@ function serializePath(subpaths: Seg[][]): string {
 	return subpaths.map(segs => {
 		if (!segs.length) return '';
 		let d = `M ${ptStr(segs[0].p0)}`;
-		for (const s of segs) d += ` C ${ptStr(s.p1)} ${ptStr(s.p2)} ${ptStr(s.p3)}`;
+		for (const s of segs) {
+			// Emit L for collapsed straight segments (CPs on the chord).
+			if (perpDistToChord(s.p1, s.p0, s.p3) < 1e-4 &&
+			    perpDistToChord(s.p2, s.p0, s.p3) < 1e-4) {
+				d += ` L ${ptStr(s.p3)}`;
+			} else {
+				d += ` C ${ptStr(s.p1)} ${ptStr(s.p2)} ${ptStr(s.p3)}`;
+			}
+		}
 		d += ' Z';
 		return d;
 	}).filter(Boolean).join(' ');
@@ -229,32 +369,36 @@ function serializePath(subpaths: Seg[][]): string {
  * - If the angle is at or above the threshold: leave the junction as a hard
  *   corner — no modification.
  *
- * The threshold default of 20° means: wiggles from tracing noise get smoothed,
- * while genuine geometry changes (45°, 90° corners, etc.) are preserved exactly.
+ * The threshold default of 25° means: wiggles and near-smooth transitions from
+ * tracing noise get smoothed, while genuine geometry changes (45°, 90° corners,
+ * etc.) are preserved exactly.
  */
-export function smoothBezierJunctions(svgPath: string, cornerThresholdDeg = 20): string {
-	const subpaths = parsePath(svgPath);
+export function smoothBezierJunctions(svgPath: string, cornerThresholdDeg = 25): string {
+	const subpaths  = parsePath(svgPath);
+	const processed = subpaths.map(segs => {
+		if (segs.length < 2) return segs;
 
-	for (const segs of subpaths) {
-		const n = segs.length;
-		if (n < 2) continue;
+		// Pass 1: collapse collinear runs to single segments; smooth curved run
+		// endpoints.  Returns a new (possibly shorter) Seg[] so intermediate
+		// joints on straight edges are fully eliminated.
+		const collapsed = collapseCollinearRuns(segs, cornerThresholdDeg);
+		const n = collapsed.length;
 
-		for (let i = 0; i < n; i++) {
-			const j = (i + 1) % n;        // wraps: last seg → first seg (closed path)
-			const cur = segs[i];
-			const nxt = segs[j];
-
-			// Verify the junction is geometrically connected.
-			if (mag(sub(cur.p3, nxt.p0)) > 1e-6) continue;
-
-			const angle = angleBetween(exitTangent(cur), entryTangent(nxt));
-
-			if (angle < cornerThresholdDeg) {
-				enforceG1(cur, nxt);
+		// Passes 2–3: G1 junction smoothing run twice for convergence.
+		for (let pass = 0; pass < 2; pass++) {
+			for (let i = 0; i < n; i++) {
+				const j   = (i + 1) % n;
+				const cur = collapsed[i];
+				const nxt = collapsed[j];
+				if (mag(sub(cur.p3, nxt.p0)) > 1e-6) continue;
+				if (angleBetween(exitTangent(cur), entryTangent(nxt)) < cornerThresholdDeg) {
+					enforceG1(cur, nxt);
+				}
 			}
-			// else: genuine corner — both control points stay exactly as-is
 		}
-	}
 
-	return serializePath(subpaths);
+		return collapsed;
+	});
+
+	return serializePath(processed);
 }

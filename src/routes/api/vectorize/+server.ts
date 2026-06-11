@@ -17,7 +17,7 @@ const TRACE_OPTIONS = {
 	turnPolicy:   'minority' as const,
 	alphaMax:     1.0,
 	optCurve:     true,
-	optTolerance: 0.8,   // 0.2 → 0.8: looser curve fit = fewer micro-wiggles on straight edges
+	optTolerance: 1.0,   // higher = fewer segments, smoother curves on noisy binary edges
 	blackOnWhite: true,
 	background:   '#ffffff',
 	color:        '#000000',
