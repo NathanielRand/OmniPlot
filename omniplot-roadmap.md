@@ -4,8 +4,9 @@ board: OmniPlot Roadmap
 
 ## 📋 Backlog
 
-### smoothing pass on corners and flat edges (where you would expect line connecting corners to be more straight)
-<!-- status: backlog | created: 2026-06-11 -->
+### Optional end cut for roll separation with adjustable gap distance from pattern edges shown on the canvas when toggled on as to where it will make its end cut.
+<!-- status: backlog | created: 2026-06-10 -->
+- Add optional end cut that cuts with enough force to cleanly cut both layers of the roll and fully separate the job from the master roll
 
 ### Agent connection serial port errors
 <!-- status: backlog | created: 2026-06-10 -->
@@ -15,14 +16,6 @@ board: OmniPlot Roadmap
 <!-- status: backlog | created: 2026-06-10 -->
 - Multiple USB connections appeared simultaneously; unclear if same device or duplicates
 - Compress the inactive connections box size to clearly differentiate active connected vs inactive methods
-
-### Lost precision on new method upload cornering
-<!-- status: backlog | created: 2026-06-10 -->
-- Precision regression on cornering observed after recent method upload changes — identify and fix
-
-### Optional end cut for roll separation
-<!-- status: backlog | created: 2026-06-10 -->
-- Add optional end cut that cuts with enough force to cleanly cut both layers of the roll and fully separate the job from the master roll
 
 ### Plotter emulator/simulator for offline testing
 <!-- status: backlog | created: 2026-06-10 -->
@@ -48,13 +41,19 @@ board: OmniPlot Roadmap
 <!-- status: backlog | created: 2026-06-10 -->
 - Add offline mode support
 
-### Vertical pattern placement preference
+### Pattern flagging for inaccuracies
 <!-- status: backlog | created: 2026-06-10 -->
-- Add preference to orient patterns vertically when the longest dimension fits within the roll width, reducing width consumption
+- Add flagging/report system for all patterns (platform and community)
+- Warn users when a pattern they select is flagged for review
 
 ### Custom material dimensions
 <!-- status: backlog | created: 2026-06-10 -->
 - Allow custom material selection for unique/irregular dimensions (e.g. non-standard roll sizes)
+
+### Heat shrinkage buffer option
+<!-- status: backlog | created: 2026-06-10 -->
+- Add setting to apply an internal buffer inside each design's cut zone for heat shrinkage compensation
+- Default ~1cm, user-adjustable
 
 ### Community pattern uploads — approval flow
 <!-- status: backlog | created: 2026-06-10 -->
@@ -85,21 +84,6 @@ board: OmniPlot Roadmap
 <!-- status: backlog | created: 2026-06-10 -->
 - Turn user's phone camera into a web-based 2D scanning tool for capturing patterns
 
-### Pattern flagging for inaccuracies
-<!-- status: backlog | created: 2026-06-10 -->
-- Add flagging/report system for all patterns (platform and community)
-- Warn users when a pattern they select is flagged for review
-
-### Pattern accuracy — window curvature
-<!-- status: backlog | created: 2026-06-10 -->
-- Current patterns are inaccurate — window curvature is not being taken into consideration
-- Audit and fix all window patterns to account for curvature
-
-### Heat shrinkage buffer option
-<!-- status: backlog | created: 2026-06-10 -->
-- Add setting to apply an internal buffer inside each design's cut zone for heat shrinkage compensation
-- Default ~1cm, user-adjustable
-
 ### optTolerance at 0.8 — that's the practical ceiling. Blurs at 2.2/1.8. If this overshoots and gentle curves start flattening, the safe retreat is optTolerance: 0.7 and blurs back to 2.0/1.5.
 <!-- status: backlog | created: 2026-06-11 -->
 
@@ -110,8 +94,9 @@ board: OmniPlot Roadmap
 - Support any image type → remove background → convert to SVG
 - Should inherit existing SVG upload functionality
 
-### test
+### Vertical pattern placement preference
 <!-- status: in-progress | created: 2026-06-10 -->
+- Add preference to orient patterns vertically when the longest dimension fits within the roll width, reducing width consumption
 
 ## 🧪 Testing
 
@@ -207,4 +192,19 @@ board: OmniPlot Roadmap
 - Confirm the "Send a test job" step in setup does NOT use a 500-unit cut
 - Verify only the 1-inch × 1-inch box with circle test cut is used throughout all docs and UI
 - Audit `/agent`, `/studio/agent` pages for consistency; guide on `/agent` should be multi-row (too clustered on all devices)
+
+### smoothing pass on corners and flat edges (where you would expect line connecting corners to be more straight)
+<!-- status: backlog | created: 2026-06-11 -->
+
+### Lost precision on new method upload cornering
+<!-- status: backlog | created: 2026-06-10 -->
+- Precision regression on cornering observed after recent method upload changes — identify and fix
+
+### Pattern accuracy — window curvature
+<!-- status: backlog | created: 2026-06-10 -->
+- Current patterns are inaccurate — window curvature is not being taken into consideration
+- Audit and fix all window patterns to account for curvature
+
+### test
+<!-- status: backlog | created: 2026-06-10 -->
 
