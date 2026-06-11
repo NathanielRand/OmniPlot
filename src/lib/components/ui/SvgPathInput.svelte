@@ -195,7 +195,10 @@
 				fd.append("image", file);
 				const res = await fetch("/api/vectorize", { method: "POST", body: fd });
 				if (!res.ok) {
-					const msg = await res.text().catch(() => "");
+					// SvelteKit error responses are JSON: { message: "...", status: N }
+					const body = await res.text().catch(() => "");
+					let msg = "";
+					try { msg = (JSON.parse(body) as { message?: string }).message ?? ""; } catch { msg = body; }
 					throw new Error(msg || `Server error ${res.status}`);
 				}
 				const { svg } = await res.json() as { svg: string };
