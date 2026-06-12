@@ -90,6 +90,9 @@ board: OmniPlot Roadmap
 ### optTolerance at 0.8 — that's the practical ceiling. Blurs at 2.2/1.8. If this overshoots and gentle curves start flattening, the safe retreat is optTolerance: 0.7 and blurs back to 2.0/1.5.
 <!-- status: backlog | created: 2026-06-11 -->
 
+### claude --resume 07dd12d1-130a-4227-b43c-a3fd6a80fc54
+<!-- status: backlog | created: 2026-06-11 -->
+
 ## 🔄 In Progress
 
 ### Image → SVG with background removal
