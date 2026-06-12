@@ -379,11 +379,11 @@ function serializePath(subpaths: Seg[][]): string {
  * - If the angle is at or above the threshold: leave the junction as a hard
  *   corner — no modification.
  *
- * The threshold default of 25° means: wiggles and near-smooth transitions from
+ * The threshold default of 40° means: wiggles and near-smooth transitions from
  * tracing noise get smoothed, while genuine geometry changes (45°, 90° corners,
  * etc.) are preserved exactly.
  */
-export function smoothBezierJunctions(svgPath: string, cornerThresholdDeg = 25): string {
+export function smoothBezierJunctions(svgPath: string, cornerThresholdDeg = 40): string {
 	const subpaths  = parsePath(svgPath);
 	const processed = subpaths.map(segs => {
 		if (segs.length < 2) return segs;
