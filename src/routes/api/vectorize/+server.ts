@@ -45,18 +45,10 @@ async function preprocessForTrace(inputBuffer: Buffer): Promise<Buffer> {
 		);
 	}
 
-	// Preprocessing pipeline — mirrors the sharp version:
-	// 1. greyscale      — single-channel luma
-	// 2. normalize      — stretch histogram to full contrast range
-	// 3. blur(2)        — smooth anti-aliased edges before threshold
-	// 4. threshold(128) — binarize
-	// 5. blur(2) + threshold — second pass smooths the binary edge
 	img
 		.greyscale()
 		.normalize()
-		.blur(2)
-		.threshold({ max: 128, autoGreyscale: false })
-		.blur(2)
+		.gaussian(2)
 		.threshold({ max: 128, autoGreyscale: false });
 
 	return new Promise<Buffer>((resolve, reject) => {

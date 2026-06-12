@@ -62,25 +62,22 @@ function projectOntoChord(p: Pt, a: Pt, b: Pt): Pt {
 	return { x: a.x + t * dx, y: a.y + t * dy };
 }
 
-// For a curved run: apply 3 passes of a 0.25/0.5/0.25 weighted-average
-// smoothing to the intermediate junction positions (corner endpoints are
-// pinned).  Control points adjacent to each junction translate rigidly so
-// the exit/entry tangent directions are preserved — only the positional noise
-// in the endpoint coordinates is reduced, not the actual curve shape.
+// For a curved run: smooth junction positions with 6-pass Laplacian (0.25/0.5/0.25),
+// then re-derive all control points with Catmull-Rom tangents so the full run is
+// C1-smooth end-to-end — not just positionally smoothed, but tangent-smooth too.
 function smoothCurvedRunEndpoints(segs: Seg[], run: number[]): void {
-	const m = run.length - 1; // number of internal junctions
+	const m = run.length - 1; // number of interior junctions
 	if (m < 1) return;
 
 	const p0 = segs[run[0]].p0;
 	const pn = segs[run[run.length - 1]].p3;
 
-	// Collect current junction positions as mutable working copies.
+	// Smooth junction positions with 6 Laplacian passes (endpoints pinned).
 	let jx: Pt[] = run.slice(0, m).map(k => ({ ...segs[k].p3 }));
-
-	for (let pass = 0; pass < 3; pass++) {
+	for (let pass = 0; pass < 6; pass++) {
 		jx = jx.map((j, i) => {
-			const prev = i === 0       ? p0          : jx[i - 1];
-			const next = i === m - 1   ? pn          : jx[i + 1];
+			const prev = i === 0     ? p0 : jx[i - 1];
+			const next = i === m - 1 ? pn : jx[i + 1];
 			return {
 				x: 0.25 * prev.x + 0.5 * j.x + 0.25 * next.x,
 				y: 0.25 * prev.y + 0.5 * j.y + 0.25 * next.y,
@@ -88,16 +85,23 @@ function smoothCurvedRunEndpoints(segs: Seg[], run: number[]): void {
 		});
 	}
 
-	// Apply smoothed positions with rigid CP translation (preserves tangents).
-	for (let k = 0; k < m; k++) {
-		const s    = segs[run[k]];
-		const sNxt = segs[run[k + 1]];
-		const dx   = jx[k].x - s.p3.x;
-		const dy   = jx[k].y - s.p3.y;
-		s.p2    = { x: s.p2.x    + dx, y: s.p2.y    + dy };
-		s.p3    = jx[k];
-		sNxt.p0 = { x: jx[k].x,        y: jx[k].y        };
-		sNxt.p1 = { x: sNxt.p1.x + dx, y: sNxt.p1.y + dy };
+	// Build knot array: [p0, jx[0]…jx[m-1], pn] — length m+2.
+	const pts: Pt[] = [p0, ...jx, pn];
+
+	// Catmull-Rom tangent at knot i: central difference for interior, one-sided at ends.
+	const tanAt = (i: number): Pt => {
+		if (i === 0)     return sub(pts[1], pts[0]);
+		if (i === m + 1) return sub(pts[m + 1], pts[m]);
+		return scl(sub(pts[i + 1], pts[i - 1]), 0.5);
+	};
+
+	// Re-derive each segment with C1-smooth control points (1/3 rule).
+	for (let k = 0; k <= m; k++) {
+		const s = segs[run[k]];
+		s.p0 = pts[k];
+		s.p1 = add(pts[k],     scl(tanAt(k),     1 / 3));
+		s.p2 = sub(pts[k + 1], scl(tanAt(k + 1), 1 / 3));
+		s.p3 = pts[k + 1];
 	}
 }
 
@@ -109,7 +113,7 @@ function smoothCurvedRunEndpoints(segs: Seg[], run: number[]): void {
 //   • Curved run: mild Gaussian endpoint smoothing applied in place, then all
 //     original segments are kept.
 // Returns a new Seg[] (may be shorter than input when runs are collapsed).
-function collapseCollinearRuns(segs: Seg[], cornerThreshDeg: number, maxRunDevFrac = 0.02): Seg[] {
+function collapseCollinearRuns(segs: Seg[], cornerThreshDeg: number, maxRunDevFrac = 0.03): Seg[] {
 	const n = segs.length;
 	if (n < 2) return segs.slice();
 
@@ -180,7 +184,8 @@ function collapseCollinearRuns(segs: Seg[], cornerThreshDeg: number, maxRunDevFr
 // ─── G1 enforcement ───────────────────────────────────────────────────────────
 
 // Adjusts p2 of `cur` and p1 of `nxt` so both tangents align to their bisector.
-// Control point distances (arm lengths) are preserved — only direction changes.
+// When both arms are real (curve-to-curve junction), arm lengths are averaged so
+// curvature transitions continuously rather than jumping at the junction.
 function enforceG1(cur: Seg, nxt: Seg): void {
 	const exitDir  = exitTangent(cur);
 	const entryDir = entryTangent(nxt);
@@ -193,12 +198,17 @@ function enforceG1(cur: Seg, nxt: Seg): void {
 	const bisector = unit(add(eu, nu));
 	if (!bisector) return; // exactly antiparallel → genuine cusp, skip
 
-	const exitLen  = mag(sub(cur.p3,  cur.p2));
-	const entryLen = mag(sub(nxt.p1,  nxt.p0));
+	const exitLen  = mag(sub(cur.p3, cur.p2));
+	const entryLen = mag(sub(nxt.p1, nxt.p0));
 
-	// Preserve arm lengths, align both to bisector.
-	cur.p2  = sub(cur.p3,  scl(bisector, exitLen));
-	nxt.p1  = add(nxt.p0,  scl(bisector, entryLen));
+	// For curve-to-curve junctions, average arm lengths to reduce curvature jumps.
+	// For straight-to-curve junctions (one arm ≈ 0), keep each arm as-is.
+	const len = (exitLen > 1e-4 && entryLen > 1e-4)
+		? (exitLen + entryLen) / 2
+		: undefined;
+
+	cur.p2 = sub(cur.p3, scl(bisector, len ?? exitLen));
+	nxt.p1 = add(nxt.p0, scl(bisector, len ?? entryLen));
 }
 
 // ─── SVG path parser ──────────────────────────────────────────────────────────
@@ -384,8 +394,8 @@ export function smoothBezierJunctions(svgPath: string, cornerThresholdDeg = 25):
 		const collapsed = collapseCollinearRuns(segs, cornerThresholdDeg);
 		const n = collapsed.length;
 
-		// Passes 2–3: G1 junction smoothing run twice for convergence.
-		for (let pass = 0; pass < 2; pass++) {
+		// Passes 2–4: G1 junction smoothing run three times for convergence.
+		for (let pass = 0; pass < 3; pass++) {
 			for (let i = 0; i < n; i++) {
 				const j   = (i + 1) % n;
 				const cur = collapsed[i];
