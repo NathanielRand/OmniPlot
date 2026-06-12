@@ -1,30 +1,21 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { trace } from 'potrace';
-import sharp from 'sharp';
+import Jimp from 'jimp';
 
-// Pin the Vercel serverless function to Node.js 20 and give enough headroom
-// for sharp + potrace on large upsampled images.
 export const config = {
 	runtime:     'nodejs20.x',
 	maxDuration: 30,
 };
 
-// Target resolution for tracing — upsample small images to this so potrace
-// has more pixels to work with, which directly improves edge accuracy.
 const TARGET_LONG_EDGE = 3000;
 
-// Potrace options.
-// alphaMax 1.0 is potrace's natural per-point corner detector — it classifies
-// high-curvature junctions as hard corners and low-curvature as curves.
-// The client-side smoothBezierJunctions pass then refines near-smooth junctions
-// (<25°) to G1, handling the noise case without rounding genuine corners.
 const TRACE_OPTIONS = {
 	turdSize:     2,
 	turnPolicy:   'minority' as const,
 	alphaMax:     1.0,
 	optCurve:     true,
-	optTolerance: 1.0,   // higher = fewer segments, smoother curves on noisy binary edges
+	optTolerance: 1.0,
 	blackOnWhite: true,
 	background:   '#ffffff',
 	color:        '#000000',
@@ -36,37 +27,45 @@ const ALLOWED_TYPES = new Set([
 ]);
 
 async function preprocessForTrace(inputBuffer: Buffer): Promise<Buffer> {
-	const meta = await sharp(inputBuffer).metadata();
-	const longEdge = Math.max(meta.width ?? 0, meta.height ?? 0);
+	const img = await new Promise<Jimp>((resolve, reject) => {
+		Jimp.read(inputBuffer, (err, image) => {
+			if (err) reject(err); else resolve(image);
+		});
+	});
 
-	let pipeline = sharp(inputBuffer);
+	const { width, height } = img.bitmap;
+	const longEdge = Math.max(width, height);
 
-	// Upsample if below target — more pixels → cleaner binary → better curves.
 	if (longEdge > 0 && longEdge < TARGET_LONG_EDGE) {
 		const scale = TARGET_LONG_EDGE / longEdge;
-		pipeline = pipeline.resize({
-			width:  Math.round((meta.width  ?? 0) * scale),
-			height: Math.round((meta.height ?? 0) * scale),
-			kernel: sharp.kernel.cubic,
-		});
+		img.resize(
+			Math.round(width  * scale),
+			Math.round(height * scale),
+			Jimp.RESIZE_BICUBIC,
+		);
 	}
 
-	// Preprocessing pipeline:
-	// 1. median(3)   — removes salt-and-pepper noise while preserving edge position
-	// 2. normalize   — stretches histogram to full contrast range
-	// 3. blur(2.2)   — smooths anti-aliased transition before thresholding
-	// 4. threshold   — binarize
-	// 5. blur(1.8) + threshold — second pass smooths the binary edge itself
-	return pipeline
-		.grayscale()
-		.median(3)
+	// Preprocessing pipeline — mirrors the sharp version:
+	// 1. greyscale      — single-channel luma
+	// 2. normalize      — stretch histogram to full contrast range
+	// 3. blur(2)        — smooth anti-aliased edges before threshold
+	// 4. threshold(128) — binarize
+	// 5. blur(2) + threshold — second pass smooths the binary edge
+	img
+		.greyscale()
 		.normalize()
-		.blur(2.2)
-		.threshold(128)
-		.blur(1.8)
-		.threshold(128)
-		.png()
-		.toBuffer();
+		.blur(2)
+		.threshold({ max: 128, autoGreyscale: false })
+		.blur(2)
+		.threshold({ max: 128, autoGreyscale: false });
+
+	return new Promise<Buffer>((resolve, reject) => {
+		img.getBase64(Jimp.MIME_PNG, (err, data) => {
+			if (err) { reject(err); return; }
+			const b64 = data.replace(/^data:image\/png;base64,/, '');
+			resolve(Buffer.from(b64, 'base64'));
+		});
+	});
 }
 
 export const POST: RequestHandler = async ({ request }) => {
@@ -104,12 +103,7 @@ export const POST: RequestHandler = async ({ request }) => {
 		return json({ svg });
 
 	} catch (err: unknown) {
-		// Re-throw SvelteKit HttpErrors (400/415/422 above) unchanged.
 		if (err && typeof err === 'object' && 'status' in err) throw err;
-
-		// Unexpected error (e.g. native module load failure, OOM).
-		// Log the full stack so it appears in Vercel's function log, then
-		// return a 500 with a human-readable message the client can display.
 		const msg = err instanceof Error ? err.message : String(err);
 		console.error('[vectorize] unexpected error:', err);
 		throw error(500, `Vectorization service error: ${msg}`);
