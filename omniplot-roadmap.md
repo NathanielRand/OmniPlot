@@ -4,6 +4,9 @@ board: OmniPlot Roadmap
 
 ## 📋 Backlog
 
+### prod error on vectorize: Cross-Origin Request Blocked: The Same Origin Policy disallows reading the remote resource at http://localhost:7878/api/status. (Reason: CORS request did not succeed). Status
+<!-- status: backlog | created: 2026-06-11 -->
+
 ### Optional end cut for roll separation with adjustable gap distance from pattern edges shown on the canvas when toggled on as to where it will make its end cut.
 <!-- status: backlog | created: 2026-06-10 -->
 - Add optional end cut that cuts with enough force to cleanly cut both layers of the roll and fully separate the job from the master roll
