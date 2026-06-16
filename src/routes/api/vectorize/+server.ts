@@ -5,10 +5,10 @@ import Jimp from 'jimp';
 
 export const config = {
 	runtime:     'nodejs20.x',
-	maxDuration: 30,
+	maxDuration: 60,
 };
 
-const TARGET_LONG_EDGE = 3000;
+const TARGET_LONG_EDGE = 6000;
 
 const TRACE_OPTIONS = {
 	turdSize:     2,
@@ -25,6 +25,49 @@ const ALLOWED_TYPES = new Set([
 	'image/png', 'image/jpeg', 'image/jpg', 'image/webp',
 	'image/bmp', 'image/gif', 'image/tiff',
 ]);
+
+// Morphological open on a thresholded binary image (black-on-white).
+// Removes up to `radius`-pixel-scale protrusions from edges (staircase micro-bumps).
+// Erosion = (2r+1)×(2r+1) max-filter, dilation = same-size min-filter.
+function morphOpen(img: Jimp, radius = 1): void {
+	const { width, height } = img.bitmap;
+	const data    = img.bitmap.data as unknown as Buffer;
+	const stride  = width * 4;
+	const eroded  = Buffer.alloc(data.length);
+
+	for (let y = 0; y < height; y++) {
+		for (let x = 0; x < width; x++) {
+			let maxV = 0;
+			for (let dy = -radius; dy <= radius; dy++) {
+				const ny = Math.max(0, Math.min(height - 1, y + dy));
+				for (let dx = -radius; dx <= radius; dx++) {
+					const nx = Math.max(0, Math.min(width - 1, x + dx));
+					const v  = data[ny * stride + nx * 4];
+					if (v > maxV) maxV = v;
+				}
+			}
+			const i = y * stride + x * 4;
+			eroded[i] = eroded[i + 1] = eroded[i + 2] = maxV;
+			eroded[i + 3] = 255;
+		}
+	}
+
+	for (let y = 0; y < height; y++) {
+		for (let x = 0; x < width; x++) {
+			let minV = 255;
+			for (let dy = -radius; dy <= radius; dy++) {
+				const ny = Math.max(0, Math.min(height - 1, y + dy));
+				for (let dx = -radius; dx <= radius; dx++) {
+					const nx = Math.max(0, Math.min(width - 1, x + dx));
+					const v  = eroded[ny * stride + nx * 4];
+					if (v < minV) minV = v;
+				}
+			}
+			const i = y * stride + x * 4;
+			data[i] = data[i + 1] = data[i + 2] = minV;
+		}
+	}
+}
 
 async function preprocessForTrace(inputBuffer: Buffer): Promise<Buffer> {
 	const img = await new Promise<Jimp>((resolve, reject) => {
@@ -50,6 +93,8 @@ async function preprocessForTrace(inputBuffer: Buffer): Promise<Buffer> {
 		.normalize()
 		.gaussian(2)
 		.threshold({ max: 128, autoGreyscale: false });
+
+	morphOpen(img, 3);
 
 	return new Promise<Buffer>((resolve, reject) => {
 		img.getBase64(Jimp.MIME_PNG, (err, data) => {
