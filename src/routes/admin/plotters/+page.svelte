@@ -5,7 +5,7 @@
 <script lang="ts">
 	import { onMount } from "svelte";
 	import Badge from "$lib/components/ui/Badge.svelte";
-	import { getPlotterErrors, resolvePlotterError } from "$lib/firebase/firestore";
+	import { auth } from "$lib/firebase/client";
 	import type { PlotterErrorReport } from "$lib/types";
 
 	let reports  = $state<PlotterErrorReport[]>([]);
@@ -20,11 +20,23 @@
 
 	onMount(loadReports);
 
+	async function authHeader() {
+		const token = await auth.currentUser?.getIdToken();
+		return token ? { Authorization: `Bearer ${token}` } : {};
+	}
+
 	async function loadReports() {
 		loading = true;
 		error = "";
 		try {
-			reports = await getPlotterErrors(200);
+			const res = await fetch("/api/admin/plotters?limit=200", { headers: await authHeader() });
+			if (!res.ok) throw new Error(await res.text());
+			const { reports: raw } = await res.json();
+			reports = raw.map((r: PlotterErrorReport & { createdAt: string; resolvedAt: string | null }) => ({
+				...r,
+				createdAt:  new Date(r.createdAt),
+				resolvedAt: r.resolvedAt ? new Date(r.resolvedAt) : null,
+			}));
 		} catch (e) {
 			error = e instanceof Error ? e.message : "Failed to load error reports.";
 		} finally {
@@ -37,7 +49,11 @@
 		next.add(id);
 		resolving = next;
 		try {
-			await resolvePlotterError(id);
+			const res = await fetch(`/api/admin/plotters/${id}`, {
+				method: "PATCH",
+				headers: await authHeader(),
+			});
+			if (!res.ok) throw new Error(await res.text());
 			reports = reports.map((r) =>
 				r.id === id ? { ...r, resolvedAt: new Date() } : r,
 			);
@@ -282,12 +298,6 @@
 		{/if}
 	</div>
 
-	<!-- ─── Rules note ──────────────────────────── -->
-	<div class="rules-note">
-		<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
-		Add <code>plotterErrors</code> to Firestore rules:
-		<code>allow create: if isAuth(); allow read, update, delete: if isAdmin();</code>
-	</div>
 </div>
 
 <style>

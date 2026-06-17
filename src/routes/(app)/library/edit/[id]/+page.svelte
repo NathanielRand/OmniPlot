@@ -195,7 +195,8 @@
 			});
 			toastStore.success("Pattern saved", `${name} has been updated.`);
 			goto("/library?tab=mine");
-		} catch {
+		} catch (err) {
+			console.error("[edit/handleSave]", err);
 			toastStore.error("Save failed", "Could not save changes. Please try again.");
 		} finally {
 			saving = false;

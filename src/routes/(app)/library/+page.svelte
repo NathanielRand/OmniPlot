@@ -6,7 +6,7 @@
 	import Button from "$lib/components/ui/Button.svelte";
 	import { uid, getItemColor } from "$lib/utils";
 	import { autoNest } from "$lib/utils/nesting";
-	import { getUserPatterns, updateUserPattern, addPatternAdjustmentRequest } from "$lib/firebase/firestore";
+	import { getUserPatterns, updateUserPattern, deleteUserPattern, addPatternAdjustmentRequest } from "$lib/firebase/firestore";
 	import type { CanvasItem, Pattern, PatternZone, UserPattern } from "$lib/types";
 	import type { VehicleEntry } from "$lib/stores/patternStore.svelte";
 
@@ -62,6 +62,31 @@
 			);
 			toastStore.error("Update failed", "Could not update community setting.");
 		}
+	}
+
+	// ─── Delete pattern ──────────────────────────
+	let deletePending = $state<Set<string>>(new Set());
+	let deleting      = $state<Set<string>>(new Set());
+
+	async function confirmDelete(p: UserPattern) {
+		if (!deletePending.has(p.id)) {
+			deletePending = new Set([...deletePending, p.id]);
+			return;
+		}
+		deleting      = new Set([...deleting,      p.id]);
+		deletePending = new Set([...deletePending].filter(id => id !== p.id));
+		try {
+			await deleteUserPattern(p.id);
+			myPatterns = myPatterns.filter(m => m.id !== p.id);
+			toastStore.success("Pattern deleted", `${compactZones(p.zones, p.category)} removed from your library.`);
+		} catch {
+			toastStore.error("Delete failed", "Could not delete the pattern. Please try again.");
+			deleting = new Set([...deleting].filter(id => id !== p.id));
+		}
+	}
+
+	function cancelDelete(id: string) {
+		deletePending = new Set([...deletePending].filter(i => i !== id));
 	}
 
 	// Collapses mirror pairs into compact labels, e.g. "Front Door (L/R)" instead of
@@ -744,7 +769,7 @@
 										Request Changes
 									</button>
 								{:else}
-									<!-- Private/pending — edit + community submit toggle -->
+									<!-- Private/pending — edit + community submit toggle + delete -->
 									<a
 										href="/library/edit/{p.id}"
 										class="my-pattern-card__edit"
@@ -764,6 +789,32 @@
 										<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
 										{p.submitToCommunity ? "Submitted" : "Submit"}
 									</button>
+									{#if deletePending.has(p.id)}
+										<button
+											class="my-pattern-card__del-confirm"
+											onclick={() => confirmDelete(p)}
+											disabled={deleting.has(p.id)}
+											aria-label="Confirm delete {p.name}"
+										>
+											{deleting.has(p.id) ? "Deleting…" : "Confirm?"}
+										</button>
+										<button
+											class="my-pattern-card__del-cancel"
+											onclick={() => cancelDelete(p.id)}
+											aria-label="Cancel delete"
+										>Cancel</button>
+									{:else}
+										<button
+											class="my-pattern-card__delete"
+											onclick={() => confirmDelete(p)}
+											disabled={deleting.has(p.id)}
+											title="Delete this pattern"
+											aria-label="Delete {p.name}"
+										>
+											<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+											Delete
+										</button>
+									{/if}
 								{/if}
 							</div>
 						</div>
@@ -1736,6 +1787,60 @@
 		border-color: var(--color-brand);
 		color: var(--color-brand);
 	}
+	.my-pattern-card__delete {
+		display: flex;
+		align-items: center;
+		gap: 5px;
+		padding: 5px 10px;
+		font-size: 0.75rem;
+		font-weight: 600;
+		font-family: var(--font-body);
+		border-radius: var(--radius-md);
+		border: 1px solid var(--border-default);
+		background: var(--bg-surface-2);
+		color: var(--text-tertiary);
+		cursor: pointer;
+		transition: background 0.12s, color 0.12s, border-color 0.12s;
+		white-space: nowrap;
+	}
+	.my-pattern-card__delete:hover {
+		border-color: color-mix(in srgb, #ef4444 50%, transparent);
+		color: #f87171;
+		background: color-mix(in srgb, #ef4444 10%, var(--bg-surface-2));
+	}
+	.my-pattern-card__del-confirm {
+		padding: 5px 10px;
+		font-size: 0.75rem;
+		font-weight: 700;
+		font-family: var(--font-body);
+		border-radius: var(--radius-md);
+		border: 1px solid color-mix(in srgb, #ef4444 60%, transparent);
+		background: color-mix(in srgb, #ef4444 15%, var(--bg-surface-2));
+		color: #f87171;
+		cursor: pointer;
+		transition: background 0.12s, border-color 0.12s;
+		white-space: nowrap;
+	}
+	.my-pattern-card__del-confirm:hover:not(:disabled) {
+		background: color-mix(in srgb, #ef4444 25%, var(--bg-surface-2));
+		border-color: #ef4444;
+	}
+	.my-pattern-card__del-confirm:disabled { opacity: 0.6; cursor: not-allowed; }
+	.my-pattern-card__del-cancel {
+		padding: 5px 10px;
+		font-size: 0.75rem;
+		font-weight: 500;
+		font-family: var(--font-body);
+		border-radius: var(--radius-md);
+		border: 1px solid var(--border-default);
+		background: transparent;
+		color: var(--text-tertiary);
+		cursor: pointer;
+		transition: background 0.12s, color 0.12s;
+		white-space: nowrap;
+	}
+	.my-pattern-card__del-cancel:hover { background: var(--bg-surface-3); color: var(--text-secondary); }
+
 	.my-pattern-card__locked {
 		display: flex;
 		align-items: center;

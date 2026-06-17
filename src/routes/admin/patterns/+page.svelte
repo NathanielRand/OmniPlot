@@ -12,11 +12,12 @@
 	import {
 		getSubmissions,
 		adminUpdateUserPattern,
+		deleteUserPattern,
 		getAdjustmentRequests,
 		resolveAdjustmentRequest,
 	} from "$lib/firebase/firestore";
 	import { toastStore } from "$lib/stores";
-	import type { PatternCategory, PatternCoverage, PatternZone, UserPattern, PatternAdjustmentRequest } from "$lib/types";
+	import type { PatternCategory, PatternCoverage, PatternZone, UserPattern, UserPatternStatus, PatternAdjustmentRequest } from "$lib/types";
 
 	// ─── Vehicles filter state ────────────────────
 	let search         = $state("");
@@ -143,6 +144,72 @@
 
 	const pendingSubmissions = $derived(submissions.filter((s) => s.status === "pending"));
 
+	// ─── Delete submission ────────────────────────
+	let pendingDeleteSubId = $state<string | null>(null);
+	let deleteSubWorking  = $state(false);
+
+	async function confirmDeleteSubmission(id: string) {
+		deleteSubWorking = true;
+		try {
+			await deleteUserPattern(id);
+			submissions = submissions.filter((s) => s.id !== id);
+			toastStore.success("Deleted", "Submission removed.");
+		} catch { toastStore.error("Delete failed", "Could not delete submission."); }
+		finally { deleteSubWorking = false; pendingDeleteSubId = null; }
+	}
+
+	// ─── Edit submission ─────────────────────────
+	let editSubTarget  = $state<UserPattern | null>(null);
+	let editSubForm    = $state({
+		name: "", widthInches: 0, heightInches: 0,
+		coverage: "full" as PatternCoverage,
+		zones: [] as PatternZone[],
+		notes: "", adminNotes: "",
+		status: "pending" as UserPatternStatus,
+		isPublished: false,
+	});
+	let editSubWorking = $state(false);
+
+	function openEditSub(sub: UserPattern) {
+		editSubTarget = sub;
+		editSubForm = {
+			name:         sub.name,
+			widthInches:  sub.widthInches,
+			heightInches: sub.heightInches,
+			coverage:     sub.coverage,
+			zones:        [...sub.zones],
+			notes:        sub.notes ?? "",
+			adminNotes:   sub.adminNotes ?? "",
+			status:       sub.status,
+			isPublished:  sub.isPublished,
+		};
+	}
+
+	async function saveEditSub() {
+		if (!editSubTarget) return;
+		editSubWorking = true;
+		try {
+			const patch: Partial<UserPattern> = {
+				name:         editSubForm.name.trim() || editSubTarget.name,
+				widthInches:  editSubForm.widthInches,
+				heightInches: editSubForm.heightInches,
+				coverage:     editSubForm.coverage,
+				zones:        editSubForm.zones,
+				notes:        editSubForm.notes.trim() || undefined,
+				adminNotes:   editSubForm.adminNotes.trim() || undefined,
+				status:       editSubForm.status,
+				isPublished:  editSubForm.isPublished,
+			};
+			await adminUpdateUserPattern(editSubTarget.id, patch);
+			submissions = submissions.map((s) =>
+				s.id === editSubTarget!.id ? { ...s, ...patch } : s,
+			);
+			toastStore.success("Saved", "Submission updated.");
+			editSubTarget = null;
+		} catch { toastStore.error("Save failed", "Could not update submission."); }
+		finally { editSubWorking = false; }
+	}
+
 	// ─── Adjustment Requests ──────────────────────
 	let adjustments        = $state<PatternAdjustmentRequest[]>([]);
 	let adjustmentsLoading = $state(false);
@@ -194,6 +261,36 @@
 		showAddModal = false;
 		newVehicle = { year: new Date().getFullYear(), make: "", model: "", bodyStyle: "sedan", status: "draft" };
 	}
+
+	// ─── Edit Vehicle modal ───────────────────────
+	let editVehicleTarget = $state<VehicleEntry | null>(null);
+	let editVehicleForm = $state({
+		year: new Date().getFullYear(), make: "", model: "",
+		bodyStyle: "sedan" as VehicleEntry["bodyStyle"],
+		status: "draft" as PatternStatus,
+	});
+
+	function openEditVehicle(v: VehicleEntry) {
+		editVehicleTarget = v;
+		editVehicleForm = { year: v.year, make: v.make, model: v.model, bodyStyle: v.bodyStyle, status: v.status };
+	}
+
+	function saveEditVehicle() {
+		if (!editVehicleTarget || !editVehicleForm.make.trim() || !editVehicleForm.model.trim()) return;
+		patternStore.updateVehicle(editVehicleTarget.id, {
+			year: editVehicleForm.year,
+			make: editVehicleForm.make.trim(),
+			model: editVehicleForm.model.trim(),
+			bodyStyle: editVehicleForm.bodyStyle,
+			status: editVehicleForm.status,
+			updatedAt: new Date().toISOString().split("T")[0],
+		});
+		toastStore.success("Updated", `${editVehicleForm.make} ${editVehicleForm.model} saved.`);
+		editVehicleTarget = null;
+	}
+
+	// ─── Delete Vehicle confirmation ──────────────
+	let pendingDeleteVehicleId = $state<string | null>(null);
 
 	// ─── Edit Patterns panel ──────────────────────
 	let editingVehicle  = $state<VehicleEntry | null>(null);
@@ -362,9 +459,37 @@ onMount(() => {
 									>{sub.status}</Badge>
 								</td>
 								<td class="td-actions">
-									{#if sub.status === "pending"}
-										<button class="action-btn action-btn--primary" onclick={() => openReview(sub)}>Review</button>
-									{/if}
+									<div class="row-actions row-actions--always">
+										{#if sub.status === "pending"}
+											<button class="action-btn action-btn--primary" onclick={() => openReview(sub)}>Review</button>
+										{/if}
+										<button class="row-btn" title="Edit submission" onclick={() => openEditSub(sub)}>
+											<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+										</button>
+										{#if pendingDeleteSubId === sub.id}
+											<div class="delete-confirm">
+												<span class="delete-confirm__label">Delete?</span>
+												<button
+													class="delete-confirm__yes"
+													disabled={deleteSubWorking}
+													onclick={() => confirmDeleteSubmission(sub.id)}
+													aria-label="Confirm delete"
+												>Yes</button>
+												<button
+													class="delete-confirm__no"
+													onclick={() => (pendingDeleteSubId = null)}
+													aria-label="Cancel delete"
+												>No</button>
+											</div>
+										{:else}
+											<button
+												class="row-btn row-btn--danger"
+												onclick={() => (pendingDeleteSubId = sub.id)}
+												title="Delete submission"
+												aria-label="Delete {sub.name}"
+											><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></button>
+										{/if}
+									</div>
 								</td>
 							</tr>
 						{/each}
@@ -506,9 +631,31 @@ onMount(() => {
 									<button class="row-btn" title="Edit patterns" onclick={() => openEditPanel(v)}>
 										<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
 									</button>
-									<button class="row-btn" title="Toggle publish" onclick={() => patternStore.updateVehicle(v.id, { status: v.status === "published" ? "draft" : "published" })}>
-										<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+									<button class="row-btn" title="Edit vehicle details" onclick={() => openEditVehicle(v)}>
+										<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
 									</button>
+									{#if pendingDeleteVehicleId === v.id}
+										<div class="delete-confirm">
+											<span class="delete-confirm__label">Delete?</span>
+											<button
+												class="delete-confirm__yes"
+												onclick={() => { patternStore.deleteVehicle(v.id); pendingDeleteVehicleId = null; }}
+												aria-label="Confirm delete vehicle"
+											>Yes</button>
+											<button
+												class="delete-confirm__no"
+												onclick={() => (pendingDeleteVehicleId = null)}
+												aria-label="Cancel delete vehicle"
+											>No</button>
+										</div>
+									{:else}
+										<button
+											class="row-btn row-btn--danger"
+											onclick={() => (pendingDeleteVehicleId = v.id)}
+											title="Delete vehicle"
+											aria-label="Delete {v.make} {v.model}"
+										><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></button>
+									{/if}
 								</div>
 							</td>
 						</tr>
@@ -572,6 +719,35 @@ onMount(() => {
 				<div class="modal__actions">
 					<button type="button" class="btn-ghost" onclick={() => (showAddModal = false)}>Cancel</button>
 					<button type="submit" class="btn-primary">Add Vehicle</button>
+				</div>
+			</form>
+		</div>
+	</div>
+{/if}
+
+<!-- ─── Edit Vehicle Modal ─── -->
+{#if editVehicleTarget}
+	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<div class="modal-overlay" onclick={() => (editVehicleTarget = null)}>
+		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+		<div class="modal" onclick={(e) => e.stopPropagation()}>
+			<div class="modal__header">
+				<h2 class="modal__title">Edit Vehicle</h2>
+				<button class="modal__close" onclick={() => (editVehicleTarget = null)} aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+			</div>
+			<form class="modal__body" onsubmit={(e) => { e.preventDefault(); saveEditVehicle(); }}>
+				<div class="form-row">
+					<div class="form-group"><label class="form-label" for="ev-year">Year</label><input id="ev-year" type="number" class="form-input" bind:value={editVehicleForm.year} min="1990" max="2030" required /></div>
+					<div class="form-group" style="flex:2"><label class="form-label" for="ev-make">Make</label><input id="ev-make" type="text" class="form-input" bind:value={editVehicleForm.make} placeholder="e.g. Toyota" required /></div>
+				</div>
+				<div class="form-group"><label class="form-label" for="ev-model">Model</label><input id="ev-model" type="text" class="form-input" bind:value={editVehicleForm.model} placeholder="e.g. GR86" required /></div>
+				<div class="form-row">
+					<div class="form-group"><label class="form-label" for="ev-body">Body Style</label><select id="ev-body" class="form-input" bind:value={editVehicleForm.bodyStyle}>{#each ["sedan","coupe","suv","truck","hatchback","wagon","convertible"] as s}<option value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>{/each}</select></div>
+					<div class="form-group"><label class="form-label" for="ev-status">Status</label><select id="ev-status" class="form-input" bind:value={editVehicleForm.status}><option value="draft">Draft</option><option value="review">Review</option><option value="published">Published</option></select></div>
+				</div>
+				<div class="modal__actions">
+					<button type="button" class="btn-ghost" onclick={() => (editVehicleTarget = null)}>Cancel</button>
+					<button type="submit" class="btn-primary">Save Changes</button>
 				</div>
 			</form>
 		</div>
@@ -656,6 +832,113 @@ onMount(() => {
 			</button>
 			<button class="btn-approve" disabled={reviewWorking} onclick={approveSubmission}>
 				{reviewWorking ? "Working…" : "Approve & Publish"}
+			</button>
+		</div>
+	</aside>
+{/if}
+
+<!-- ─── Edit Submission Panel ─── -->
+{#if editSubTarget}
+	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<div class="panel-backdrop" onclick={() => (editSubTarget = null)}></div>
+	<aside class="review-panel" role="dialog" aria-label="Edit submission">
+		<div class="review-panel__header">
+			<div>
+				<div class="review-panel__sub">Edit community submission · {editSubTarget.status}</div>
+				<h2 class="review-panel__title">{editSubTarget.make} {editSubTarget.models.join(", ")} · {editSubTarget.years.join(", ")}</h2>
+			</div>
+			<button class="modal__close" onclick={() => (editSubTarget = null)} aria-label="Close">
+				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>
+			</button>
+		</div>
+
+		<div class="review-panel__body">
+			<div class="review-preview">
+				<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" aria-label="Pattern preview">
+					<path d={editSubTarget.svgPath} fill="none" stroke="var(--color-brand)" stroke-width="1.5"/>
+				</svg>
+			</div>
+
+			<div class="review-edits">
+				<div class="review-edits__title">Pattern details</div>
+
+				<div class="form-group">
+					<label class="form-label" for="es-name">Pattern Name</label>
+					<input id="es-name" type="text" class="form-input form-input--sm" bind:value={editSubForm.name}/>
+				</div>
+
+				<div class="form-row">
+					<div class="form-group">
+						<label class="form-label" for="es-w">Width (in)</label>
+						<input id="es-w" type="number" class="form-input form-input--sm" bind:value={editSubForm.widthInches} min="0.1" step="0.1"/>
+					</div>
+					<div class="form-group">
+						<label class="form-label" for="es-h">Height (in)</label>
+						<input id="es-h" type="number" class="form-input form-input--sm" bind:value={editSubForm.heightInches} min="0.1" step="0.1"/>
+					</div>
+				</div>
+
+				<div class="form-row">
+					<div class="form-group">
+						<label class="form-label" for="es-coverage">Coverage</label>
+						<select id="es-coverage" class="form-input form-input--sm" bind:value={editSubForm.coverage}>
+							<option value="full">Full</option>
+							<option value="partial">Partial</option>
+							<option value="edge-only">Edge only</option>
+						</select>
+					</div>
+					<div class="form-group">
+						<label class="form-label" for="es-zone">Primary Zone</label>
+						<select id="es-zone" class="form-input form-input--sm"
+							value={editSubForm.zones[0] ?? ""}
+							onchange={(e) => { editSubForm.zones = [e.currentTarget.value as PatternZone]; }}
+						>
+							{#each (editSubTarget.category === "ppf" ? PPF_ZONES_LIST : TINT_ZONES_LIST) as z}
+								<option value={z.value}>{z.label}</option>
+							{/each}
+						</select>
+					</div>
+				</div>
+
+				<div class="form-group">
+					<label class="form-label" for="es-notes">User notes</label>
+					<textarea id="es-notes" class="form-input form-input--sm" style="resize:vertical;min-height:56px" bind:value={editSubForm.notes}></textarea>
+				</div>
+
+				<div class="form-group">
+					<label class="form-label" for="es-admin-notes">Admin notes <span class="form-label__opt">(internal)</span></label>
+					<textarea id="es-admin-notes" class="form-input form-input--sm" style="resize:vertical;min-height:56px" bind:value={editSubForm.adminNotes}></textarea>
+				</div>
+			</div>
+
+			<div class="review-edits">
+				<div class="review-edits__title">Status &amp; visibility</div>
+
+				<div class="form-row">
+					<div class="form-group">
+						<label class="form-label" for="es-status">Status</label>
+						<select id="es-status" class="form-input form-input--sm" bind:value={editSubForm.status}>
+							<option value="pending">Pending</option>
+							<option value="approved">Approved</option>
+							<option value="rejected">Rejected</option>
+							<option value="private">Private</option>
+						</select>
+					</div>
+					<div class="form-group" style="justify-content:flex-end;padding-bottom:2px">
+						<label class="form-label" for="es-published">Published</label>
+						<label class="toggle-label" style="margin-top:4px">
+							<input id="es-published" type="checkbox" bind:checked={editSubForm.isPublished}/>
+							{editSubForm.isPublished ? "Visible in library" : "Hidden from library"}
+						</label>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<div class="review-panel__footer">
+			<button class="btn-ghost" onclick={() => (editSubTarget = null)}>Cancel</button>
+			<button class="btn-approve" disabled={editSubWorking} onclick={saveEditSub}>
+				{editSubWorking ? "Saving…" : "Save Changes"}
 			</button>
 		</div>
 	</aside>
@@ -901,7 +1184,7 @@ onMount(() => {
 	.data-table tbody tr:last-child { border-bottom: none; }
 	.data-table tbody tr:hover { background: var(--interactive-hover); }
 	.data-table td { padding: 10px 14px; vertical-align: middle; }
-	.th-actions { width: 90px; }
+	.th-actions { width: 120px; }
 
 	.pattern-cell { display: flex; align-items: center; gap: 10px; }
 	.pattern-cell__preview { width: 38px; height: 38px; border-radius: var(--radius-md); background: var(--bg-surface-2); border: 1px solid var(--border-subtle); display: flex; align-items: center; justify-content: center; padding: 5px; flex-shrink: 0; }
@@ -930,8 +1213,9 @@ onMount(() => {
 	.row-done     { opacity: 0.45; }
 	.row-resolved { opacity: 0.6; }
 
-	.row-actions { display: flex; gap: 4px; opacity: 0; transition: opacity 0.12s; }
+	.row-actions { display: flex; gap: 4px; opacity: 0; transition: opacity 0.12s; align-items: center; }
 	tr:hover .row-actions { opacity: 1; }
+	.row-actions--always { opacity: 1; }
 
 	.row-btn { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; background: var(--bg-surface-2); border: 1px solid var(--border-default); border-radius: var(--radius-md); color: var(--text-secondary); cursor: pointer; transition: all 0.12s; }
 	.row-btn:hover { background: var(--bg-surface-3); color: var(--text-primary); }

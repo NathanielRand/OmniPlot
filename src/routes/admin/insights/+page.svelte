@@ -3,7 +3,7 @@
 	import { formatDate } from '$lib/utils';
 	import { onMount } from 'svelte';
 	import { toastStore } from '$lib/stores';
-	import { getAllInsights, updateInsightPost, deleteInsightPost } from '$lib/firebase/firestore';
+	import { auth } from '$lib/firebase/client';
 	import type { InsightPost, InsightCategory } from '$lib/types';
 
 	const CATEGORY_BADGE: Record<InsightCategory, 'brand' | 'lite' | 'success' | 'warning'> = {
@@ -20,16 +20,33 @@
 		'vehicles':    'Vehicles',
 	};
 
-	let posts       = $state<InsightPost[]>([]);
-	let loading     = $state(true);
-	let error       = $state<string | null>(null);
+	let posts        = $state<InsightPost[]>([]);
+	let loading      = $state(true);
+	let error        = $state<string | null>(null);
 	let filterStatus = $state<'all' | 'published' | 'draft'>('all');
-	let search      = $state('');
-	let deletingId  = $state<string | null>(null);
+	let search       = $state('');
+	let deletingId   = $state<string | null>(null);
+
+	async function authHeader() {
+		const token = await auth.currentUser?.getIdToken();
+		return token ? { Authorization: `Bearer ${token}` } : {};
+	}
+
+	function deserializePosts(raw: Record<string, unknown>[]): InsightPost[] {
+		return raw.map((p) => ({
+			...(p as InsightPost),
+			publishedAt: p.publishedAt ? new Date(p.publishedAt as string) : null,
+			createdAt:   new Date(p.createdAt as string),
+			updatedAt:   new Date(p.updatedAt as string),
+		}));
+	}
 
 	onMount(async () => {
 		try {
-			posts = await getAllInsights();
+			const res = await fetch('/api/admin/insights', { headers: await authHeader() });
+			if (!res.ok) throw new Error(await res.text());
+			const { posts: raw } = await res.json();
+			posts = deserializePosts(raw);
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Could not load insights';
 		} finally {
@@ -56,11 +73,14 @@
 	async function togglePublish(post: InsightPost) {
 		const next = post.status === 'published' ? 'draft' : 'published';
 		const nowPublish = next === 'published';
+		const publishedAt = nowPublish ? (post.publishedAt ?? new Date()).toISOString() : (post.publishedAt?.toISOString() ?? null);
 		try {
-			await updateInsightPost(post.id, {
-				status:      next,
-				publishedAt: nowPublish ? (post.publishedAt ?? new Date()) : post.publishedAt,
+			const res = await fetch(`/api/admin/insights/${post.id}`, {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json', ...await authHeader() },
+				body: JSON.stringify({ status: next, publishedAt }),
 			});
+			if (!res.ok) throw new Error(await res.text());
 			posts = posts.map((p) =>
 				p.id === post.id
 					? { ...p, status: next, publishedAt: nowPublish ? (post.publishedAt ?? new Date()) : post.publishedAt }
@@ -79,7 +99,11 @@
 			return;
 		}
 		try {
-			await deleteInsightPost(post.id);
+			const res = await fetch(`/api/admin/insights/${post.id}`, {
+				method: 'DELETE',
+				headers: await authHeader(),
+			});
+			if (!res.ok) throw new Error(await res.text());
 			posts = posts.filter((p) => p.id !== post.id);
 			toastStore.success('Post deleted');
 		} catch {

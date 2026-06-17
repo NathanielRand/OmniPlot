@@ -15,7 +15,8 @@
 
 	// ─── Form state ───────────────────────────────
 	let step = $state<"form" | "success">("form");
-	let submitting = $state(false);
+	let submitting  = $state(false);
+	let isImporting = $state(false); // true while SvgPathInput multi-vectorize is in flight
 
 	// ─── Multi-pattern extraction mode ───────────
 	interface MultiSlot {
@@ -29,6 +30,21 @@
 	let multiSlots = $state<MultiSlot[]>([]);
 	let multiErrors = $state<Record<number, Record<string, string>>>({});
 	let multiSavedCount = $state(0);
+
+	// ─── Upload type + individual slots ──────────
+	type UploadMode = "single" | "multi";
+	type MultiMethod = "individual" | "single-file";
+	interface IndividualSlot {
+		zone: PatternZone | "";
+		widthInches: number;
+		heightInches: number;
+		svgPath: string;
+	}
+	let uploadMode  = $state<UploadMode>("single");
+	let multiMethod = $state<MultiMethod>("individual");
+	let multiFileSvgPath = $state("");
+	let individualSlots = $state<IndividualSlot[]>([{ zone: "" as PatternZone | "", widthInches: 0, heightInches: 0, svgPath: "" }]);
+	let indivErrors = $state<Record<number, Record<string, string>>>({});
 
 	let vehicle = $state({
 		make:      "",
@@ -115,6 +131,27 @@
 	}
 	function mirrorOf(z: PatternZone): PatternZone | undefined {
 		return MIRROR_PAIRS[z];
+	}
+
+	// ─── Individual slot helpers ──────────────────
+	function addIndividualSlot() {
+		individualSlots = [...individualSlots, { zone: "" as PatternZone | "", widthInches: 0, heightInches: 0, svgPath: "" }];
+	}
+	function removeIndividualSlot(i: number) {
+		if (individualSlots.length > 1) individualSlots = individualSlots.filter((_, idx) => idx !== i);
+	}
+	function validateIndividual(): boolean {
+		const errs: Record<number, Record<string, string>> = {};
+		individualSlots.forEach((slot, i) => {
+			const e: Record<string, string> = {};
+			if (!slot.zone)                                    e.zone    = "Select a zone";
+			if (!slot.widthInches  || slot.widthInches  <= 0) e.width   = "Enter a positive width";
+			if (!slot.heightInches || slot.heightInches <= 0) e.height  = "Enter a positive height";
+			if (!slot.svgPath.trim())                          e.svgPath = "Import a pattern first";
+			if (Object.keys(e).length) errs[i] = e;
+		});
+		indivErrors = errs;
+		return Object.keys(errs).length === 0;
 	}
 
 	// ─── Year helpers ─────────────────────────────
@@ -205,6 +242,47 @@
 		e.preventDefault();
 		if (!userStore.user) { toastStore.error("Not signed in", "Please log in first."); return; }
 
+		if (uploadMode === "multi" && multiMethod === "individual") {
+			if (!validateVehicle() || !validateIndividual()) return;
+			submitting = true;
+			try {
+				let saved = 0;
+				for (const slot of individualSlots) {
+					const zone = slot.zone as PatternZone;
+					await addUserPattern({
+						ownerId:           userStore.user.uid,
+						submitToCommunity: mode === "community",
+						make:              vehicle.make.trim(),
+						models:            vehicle.models,
+						years:             vehicle.years,
+						bodyStyle:         vehicle.bodyStyle,
+						category:          pattern.category,
+						zones:             [zone],
+						name:              zoneLabel(zone),
+						coverage:          pattern.coverage,
+						widthInches:       slot.widthInches,
+						heightInches:      slot.heightInches,
+						svgPath:           slot.svgPath.trim(),
+						notes:             pattern.notes.trim() || undefined,
+					});
+					saved++;
+				}
+				multiSavedCount = saved;
+				step = "success";
+			} catch (err) {
+				console.error(err);
+				toastStore.error("Submission failed", "Could not save patterns. Please try again.");
+			} finally {
+				submitting = false;
+			}
+			return;
+		}
+
+		if (uploadMode === "multi" && multiMethod === "single-file" && !multiMode) {
+			toastStore.error("Extract patterns first", "Upload a combined image and split it into patterns before saving.");
+			return;
+		}
+
 		if (multiMode) {
 			if (!validateVehicle() || !validateMulti()) return;
 			submitting = true;
@@ -283,6 +361,11 @@
 		multiSlots = [];
 		multiErrors = {};
 		multiSavedCount = 0;
+		uploadMode  = "single";
+		multiMethod = "individual";
+		multiFileSvgPath = "";
+		individualSlots = [{ zone: "" as PatternZone | "", widthInches: 0, heightInches: 0, svgPath: "" }];
+		indivErrors = {};
 	}
 </script>
 
@@ -310,9 +393,11 @@
 					<h2 class="success-title">Pattern Saved</h2>
 					<p class="success-body">
 						<strong>{vehicle.years.join(", ")} {vehicle.make} {vehicle.models.join(" / ")}</strong> pattern
-						({multiMode
-							? multiSlots.filter(s => !s.skip && s.zone).map(s => zoneLabel(s.zone as PatternZone)).join(" + ")
-							: pattern.zones.map(z => zoneLabel(z)).join(" + ")
+						({uploadMode === "multi" && multiMethod === "individual"
+							? individualSlots.map(s => zoneLabel(s.zone as PatternZone)).join(" + ")
+							: multiMode
+								? multiSlots.filter(s => !s.skip && s.zone).map(s => zoneLabel(s.zone as PatternZone)).join(" + ")
+								: pattern.zones.map(z => zoneLabel(z)).join(" + ")
 						}) is available in your library.
 						{#if mode === "community"}
 							It's been queued for review — once approved it will appear in the public library.
@@ -480,15 +565,102 @@
 						</div>
 					{/if}
 
-					{#if multiMode}
-						<!-- ─── Multi-pattern slot cards ─── -->
+					<!-- ─── Upload type ─── -->
+					<div class="field">
+						<span class="field__label">Upload Type</span>
+						<div class="radio-group" role="radiogroup" aria-label="Upload type">
+							<label class="radio-option" class:radio-option--active={uploadMode === "single"}>
+								<input type="radio" name="uploadMode" value="single" bind:group={uploadMode}
+									onchange={() => { multiMode = false; multiSlots = []; multiErrors = {}; multiFileSvgPath = ""; individualSlots = [{ zone: "" as PatternZone | "", widthInches: 0, heightInches: 0, svgPath: "" }]; indivErrors = {}; }}
+								/>
+								<span class="radio-option__label">Single Pattern</span>
+								<span class="radio-option__sub">One pattern for one or more zones</span>
+							</label>
+							<label class="radio-option" class:radio-option--active={uploadMode === "multi"}>
+								<input type="radio" name="uploadMode" value="multi" bind:group={uploadMode} onchange={() => {}}/>
+								<span class="radio-option__label">Multiple Patterns</span>
+								<span class="radio-option__sub">Import patterns for several zones at once</span>
+							</label>
+						</div>
+					</div>
+
+					{#if uploadMode === "multi"}
+						<div class="field">
+							<span class="field__label">How are you uploading?</span>
+							<div class="radio-group" role="radiogroup" aria-label="Multi-upload method">
+								<label class="radio-option" class:radio-option--active={multiMethod === "individual"}>
+									<input type="radio" name="multiMethod" value="individual" bind:group={multiMethod}
+										onchange={() => { multiMode = false; multiSlots = []; multiErrors = {}; multiFileSvgPath = ""; }}
+									/>
+									<span class="radio-option__label">One file per zone</span>
+									<span class="radio-option__sub">Upload and assign each pattern individually</span>
+								</label>
+								<label class="radio-option" class:radio-option--active={multiMethod === "single-file"}>
+									<input type="radio" name="multiMethod" value="single-file" bind:group={multiMethod}
+										onchange={() => { individualSlots = [{ zone: "" as PatternZone | "", widthInches: 0, heightInches: 0, svgPath: "" }]; indivErrors = {}; }}
+									/>
+									<span class="radio-option__label">Combined file</span>
+									<span class="radio-option__sub">One image containing all patterns — split and assign each</span>
+								</label>
+							</div>
+						</div>
+					{/if}
+
+					{#if uploadMode === "multi" && multiMethod === "individual"}
+						<!-- ─── Individual slots: one importer per zone ─── -->
+						<div class="indiv-slots">
+							{#each individualSlots as slot, i (i)}
+								{@const slotErrs = indivErrors[i] ?? {}}
+								<div class="indiv-slot">
+									<div class="indiv-slot__hdr">
+										<span class="indiv-slot__num">Zone {i + 1}</span>
+										{#if individualSlots.length > 1}
+											<button type="button" class="indiv-slot__remove" onclick={() => removeIndividualSlot(i)} aria-label="Remove zone {i + 1}">×</button>
+										{/if}
+									</div>
+									<div class="field" class:field--error={!!slotErrs.zone}>
+										<label class="field__label">Zone</label>
+										<select class="field__select" bind:value={slot.zone} aria-label="Zone for slot {i + 1}">
+											<option value="">Select zone…</option>
+											{#each zoneList as z}
+												<option value={z.value}>{z.label}</option>
+											{/each}
+										</select>
+										{#if slotErrs.zone}<span class="field__error">{slotErrs.zone}</span>{/if}
+									</div>
+									<div class="field-row field-row--2">
+										<div class="field" class:field--error={!!slotErrs.width}>
+											<label class="field__label">Width (inches)</label>
+											<input class="field__input" type="number" min="0.1" step="0.1" bind:value={slot.widthInches} placeholder="60.5" aria-label="Width for zone {i + 1}"/>
+											{#if slotErrs.width}<span class="field__error">{slotErrs.width}</span>{/if}
+										</div>
+										<div class="field" class:field--error={!!slotErrs.height}>
+											<label class="field__label">Height (inches)</label>
+											<input class="field__input" type="number" min="0.1" step="0.1" bind:value={slot.heightInches} placeholder="48.0" aria-label="Height for zone {i + 1}"/>
+											{#if slotErrs.height}<span class="field__error">{slotErrs.height}</span>{/if}
+										</div>
+									</div>
+									<div class="field" class:field--error={!!slotErrs.svgPath}>
+										<label class="field__label">Pattern Importer</label>
+										<SvgPathInput bind:value={slot.svgPath}/>
+										{#if slotErrs.svgPath}<span class="field__error">{slotErrs.svgPath}</span>{/if}
+									</div>
+								</div>
+							{/each}
+						</div>
+						<button type="button" class="btn btn--ghost indiv-add-btn" onclick={addIndividualSlot}>
+							+ Add Another Zone
+						</button>
+
+					{:else if multiMode}
+						<!-- ─── Multi-pattern slot cards (from combined-file extraction) ─── -->
 						<div class="multi-header">
 							<span class="multi-header__title">
 								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
 								{multiSlots.length} contours extracted — assign a zone to each
 							</span>
 							<button type="button" class="multi-header__back" onclick={exitMultiMode}>
-								← Back to single pattern
+								{uploadMode === "multi" ? "← Back to file upload" : "← Back to single pattern"}
 							</button>
 						</div>
 						<div class="multi-slots">
@@ -547,8 +719,24 @@
 								</div>
 							{/each}
 						</div>
+
+					{:else if uploadMode === "multi" && multiMethod === "single-file"}
+						<!-- ─── Combined file importer (pre-extraction) ─── -->
+						<div class="field">
+							<label class="field__label">
+								Pattern Importer
+								<span class="field__hint">Upload a combined image — individual patterns are detected automatically</span>
+							</label>
+							<SvgPathInput
+								bind:value={multiFileSvgPath}
+								onMultiExtract={handleMultiExtract}
+								autoExtract={true}
+								onVectorizingChange={(v) => { isImporting = v; }}
+							/>
+						</div>
+
 					{:else}
-						<!-- ─── Zones selector ─── -->
+						<!-- ─── Single pattern form ─── -->
 						<div class="field" class:field--error={!!errors.zones}>
 							<label class="field__label">Zones</label>
 							<div class="multitag" class:multitag--error={!!errors.zones}>
@@ -615,11 +803,14 @@
 
 				<!-- Actions -->
 				<div class="form-actions">
-					<button type="button" class="btn btn--ghost" onclick={() => goto("/library")}>Cancel</button>
-					<button type="submit" class="btn btn--primary" disabled={submitting}>
+					<button type="button" class="btn btn--ghost" onclick={() => goto("/library")} disabled={isImporting}>Cancel</button>
+					<button type="submit" class="btn btn--primary" disabled={submitting || isImporting}>
 						{#if submitting}
 							<span class="spinner" aria-hidden="true"></span>
 							Saving…
+						{:else if isImporting}
+							<span class="spinner" aria-hidden="true"></span>
+							Importing patterns…
 						{:else if mode === "community"}
 							Submit to Community
 						{:else}
@@ -1196,6 +1387,58 @@
 	.success-title { font-size: 1.25rem; font-weight: 700; color: var(--text-primary); margin: 0; }
 	.success-body { font-size: 0.9375rem; color: var(--text-secondary); line-height: 1.6; margin: 0; }
 	.success-actions { display: flex; gap: 10px; margin-top: 8px; }
+
+	/* ─── Individual slots ─── */
+	.indiv-slots {
+		display: flex;
+		flex-direction: column;
+		gap: 20px;
+	}
+
+	.indiv-slot {
+		display: flex;
+		flex-direction: column;
+		gap: 14px;
+		padding: 16px;
+		background: var(--bg-surface-2);
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-md);
+	}
+
+	.indiv-slot__hdr {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+	}
+
+	.indiv-slot__num {
+		font-size: 0.75rem;
+		font-weight: 700;
+		color: var(--text-tertiary);
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+	}
+
+	.indiv-slot__remove {
+		background: none;
+		border: none;
+		font-size: 1rem;
+		line-height: 1;
+		color: var(--text-tertiary);
+		cursor: pointer;
+		padding: 2px 6px;
+		border-radius: 3px;
+		transition: background 0.08s, color 0.08s;
+	}
+	.indiv-slot__remove:hover {
+		background: color-mix(in srgb, var(--color-danger, #f44) 12%, transparent);
+		color: var(--color-danger, #f44);
+	}
+
+	.indiv-add-btn {
+		align-self: flex-start;
+		margin-top: 4px;
+	}
 
 	/* ─── Responsive ─── */
 	@media (max-width: 640px) {

@@ -17,6 +17,7 @@ import {
 	onSnapshot,
 	serverTimestamp,
 	increment,
+	deleteField,
 	Timestamp,
 	type DocumentData,
 	type QueryConstraint,
@@ -589,6 +590,11 @@ export async function updateUserPattern(
 	const update: Record<string, unknown> = { ...patch, updatedAt: serverTimestamp() };
 	if (patch.submitToCommunity !== undefined) {
 		update.status = patch.submitToCommunity ? "pending" : "private";
+	}
+	// Firebase v12 throws on undefined values in updateDoc — convert them to
+	// deleteField() so optional fields (e.g. notes) are properly cleared.
+	for (const key of Object.keys(update)) {
+		if (update[key] === undefined) update[key] = deleteField();
 	}
 	await updateDoc(doc(db, Collections.USER_PATTERNS, id), update);
 }

@@ -99,6 +99,20 @@ service cloud.firestore {
       allow update, delete: if signedIn() && resource.data.userId == uid();
     }
 
+    // ─── Insights (blog posts) ────────────────────────────────────────────
+    // Anyone can read published posts; only admins can read drafts or write.
+    match /insights/{postId} {
+      allow read:          if resource.data.get('status', '') == 'published' || isAdmin();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ─── Plotter error reports ────────────────────────────────────────────
+    // Any signed-in user can report an error; only admins can read and resolve.
+    match /plotterErrors/{reportId} {
+      allow create:        if signedIn();
+      allow read, update, delete: if isAdmin();
+    }
+
     // ─── Shops ────────────────────────────────────────────────────────────
     match /shops/{shopId} {
       allow read:   if isMember(shopId);

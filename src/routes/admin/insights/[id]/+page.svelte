@@ -5,7 +5,7 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
-	import { getAllInsights, createInsightPost, updateInsightPost } from '$lib/firebase/firestore';
+	import { auth } from '$lib/firebase/client';
 	import { INSIGHT_CATEGORIES } from '$lib/config';
 	import type { InsightPost, InsightCategory } from '$lib/types';
 
@@ -55,6 +55,11 @@
 		}
 	});
 
+	async function authHeader() {
+		const token = await auth.currentUser?.getIdToken();
+		return token ? { Authorization: `Bearer ${token}` } : {};
+	}
+
 	// ─── Load existing post ───────────────────────
 	onMount(async () => {
 		if (isNew) {
@@ -62,14 +67,16 @@
 			return;
 		}
 		try {
-			const all = await getAllInsights();
-			const found = all.find((p) => p.id === postId);
+			const res = await fetch('/api/admin/insights', { headers: await authHeader() });
+			if (!res.ok) throw new Error(await res.text());
+			const { posts } = await res.json();
+			const found = posts.find((p: { id: string }) => p.id === postId);
 			if (!found) {
 				toastStore.error('Post not found');
 				goto('/admin/insights');
 				return;
 			}
-			existingPost = found;
+			existingPost    = { ...found, publishedAt: found.publishedAt ? new Date(found.publishedAt) : null, createdAt: new Date(found.createdAt), updatedAt: new Date(found.updatedAt) };
 			title           = found.title;
 			slug            = found.slug;
 			slugEdited      = true;
@@ -124,11 +131,22 @@
 			} satisfies Omit<InsightPost, 'id' | 'createdAt' | 'updatedAt'>;
 
 			if (isNew) {
-				const newId = await createInsightPost(data);
+				const res = await fetch('/api/admin/insights', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json', ...await authHeader() },
+					body: JSON.stringify({ ...data, publishedAt: data.publishedAt instanceof Date ? data.publishedAt.toISOString() : data.publishedAt }),
+				});
+				if (!res.ok) throw new Error(await res.text());
+				const { id: newId } = await res.json();
 				toastStore.success(publish ? 'Post published' : 'Draft saved');
 				goto(`/admin/insights/${newId}`);
 			} else {
-				await updateInsightPost(postId, data);
+				const res = await fetch(`/api/admin/insights/${postId}`, {
+					method: 'PATCH',
+					headers: { 'Content-Type': 'application/json', ...await authHeader() },
+					body: JSON.stringify({ ...data, publishedAt: data.publishedAt instanceof Date ? data.publishedAt.toISOString() : data.publishedAt }),
+				});
+				if (!res.ok) throw new Error(await res.text());
 				existingPost = existingPost
 					? { ...existingPost, ...data, updatedAt: new Date() }
 					: null;
