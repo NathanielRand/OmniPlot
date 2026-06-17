@@ -27,10 +27,13 @@
 	let vectorizing   = $state(false);
 
 	// ─── Scan animation state ─────────────────────
-	let scanImageUrl  = $state("");
-	let scanProgress  = $state(0);
-	let scanElapsed   = $state(0);
-	let scanPhases    = $state<Array<{ label: string; end: number }>>([]);
+	let scanImageUrl     = $state("");
+	let scanProgress     = $state(0);
+	let scanElapsed      = $state(0);
+	let scanPhases       = $state<Array<{ label: string; end: number }>>([]);
+	let scanTotalCount   = $state(0);
+	let scanDoneCount    = $state(0);
+	let scanPatternStates = $state<Array<'queued' | 'active' | 'done'>>([]);
 	let _scanTimer:   ReturnType<typeof setInterval> | null = null;
 	let _scanTimeout: ReturnType<typeof setTimeout>  | null = null;
 	let _abortCtrl:   AbortController | null = null;
@@ -43,15 +46,28 @@
 		return scanPhases.length - 1;
 	});
 
+	const scanLabel = $derived.by(() => {
+		if (!scanPhases.length) return "Vectorizing";
+		const phase = scanPhases[scanPhaseIndex];
+		if (scanTotalCount > 0 && scanPhaseIndex === 1) {
+			if (scanDoneCount === 0) return `${scanTotalCount} shape${scanTotalCount === 1 ? '' : 's'} found — tracing…`;
+			return `${scanDoneCount} / ${scanTotalCount} shapes traced`;
+		}
+		return phase?.label ?? "Vectorizing";
+	});
+
 	function startScanAnimation(file: File, isMulti: boolean) {
 		// Clear any stale stop-timeout so it can't revoke the new URL.
 		if (_scanTimeout !== null) { clearTimeout(_scanTimeout); _scanTimeout = null; }
 		if (_scanTimer   !== null) { clearInterval(_scanTimer);  _scanTimer   = null; }
 		if (scanImageUrl) URL.revokeObjectURL(scanImageUrl);
 
-		scanImageUrl = URL.createObjectURL(file);
-		scanProgress = 0;
-		scanElapsed  = 0;
+		scanImageUrl      = URL.createObjectURL(file);
+		scanProgress      = 0;
+		scanElapsed       = 0;
+		scanTotalCount    = 0;
+		scanDoneCount     = 0;
+		scanPatternStates = [];
 		scanPhases = isMulti ? [
 			{ label: "Detecting shapes", end: 25 },
 			{ label: "Tracing shapes",   end: 95 },
@@ -84,9 +100,12 @@
 		if (_scanTimer   !== null) { clearInterval(_scanTimer);  _scanTimer   = null; }
 		if (_scanTimeout !== null) { clearTimeout(_scanTimeout); _scanTimeout = null; }
 		if (scanImageUrl) { URL.revokeObjectURL(scanImageUrl); scanImageUrl = ""; }
-		scanProgress = 0;
-		scanElapsed  = 0;
-		scanPhases   = [];
+		scanProgress      = 0;
+		scanElapsed       = 0;
+		scanPhases        = [];
+		scanTotalCount    = 0;
+		scanDoneCount     = 0;
+		scanPatternStates = [];
 		vectorizing  = false;
 		vectorizeErr = "";
 		onVectorizingChange?.(false);
@@ -310,7 +329,10 @@
 				// Stop time-based animation; switch to count-based progress for tracing.
 				// Keep a lightweight elapsed-only interval so the HUD timer doesn't freeze.
 				if (_scanTimer !== null) { clearInterval(_scanTimer); _scanTimer = null; }
-				scanProgress = 25;
+				scanProgress      = 25;
+				scanTotalCount    = crops.length;
+				scanDoneCount     = 0;
+				scanPatternStates = Array(crops.length).fill('queued') as Array<'queued' | 'active' | 'done'>;
 				const _elapsedBase = scanElapsed;
 				const _elapsedT0   = Date.now();
 				_scanTimer = setInterval(() => {
@@ -328,14 +350,21 @@
 				});
 
 				// Draw all crops while the image is in memory, then revoke the URL.
+				// Cap the canvas long edge to CROP_MAX_EDGE so we don't upload huge PNGs.
+				const CROP_MAX_EDGE = 3000;
 				const canvases = crops.map(({ x, y, w, h }) => {
+					const rawW = w + BORDER_PX * 2;
+					const rawH = h + BORDER_PX * 2;
+					const longEdge = Math.max(rawW, rawH);
+					const scale = longEdge > CROP_MAX_EDGE ? CROP_MAX_EDGE / longEdge : 1;
 					const canvas = document.createElement('canvas');
-					canvas.width  = w + BORDER_PX * 2;
-					canvas.height = h + BORDER_PX * 2;
+					canvas.width  = Math.round(rawW * scale);
+					canvas.height = Math.round(rawH * scale);
 					const ctx = canvas.getContext('2d')!;
 					ctx.fillStyle = '#ffffff';
 					ctx.fillRect(0, 0, canvas.width, canvas.height);
-					ctx.drawImage(imgEl, x, y, w, h, BORDER_PX, BORDER_PX, w, h);
+					const dstBorderPx = Math.round(BORDER_PX * scale);
+					ctx.drawImage(imgEl, x, y, w, h, dstBorderPx, dstBorderPx, canvas.width - dstBorderPx * 2, canvas.height - dstBorderPx * 2);
 					return canvas;
 				});
 				URL.revokeObjectURL(imgUrl);
@@ -343,17 +372,18 @@
 				// Parallel trace with concurrency limit.
 				const CONCURRENCY = 3;
 				const svgsOrdered = new Array<string>(crops.length);
-				let nextIdx   = 0;
-				let doneCount = 0;
+				let nextIdx = 0;
 
 				async function cropWorker(): Promise<void> {
 					while (nextIdx < crops.length) {
 						const i = nextIdx++;
+						scanPatternStates[i] = 'active';
 						const blob = await new Promise<Blob>((resolve, reject) =>
 							canvases[i].toBlob(b => b ? resolve(b) : reject(new Error('Canvas export failed')), 'image/png')
 						);
 						const cropFd = new FormData();
 						cropFd.append("image", new File([blob], 'crop.png', { type: 'image/png' }));
+						cropFd.append("targetEdge", "3000");
 						const res = await fetch("/api/vectorize", { method: "POST", body: cropFd, signal });
 						if (!res.ok) {
 							const body = await res.text().catch(() => "");
@@ -363,7 +393,9 @@
 						}
 						const { svg } = await res.json() as { svg: string };
 						svgsOrdered[i] = svg;
-						scanProgress = Math.min(94, 25 + 68 * (++doneCount / crops.length));
+						scanPatternStates[i] = 'done';
+						scanDoneCount++;
+						scanProgress = Math.min(94, 25 + 68 * (scanDoneCount / crops.length));
 					}
 				}
 
@@ -649,14 +681,21 @@
 							</div>
 							<div class="spi__scan-meta">
 								<span class="spi__scan-pct">{Math.round(scanProgress)}%</span>
-								<span class="spi__scan-label">{scanPhases[scanPhaseIndex]?.label ?? "Vectorizing"}</span>
+								<span class="spi__scan-label">{scanLabel}</span>
 								<span class="spi__scan-elapsed">{scanElapsed}s</span>
 							</div>
+							{#if scanPatternStates.length > 0}
+								<div class="spi__pattern-grid">
+									{#each scanPatternStates as status, i}
+										<div class="spi__pattern-slot spi__pattern-slot--{status}" title="Pattern {i + 1}"></div>
+									{/each}
+								</div>
+							{/if}
 							<button type="button" class="spi__scan-cancel" onclick={cancelVectorize}>Cancel</button>
 							{#if scanPhases.length > 1}
 								<p class="spi__scan-notice">
 									<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" style="flex-shrink:0;margin-top:1px"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-									<span>Stay on this page — each pattern takes 10–30s (longer for complex shapes). Don't refresh or reload. If it fails, an error will appear; otherwise it's still running.</span>
+									<span>{#if scanTotalCount > 0}{scanTotalCount} pattern{scanTotalCount === 1 ? '' : 's'} detected — each takes 10–30s to trace.{:else}Detecting patterns — stay on this page.{/if} Don't refresh or reload.</span>
 								</p>
 							{/if}
 						</div>
@@ -734,8 +773,12 @@
 				<div class="spi__scan-dim" style="top: {Math.round(scanProgress)}%"></div>
 				<div class="spi__scan-beam" style="top: calc({Math.round(scanProgress)}% - 1px)"></div>
 				<div class="spi__scan-hud">
-					<span>{scanPhases[scanPhaseIndex]?.label ?? "Analyzing"}</span>
-					<span class="spi__scan-pct-hud">{Math.round(scanProgress)}%</span>
+					<span>{scanLabel || (scanPhases[scanPhaseIndex]?.label ?? "Analyzing")}</span>
+					{#if scanTotalCount > 0 && scanPhaseIndex === 1}
+						<span class="spi__scan-pct-hud">{scanDoneCount}/{scanTotalCount}</span>
+					{:else}
+						<span class="spi__scan-pct-hud">{Math.round(scanProgress)}%</span>
+					{/if}
 					<span>{scanElapsed}s elapsed</span>
 				</div>
 			</div>
@@ -1417,6 +1460,40 @@
 		border-color: var(--color-danger, #f44);
 		color: var(--color-danger, #f44);
 		background: color-mix(in srgb, var(--color-danger, #f44) 8%, transparent);
+	}
+
+	/* ─── Pattern slot grid (multi-mode, shown after detect) ─── */
+	.spi__pattern-grid {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px;
+	}
+
+	.spi__pattern-slot {
+		width: 14px;
+		height: 14px;
+		border-radius: 3px;
+		border: 1.5px solid var(--border-default);
+		background: transparent;
+		flex-shrink: 0;
+		transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+	}
+
+	.spi__pattern-slot--active {
+		border-color: var(--color-brand);
+		background: color-mix(in srgb, var(--color-brand) 25%, transparent);
+		animation: pattern-pulse 1.0s ease-in-out infinite;
+	}
+
+	.spi__pattern-slot--done {
+		border-color: var(--color-brand);
+		background: var(--color-brand);
+		box-shadow: 0 0 4px color-mix(in srgb, var(--color-brand) 50%, transparent);
+	}
+
+	@keyframes pattern-pulse {
+		0%, 100% { box-shadow: 0 0 3px color-mix(in srgb, var(--color-brand) 35%, transparent); }
+		50%       { box-shadow: 0 0 9px color-mix(in srgb, var(--color-brand) 65%, transparent); }
 	}
 
 	/* ─── Stay-on-page notice (multi-mode only) ─── */

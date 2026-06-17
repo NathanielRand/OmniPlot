@@ -28,7 +28,10 @@ export const POST: RequestHandler = async ({ request }) => {
 
 		const raw = Buffer.from(await file.arrayBuffer());
 
-		const processed = await preprocessForTrace(raw).catch((err) => {
+		const targetEdgeStr = formData.get('targetEdge');
+		const targetEdge = targetEdgeStr && Number(targetEdgeStr) > 0 ? Number(targetEdgeStr) : undefined;
+
+		const processed = await preprocessForTrace(raw, targetEdge).catch((err) => {
 			const msg = err?.message ?? 'unknown error';
 			console.error('[vectorize] preprocessing failed:', msg);
 			throw error(422, `Image preprocessing failed: ${msg}`);
