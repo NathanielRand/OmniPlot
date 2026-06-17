@@ -52,11 +52,8 @@
 		scanImageUrl = URL.createObjectURL(file);
 		scanProgress = 0;
 		scanElapsed  = 0;
-		// Tracing shapes owns the long plateau — it's the sequential potrace loop.
-		scanPhases   = isMulti ? [
-			{ label: "Scanning image",   end: 10 },
-			{ label: "Detecting shapes", end: 22 },
-			{ label: "Upscaling crops",  end: 38 },
+		scanPhases = isMulti ? [
+			{ label: "Detecting shapes", end: 25 },
 			{ label: "Tracing shapes",   end: 95 },
 		] : [
 			{ label: "Preprocessing",  end: 45 },
@@ -64,7 +61,7 @@
 		];
 
 		const t0  = Date.now();
-		const tau = isMulti ? 14 : 8;
+		const tau = isMulti ? 20 : 8;
 		_scanTimer = setInterval(() => {
 			const s = (Date.now() - t0) / 1000;
 			scanElapsed  = Math.floor(s);
@@ -293,19 +290,86 @@
 				// SVG: lossless direct path extraction — no rasterisation at all.
 				value = processSvgText(await file.text());
 			} else if (isMulti) {
-				// Multi-pattern raster: per-shape crop + full-resolution potrace server-side.
-				const fd = new FormData();
-				fd.append("image", file);
-				const res = await fetch("/api/vectorize-multi", { method: "POST", body: fd, signal });
-				if (!res.ok) {
-					const body = await res.text().catch(() => "");
+				// Multi-pattern raster: detect blobs server-side (fast), crop client-side,
+				// then trace each crop in parallel via /api/vectorize (one invocation per shape).
+				// This keeps every individual function call well under Vercel's per-invocation
+				// timeout regardless of how many patterns are in the combined file.
+
+				// Phase 1: detect — returns original-space crop bboxes.
+				const fd1 = new FormData();
+				fd1.append("image", file);
+				const detectRes = await fetch("/api/vectorize-detect", { method: "POST", body: fd1, signal });
+				if (!detectRes.ok) {
+					const body = await detectRes.text().catch(() => "");
 					let msg = "";
 					try { msg = (JSON.parse(body) as { message?: string }).message ?? ""; } catch { msg = body; }
-					throw new Error(msg || `Server error ${res.status}`);
+					throw new Error(msg || `Server error ${detectRes.status}`);
 				}
-				const { svgs } = await res.json() as { svgs: string[] };
+				const { crops } = await detectRes.json() as { crops: Array<{ x: number; y: number; w: number; h: number }> };
+
+				// Stop time-based animation; switch to count-based progress for tracing.
+				// Keep a lightweight elapsed-only interval so the HUD timer doesn't freeze.
+				if (_scanTimer !== null) { clearInterval(_scanTimer); _scanTimer = null; }
+				scanProgress = 25;
+				const _elapsedBase = scanElapsed;
+				const _elapsedT0   = Date.now();
+				_scanTimer = setInterval(() => {
+					scanElapsed = _elapsedBase + Math.floor((Date.now() - _elapsedT0) / 1000);
+				}, 500);
+
+				// Phase 2: crop each blob client-side using canvas, send each to /api/vectorize.
+				const BORDER_PX = 20;
+				const imgUrl = URL.createObjectURL(file);
+				const imgEl  = await new Promise<HTMLImageElement>((resolve, reject) => {
+					const el = new Image();
+					el.onload  = () => resolve(el);
+					el.onerror = () => reject(new Error('Could not load image for cropping'));
+					el.src = imgUrl;
+				});
+
+				// Draw all crops while the image is in memory, then revoke the URL.
+				const canvases = crops.map(({ x, y, w, h }) => {
+					const canvas = document.createElement('canvas');
+					canvas.width  = w + BORDER_PX * 2;
+					canvas.height = h + BORDER_PX * 2;
+					const ctx = canvas.getContext('2d')!;
+					ctx.fillStyle = '#ffffff';
+					ctx.fillRect(0, 0, canvas.width, canvas.height);
+					ctx.drawImage(imgEl, x, y, w, h, BORDER_PX, BORDER_PX, w, h);
+					return canvas;
+				});
+				URL.revokeObjectURL(imgUrl);
+
+				// Parallel trace with concurrency limit.
+				const CONCURRENCY = 3;
+				const svgsOrdered = new Array<string>(crops.length);
+				let nextIdx   = 0;
+				let doneCount = 0;
+
+				async function cropWorker(): Promise<void> {
+					while (nextIdx < crops.length) {
+						const i = nextIdx++;
+						const blob = await new Promise<Blob>((resolve, reject) =>
+							canvases[i].toBlob(b => b ? resolve(b) : reject(new Error('Canvas export failed')), 'image/png')
+						);
+						const cropFd = new FormData();
+						cropFd.append("image", new File([blob], 'crop.png', { type: 'image/png' }));
+						const res = await fetch("/api/vectorize", { method: "POST", body: cropFd, signal });
+						if (!res.ok) {
+							const body = await res.text().catch(() => "");
+							let msg = "";
+							try { msg = (JSON.parse(body) as { message?: string }).message ?? ""; } catch { msg = body; }
+							throw new Error(msg || `Server error ${res.status}`);
+						}
+						const { svg } = await res.json() as { svg: string };
+						svgsOrdered[i] = svg;
+						scanProgress = Math.min(94, 25 + 68 * (++doneCount / crops.length));
+					}
+				}
+
+				await Promise.all(Array.from({ length: Math.min(CONCURRENCY, crops.length) }, cropWorker));
 				// Call directly — don't set value, avoids the autoExtract $effect double-firing.
-				onMultiExtract(svgs.map(svg => smoothBezierJunctions(processSvgText(svg))));
+				onMultiExtract(svgsOrdered.map(svg => smoothBezierJunctions(processSvgText(svg))));
 			} else {
 				// Raster: server-side preprocessing + potrace → high-precision SVG.
 				const fd = new FormData();
