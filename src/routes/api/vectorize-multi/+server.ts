@@ -1,7 +1,7 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import Jimp from 'jimp';
-import { morphOpen, readJimp, jimpToBuffer, runTrace, TRACE_OPTIONS } from '$lib/server/vectorize';
+import { morphOpen, readJimp, jimpToBuffer, runTrace, preprocessForTrace } from '$lib/server/vectorize';
 
 export const config = {
 	runtime:     'nodejs20.x',
@@ -131,7 +131,7 @@ export const POST: RequestHandler = async ({ request }) => {
 		// ── 3. Connected-component blob detection ──
 		const blobs = findShapeBboxes(detect, MIN_BLOB_AREA);
 		if (blobs.length === 0) {
-			throw error(422, 'No shapes detected in image. Make sure the image has dark shapes on a light background.');
+			throw error(422, 'No shapes detected in image. Make sure the image has high-contrast shapes on a uniform background.');
 		}
 
 		// ── 4. Map detect-space bboxes → original-space with padding ──
@@ -163,24 +163,11 @@ export const POST: RequestHandler = async ({ request }) => {
 			const canvas = await createWhiteJimp(ow + BORDER_PX * 2, oh + BORDER_PX * 2);
 			canvas.composite(crop, BORDER_PX, BORDER_PX);
 
-			// Upscale to per-crop target, then full preprocessing pipeline.
-			const cW    = canvas.bitmap.width;
-			const cH    = canvas.bitmap.height;
-			const cLong = Math.max(cW, cH);
-			if (cLong < MULTI_TARGET_LONG_EDGE) {
-				const s = MULTI_TARGET_LONG_EDGE / cLong;
-				canvas.resize(Math.round(cW * s), Math.round(cH * s), Jimp.RESIZE_BICUBIC);
-			}
-
-			canvas
-				.greyscale()
-				.normalize()
-				.gaussian(2)
-				.threshold({ max: 128, autoGreyscale: false });
-			morphOpen(canvas, 3);
-
-			const buf = await jimpToBuffer(canvas);
-			return runTrace(buf).catch((e: Error) => {
+			// preprocessForTrace handles Lanczos3 resize, USM, adaptive threshold,
+			// and dynamic morphOpen radius — all scaled to the original crop size.
+			const rawBuf   = await jimpToBuffer(canvas);
+			const processed = await preprocessForTrace(rawBuf, MULTI_TARGET_LONG_EDGE);
+			return runTrace(processed).catch((e: Error) => {
 				throw error(422, `Vectorization failed for a shape: ${e?.message ?? e}`);
 			});
 		}

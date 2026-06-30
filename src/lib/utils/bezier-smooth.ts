@@ -9,7 +9,9 @@
 interface Pt { x: number; y: number }
 
 // Cubic bezier segment in absolute coordinates.
-interface Seg { p0: Pt; p1: Pt; p2: Pt; p3: Pt }
+// `straight` is set on segments produced by collinear-run collapse so the G1 loop
+// knows not to move their control points off the chord.
+interface Seg { p0: Pt; p1: Pt; p2: Pt; p3: Pt; straight?: boolean }
 
 // ─── Vector math ─────────────────────────────────────────────────────────────
 
@@ -62,19 +64,20 @@ function projectOntoChord(p: Pt, a: Pt, b: Pt): Pt {
 	return { x: a.x + t * dx, y: a.y + t * dy };
 }
 
-// For a curved run: smooth junction positions with 6-pass Laplacian (0.25/0.5/0.25),
+// For a curved run: smooth junction positions with Laplacian (0.25/0.5/0.25),
 // then re-derive all control points with Catmull-Rom tangents so the full run is
 // C1-smooth end-to-end — not just positionally smoothed, but tangent-smooth too.
-function smoothCurvedRunEndpoints(segs: Seg[], run: number[]): void {
+// `passes` is adaptive — callers supply a count based on how curved the run is.
+function smoothCurvedRunEndpoints(segs: Seg[], run: number[], passes = 12): void {
 	const m = run.length - 1; // number of interior junctions
 	if (m < 1) return;
 
 	const p0 = segs[run[0]].p0;
 	const pn = segs[run[run.length - 1]].p3;
 
-	// Smooth junction positions with 6 Laplacian passes (endpoints pinned).
+	// Smooth junction positions with Laplacian (endpoints pinned).
 	let jx: Pt[] = run.slice(0, m).map(k => ({ ...segs[k].p3 }));
-	for (let pass = 0; pass < 6; pass++) {
+	for (let pass = 0; pass < passes; pass++) {
 		jx = jx.map((j, i) => {
 			const prev = i === 0     ? p0 : jx[i - 1];
 			const next = i === m - 1 ? pn : jx[i + 1];
@@ -164,16 +167,26 @@ function collapseCollinearRuns(segs: Seg[], cornerThreshDeg: number, maxRunDevFr
 
 		if (maxDev <= maxRunDevFrac * span) {
 			// Collinear: emit one straight segment for the whole run.
+			// Mark it so the G1 pass won't pull its CPs off the chord.
 			const dx = pn.x - p0.x, dy = pn.y - p0.y;
 			result.push({
 				p0,
 				p1: { x: p0.x + dx / 3,       y: p0.y + dy / 3       },
 				p2: { x: p0.x + dx * 2 / 3,    y: p0.y + dy * 2 / 3   },
 				p3: pn,
+				straight: true,
 			});
 		} else {
 			// Curved: smooth endpoint noise, keep all segments.
-			smoothCurvedRunEndpoints(segs, run);
+			// Adaptive pass count: runs near the collinear threshold (small
+			// deviationRatio) use more passes to converge toward the chord;
+			// clearly-curved runs use fewer to preserve genuine arc shape.
+			// Eigenvalue analysis: for 6 waviness cycles in a 50-junction run,
+			// 12 passes yield ~36% reduction; 30 passes yield ~68%; 80 passes
+			// yield ~94% — while the fundamental arc shape (k=1) barely shifts.
+			const deviationRatio = maxDev / span;
+			const passes = deviationRatio < 0.04 ? 80 : deviationRatio < 0.10 ? 30 : 12;
+			smoothCurvedRunEndpoints(segs, run, passes);
 			for (const k of run) result.push(segs[k]);
 		}
 	}
@@ -367,6 +380,81 @@ function serializePath(subpaths: Seg[][]): string {
 	}).filter(Boolean).join(' ');
 }
 
+// ─── Step-artifact removal ────────────────────────────────────────────────────
+
+// Eliminates "stair-step" displacement artifacts: short segments that create
+// large angles (≥ 60°) on BOTH sides, sandwiched between much longer segments.
+// These arise when a pixel-level lateral edge shift in the binary image produces
+// a pair of ~90° turns that our corner threshold correctly leaves as corners —
+// but the resulting micro-step is an artifact, not a genuine geometric feature.
+//
+// For each removed step the predecessor's endpoint is extended to the successor's
+// start, so the straight-through path skips the displacement cleanly.
+function removeStepArtifacts(segs: Seg[], minAngleDeg = 60, maxRatio = 0.15): Seg[] {
+	let arr = segs.slice();
+
+	// Up to 5 passes: each pass can remove one batch of non-adjacent steps.
+	for (let pass = 0; pass < 5; pass++) {
+		const m = arr.length;
+		if (m < 3) break;
+
+		const toRemove: boolean[] = new Array(m).fill(false);
+		let anyRemoved = false;
+
+		for (let i = 0; i < m; i++) {
+			const seg  = arr[i];
+			const prev = arr[(i - 1 + m) % m];
+			const next = arr[(i + 1) % m];
+
+			const segLen  = mag(sub(seg.p3,  seg.p0));
+			const prevLen = mag(sub(prev.p3, prev.p0));
+			const nextLen = mag(sub(next.p3, next.p0));
+			const adjMin  = Math.min(prevLen, nextLen);
+
+			// Step must be much shorter than both adjacent segments.
+			if (adjMin < 1e-6 || segLen >= adjMin * maxRatio) continue;
+
+			// Both entry and exit angles must be large (the step "zigs then zags").
+			const ea = angleBetween(exitTangent(prev), entryTangent(seg));
+			const xa = angleBetween(exitTangent(seg),  entryTangent(next));
+			if (ea < minAngleDeg || xa < minAngleDeg) continue;
+
+			toRemove[i] = true;
+			anyRemoved  = true;
+		}
+
+		if (!anyRemoved) break;
+
+		// Rebuild array: skip removed segments, extending each predecessor's endpoint
+		// to bridge the removed step's displacement.
+		const next: Seg[] = [];
+		for (let i = 0; i < m; i++) {
+			if (!toRemove[i]) {
+				next.push({ ...arr[i] });
+				continue;
+			}
+			// Extend the predecessor to the step's exit point.
+			if (next.length > 0) {
+				const pred = next[next.length - 1];
+				pred.p3 = arr[i].p3;
+				if (pred.straight) {
+					const dx = pred.p3.x - pred.p0.x, dy = pred.p3.y - pred.p0.y;
+					pred.p1 = { x: pred.p0.x + dx / 3,     y: pred.p0.y + dy / 3     };
+					pred.p2 = { x: pred.p0.x + dx * 2 / 3, y: pred.p0.y + dy * 2 / 3 };
+				} else {
+					// Curved predecessor: preserve exit-tangent direction, move endpoint.
+					const dir = unit(exitTangent(pred));
+					const arm = mag(sub(pred.p3, pred.p2));
+					if (dir && arm > 0) pred.p2 = sub(pred.p3, scl(dir, arm));
+				}
+			}
+		}
+		arr = next;
+	}
+
+	return arr;
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
@@ -383,7 +471,7 @@ function serializePath(subpaths: Seg[][]): string {
  * tracing noise get smoothed, while genuine geometry changes (45°, 90° corners,
  * etc.) are preserved exactly.
  */
-export function smoothBezierJunctions(svgPath: string, cornerThresholdDeg = 40): string {
+export function smoothBezierJunctions(svgPath: string, cornerThresholdDeg = 50): string {
 	const subpaths  = parsePath(svgPath);
 	const processed = subpaths.map(segs => {
 		if (segs.length < 2) return segs;
@@ -395,19 +483,43 @@ export function smoothBezierJunctions(svgPath: string, cornerThresholdDeg = 40):
 		const n = collapsed.length;
 
 		// Passes 2–4: G1 junction smoothing run three times for convergence.
+		// Collapsed straight segments are protected: only the curved side is adjusted
+		// (to align tangentially with the straight edge), preserving the chord path.
 		for (let pass = 0; pass < 3; pass++) {
 			for (let i = 0; i < n; i++) {
 				const j   = (i + 1) % n;
 				const cur = collapsed[i];
 				const nxt = collapsed[j];
 				if (mag(sub(cur.p3, nxt.p0)) > 1e-6) continue;
-				if (angleBetween(exitTangent(cur), entryTangent(nxt)) < cornerThresholdDeg) {
+				if (angleBetween(exitTangent(cur), entryTangent(nxt)) >= cornerThresholdDeg) continue;
+
+				const curSt = cur.straight === true;
+				const nxtSt = nxt.straight === true;
+
+				if (curSt !== nxtSt) {
+					// Mixed straight-to-curve: only adjust the curved side so its
+					// tangent aligns with the straight segment's chord direction.
+					// This prevents G1 from pulling straight-segment CPs off the chord.
+					const anchorDir = curSt ? exitTangent(cur) : entryTangent(nxt);
+					const uAnchor   = unit(anchorDir);
+					if (!uAnchor) continue;
+					if (!curSt) cur.p2 = sub(cur.p3, scl(uAnchor, mag(sub(cur.p3, cur.p2))));
+					if (!nxtSt) nxt.p1 = add(nxt.p0, scl(uAnchor, mag(sub(nxt.p1, nxt.p0))));
+				} else {
+					// Both straight or both curved: normal G1 to round the junction.
 					enforceG1(cur, nxt);
 				}
 			}
 		}
 
-		return collapsed;
+		// Pass 5: remove micro-step artifacts (short segments with large angles on
+		// both sides — pixel-shift stair-steps left intact by corner detection).
+		const destepped = removeStepArtifacts(collapsed);
+
+		// Pass 6: re-run collinear collapse on the de-stepped result.
+		// Removing steps leaves near-collinear segments that span the original
+		// step displacement; a second collapse merges them into one L command.
+		return collapseCollinearRuns(destepped, cornerThresholdDeg);
 	});
 
 	return serializePath(processed);
