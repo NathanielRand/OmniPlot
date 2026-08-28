@@ -1,4 +1,5 @@
 // ONGOING
+- Added an "Early Access" navbar subtext and a mandatory disclosure modal shown before the guided tour on first dashboard visit.
 - any img type -> rm background -> convert to svg -  inherit svg upload functionality
 - claude --resume 31f50029-b621-492c-a461-ea4bd37790f6
 

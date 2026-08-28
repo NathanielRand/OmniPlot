@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import Logo from '$lib/components/ui/Logo.svelte';
+  import EarlyAccessBadge from '$lib/components/ui/EarlyAccessBadge.svelte';
   import ThemeToggle from '$lib/components/ui/ThemeToggle.svelte';
   interface Props { children: Snippet; }
   let { children }: Props = $props();
@@ -8,7 +9,10 @@
 
 <div class="auth-shell">
   <header class="auth-header">
-    <Logo size={28} />
+    <div class="auth-header__brand">
+      <Logo size={28} />
+      <EarlyAccessBadge />
+    </div>
     <ThemeToggle />
   </header>
 
@@ -40,6 +44,12 @@
     padding: 16px 24px;
     border-bottom: 1px solid var(--border-subtle);
     background: var(--bg-surface);
+  }
+
+  .auth-header__brand {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
   }
 
   .auth-main {

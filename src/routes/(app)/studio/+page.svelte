@@ -46,6 +46,7 @@
 	import Button from "$lib/components/ui/Button.svelte";
 	import Badge from "$lib/components/ui/Badge.svelte";
 	import GuidedTour from "$lib/components/ui/GuidedTour.svelte";
+	import EarlyAccessModal from "$lib/components/ui/EarlyAccessModal.svelte";
 	import type { TourStep } from "$lib/components/ui/GuidedTour.svelte";
 	import { getVehicleName } from "$lib/stores/patternStore.svelte";
 	import type { CanvasItem, PlotterConfig } from "$lib/types";
@@ -1172,6 +1173,21 @@
 		toastStore.info("Disconnected", "Connection closed.");
 	}
 
+	function maybeShowTour() {
+		if (typeof localStorage !== "undefined" && !localStorage.getItem("op-tour-seen")) {
+			setTimeout(() => uiStore.openTour(), 800);
+		}
+	}
+
+	// Once the mandatory early access disclosure closes (acknowledged), fall
+	// through to the guided tour check so the two never overlap.
+	let _prevEarlyAccessOpen = false;
+	$effect(() => {
+		const open = uiStore.earlyAccessModalOpen;
+		if (_prevEarlyAccessOpen && !open) maybeShowTour();
+		_prevEarlyAccessOpen = open;
+	});
+
 	onMount(() => {
 		canvasStore.restoreFromStorage();
 		_mounted = true;
@@ -1183,9 +1199,12 @@
 				try { resumeCheckpoint = JSON.parse(raw); } catch { localStorage.removeItem("omniplot-resume-checkpoint"); }
 			}
 		}
-		// Auto-trigger tour for first-time visitors
-		if (typeof localStorage !== "undefined" && !localStorage.getItem("op-tour-seen")) {
-			setTimeout(() => uiStore.openTour(), 800);
+		// Early access disclosure gates everything else — show it first, and only
+		// queue the guided tour once it has been acknowledged (or was already).
+		if (typeof localStorage !== "undefined" && !localStorage.getItem("op-early-access-ack")) {
+			uiStore.openEarlyAccessModal();
+		} else {
+			maybeShowTour();
 		}
 
 		// Initial plotter discovery
@@ -2646,6 +2665,8 @@
 		{/each}
 	</div>
 </div>
+
+<EarlyAccessModal />
 
 <GuidedTour
 	steps={TOUR_STEPS}

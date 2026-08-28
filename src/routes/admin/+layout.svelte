@@ -3,6 +3,7 @@
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import Logo from '$lib/components/ui/Logo.svelte';
+  import EarlyAccessBadge from '$lib/components/ui/EarlyAccessBadge.svelte';
   import ThemeToggle from '$lib/components/ui/ThemeToggle.svelte';
   import Badge from '$lib/components/ui/Badge.svelte';
   import { ADMIN_NAV } from '$lib/config';
@@ -73,7 +74,10 @@
   <!-- Sidebar -->
   <aside class="admin-sidebar">
     <div class="admin-sidebar__header">
-      <Logo size={26} />
+      <div class="admin-sidebar__brand">
+        <Logo size={26} />
+        <EarlyAccessBadge />
+      </div>
       <Badge variant="danger" size="sm">Admin</Badge>
     </div>
 
@@ -232,6 +236,12 @@
     padding: 16px 14px;
     border-bottom: 1px solid var(--border-subtle);
     flex-shrink: 0;
+  }
+
+  .admin-sidebar__brand {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
   }
 
   .admin-nav {

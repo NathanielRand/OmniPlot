@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Snippet } from "svelte";
 	import Logo from "$lib/components/ui/Logo.svelte";
+	import EarlyAccessBadge from "$lib/components/ui/EarlyAccessBadge.svelte";
 	import ThemeToggle from "$lib/components/ui/ThemeToggle.svelte";
 	import Button from "$lib/components/ui/Button.svelte";
 	import Badge from "$lib/components/ui/Badge.svelte";
@@ -67,7 +68,10 @@
 	<!-- ─── Header ─── -->
 	<header class="mkt-header">
 		<div class="mkt-header__inner">
-			<Logo size={30} />
+			<div class="mkt-header__brand">
+				<Logo size={30} />
+				<EarlyAccessBadge />
+			</div>
 
 			<nav class="mkt-header__nav" aria-label="Marketing navigation">
 				{#each MARKETING_NAV as item}
@@ -315,6 +319,12 @@
 		display: flex;
 		align-items: center;
 		gap: 16px;
+	}
+
+	.mkt-header__brand {
+		display: flex;
+		flex-direction: column;
+		gap: 1px;
 	}
 
 	.mkt-header__nav {

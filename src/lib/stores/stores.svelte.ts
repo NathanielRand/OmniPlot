@@ -160,6 +160,7 @@ function createUiStore() {
 	let commandPaletteOpen = $state(false);
 	let reportModalOpen = $state(false);
 	let tourOpen = $state(false);
+	let earlyAccessModalOpen = $state(false);
 
 	return {
 		get sidebarOpen() {
@@ -182,6 +183,9 @@ function createUiStore() {
 		},
 		get tourOpen() {
 			return tourOpen;
+		},
+		get earlyAccessModalOpen() {
+			return earlyAccessModalOpen;
 		},
 
 		toggleSidebar() {
@@ -222,6 +226,12 @@ function createUiStore() {
 		},
 		closeTour() {
 			tourOpen = false;
+		},
+		openEarlyAccessModal() {
+			earlyAccessModalOpen = true;
+		},
+		closeEarlyAccessModal() {
+			earlyAccessModalOpen = false;
 		},
 	};
 }

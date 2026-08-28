@@ -3,6 +3,7 @@
 	import { page } from "$app/state";
 	import Logo from "$lib/components/ui/Logo.svelte";
 	import Badge from "$lib/components/ui/Badge.svelte";
+	import EarlyAccessBadge from "$lib/components/ui/EarlyAccessBadge.svelte";
 	import ThemeToggle from "$lib/components/ui/ThemeToggle.svelte";
 	import { uiStore, userStore, shopStore, agentStore } from "$lib/stores";
 	import { APP_NAV } from "$lib/config";
@@ -80,7 +81,10 @@
 					<path d="M3 12h18M3 6h18M3 18h18" />
 				</svg>
 			</button>
-			<Logo size={28} />
+			<div class="topbar__brand">
+				<Logo size={28} />
+				<EarlyAccessBadge />
+			</div>
 		</div>
 
 		<nav class="topbar__nav" aria-label="Main navigation">
@@ -426,6 +430,12 @@
 		align-items: center;
 		gap: 10px;
 		flex-shrink: 0;
+	}
+
+	.topbar__brand {
+		display: flex;
+		flex-direction: column;
+		gap: 1px;
 	}
 
 	.topbar__menu-btn {
