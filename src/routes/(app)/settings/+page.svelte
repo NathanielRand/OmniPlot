@@ -253,7 +253,6 @@
 	let pendingInvites = $state<ShopInvite[]>([]);
 	let shopLoading    = $state(false);
 	let newShopName    = $state("");
-	let newShopPlan    = $state<ShopPlan>("starter");
 	let creatingShop   = $state(false);
 	let newInviteRole  = $state<ShopRole>("tech");
 	let creatingInvite = $state(false);
@@ -629,7 +628,10 @@
 		if (!newShopName || !userStore.user) return;
 		creatingShop = true;
 		try {
-			const s = await createShop(userStore.user.uid, newShopName, newShopPlan);
+			// Plan is no longer user-selected at creation — always starts on
+			// "starter"; upgrading the shop's plan happens from the shop
+			// header once it exists ("Activate plan" / "Manage billing").
+			const s = await createShop(userStore.user.uid, newShopName, "starter");
 			shop = s;
 			members = [{
 				uid: userStore.user.uid,
@@ -640,8 +642,7 @@
 				joinedAt: new Date(),
 			}];
 			toastStore.success("Shop created", "Redirecting to billing…");
-			// Kick off Stripe checkout for the chosen plan
-			await redirectToShopCheckout(s.id, newShopPlan);
+			await redirectToShopCheckout(s.id, "starter");
 		} catch (err) {
 			toastStore.error("Couldn't create shop", err instanceof Error ? err.message : "");
 			creatingShop = false;
@@ -1243,10 +1244,31 @@
 						<span>Loading team…</span>
 					</div>
 
+				{:else if !shop && userStore.user?.tier === "free"}
+					<!-- Not entitled — team creation is a paid-plan feature. Gated
+					     only when there's no shop yet: an existing shop's access is
+					     governed by its own subscriptionStatus, not the owner's
+					     individual UserTier, so this must never hide an existing
+					     shop's management UI from its owner/members. -->
+					<div class="create-shop-callout">
+						<div>
+							<div class="create-shop-callout__title">Upgrade to create a team</div>
+							<p class="create-shop-callout__sub">
+								Team access — one account per technician, shared patterns, a single billing subscription — comes with any paid plan.
+							</p>
+						</div>
+					</div>
+					<div class="form-actions">
+						<Button variant="primary" size="sm" onclick={uiStore.openPricing}>
+							Upgrade plan
+						</Button>
+					</div>
+
 				{:else if !shop}
-					<!-- Create shop -->
+					<!-- Create shop — plan is no longer user-selected here; the shop
+					     starts on "starter" and is upgraded from the shop header. -->
 					<form onsubmit={handleCreateShop}>
-						<div class="form-field" style="margin-bottom:14px">
+						<div class="form-field" style="margin-bottom:20px">
 							<label for="newShopName" class="form-label">Shop name</label>
 							<input
 								id="newShopName"
@@ -1257,19 +1279,11 @@
 								required
 							/>
 						</div>
-						<div class="form-field" style="margin-bottom:20px">
-							<label for="newShopPlan" class="form-label">Plan</label>
-							<select id="newShopPlan" class="form-select" bind:value={newShopPlan}>
-								{#each Object.entries(SHOP_PLAN_LABELS) as [val, label]}
-									<option value={val}>{label}</option>
-								{/each}
-							</select>
-						</div>
 						<div class="create-shop-callout">
 							<div>
 								<div class="create-shop-callout__title">One account per technician</div>
 								<p class="create-shop-callout__sub">
-									Each tech gets their own login. One billing subscription covers the whole team. Invite up to {newShopPlan === "starter" ? "3" : newShopPlan === "team" ? "10" : "25"} members.
+									Each tech gets their own login. One billing subscription covers the whole team.
 								</p>
 							</div>
 						</div>

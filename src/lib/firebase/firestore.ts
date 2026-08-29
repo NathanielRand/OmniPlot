@@ -804,6 +804,8 @@ export function toOrgMember(data: DocumentData): OrgMember {
 	return {
 		uid: data.uid ?? "",
 		orgId: data.orgId ?? "",
+		directRole: data.directRole ?? null,
+		directShopIds: data.directShopIds ?? null,
 		role: data.role ?? "tech",
 		shopIds: data.shopIds ?? null,
 		displayName: data.displayName ?? "",

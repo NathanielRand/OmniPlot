@@ -2,6 +2,7 @@ import { json } from "@sveltejs/kit";
 import type { RequestHandler } from "./$types";
 import { getAdminDb } from "$lib/server/firebase-admin";
 import { requireUid } from "$lib/server/shop-auth";
+import { recomputeOrgMember } from "$lib/server/recompute-org-member";
 import { FieldValue } from "firebase-admin/firestore";
 
 // POST /api/shops/invites/[token]/accept — role is read from the stored
@@ -50,6 +51,10 @@ export const POST: RequestHandler = async ({ request, params }) => {
 	batch.update(inviteRef, { status: "accepted" });
 
 	await batch.commit();
+
+	const shopSnap = await db.doc(`shops/${invite.shopId}`).get();
+	const orgId = shopSnap.data()?.orgId;
+	if (orgId) await recomputeOrgMember(orgId, uid);
 
 	return json({ shopId: invite.shopId, role: invite.role });
 };

@@ -4,7 +4,7 @@ import type { ShopRole } from "$lib/types";
 // Higher number = more privilege. Used to stop a caller granting or
 // touching a role above their own — rules can't express this, so it lives
 // here and every mutation route must call it.
-const ROLE_RANK: Record<ShopRole, number> = { tech: 1, manager: 2, owner: 3 };
+export const ROLE_RANK: Record<ShopRole, number> = { tech: 1, manager: 2, owner: 3 };
 
 export function roleAtLeast(role: ShopRole, min: ShopRole): boolean {
 	return ROLE_RANK[role] >= ROLE_RANK[min];
@@ -12,6 +12,10 @@ export function roleAtLeast(role: ShopRole, min: ShopRole): boolean {
 
 export function roleOutranks(a: ShopRole, b: ShopRole): boolean {
 	return ROLE_RANK[a] > ROLE_RANK[b];
+}
+
+export function maxRole(a: ShopRole, b: ShopRole): ShopRole {
+	return ROLE_RANK[a] >= ROLE_RANK[b] ? a : b;
 }
 
 export async function requireUid(request: Request): Promise<string | null> {

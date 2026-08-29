@@ -56,7 +56,9 @@ export const POST: RequestHandler = async ({ request }) => {
 		uid,
 		orgId: orgRef.id,
 		role: "owner",
-		shopIds: null,
+		shopIds: [shopRef.id],
+		directRole: "owner",
+		directShopIds: [shopRef.id],
 		joinedAt: now,
 	});
 

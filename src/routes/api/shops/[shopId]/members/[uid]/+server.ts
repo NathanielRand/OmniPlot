@@ -8,8 +8,15 @@ import {
 	roleOutranks,
 	isLastOwner,
 } from "$lib/server/shop-auth";
+import { recomputeOrgMember } from "$lib/server/recompute-org-member";
 import { FieldValue } from "firebase-admin/firestore";
 import type { ShopRole } from "$lib/types";
+
+async function recomputeForShop(shopId: string, uid: string): Promise<void> {
+	const shopSnap = await getAdminDb().doc(`shops/${shopId}`).get();
+	const orgId = shopSnap.data()?.orgId;
+	if (orgId) await recomputeOrgMember(orgId, uid);
+}
 
 const VALID_ROLES: ShopRole[] = ["owner", "manager", "tech"];
 
@@ -52,6 +59,7 @@ export const PATCH: RequestHandler = async ({ request, params }) => {
 		updatedAt: FieldValue.serverTimestamp(),
 	});
 	await batch.commit();
+	await recomputeForShop(shopId, targetUid);
 
 	return json({ ok: true });
 };
@@ -96,5 +104,7 @@ export const DELETE: RequestHandler = async ({ request, params }) => {
 	}
 
 	await batch.commit();
+	await recomputeForShop(shopId, targetUid);
+
 	return json({ ok: true });
 };

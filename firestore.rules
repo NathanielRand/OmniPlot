@@ -123,6 +123,19 @@ service cloud.firestore {
         allow read:  if isOrgMember(orgId);
         allow write: if false;
       }
+
+      // Groups: org-level, scoped grants — src/routes/api/orgs/**. Mutating
+      // a group's role/shopIds changes every member's effective permission,
+      // which is exactly the kind of chain rules can't safely evaluate.
+      match /groups/{groupId} {
+        allow read:  if isOrgMember(orgId);
+        allow write: if false;
+
+        match /groupMembers/{memberId} {
+          allow read:  if isOrgMember(orgId);
+          allow write: if false;
+        }
+      }
     }
 
     // ─── Shops ────────────────────────────────────────────────────────────

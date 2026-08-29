@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { getAdminDb, verifyIdToken } from '$lib/server/firebase-admin';
+import { recomputeOrgMember } from '$lib/server/recompute-org-member';
 import { FieldValue } from 'firebase-admin/firestore';
 
 async function assertAdmin(authHeader: string | null): Promise<string | null> {
@@ -71,7 +72,10 @@ export const PATCH: RequestHandler = async ({ request }) => {
 		const userSnap = await db.doc(`users/${uid}`).get();
 		const shopId = userSnap.data()?.shopId;
 		if (shopId) {
+			const shopSnap = await db.doc(`shops/${shopId}`).get();
 			await db.doc(`shops/${shopId}/members/${uid}`).delete();
+			const orgId = shopSnap.data()?.orgId;
+			if (orgId) await recomputeOrgMember(orgId, uid);
 		}
 	}
 

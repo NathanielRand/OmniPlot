@@ -72,15 +72,45 @@ export interface Organization {
 
 // orgs/{orgId}/members/{uid} — the resolved permission record. Precomputed
 // (not derived at request time) because Firestore rules can't walk an
-// org→team→role chain per request.
+// org→group→role chain per request.
+//
+// `role`/`shopIds` are the EFFECTIVE grant — max(directRole, every group
+// this member belongs to) — and are what permission checks should read.
+// `directRole`/`directShopIds` are the grant that comes from shop
+// membership alone, independent of any group; recompute uses them as a
+// floor so leaving/losing a group can never erode a shop-membership grant.
 export interface OrgMember {
 	uid: string;
 	orgId: string;
 	role: ShopRole;
-	// Shops this membership's role applies to; null = org-wide.
-	shopIds: string[] | null;
+	shopIds: string[] | null; // null = org-wide
+	// Null when this member's only grant comes from group membership.
+	directRole: ShopRole | null;
+	directShopIds: string[] | null;
 	displayName: string;
 	email: string;
+	joinedAt: Date;
+}
+
+// orgs/{orgId}/groups/{groupId} — an org-level group whose role grant is
+// scoped to one or more shops, or org-wide. Named "Group" (not "Team") to
+// avoid colliding with the "Team" ShopPlan tier already user-visible in
+// the pricing modal and plan badges.
+export interface Group {
+	id: string;
+	orgId: string;
+	name: string;
+	role: ShopRole;
+	shopIds: string[] | null; // null = org-wide
+	createdAt: Date;
+	updatedAt: Date;
+}
+
+// orgs/{orgId}/groups/{groupId}/groupMembers/{uid}
+export interface GroupMember {
+	uid: string;
+	orgId: string;
+	groupId: string;
 	joinedAt: Date;
 }
 
