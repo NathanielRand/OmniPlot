@@ -60,8 +60,34 @@ export type ShopPlan = "starter" | "team" | "studio";
 export type ShopRole = "owner" | "manager" | "tech";
 export type InviteStatus = "pending" | "accepted" | "revoked";
 
+// Top of the hierarchy — the paying entity. Billing fields stay on Shop
+// until Phase 4 rescopes billing to the org.
+export interface Organization {
+	id: string;
+	name: string;
+	ownerId: string;
+	createdAt: Date;
+	updatedAt: Date;
+}
+
+// orgs/{orgId}/members/{uid} — the resolved permission record. Precomputed
+// (not derived at request time) because Firestore rules can't walk an
+// org→team→role chain per request.
+export interface OrgMember {
+	uid: string;
+	orgId: string;
+	role: ShopRole;
+	// Shops this membership's role applies to; null = org-wide.
+	shopIds: string[] | null;
+	displayName: string;
+	email: string;
+	joinedAt: Date;
+}
+
 export interface Shop {
 	id: string;
+	// Null until the Phase 1 backfill runs.
+	orgId: string | null;
 	name: string;
 	plan: ShopPlan;
 	seats: number; // max active members

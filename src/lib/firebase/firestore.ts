@@ -36,6 +36,8 @@ import type {
 	ShopMember,
 	ShopInvite,
 	ShopRole,
+	Organization,
+	OrgMember,
 	PlotterDevice,
 	InsightPost,
 	PlotterErrorReport,
@@ -54,6 +56,7 @@ export const Collections = {
 	PLOTTERS: "plotters",
 	SHOPS: "shops",
 	SHOP_INVITES: "shopInvites",
+	ORGS: "orgs",
 	INSIGHTS: "insights",
 	PLOTTER_ERRORS: "plotterErrors",
 	USER_PATTERNS: "userPatterns",
@@ -759,10 +762,34 @@ export async function batchSeedData(
 	}
 }
 
+// ─── Org converters ────────────────────────────
+export function toOrganization(id: string, data: DocumentData): Organization {
+	return {
+		id,
+		name: data.name ?? "",
+		ownerId: data.ownerId ?? "",
+		createdAt: fromTimestamp(data.createdAt),
+		updatedAt: fromTimestamp(data.updatedAt),
+	};
+}
+
+export function toOrgMember(data: DocumentData): OrgMember {
+	return {
+		uid: data.uid ?? "",
+		orgId: data.orgId ?? "",
+		role: data.role ?? "tech",
+		shopIds: data.shopIds ?? null,
+		displayName: data.displayName ?? "",
+		email: data.email ?? "",
+		joinedAt: fromTimestamp(data.joinedAt),
+	};
+}
+
 // ─── Shop converters ──────────────────────────
 export function toShop(id: string, data: DocumentData): Shop {
 	return {
 		id,
+		orgId: data.orgId ?? null,
 		name: data.name ?? "",
 		plan: data.plan ?? "starter",
 		seats: data.seats ?? 1,
@@ -809,10 +836,24 @@ export async function createShop(
 	name: string,
 	plan: Shop["plan"] = "starter",
 ): Promise<Shop> {
+	const orgRef = doc(collection(db, Collections.ORGS));
 	const ref = doc(collection(db, Collections.SHOPS));
 	const now = serverTimestamp();
 	const seats = plan === "starter" ? 3 : plan === "team" ? 10 : 25;
-	await setDoc(ref, {
+
+	const batch = writeBatch(db);
+
+	// A shop always has an owning org — created together so "shop with no
+	// org" is never a reachable state for anything written after Phase 1.
+	batch.set(orgRef, {
+		name,
+		ownerId,
+		createdAt: now,
+		updatedAt: now,
+	});
+
+	batch.set(ref, {
+		orgId: orgRef.id,
 		name,
 		plan,
 		seats,
@@ -825,21 +866,35 @@ export async function createShop(
 		updatedAt: now,
 	});
 
-	// Write the owner as first member
+	// Write the owner as first shop member
 	const memberRef = doc(db, Collections.SHOPS, ref.id, "members", ownerId);
-	await setDoc(memberRef, {
+	batch.set(memberRef, {
 		uid: ownerId,
 		shopId: ref.id,
 		role: "owner",
 		joinedAt: now,
 	});
 
-	// Stamp shopId + shopRole on the owner's user doc
-	await updateDoc(doc(db, Collections.USERS, ownerId), {
+	// Mirror as the org member record — the doc rules/server routes will
+	// actually read once role resolution moves off the client (Phase 2+).
+	const orgMemberRef = doc(db, Collections.ORGS, orgRef.id, "members", ownerId);
+	batch.set(orgMemberRef, {
+		uid: ownerId,
+		orgId: orgRef.id,
+		role: "owner",
+		shopIds: null, // org-wide — owner created the org
+		joinedAt: now,
+	});
+
+	// Stamp shopId + shopRole on the owner's user doc — kept as the
+	// default/last-active shop pointer; the org member doc is authoritative.
+	batch.update(doc(db, Collections.USERS, ownerId), {
 		shopId: ref.id,
 		shopRole: "owner",
 		updatedAt: now,
 	});
+
+	await batch.commit();
 
 	const snap = await getDoc(ref);
 	return toShop(ref.id, snap.data()!);

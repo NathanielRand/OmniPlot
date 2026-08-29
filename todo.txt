@@ -1,8 +1,51 @@
 Still outstanding from before: none of the billing flows (pause, cancel-now, delete-account, clear-history, admin pause/unpause) have run against real Stripe test-mode webhooks. That test-mode pass is now more important given the API version change touches the same webhook path. Want me to run it?
 
 // ONGOING
-- user's window tint library incorrectly shows counter values . maybe its including admin/community/requests pattern counts in non-active status but idk, needs confirming. the user should only see counts for their own patterns, admin added patterns, or community approved patterns. when no patterns are present, we need to show a larger "upload pattern" btn blended into our existing "No vehicles found" (which really needs to say "no patterns found"). the "Try a different search or request this vehicle" should change to "request a pattern".
-- shops/teams/org needs overhaul. we need to be able to support an org having multiple shops and multiple groups of teams with varying roles/perms.
+Org / Shop / Team Overhaul — Plan
+
+Current state (confirmed): flat two-tier model, no org entity. User 0..1 — 1 Shop, Shop 1 — many ShopMember, roles hardcoded as ShopRole = owner|manager|tech. Everything is Firestore client-SDK + firestore.rules, no server-side membership API. shopId/shopRole scalars on the user doc are read/written at 116 call sites across the app (settings page, join flow, admin panel, billing) — this rules out a rewrite; the migration must be additive.
+
+Target model
+
+- Organization (new, top of hierarchy): the paying entity. id, name, ownerId, plan, seats, stripeCustomerId, ... — effectively what Shop billing fields are today, moved up one level.
+- Shop: becomes orgId-scoped, drops billing fields (now just a location/site record).
+- Team: org-level group (not per-shop, not a shop subdivision) whose role grant is scoped to one or more shops, or org-wide. This is the plain reading of "an org having multiple shops and multiple groups of teams" and it's the only shape that keeps permission resolution to one document read (see below) — not attempted as "teams nested in shops."
+- Membership doc: orgs/{orgId}/members/{uid} — the single source of truth, holding the resolved permission set + which shopIds it applies to. This is the doc Firestore rules and server routes actually read. Firestore's rules-evaluation budget doesn't support walking org→team→role→permission chains per request, so nothing in rules ever traverses that chain — it's precomputed into this one doc whenever a role/team assignment changes.
+
+Why additive, not a rewrite
+
+Keep shopId/shopRole on the user doc as a "default/last-active shop" UI pointer — every existing consumer (shopStore, settings page, handlePortal("shop"), the join page's shopId equality check, admin's removeShop action) keeps compiling. The membership doc becomes authoritative; the scalar becomes a convenience cache updated alongside it.
+
+The privilege-escalation gap that has to close first
+
+firestore.rules:131–136 lets any signed-in user update a shopInvite doc (that's how accept works today) and reads on it are public. With only 3 shop roles the blast radius is small. Once invites can carry cross-shop/team grants, that same permissive rule lets a user rewrite the invite's role field before accepting themselves in. Rules can't express "can't grant a permission you don't hold," "can't self-escalate," "last owner can't be removed," or org-wide seat limits. So: all membership/role/invite/team mutations move to +server.ts routes using the Admin SDK; Firestore rules become a deny-by-default backstop, not the authorization layer. This is implied by the request but not stated, and is the piece most likely to get under-scoped if skipped.
+
+Billing must be explicitly rescoped, not deferred
+
+stripe-ledger.ts keys everything on metadata.type: 'shop' + shopId, and writes subscription status onto shops/{shopId}. If the org becomes the payer: new metadata shape, a new webhook branch, SHOP_PLAN_LIMITS/SHOP_PRICING_PLANS rekeyed to org, seats reinterpreted as an org-wide pool instead of per-shop — and existing live shop subscriptions need a migration or a compat branch reading either metadata shape. This is the item most likely to break silently in production if left implicit.
+
+Phasing (each phase ships independently)
+
+1. Org entity + membership docs, additive. Add Organization, OrgMember types; backfill one org per existing shop (org.ownerId = shop.ownerId); keep shopId/shopRole scalars working unchanged.
+2. Server-side membership/invite/role routes + tightened rules. Move mutations off client SDK; rules become read-mostly + deny-by-default writes.
+3. Teams: org-level team entity, scoped grants (shop subset or org-wide), permission resolution written into the OrgMember doc on any change.
+4. Billing rescope: org-level Stripe customer/subscription, metadata migration for existing shops, seat semantics.
+5. UI: org switcher, shop switcher, team management screens; settings page's "team" tab splits into shop and team management.
+
+todo.txt is currently modified on dev — flagging since it's uncommitted local state, not touched by this plan.
+
+---
+
+Want me to start on Phase 1 (schema + backfill), or do you want to adjust the team/shop scoping call (org-level teams vs. per-shop teams) before I touch anything?
+
+✻ Sautéed for 3m 17s
+
+※ recap: Overhauling OmniPlot's shop/org/team model to support multi-shop orgs with team-based roles. I mapped the current flat Shop model and drafted a 5-phase plan; next step is your go-ahead to start Phase 1 (org schema + backfill). (disable recaps in /config)
+
+
+// NEXT
+- pattern builder where the uses inputs the exact dimensions to manually craft the pattern directly from the studio. this give true sandbox and potentially unlimited types of patterns.
+- the platform is very vehicle focused which has been good but i want to expand our offerings to include other cut/print needs like residential/commercial windows, art designs that have nothing to do with vehicles or building, idk. How can we keep the vehicles flow and branding but ADD (not take away) features to support anm encourage more than vehicles use. Everything from our pattern library layout/sort/filters/search, pattern uploader.
 - audit core saas infrastructure to verying all systems are fully wired up (not commented out or mocked out or faked in any way). we need to add anything we are missing that would be expected and/or common for saas infrastructure of this type to handle large scale.
 - audit all advertised features, services, pages (marketing & user dashboard) to make sure we support, enforce, and have the right systems in place for the whole process. update any marketing pages with features we've added since updating those last or process changes. find where we have inaccurate or mock data to prevent misadvertising. build a list of whats incomplete and also what is missing entirely or something we should have considering our product line. we need proper disclousure and badges next to everything we dont support or is in dev and disable to prevent misuse or abuse.
 - triggered email notifications/receipts for our various user actions (welcome, subscription, any transaction receipt, usage alerts, feature drops, account specific emails, etc..) that admin can view, test, update, create, and pause from the admin dashboard. notification activity needs to be viewable from admin. admin options to manual send.
@@ -10,8 +53,6 @@ Still outstanding from before: none of the billing flows (pause, cancel-now, del
 
 
 // BACKLOG
-- pattern builder where the uses inputs the exact dimensions to manually craft the pattern directly from the studio. this give true sandbox and potentially unlimited types of patterns.
-- the platform is very vehicle focused which has been good but i want to expand our offerings to include other cut/print needs like residential/commercial windows, art designs that have nothing to do with vehicles or building, idk. How can we keep the vehicles flow and branding but ADD (not take away) features to support anm encourage more than vehicles use. Everything from our pattern library layout/sort/filters/search, pattern uploader.
 - select material should dynamically change the gray box "cut zone/print zone" on the studio canvas size to match. that way they nest patterns into that zone, it is accruate to the size of the material they have placed those patterns in.
 - any img type -> rm background -> convert to svg -  inherit svg upload functionality
 - the agent connection is throwing serial port errors.

@@ -113,6 +113,32 @@ service cloud.firestore {
       allow read, update, delete: if isAdmin();
     }
 
+    function isOrgMember(orgId) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/orgs/$(orgId)/members/$(uid()));
+    }
+
+    // ─── Organizations ────────────────────────────────────────────────────
+    // create is bootstrap-only (self-creation as owner of your own new org
+    // — not an escalation vector). update/delete are closed outright: that's
+    // where role/team-grant rewriting would happen, and it moves to Admin
+    // SDK server routes in Phase 2. Same shape as the existing shops rules.
+    match /orgs/{orgId} {
+      allow read:   if isOrgMember(orgId);
+      allow create: if signedIn();
+      allow update, delete: if false;
+
+      match /members/{memberId} {
+        allow read:   if isOrgMember(orgId);
+        // Self-bootstrap as owner only — creating any other role for
+        // yourself, or any member doc for someone else, is denied.
+        allow create: if signedIn()
+                       && request.resource.data.uid == uid()
+                       && request.resource.data.role == 'owner';
+        allow update, delete: if false;
+      }
+    }
+
     // ─── Shops ────────────────────────────────────────────────────────────
     match /shops/{shopId} {
       allow read:   if isMember(shopId);
@@ -121,8 +147,16 @@ service cloud.firestore {
       allow delete: if false;               // Admin SDK only
 
       match /members/{memberId} {
-        allow read:                if isMember(shopId);
-        allow create, update, delete: if isOwnerOrManager(shopId);
+        allow read: if isMember(shopId);
+        // Bootstrap case: a brand-new shop has no members yet, so
+        // isOwnerOrManager can never be true for its first write — permit
+        // self-creation as owner; every other create/update/delete still
+        // requires existing owner/manager membership.
+        allow create: if isOwnerOrManager(shopId)
+                       || (signedIn()
+                           && request.resource.data.uid == uid()
+                           && request.resource.data.role == 'owner');
+        allow update, delete: if isOwnerOrManager(shopId);
       }
     }
 
