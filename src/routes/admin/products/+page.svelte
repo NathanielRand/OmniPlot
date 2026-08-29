@@ -51,7 +51,7 @@
 	);
 
 	// ─── Helpers ───────────────────────────────────
-	async function authHeaders() {
+	async function authHeaders(): Promise<Record<string, string>> {
 		const token = await auth.currentUser?.getIdToken();
 		return token ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' };
 	}
@@ -524,7 +524,7 @@
 		<div class="section-header">
 			<h2 class="section-title">Create product</h2>
 			{#if !creatingProduct}
-				<Button variant="default" size="sm" onclick={() => (creatingProduct = true)}>
+				<Button variant="secondary" size="sm" onclick={() => (creatingProduct = true)}>
 					<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
 					New product
 				</Button>

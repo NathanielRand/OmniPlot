@@ -14,13 +14,19 @@ export async function syncSubscriptionToFirestore(sub: Stripe.Subscription): Pro
 	const { uid, type, shopId } = sub.metadata ?? {};
 	if (!uid) return false;
 
-	const status            = sub.status as 'active' | 'canceled' | 'past_due' | 'trialing';
+	const status            = sub.status;
 	const item               = sub.items.data[0];
 	const priceId            = item?.price.id ?? '';
 	const periodEnd          = item?.current_period_end ? new Date(item.current_period_end * 1000) : null;
 	const trialEnd           = sub.trial_end ? new Date(sub.trial_end * 1000) : null;
 	const cancelAtPeriodEnd  = sub.cancel_at_period_end ?? false;
 	const tier               = sub.metadata?.tier;
+	// `pause_collection` (self-service "pause billing") does NOT change
+	// `status` — Stripe leaves it 'active' and keeps generating invoices
+	// (voided/marked uncollectible, per `behavior`). `status === 'paused'` is
+	// a distinct, unrelated thing that only happens when a trial ends with no
+	// payment method on file. Track both separately.
+	const collectionPaused  = !!sub.pause_collection;
 
 	const db = getAdminDb();
 
@@ -51,13 +57,20 @@ export async function syncSubscriptionToFirestore(sub: Stripe.Subscription): Pro
 		// `.set(..., { merge: true })` does NOT parse dotted string keys as
 		// nested paths the way `.update()` does — those would land as literal
 		// top-level fields named "subscription.status" etc. Nest for real.
+		//
+		// A paused subscription (either real trial-pause status, or a
+		// self-service pause_collection) still exists in Stripe, but the user
+		// shouldn't keep paid entitlements while not being billed for them —
+		// drop tier to free for the duration; resuming restores it below.
+		const isPaused = status === 'paused' || collectionPaused;
 		await db.doc(`users/${uid}`).set({
-			...(status === 'active' && tier ? { tier } : {}),
+			...(status === 'active' && !collectionPaused && tier ? { tier } : isPaused ? { tier: 'free' } : {}),
 			subscription: {
 				stripeCustomerId:     typeof sub.customer === 'string' ? sub.customer : sub.customer.id,
 				stripeSubscriptionId: sub.id,
 				stripePriceId:        priceId,
 				status,
+				pausedCollection:     collectionPaused,
 				cancelAtPeriodEnd,
 				currentPeriodEnd:     periodEnd,
 				trialEnd,

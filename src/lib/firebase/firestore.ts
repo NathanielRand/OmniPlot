@@ -91,6 +91,7 @@ export function toUserProfile(id: string, data: DocumentData): UserProfile {
 			stripePriceId:        data.subscription?.stripePriceId        ?? null,
 			stripeSubscriptionId: data.subscription?.stripeSubscriptionId ?? null,
 			status:               data.subscription?.status               ?? null,
+			pausedCollection:     data.subscription?.pausedCollection     ?? false,
 			cancelAtPeriodEnd:    data.subscription?.cancelAtPeriodEnd    ?? false,
 			currentPeriodEnd: data.subscription?.currentPeriodEnd
 				? fromTimestamp(data.subscription.currentPeriodEnd)

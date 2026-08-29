@@ -245,7 +245,7 @@
 								<div class="tier-pct">{userPct(t.count)}%</div>
 							</div>
 						{/each}
-						{#if (stats.users.shopMemberCount ?? 0) > 0}
+						{#if stats && (stats.users.shopMemberCount ?? 0) > 0}
 							<div class="tier-row">
 								<div class="tier-label" style="color:#34d399">Shop</div>
 								<div class="tier-bar-wrap">

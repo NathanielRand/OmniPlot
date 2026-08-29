@@ -26,6 +26,8 @@
 		updateUserProfile,
 	} from "$lib/firebase/firestore";
 	import { auth } from "$lib/firebase/client";
+	import { signOutUser } from "$lib/firebase/auth";
+	import { goto } from "$app/navigation";
 	import AddCardModal from "$lib/components/ui/AddCardModal.svelte";
 	import type { Shop, ShopMember, ShopInvite, ShopRole, ShopPlan } from "$lib/types";
 
@@ -398,6 +400,47 @@
 		}
 	}
 
+	let confirmCancelNowOpen  = $state(false);
+	let confirmClearOpen      = $state(false);
+	let clearHistoryLoading   = $state(false);
+
+	async function handleClearHistory() {
+		clearHistoryLoading = true;
+		try {
+			const token = await auth.currentUser?.getIdToken();
+			const res = await fetch("/api/user/clear-history", {
+				method: "POST",
+				headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+			});
+			if (!res.ok) throw new Error((await res.json()).error ?? "Failed");
+			confirmClearOpen = false;
+			toastStore.success("Job history cleared", "Your cut jobs have been deleted.");
+		} catch (err) {
+			toastStore.error("Could not clear history", err instanceof Error ? err.message : "");
+		} finally {
+			clearHistoryLoading = false;
+		}
+	}
+
+	async function handleCancelNow() {
+		cancelLoading = true;
+		try {
+			const token = await auth.currentUser?.getIdToken();
+			const res = await fetch('/api/billing/cancel', {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+			});
+			if (!res.ok) throw new Error((await res.json()).error ?? 'Failed');
+			confirmCancelNowOpen = false;
+			confirmCancelOpen = false;
+			toastStore.success('Subscription canceled', 'Your plan has ended immediately.');
+		} catch (err) {
+			toastStore.error('Could not cancel', err instanceof Error ? err.message : '');
+		} finally {
+			cancelLoading = false;
+		}
+	}
+
 	async function handleReactivate() {
 		cancelLoading = true;
 		try {
@@ -412,6 +455,70 @@
 			toastStore.error('Could not reactivate', err instanceof Error ? err.message : '');
 		} finally {
 			cancelLoading = false;
+		}
+	}
+
+	// ─── Delete account ───────────────────────────
+	let confirmDeleteOpen  = $state(false);
+	let deleteConfirmText  = $state("");
+	let deleteLoading      = $state(false);
+
+	async function handleDeleteAccount() {
+		deleteLoading = true;
+		try {
+			const token = await auth.currentUser?.getIdToken();
+			const res = await fetch("/api/user/delete-account", {
+				method: "POST",
+				headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+			});
+			if (!res.ok) throw new Error((await res.json()).error ?? "Failed");
+			confirmDeleteOpen = false;
+			await signOutUser();
+			await goto("/");
+			toastStore.success("Account deleted", "Sorry to see you go.");
+		} catch (err) {
+			toastStore.error("Could not delete account", err instanceof Error ? err.message : "");
+		} finally {
+			deleteLoading = false;
+		}
+	}
+
+	// ─── Pause / Resume ───────────────────────────
+	let pauseLoading      = $state(false);
+	let confirmPauseOpen  = $state(false);
+
+	async function handlePause() {
+		pauseLoading = true;
+		try {
+			const token = await auth.currentUser?.getIdToken();
+			const res = await fetch('/api/billing/pause', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+			});
+			if (!res.ok) throw new Error((await res.json()).error ?? 'Failed');
+			confirmPauseOpen = false;
+			toastStore.success('Subscription paused', 'Billing is paused — you can resume anytime.');
+		} catch (err) {
+			toastStore.error('Could not pause', err instanceof Error ? err.message : '');
+		} finally {
+			pauseLoading = false;
+		}
+	}
+
+	async function handleResumePause() {
+		pauseLoading = true;
+		try {
+			const token = await auth.currentUser?.getIdToken();
+			const res = await fetch('/api/billing/pause', {
+				method: 'DELETE',
+				headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+			});
+			if (!res.ok) throw new Error((await res.json()).error ?? 'Failed');
+			toastStore.success('Subscription resumed', 'Billing will continue as normal.');
+		} catch (err) {
+			toastStore.error('Could not resume', err instanceof Error ? err.message : '');
+		} finally {
+			pauseLoading = false;
 		}
 	}
 
@@ -853,7 +960,9 @@
 					<div class="billing-plan__header">
 						<div>
 							<div class="billing-plan__name">{PLAN_NAMES[tier] ?? tier} Plan</div>
-							{#if sub?.cancelAtPeriodEnd && sub.currentPeriodEnd}
+							{#if sub?.pausedCollection}
+								<div class="billing-plan__desc billing-plan__desc--warn">Billing paused — you're on the Free plan until you resume</div>
+							{:else if sub?.cancelAtPeriodEnd && sub.currentPeriodEnd}
 								<div class="billing-plan__desc billing-plan__desc--warn">
 									Cancels on {fmtDate(sub.currentPeriodEnd)} — you keep access until then
 								</div>
@@ -899,12 +1008,26 @@
 								Upgrade plan
 							</Button>
 						{/if}
-						{#if sub?.status === "active" || sub?.status === "trialing"}
+						{#if sub?.stripeCustomerId}
+							<Button variant="secondary" size="sm" loading={portalLoading} onclick={() => handlePortal("individual")}>
+								Manage billing
+							</Button>
+						{/if}
+						{#if sub?.pausedCollection}
+							<Button variant="secondary" size="sm" loading={pauseLoading} onclick={handleResumePause}>
+								Resume plan
+							</Button>
+						{:else if sub?.status === "active" || sub?.status === "trialing"}
 							{#if sub.cancelAtPeriodEnd}
 								<Button variant="secondary" size="sm" loading={cancelLoading} onclick={handleReactivate}>
 									Undo cancellation
 								</Button>
 							{:else}
+								{#if sub.status === "active"}
+									<Button variant="secondary" size="sm" onclick={() => (confirmPauseOpen = true)}>
+										Pause plan
+									</Button>
+								{/if}
 								<Button variant="ghost" size="sm" onclick={() => (confirmCancelOpen = true)}>
 									Cancel plan
 								</Button>
@@ -912,23 +1035,6 @@
 						{/if}
 					</div>
 				</div>
-
-				<!-- Cancel confirmation -->
-				{#if confirmCancelOpen}
-					<div class="cancel-confirm">
-						<div class="cancel-confirm__body">
-							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
-							<p>
-								Your access continues until <strong>{fmtDate(sub?.currentPeriodEnd)}</strong>.
-								You won't be charged again after that date.
-							</p>
-						</div>
-						<div class="cancel-confirm__actions">
-							<Button variant="ghost" size="sm" onclick={() => (confirmCancelOpen = false)}>Keep plan</Button>
-							<Button variant="danger" size="sm" loading={cancelLoading} onclick={handleCancel}>Confirm cancellation</Button>
-						</div>
-					</div>
-				{/if}
 
 				{#if sub?.status === "past_due"}
 					<div class="billing-alert" style="margin-top:12px">
@@ -1491,38 +1597,38 @@
 					<Button
 						variant="danger"
 						size="sm"
-						onclick={() =>
-							toastStore.warning(
-								"Not implemented",
-								"This would clear all job history.",
-							)}
+						onclick={() => (confirmClearOpen = true)}
 					>
 						Clear history
 					</Button>
 				</div>
 
-				<div class="danger-card">
-					<div>
-						<div class="danger-card__title">
-							Cancel subscription
+				{#if userStore.user?.subscription?.status === "active" || userStore.user?.subscription?.status === "trialing"}
+					<div class="danger-card">
+						<div>
+							<div class="danger-card__title">
+								Cancel subscription
+							</div>
+							<p class="danger-card__desc">
+								{#if userStore.user.subscription.cancelAtPeriodEnd}
+									Your plan is already set to cancel on {fmtDate(userStore.user.subscription.currentPeriodEnd)}.
+								{:else}
+									Your plan will revert to Free at the end of the
+									billing period.
+								{/if}
+							</p>
 						</div>
-						<p class="danger-card__desc">
-							Your plan will revert to Free at the end of the
-							billing period.
-						</p>
+						{#if userStore.user.subscription.cancelAtPeriodEnd}
+							<Button variant="secondary" size="sm" loading={cancelLoading} onclick={handleReactivate}>
+								Undo cancellation
+							</Button>
+						{:else}
+							<Button variant="danger" size="sm" onclick={() => (confirmCancelOpen = true)}>
+								Cancel plan
+							</Button>
+						{/if}
 					</div>
-					<Button
-						variant="danger"
-						size="sm"
-						onclick={() =>
-							toastStore.info(
-								"No active subscription",
-								"You are on the Free plan.",
-							)}
-					>
-						Cancel plan
-					</Button>
-				</div>
+				{/if}
 
 				<div class="danger-card danger-card--severe">
 					<div>
@@ -1535,11 +1641,7 @@
 					<Button
 						variant="danger"
 						size="sm"
-						onclick={() =>
-							toastStore.error(
-								"Not implemented",
-								"Contact support to delete your account.",
-							)}
+						onclick={() => (confirmDeleteOpen = true)}
 					>
 						Delete account
 					</Button>
@@ -1548,6 +1650,119 @@
 		{/if}
 	</div>
 </div>
+
+{#if confirmCancelOpen}
+	<div class="cancel-confirm-overlay" role="button" tabindex="-1" aria-label="Close dialog" onclick={() => (confirmCancelOpen = false)} onkeydown={(e) => e.key === 'Escape' && (confirmCancelOpen = false)}>
+		<div class="cancel-confirm" onclick={(e) => e.stopPropagation()}>
+			<div class="cancel-confirm__body">
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+				<p>
+					Your access continues until <strong>{fmtDate(userStore.user?.subscription?.currentPeriodEnd)}</strong>.
+					You won't be charged again after that date.
+				</p>
+			</div>
+			<div class="cancel-confirm__actions">
+				<Button variant="ghost" size="sm" onclick={() => (confirmCancelOpen = false)}>Keep plan</Button>
+				<Button variant="danger" size="sm" loading={cancelLoading} onclick={handleCancel}>Confirm cancellation</Button>
+			</div>
+			<button
+				type="button"
+				class="btn-link-sm"
+				style="margin-top:10px"
+				onclick={() => { confirmCancelOpen = false; confirmCancelNowOpen = true; }}
+			>
+				Need it canceled right now instead? →
+			</button>
+		</div>
+	</div>
+{/if}
+
+{#if confirmCancelNowOpen}
+	<div class="cancel-confirm-overlay" role="button" tabindex="-1" aria-label="Close dialog" onclick={() => (confirmCancelNowOpen = false)} onkeydown={(e) => e.key === 'Escape' && (confirmCancelNowOpen = false)}>
+		<div class="cancel-confirm" onclick={(e) => e.stopPropagation()}>
+			<div class="cancel-confirm__body">
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+				<p>
+					This ends your access <strong>immediately</strong> — you drop to the Free plan right
+					now. There's no refund or credit for the remaining time on this billing period.
+				</p>
+			</div>
+			<div class="cancel-confirm__actions">
+				<Button variant="ghost" size="sm" onclick={() => (confirmCancelNowOpen = false)}>Never mind</Button>
+				<Button variant="danger" size="sm" loading={cancelLoading} onclick={handleCancelNow}>Cancel immediately</Button>
+			</div>
+		</div>
+	</div>
+{/if}
+
+{#if confirmPauseOpen}
+	<div class="cancel-confirm-overlay" role="button" tabindex="-1" aria-label="Close dialog" onclick={() => (confirmPauseOpen = false)} onkeydown={(e) => e.key === 'Escape' && (confirmPauseOpen = false)}>
+		<div class="cancel-confirm" onclick={(e) => e.stopPropagation()}>
+			<div class="cancel-confirm__body">
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+				<p>
+					Billing pauses immediately and you'll drop to the Free plan until you resume.
+					Your subscription isn't canceled — resume anytime to pick up where you left off.
+				</p>
+			</div>
+			<div class="cancel-confirm__actions">
+				<Button variant="ghost" size="sm" onclick={() => (confirmPauseOpen = false)}>Keep plan active</Button>
+				<Button variant="danger" size="sm" loading={pauseLoading} onclick={handlePause}>Pause billing</Button>
+			</div>
+		</div>
+	</div>
+{/if}
+
+{#if confirmClearOpen}
+	<div class="cancel-confirm-overlay" role="button" tabindex="-1" aria-label="Close dialog" onclick={() => (confirmClearOpen = false)} onkeydown={(e) => e.key === 'Escape' && (confirmClearOpen = false)}>
+		<div class="cancel-confirm" onclick={(e) => e.stopPropagation()}>
+			<div class="cancel-confirm__body">
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+				<p>
+					This permanently deletes all of your cut job history. Patterns in your library
+					are not affected. This cannot be undone.
+				</p>
+			</div>
+			<div class="cancel-confirm__actions">
+				<Button variant="ghost" size="sm" onclick={() => (confirmClearOpen = false)}>Cancel</Button>
+				<Button variant="danger" size="sm" loading={clearHistoryLoading} onclick={handleClearHistory}>Clear history</Button>
+			</div>
+		</div>
+	</div>
+{/if}
+
+{#if confirmDeleteOpen}
+	<div class="cancel-confirm-overlay" role="button" tabindex="-1" aria-label="Close dialog" onclick={() => { confirmDeleteOpen = false; deleteConfirmText = ""; }} onkeydown={(e) => e.key === 'Escape' && (confirmDeleteOpen = false)}>
+		<div class="cancel-confirm" onclick={(e) => e.stopPropagation()}>
+			<div class="cancel-confirm__body">
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+				<p>
+					This permanently deletes your account, jobs, and patterns, and cancels any active
+					subscription. This cannot be undone. Type <strong>DELETE</strong> to confirm.
+				</p>
+			</div>
+			<input
+				class="form-input"
+				style="margin-bottom:12px"
+				bind:value={deleteConfirmText}
+				placeholder="DELETE"
+				autocomplete="off"
+			/>
+			<div class="cancel-confirm__actions">
+				<Button variant="ghost" size="sm" onclick={() => { confirmDeleteOpen = false; deleteConfirmText = ""; }}>Cancel</Button>
+				<Button
+					variant="danger"
+					size="sm"
+					loading={deleteLoading}
+					disabled={deleteConfirmText !== "DELETE"}
+					onclick={handleDeleteAccount}
+				>
+					Delete my account
+				</Button>
+			</div>
+		</div>
+	</div>
+{/if}
 
 {#if addCardOpen}
 	<AddCardModal
@@ -2289,12 +2504,24 @@
 	}
 
 	/* Cancel confirmation */
+	.cancel-confirm-overlay {
+		position: fixed;
+		inset: 0;
+		background: rgba(0, 0, 0, 0.4);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		z-index: 1000;
+	}
 	.cancel-confirm {
-		margin-top: 12px;
+		width: 100%;
+		max-width: 380px;
+		margin: 16px;
 		padding: 14px 16px;
-		background: rgba(255, 77, 109, 0.05);
+		background: var(--bg-surface);
 		border: 1px solid rgba(255, 77, 109, 0.25);
 		border-radius: var(--radius-md);
+		box-shadow: var(--shadow-lg, 0 8px 24px rgba(0,0,0,0.2));
 	}
 	.cancel-confirm__body {
 		display: flex;

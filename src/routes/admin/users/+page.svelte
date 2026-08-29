@@ -44,6 +44,10 @@
 		};
 		subscription: {
 			status:               string | null;
+			// True when billing is on hold via self-service/admin
+			// `pause_collection` — Stripe leaves `status` as "active" the whole
+			// time, so this has to be tracked separately.
+			pausedCollection:     boolean;
 			stripeCustomerId:     string | null;
 			stripeSubscriptionId: string | null;
 			currentPeriodEnd:     string | null;
@@ -263,14 +267,18 @@
 		return token ? { Authorization: `Bearer ${token}` } : {};
 	}
 
-	async function drawerSubscriptionAction(action: "cancel_at_period_end" | "cancel_now" | "resume") {
+	async function drawerSubscriptionAction(action: "cancel_at_period_end" | "cancel_now" | "resume" | "pause" | "unpause") {
 		if (!detail) return;
 		const who = detail.displayName || detail.email;
 		const confirmMsg = action === "cancel_at_period_end"
 			? `Cancel ${who}'s subscription at the end of the current billing period? They'll keep access until then.`
 			: action === "cancel_now"
 			? `Cancel ${who}'s subscription immediately? They'll lose paid access right away — this cannot be undone.`
-			: `Resume ${who}'s subscription? The scheduled cancellation will be removed.`;
+			: action === "resume"
+			? `Resume ${who}'s subscription? The scheduled cancellation will be removed.`
+			: action === "pause"
+			? `Pause billing for ${who}? They'll drop to the Free plan immediately and won't be charged until resumed.`
+			: `Resume billing for ${who}? Their paid tier will be restored.`;
 		if (!confirm(confirmMsg)) return;
 		drawerAction = `sub_${action}`;
 		try {
@@ -285,14 +293,21 @@
 				detail = { ...detail, subscription: { ...detail.subscription, cancelAtPeriodEnd: true } };
 			} else if (action === "resume") {
 				detail = { ...detail, subscription: { ...detail.subscription, cancelAtPeriodEnd: false } };
-			} else {
+			} else if (action === "cancel_now") {
 				detail = { ...detail, tier: "free", subscription: { ...detail.subscription, status: "canceled", cancelAtPeriodEnd: false, currentPeriodEnd: null } };
 				users = users.map((u) => u.uid === detail!.uid ? { ...u, tier: "free" } : u);
+			} else if (action === "pause") {
+				detail = { ...detail, tier: "free", subscription: { ...detail.subscription, pausedCollection: true } };
+				users = users.map((u) => u.uid === detail!.uid ? { ...u, tier: "free" } : u);
+			} else {
+				detail = { ...detail, subscription: { ...detail.subscription, pausedCollection: false } };
 			}
 			toastStore.success(
 				action === "cancel_at_period_end" ? "Will cancel at period end"
 				: action === "resume" ? "Subscription resumed"
-				: "Subscription canceled immediately",
+				: action === "cancel_now" ? "Subscription canceled immediately"
+				: action === "pause" ? "Billing paused"
+				: "Billing resumed",
 			);
 		} catch (e) {
 			toastStore.error("Action failed", e instanceof Error ? e.message : undefined);
@@ -495,9 +510,13 @@
 							{#if detail.subscription.status}
 								<div class="drawer-kv">
 									<span class="kv-label">Status</span>
-									<Badge variant={subStatusVariant(detail.subscription.status)} dot size="sm">
-										{detail.subscription.status}
-									</Badge>
+									{#if detail.subscription.pausedCollection}
+										<Badge variant="warning" dot size="sm">paused</Badge>
+									{:else}
+										<Badge variant={subStatusVariant(detail.subscription.status)} dot size="sm">
+											{detail.subscription.status}
+										</Badge>
+									{/if}
 								</div>
 							{/if}
 							{#if detail.subscription.currentPeriodEnd}
@@ -544,6 +563,25 @@
 
 						{#if detail.subscription.stripeSubscriptionId && (detail.subscription.status === "active" || detail.subscription.status === "trialing" || detail.subscription.status === "past_due")}
 							<div class="sub-actions">
+								{#if detail.subscription.pausedCollection}
+									<button
+										class="sub-action-btn sub-action-btn--restore"
+										onclick={() => drawerSubscriptionAction("unpause")}
+										disabled={drawerAction === "sub_unpause"}
+									>
+										<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 12a9 9 0 109-9 9.75 9.75 0 00-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+										{drawerAction === "sub_unpause" ? "Resuming…" : "Resume billing"}
+									</button>
+								{:else}
+									<button
+										class="sub-action-btn"
+										onclick={() => drawerSubscriptionAction("pause")}
+										disabled={drawerAction === "sub_pause"}
+									>
+										<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+										{drawerAction === "sub_pause" ? "Pausing…" : "Pause billing"}
+									</button>
+								{/if}
 								{#if detail.subscription.cancelAtPeriodEnd}
 									<button
 										class="sub-action-btn sub-action-btn--restore"

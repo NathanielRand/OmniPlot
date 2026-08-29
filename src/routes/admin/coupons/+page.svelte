@@ -79,7 +79,7 @@
 	const totalRedeemed = $derived(codes.reduce((sum, c) => sum + c.times_redeemed, 0));
 
 	// ─── Helpers ───────────────────────────────────
-	async function authHeaders() {
+	async function authHeaders(): Promise<Record<string, string>> {
 		const token = await auth.currentUser?.getIdToken();
 		return token
 			? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }

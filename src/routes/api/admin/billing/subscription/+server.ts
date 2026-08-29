@@ -6,7 +6,7 @@ import { getAdminDb, verifyIdToken } from '$lib/server/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { sendCancellationEmail } from '$lib/server/email';
 
-type Action = 'cancel_at_period_end' | 'cancel_now' | 'resume';
+type Action = 'cancel_at_period_end' | 'cancel_now' | 'resume' | 'pause' | 'unpause';
 
 async function assertAdmin(authHeader: string | null): Promise<boolean> {
 	const uid = await verifyIdToken(authHeader);
@@ -77,6 +77,26 @@ export const POST: RequestHandler = async ({ request }) => {
 			await stripe.subscriptions.update(subId, { cancel_at_period_end: false }, connectedAccount);
 			await getAdminDb().doc(`users/${uid}`).set(
 				{ subscription: { cancelAtPeriodEnd: false }, updatedAt: FieldValue.serverTimestamp() },
+				{ merge: true },
+			);
+
+		// `resume` above only clears `cancel_at_period_end` — it does NOT touch
+		// `pause_collection`, which is a separate field entirely (see
+		// stripe-ledger.ts). A paused subscription needs its own pause/unpause
+		// actions or an admin trying to "resume" a paused user gets a silent
+		// no-op.
+		} else if (action === 'pause') {
+			await stripe.subscriptions.update(subId, { pause_collection: { behavior: 'void' } }, connectedAccount);
+			await getAdminDb().doc(`users/${uid}`).set(
+				{ tier: 'free', subscription: { pausedCollection: true }, updatedAt: FieldValue.serverTimestamp() },
+				{ merge: true },
+			);
+
+		} else if (action === 'unpause') {
+			const sub = await stripe.subscriptions.update(subId, { pause_collection: null }, connectedAccount);
+			const tier = sub.metadata?.tier;
+			await getAdminDb().doc(`users/${uid}`).set(
+				{ ...(tier ? { tier } : {}), subscription: { pausedCollection: false }, updatedAt: FieldValue.serverTimestamp() },
 				{ merge: true },
 			);
 

@@ -48,7 +48,7 @@
 		resolved:    reports.filter(r => r.status === 'resolved').length,
 	});
 
-	async function authHeader() {
+	async function authHeader(): Promise<Record<string, string>> {
 		const token = await auth.currentUser?.getIdToken();
 		return token ? { Authorization: `Bearer ${token}` } : {};
 	}

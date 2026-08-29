@@ -1,11 +1,13 @@
 // ONGOING
-- proper user account management, billing management, subscription management
+- user's window tint library incorrectly shows counter values . maybe its including admin/community/requests pattern counts in non-active status but idk, needs confirming. the user should only see counts for their own patterns, admin added patterns, or community approved patterns. when no patterns are present, we need to show a larger "upload pattern" btn blended into our existing "No vehicles found" (which really needs to say "no patterns found"). the "Try a different search or request this vehicle" should change to "request a pattern".
+- shops/teams/org needs overhaul. we need to be able to support an org having multiple shops and multiple groups of teams with varying roles/perms.
+- audit core saas infrastructure to verying all systems are fully wired up (not commented out or mocked out or faked in any way). we need to add anything we are missing that would be expected and/or common for saas infrastructure of this type to handle large scale.
+- audit all advertised features, services, pages (marketing & user dashboard) to make sure we support, enforce, and have the right systems in place for the whole process. update any marketing pages with features we've added since updating those last or process changes. find where we have inaccurate or mock data to prevent misadvertising. build a list of whats incomplete and also what is missing entirely or something we should have considering our product line. we need proper disclousure and badges next to everything we dont support or is in dev and disable to prevent misuse or abuse.
 - triggered email notifications/receipts for our various user actions (welcome, subscription, any transaction receipt, usage alerts, feature drops, account specific emails, etc..) that admin can view, test, update, create, and pause from the admin dashboard. notification activity needs to be viewable from admin. admin options to manual send.
-- verify user's own subscription actions exists and work (i.e cancel, pause, etc..)
-- reports/support systems needs conversational ability to address connor support ticket.
+- reports/support systems needs conversational ability for user and admin (user must be logged in to start this kindof support chat) to address "report an issue" reports directly from the ui from both user and admin. like a persistant message conversation formed from that report an issue message that the user started that admin can change the state on as it progresses.
 
 
-// UPCOMING
+// BACKLOG
 - any img type -> rm background -> convert to svg -  inherit svg upload functionality
 - the agent connection is throwing serial port errors.
 - multiple usdb connections seemd to have popped up. idk of the same or if it just detected multiple but there was a lot of connections. we should find a way to compress the unactive connections box size to clerarly differiate the the active connected vs inactive methods.

@@ -314,7 +314,7 @@
 	function addAllSelected() {
 		if (!selectedVehicle || !useStorePatterns) return;
 		const toAdd = vehiclePatterns.filter((p) => selectedPatternIds.has(p.id));
-		toAdd.forEach(addPatternToCanvas);
+		toAdd.forEach((pattern) => addPatternToCanvas(pattern));
 		if (toAdd.length > 1) {
 			toastStore.success(`${toAdd.length} patterns added`, "Open Studio to arrange and cut.");
 		}

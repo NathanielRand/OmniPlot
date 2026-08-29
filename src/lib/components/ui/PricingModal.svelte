@@ -17,7 +17,7 @@
 		checkoutPlan = plan.id;
 		try {
 			const token = await auth.currentUser?.getIdToken();
-			const authHeader = token ? { Authorization: `Bearer ${token}` } : {};
+			const authHeader: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
 
 			// Check for a saved payment method before hitting checkout
 			const pmRes = await fetch("/api/billing/payment-methods", { headers: authHeader });

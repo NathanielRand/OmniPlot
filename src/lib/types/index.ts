@@ -29,7 +29,10 @@ export interface UserProfile {
 		stripeCustomerId:     string | null;
 		stripePriceId:        string | null;
 		stripeSubscriptionId: string | null;
-		status: "active" | "canceled" | "past_due" | "trialing" | null;
+		status: "active" | "canceled" | "past_due" | "trialing" | "paused" | null;
+		// True when billing is on hold via self-service `pause_collection` —
+		// distinct from `status`, which Stripe leaves as "active" throughout.
+		pausedCollection: boolean;
 		currentPeriodEnd: Date | null;
 		trialEnd:         Date | null;
 		cancelAtPeriodEnd: boolean;

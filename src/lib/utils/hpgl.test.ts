@@ -37,7 +37,7 @@ const baseConfig: PlotterConfig = {
 	protocol: 'hpgl', connection: 'download',
 	bladeForce: 65, cuttingSpeed: 400, passes: 1,
 	overcut: 0, offsetBlade: 0,
-	mediaWidthMm: 1524, originX: 0, originY: 0,
+	mediaWidthMm: 1524, maxMediaWidthMm: 1524, originX: 0, originY: 0,
 	flipH: false, flipV: false,
 };
 

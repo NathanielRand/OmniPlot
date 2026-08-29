@@ -65,6 +65,13 @@ export const POST: RequestHandler = async ({ request }) => {
 				break;
 			case 'customer.subscription.created':
 			case 'customer.subscription.updated':
+			// Self-service `pause_collection` changes fire as `.updated`, not
+			// `.paused`/`.resumed` — those two only fire for the unrelated
+			// "trial ends with no payment method" status. Handle both here;
+			// `syncSubscriptionToFirestore` reads `sub.pause_collection`
+			// directly rather than relying on which event type arrived.
+			case 'customer.subscription.paused':
+			case 'customer.subscription.resumed':
 				await onSubscriptionUpdated(event.data.object as Stripe.Subscription);
 				break;
 			case 'customer.subscription.deleted':
@@ -101,8 +108,6 @@ export const POST: RequestHandler = async ({ request }) => {
 			case 'invoice.updated':
 			case 'payment_intent.created':
 			case 'payment_intent.succeeded':
-			case 'customer.subscription.paused':
-			case 'customer.subscription.resumed':
 			case 'subscription_schedule.aborted':
 			case 'subscription_schedule.canceled':
 			case 'subscription_schedule.completed':

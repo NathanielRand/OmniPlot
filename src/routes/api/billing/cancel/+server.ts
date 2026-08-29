@@ -69,6 +69,37 @@ export const POST: RequestHandler = async ({ request }) => {
 	}
 };
 
+// PUT — cancel immediately, no proration/refund for the remainder of the
+// current period. Self-service equivalent of the admin `cancel_now` action.
+export const PUT: RequestHandler = async ({ request }) => {
+	try {
+		const uid = await verifyIdToken(request.headers.get('authorization'));
+		if (!uid) return json({ error: 'Unauthorized' }, { status: 401 });
+
+		const subId = await getSubId(uid);
+		if (!subId) return json({ error: 'No active subscription found.' }, { status: 404 });
+
+		await stripe.subscriptions.cancel(subId, {}, connectedAccount);
+
+		// The webhook's customer.subscription.deleted handler also reconciles
+		// this, but we write through here so the UI reflects it immediately
+		// without waiting on webhook delivery.
+		await getAdminDb().doc(`users/${uid}`).set({
+			tier: 'free',
+			subscription: { status: 'canceled', cancelAtPeriodEnd: false, currentPeriodEnd: null },
+		}, { merge: true });
+
+		return json({ ok: true });
+
+	} catch (err) {
+		if (err instanceof Stripe.errors.StripeError) {
+			return json({ error: err.message }, { status: err.statusCode ?? 500 });
+		}
+		console.error('[cancel-now]', err);
+		return json({ error: 'Could not cancel subscription.' }, { status: 500 });
+	}
+};
+
 // DELETE — reactivate (undo cancel_at_period_end)
 export const DELETE: RequestHandler = async ({ request }) => {
 	try {

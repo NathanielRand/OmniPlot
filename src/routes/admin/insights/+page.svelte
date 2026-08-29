@@ -27,14 +27,14 @@
 	let search       = $state('');
 	let deletingId   = $state<string | null>(null);
 
-	async function authHeader() {
+	async function authHeader(): Promise<Record<string, string>> {
 		const token = await auth.currentUser?.getIdToken();
 		return token ? { Authorization: `Bearer ${token}` } : {};
 	}
 
 	function deserializePosts(raw: Record<string, unknown>[]): InsightPost[] {
 		return raw.map((p) => ({
-			...(p as InsightPost),
+			...(p as unknown as InsightPost),
 			publishedAt: p.publishedAt ? new Date(p.publishedAt as string) : null,
 			createdAt:   new Date(p.createdAt as string),
 			updatedAt:   new Date(p.updatedAt as string),

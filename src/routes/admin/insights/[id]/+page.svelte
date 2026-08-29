@@ -55,7 +55,7 @@
 		}
 	});
 
-	async function authHeader() {
+	async function authHeader(): Promise<Record<string, string>> {
 		const token = await auth.currentUser?.getIdToken();
 		return token ? { Authorization: `Bearer ${token}` } : {};
 	}
@@ -128,7 +128,11 @@
 				publishedAt: publish
 					? (existingPost?.publishedAt ?? new Date())
 					: (existingPost?.publishedAt ?? null),
-			} satisfies Omit<InsightPost, 'id' | 'createdAt' | 'updatedAt'>;
+				// `viewCount` deliberately omitted — the PATCH route spreads the
+				// body straight into Firestore, so sending it here would clobber
+				// accumulated views back to whatever was loaded when this editor
+				// opened.
+			} satisfies Omit<InsightPost, 'id' | 'createdAt' | 'updatedAt' | 'viewCount'>;
 
 			if (isNew) {
 				const res = await fetch('/api/admin/insights', {

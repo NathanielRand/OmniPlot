@@ -85,15 +85,19 @@
 			// Find or create vehicle
 			let vehicleId = sub.vehicleId;
 			if (!vehicleId) {
+				// A submission can carry multiple models/years; the vehicle
+				// catalog wants one of each, so use the first as representative.
+				const subModel = sub.models[0] ?? "";
+				const subYear  = Number(sub.years[0]) || new Date().getFullYear();
 				const existing = patternStore.vehicles.find(
 					(v) => v.make.toLowerCase() === sub.make.toLowerCase() &&
-					       v.model.toLowerCase() === sub.model.toLowerCase() &&
-					       v.year === sub.year,
+					       v.model.toLowerCase() === subModel.toLowerCase() &&
+					       v.year === subYear,
 				);
 				vehicleId = existing
 					? existing.id
 					: patternStore.addVehicle({
-							make: sub.make, model: sub.model, year: sub.year,
+							make: sub.make, model: subModel, year: subYear,
 							bodyStyle: sub.bodyStyle, status: "published",
 							tags: [], updatedAt: new Date().toISOString().split("T")[0],
 					  }).id;
@@ -103,7 +107,7 @@
 			patternStore.addPattern({
 				vehicleId,
 				category:     sub.category,
-				zone:         sub.zone,
+				zone:         sub.zones[0],
 				name:         reviewEdits.name.trim() || sub.name,
 				coverage:     sub.coverage,
 				svgPath:      sub.svgPath,
@@ -440,11 +444,11 @@ onMount(() => {
 										</div>
 										<div>
 											<div class="cell-name">{sub.name}</div>
-											<div class="cell-meta">{sub.zone}</div>
+											<div class="cell-meta">{sub.zones.join(", ")}</div>
 										</div>
 									</div>
 								</td>
-								<td class="td-vehicle">{sub.year} {sub.make} {sub.model}</td>
+								<td class="td-vehicle">{sub.years.join("/")} {sub.make} {sub.models.join(", ")}</td>
 								<td>
 									<Badge variant={sub.category === "ppf" ? "brand" : "default"} size="sm">
 										{sub.category === "ppf" ? "PPF" : "Tint"}
@@ -762,7 +766,7 @@ onMount(() => {
 		<div class="review-panel__header">
 			<div>
 				<div class="review-panel__sub">Community submission · {reviewTarget.status}</div>
-				<h2 class="review-panel__title">{reviewTarget.year} {reviewTarget.make} {reviewTarget.model}</h2>
+				<h2 class="review-panel__title">{reviewTarget.years.join("/")} {reviewTarget.make} {reviewTarget.models.join(", ")}</h2>
 			</div>
 			<button class="modal__close" onclick={() => (reviewTarget = null)} aria-label="Close">
 				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>
@@ -785,7 +789,7 @@ onMount(() => {
 				</div>
 				<div class="review-meta__row">
 					<span class="review-meta__label">Zone</span>
-					<span class="review-meta__val">{reviewTarget.zone}</span>
+					<span class="review-meta__val">{reviewTarget.zones.join(", ")}</span>
 				</div>
 				<div class="review-meta__row">
 					<span class="review-meta__label">Coverage</span>

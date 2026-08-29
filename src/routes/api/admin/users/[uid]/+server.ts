@@ -106,6 +106,7 @@ export const GET: RequestHandler = async ({ request, params }) => {
 		},
 		subscription: {
 			status:               d.subscription?.status               ?? null,
+			pausedCollection:     d.subscription?.pausedCollection     ?? false,
 			stripeCustomerId:     d.subscription?.stripeCustomerId     ?? null,
 			stripeSubscriptionId: d.subscription?.stripeSubscriptionId ?? null,
 			currentPeriodEnd:     d.subscription?.currentPeriodEnd?.toDate?.()?.toISOString() ?? null,

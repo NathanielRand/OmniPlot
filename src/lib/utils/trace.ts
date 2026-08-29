@@ -76,7 +76,7 @@ function otsuOnHist(hist: Uint32Array, total: number): number {
 
 // ── Binary grid from RGBA pixel data ─────────────────────────────────────────
 export function buildBinaryGrid(data: Uint8ClampedArray, W: number, H: number, sigma = 0): Uint8Array {
-	let luma = new Float32Array(W * H);
+	let luma: Float32Array<ArrayBufferLike> = new Float32Array(W * H);
 	for (let i = 0; i < W * H; i++) {
 		luma[i] = 0.299 * data[i * 4] + 0.587 * data[i * 4 + 1] + 0.114 * data[i * 4 + 2];
 	}

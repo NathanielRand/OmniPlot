@@ -59,7 +59,10 @@ export const POST: RequestHandler = async ({ request }) => {
 
 	const coupon = await stripe.coupons.create(couponParams, connectedAccount);
 
-	const promoParams: Stripe.PromotionCodeCreateParams = { coupon: coupon.id };
+	// `coupon` moved under `promotion` in newer API versions — a promotion
+	// code now references a typed `Promotion` (currently only `type: 'coupon'`
+	// exists) rather than taking a bare coupon id.
+	const promoParams: Stripe.PromotionCodeCreateParams = { promotion: { type: 'coupon', coupon: coupon.id } };
 	if (code)             promoParams.code             = code.trim().toUpperCase();
 	if (maxRedemptions)   promoParams.max_redemptions  = Number(maxRedemptions);
 	if (expiresAt)        promoParams.expires_at       = Math.floor(new Date(expiresAt).getTime() / 1000);
