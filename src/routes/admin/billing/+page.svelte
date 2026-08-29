@@ -23,6 +23,18 @@
 		id: string; amount: number; fee: number;
 		currency: string; created: number; description: string | null;
 	}
+	interface Revenue {
+		totalSucceeded: number;
+		totalRefunded:  number;
+		totalDisputed:  number;
+		unattributed:   number;
+		byCurrency:     Record<string, number>;
+	}
+	interface Transaction {
+		id: string; uid: string | null; email: string | null;
+		amount: number; amountRefunded: number; currency: string;
+		status: string; description: string | null; created: number;
+	}
 
 	// ─── State ─────────────────────────────────────
 	let loading      = $state(true);
@@ -30,6 +42,10 @@
 	let firebaseUsage = $state<FirebaseUsage | null>(null);
 	let stripeBalance = $state<StripeBalance | null>(null);
 	let recentFees    = $state<RecentFee[]>([]);
+	let revenue           = $state<Revenue | null>(null);
+	let recentTransactions = $state<Transaction[]>([]);
+	let syncing           = $state(false);
+	let syncMsg           = $state<string | null>(null);
 
 	// ─── Helpers ───────────────────────────────────
 	async function authHeaders() {
@@ -64,10 +80,28 @@
 			firebaseUsage = d.firebaseUsage;
 			stripeBalance  = d.stripeBalance;
 			recentFees     = d.recentFees ?? [];
+			revenue        = d.revenue ?? null;
+			recentTransactions = d.recentTransactions ?? [];
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Could not load billing data';
 		} finally {
 			loading = false;
+		}
+	}
+
+	async function runSync() {
+		syncing = true; syncMsg = null;
+		try {
+			const res = await fetch('/api/admin/billing/sync', { method: 'POST', headers: await authHeaders() });
+			if (!res.ok) throw new Error((await res.json()).error ?? 'Sync failed');
+			const d = await res.json();
+			syncMsg = `Synced ${d.chargesSynced} charge${d.chargesSynced === 1 ? '' : 's'} and ${d.subsSynced} subscription${d.subsSynced === 1 ? '' : 's'} from Stripe` +
+				(d.subsSkipped ? ` (${d.subsSkipped} skipped — no uid in metadata).` : '.');
+			await load();
+		} catch (e) {
+			syncMsg = e instanceof Error ? e.message : 'Sync failed';
+		} finally {
+			syncing = false;
 		}
 	}
 
@@ -221,6 +255,88 @@
 			<a href="https://console.cloud.google.com/billing" target="_blank" rel="noopener noreferrer">Google Cloud Billing Console</a>.
 			Document counts shown above are proxies for read/write volume.
 		</div>
+	</div>
+
+	<!-- ── Revenue ledger ───────────────────────────────── -->
+	<div class="cost-section">
+		<div class="section-head">
+			<div class="section-icon section-icon--stripe" aria-hidden="true">
+				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
+			</div>
+			<div>
+				<h2 class="section-title">Revenue</h2>
+				<p class="section-desc">Charges synced from the Stripe webhook into Firestore — per-user financial history lives on each user's admin drawer.</p>
+			</div>
+			<button class="ext-link" style="cursor:pointer" onclick={runSync} disabled={syncing}>
+				{syncing ? 'Syncing…' : 'Sync from Stripe'}
+			</button>
+		</div>
+
+		{#if syncMsg}
+			<div class="gcp-billing-note">{syncMsg}</div>
+		{/if}
+
+		{#if loading}
+			<div class="balance-row">
+				{#each { length: 3 } as _}
+					<div class="balance-card">
+						<div class="skel" style="width:70px;height:10px;margin-bottom:8px"></div>
+						<div class="skel" style="width:110px;height:28px"></div>
+					</div>
+				{/each}
+			</div>
+		{:else if revenue}
+			<div class="balance-row">
+				<div class="balance-card">
+					<div class="balance-label">Total revenue</div>
+					<div class="balance-amount">{fmtCurrency(revenue.totalSucceeded)}</div>
+					<div class="balance-note">Succeeded charges, gross</div>
+				</div>
+				<div class="balance-card balance-card--pending">
+					<div class="balance-label">Refunded</div>
+					<div class="balance-amount">{fmtCurrency(revenue.totalRefunded)}</div>
+					<div class="balance-note">{revenue.totalDisputed > 0 ? `+ ${fmtCurrency(revenue.totalDisputed)} disputed` : 'No open disputes'}</div>
+				</div>
+				<div class="balance-card balance-card--info">
+					<div class="balance-label">Unattributed</div>
+					<div class="balance-amount balance-amount--rate">{revenue.unattributed}</div>
+					<div class="balance-note">Charges with no matching user — check email/customer id</div>
+				</div>
+			</div>
+		{/if}
+
+		{#if recentTransactions.length > 0}
+			<div class="fees-table-wrap">
+				<div class="fees-table-head">Recent transactions</div>
+				<table class="fees-table" aria-label="Recent transactions">
+					<thead>
+						<tr>
+							<th>Date</th>
+							<th>User</th>
+							<th>Description</th>
+							<th>Amount</th>
+							<th>Status</th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each recentTransactions as t}
+							<tr>
+								<td class="td-mono">{fmtDate(t.created)}</td>
+								<td class="td-mono">{t.uid ? t.email ?? t.uid : 'Unattributed'}</td>
+								<td class="td-desc">{t.description ?? '—'}</td>
+								<td class="td-mono">{fmtCurrency(t.amount, t.currency)}</td>
+								<td>
+									<Badge
+										variant={t.status === 'succeeded' ? 'success' : t.status === 'refunded' ? 'warning' : t.status === 'disputed' || t.status === 'failed' ? 'danger' : 'default'}
+										size="sm" dot
+									>{t.status}</Badge>
+								</td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
+		{/if}
 	</div>
 
 	<!-- ── Stripe ────────────────────────────────────── -->

@@ -75,6 +75,15 @@
 			connection: string;
 			createdAt:  string | null;
 		}[];
+		recentTransactions: {
+			id:             string;
+			amount:         number;
+			amountRefunded: number;
+			currency:       string;
+			status:         string;
+			description:    string | null;
+			created:        string | null;
+		}[];
 	}
 
 	// ── State ──────────────────────────────────────
@@ -185,6 +194,7 @@
 
 	async function drawerSaveTier() {
 		if (!detail || drawerTier === detail.tier) return;
+		if (!confirm(`Change ${detail.displayName || detail.email}'s tier from "${detail.tier}" to "${drawerTier}"?`)) return;
 		drawerAction = "tier";
 		try {
 			await patchUser(detail.uid, { tier: drawerTier });
@@ -201,6 +211,8 @@
 	async function drawerToggleSuspend() {
 		if (!detail) return;
 		const next: Status = detail.status === "suspended" ? "active" : "suspended";
+		const verb = next === "suspended" ? "Suspend" : "Reactivate";
+		if (!confirm(`${verb} ${detail.displayName || detail.email}'s account?`)) return;
 		drawerAction = "suspend";
 		try {
 			await patchUser(detail.uid, { status: next });
@@ -216,6 +228,7 @@
 
 	async function drawerClearSession() {
 		if (!detail) return;
+		if (!confirm(`Clear ${detail.displayName || detail.email}'s active session? They'll be signed out on their next request.`)) return;
 		drawerAction = "session";
 		try {
 			await patchUser(detail.uid, { clearSession: true });
@@ -230,6 +243,7 @@
 
 	async function drawerRemoveShop() {
 		if (!detail) return;
+		if (!confirm(`Remove ${detail.displayName || detail.email} from "${detail.shopName ?? "this shop"}"?`)) return;
 		drawerAction = "shop";
 		try {
 			await patchUser(detail.uid, { removeShop: true });
@@ -238,6 +252,69 @@
 			toastStore.success("Removed from shop");
 		} catch {
 			toastStore.error("Action failed");
+		} finally {
+			drawerAction = null;
+		}
+	}
+
+	// ── Billing actions ─────────────────────────────
+	async function authHeaders(): Promise<Record<string, string>> {
+		const token = await auth.currentUser?.getIdToken();
+		return token ? { Authorization: `Bearer ${token}` } : {};
+	}
+
+	async function drawerSubscriptionAction(action: "cancel_at_period_end" | "cancel_now" | "resume") {
+		if (!detail) return;
+		const who = detail.displayName || detail.email;
+		const confirmMsg = action === "cancel_at_period_end"
+			? `Cancel ${who}'s subscription at the end of the current billing period? They'll keep access until then.`
+			: action === "cancel_now"
+			? `Cancel ${who}'s subscription immediately? They'll lose paid access right away — this cannot be undone.`
+			: `Resume ${who}'s subscription? The scheduled cancellation will be removed.`;
+		if (!confirm(confirmMsg)) return;
+		drawerAction = `sub_${action}`;
+		try {
+			const res = await fetch("/api/admin/billing/subscription", {
+				method:  "POST",
+				headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+				body:    JSON.stringify({ uid: detail.uid, action }),
+			});
+			if (!res.ok) throw new Error((await res.json()).error ?? "Request failed");
+
+			if (action === "cancel_at_period_end") {
+				detail = { ...detail, subscription: { ...detail.subscription, cancelAtPeriodEnd: true } };
+			} else if (action === "resume") {
+				detail = { ...detail, subscription: { ...detail.subscription, cancelAtPeriodEnd: false } };
+			} else {
+				detail = { ...detail, tier: "free", subscription: { ...detail.subscription, status: "canceled", cancelAtPeriodEnd: false, currentPeriodEnd: null } };
+				users = users.map((u) => u.uid === detail!.uid ? { ...u, tier: "free" } : u);
+			}
+			toastStore.success(
+				action === "cancel_at_period_end" ? "Will cancel at period end"
+				: action === "resume" ? "Subscription resumed"
+				: "Subscription canceled immediately",
+			);
+		} catch (e) {
+			toastStore.error("Action failed", e instanceof Error ? e.message : undefined);
+		} finally {
+			drawerAction = null;
+		}
+	}
+
+	async function refundTransaction(chargeId: string, amount: number, currency: string) {
+		if (!confirm(`Refund ${fmtCurrency(amount, currency)}? This cannot be undone.`)) return;
+		drawerAction = `refund_${chargeId}`;
+		try {
+			const res = await fetch("/api/admin/billing/refund", {
+				method:  "POST",
+				headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+				body:    JSON.stringify({ chargeId }),
+			});
+			if (!res.ok) throw new Error((await res.json()).error ?? "Refund failed");
+			toastStore.success("Refund issued", "Ledger will update once Stripe confirms the webhook.");
+			if (detail) await openDetail(detail.uid);
+		} catch (e) {
+			toastStore.error("Refund failed", e instanceof Error ? e.message : undefined);
 		} finally {
 			drawerAction = null;
 		}
@@ -255,6 +332,8 @@
 	// Quick suspend from row (no drawer needed)
 	async function toggleSuspend(user: AdminUser) {
 		const next: Status = user.status === "suspended" ? "active" : "suspended";
+		const verb = next === "suspended" ? "Suspend" : "Reactivate";
+		if (!confirm(`${verb} ${user.displayName || user.email}'s account?`)) return;
 		try {
 			await patchUser(user.uid, { status: next });
 			users = users.map((u) => u.uid === user.uid ? { ...u, status: next } : u);
@@ -295,6 +374,17 @@
 
 	function connLabel(c: string) {
 		return c === "cut-agent" ? "Agent" : c === "usb-serial" ? "USB" : c === "network" ? "Net" : c === "download" ? "DL" : c;
+	}
+
+	function fmtCurrency(cents: number, currency = "usd") {
+		return new Intl.NumberFormat("en-US", { style: "currency", currency: currency.toUpperCase() }).format(cents / 100);
+	}
+
+	function txVariant(status: string) {
+		if (status === "succeeded") return "success";
+		if (status === "refunded")  return "warning";
+		if (status === "disputed" || status === "failed") return "danger";
+		return "default";
 	}
 </script>
 
@@ -439,7 +529,50 @@
 									</div>
 								</div>
 							{/if}
+							{#if detail.subscription.stripeSubscriptionId}
+								<div class="drawer-kv drawer-kv--full">
+									<span class="kv-label">Subscription ID</span>
+									<div class="kv-copy-row">
+										<code class="kv-value kv-value--mono">{detail.subscription.stripeSubscriptionId}</code>
+										<button class="uid-copy-btn" onclick={() => copyToClipboard(detail!.subscription.stripeSubscriptionId!, "Subscription ID copied")} title="Copy">
+											<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+										</button>
+									</div>
+								</div>
+							{/if}
 						</div>
+
+						{#if detail.subscription.stripeSubscriptionId && (detail.subscription.status === "active" || detail.subscription.status === "trialing" || detail.subscription.status === "past_due")}
+							<div class="sub-actions">
+								{#if detail.subscription.cancelAtPeriodEnd}
+									<button
+										class="sub-action-btn sub-action-btn--restore"
+										onclick={() => drawerSubscriptionAction("resume")}
+										disabled={drawerAction === "sub_resume"}
+									>
+										<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 12a9 9 0 109-9 9.75 9.75 0 00-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+										{drawerAction === "sub_resume" ? "Resuming…" : "Resume subscription"}
+									</button>
+								{:else}
+									<button
+										class="sub-action-btn"
+										onclick={() => drawerSubscriptionAction("cancel_at_period_end")}
+										disabled={drawerAction === "sub_cancel_at_period_end"}
+									>
+										<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+										{drawerAction === "sub_cancel_at_period_end" ? "Scheduling…" : "Cancel at period end"}
+									</button>
+								{/if}
+								<button
+									class="sub-action-btn sub-action-btn--danger"
+									onclick={() => drawerSubscriptionAction("cancel_now")}
+									disabled={drawerAction === "sub_cancel_now"}
+								>
+									<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6M9 9l6 6"/></svg>
+									{drawerAction === "sub_cancel_now" ? "Canceling…" : "Cancel immediately"}
+								</button>
+							</div>
+						{/if}
 					</div>
 				{/if}
 
@@ -528,6 +661,54 @@
 							</div>
 						{/if}
 					</div>
+				</div>
+
+				<!-- Payment history -->
+				<div class="drawer-section">
+					<div class="drawer-section__title">Payment history</div>
+					{#if detail.recentTransactions.length > 0}
+						<div class="tx-table-wrap">
+							<table class="tx-table" aria-label="Payment history">
+								<thead>
+									<tr>
+										<th>Date</th>
+										<th>Description</th>
+										<th>Amount</th>
+										<th>Status</th>
+										<th></th>
+									</tr>
+								</thead>
+								<tbody>
+									{#each detail.recentTransactions as t (t.id)}
+										<tr>
+											<td class="td-mono">{t.created ? formatDate(new Date(t.created)) : "—"}</td>
+											<td class="td-desc">{t.description ?? "—"}</td>
+											<td class="td-mono">
+												{fmtCurrency(t.amount, t.currency)}
+												{#if t.status === "refunded"}
+													<span class="td-refunded">−{fmtCurrency(t.amountRefunded, t.currency)}</span>
+												{/if}
+											</td>
+											<td><Badge variant={txVariant(t.status)} size="sm" dot>{t.status}</Badge></td>
+											<td class="td-action">
+												{#if t.status === "succeeded"}
+													<button
+														class="tx-refund-btn"
+														onclick={() => refundTransaction(t.id, t.amount, t.currency)}
+														disabled={drawerAction === `refund_${t.id}`}
+													>
+														{drawerAction === `refund_${t.id}` ? "…" : "Refund"}
+													</button>
+												{/if}
+											</td>
+										</tr>
+									{/each}
+								</tbody>
+							</table>
+						</div>
+					{:else}
+						<p class="drawer-empty">No Stripe charges attributed to this user yet.</p>
+					{/if}
 				</div>
 
 				<!-- Recent jobs -->
@@ -956,10 +1137,9 @@
 	}
 
 	.user-drawer {
-		position: fixed; top: 0; right: 0; bottom: 0;
-		width: 420px; max-width: 92vw;
+		position: fixed; top: 0; right: 0; bottom: 0; left: 0;
+		width: 100vw;
 		background: var(--bg-surface);
-		border-left: 1px solid var(--border-default);
 		box-shadow: -12px 0 48px rgba(0,0,0,0.25);
 		z-index: 201;
 		display: flex; flex-direction: column;
@@ -973,7 +1153,7 @@
 
 	.drawer-header {
 		display: flex; align-items: flex-start; gap: 12px;
-		padding: 16px 16px 14px;
+		padding: 20px max(16px, calc(50vw - 460px)) 16px;
 		border-bottom: 1px solid var(--border-subtle);
 		flex-shrink: 0;
 	}
@@ -1042,7 +1222,7 @@
 	}
 
 	.drawer-section {
-		padding: 14px 16px;
+		padding: 16px max(16px, calc(50vw - 460px));
 		border-bottom: 1px solid var(--border-subtle);
 	}
 	.drawer-section:last-child { border-bottom: none; }
@@ -1057,6 +1237,10 @@
 	/* KV grid */
 	.drawer-kv-grid {
 		display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px;
+	}
+	@media (min-width: 760px) {
+		.drawer-kv-grid { grid-template-columns: repeat(4, 1fr); }
+		.drawer-kv--full { grid-column: 1 / -1; }
 	}
 	.drawer-kv { display: flex; flex-direction: column; gap: 2px; }
 	.drawer-kv--full { grid-column: 1 / -1; }
@@ -1077,6 +1261,54 @@
 	.job-row__conn  { font-size: 0.6875rem; font-family: var(--font-mono); color: var(--text-tertiary); flex-shrink: 0; }
 	.job-row__pieces{ font-size: 0.6875rem; font-family: var(--font-mono); color: var(--text-tertiary); flex-shrink: 0; }
 	.job-row__date  { font-size: 0.6875rem; font-family: var(--font-mono); color: var(--text-tertiary); flex-shrink: 0; }
+	.drawer-empty   { font-size: 0.8125rem; color: var(--text-tertiary); }
+
+	/* Payment history table */
+	.tx-table-wrap { border: 1px solid var(--border-subtle); border-radius: var(--radius-md); overflow: hidden; }
+	.tx-table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
+	.tx-table thead { background: var(--bg-surface-2); }
+	.tx-table th {
+		padding: 6px 10px; text-align: left; font-size: 0.625rem; font-weight: 600;
+		font-family: var(--font-mono); color: var(--text-tertiary);
+		text-transform: uppercase; letter-spacing: 0.06em;
+	}
+	.tx-table tbody tr { border-top: 1px solid var(--border-subtle); background: var(--bg-surface-2); }
+	.tx-table tbody tr:hover { background: var(--bg-surface-3); }
+	.tx-table td { padding: 7px 10px; vertical-align: middle; }
+	.td-mono     { font-family: var(--font-mono); font-size: 0.75rem; white-space: nowrap; }
+	.td-desc     { color: var(--text-secondary); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.td-refunded { font-family: var(--font-mono); font-size: 0.6875rem; color: var(--color-danger); margin-left: 6px; }
+	.td-action   { text-align: right; }
+	.tx-refund-btn {
+		font-size: 0.6875rem; font-weight: 500; font-family: var(--font-body); color: var(--color-danger);
+		background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); border-radius: var(--radius-sm);
+		padding: 4px 9px; cursor: pointer;
+	}
+	.tx-refund-btn:hover:not(:disabled) { background: rgba(239,68,68,0.18); }
+	.tx-refund-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+	/* Subscription action row (inline within the native Subscription section) */
+	.sub-actions {
+		display: flex; flex-wrap: wrap; gap: 7px;
+		margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-subtle);
+	}
+	.sub-action-btn {
+		display: inline-flex; align-items: center; gap: 6px;
+		padding: 6px 12px; border-radius: var(--radius-md);
+		font-size: 0.8125rem; font-weight: 500; font-family: var(--font-body);
+		cursor: pointer; border: 1px solid var(--border-default); background: var(--bg-surface);
+		color: var(--text-secondary); transition: all 0.12s;
+	}
+	.sub-action-btn:hover:not(:disabled) { background: var(--bg-surface-3); color: var(--text-primary); }
+	.sub-action-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+	.sub-action-btn--danger {
+		background: rgba(239,68,68,0.1); color: var(--color-danger); border-color: rgba(239,68,68,0.3);
+	}
+	.sub-action-btn--danger:hover:not(:disabled) { background: rgba(239,68,68,0.18); }
+	.sub-action-btn--restore {
+		background: rgba(46,204,113,0.1); color: #2ecc71; border-color: rgba(46,204,113,0.3);
+	}
+	.sub-action-btn--restore:hover:not(:disabled) { background: rgba(46,204,113,0.18); }
 
 	/* Actions */
 	.action-block { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }

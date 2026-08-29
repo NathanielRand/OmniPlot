@@ -1,5 +1,8 @@
 // ONGOING
-- Added an "Early Access" navbar subtext and a mandatory disclosure modal shown before the guided tour on first dashboard visit.
+- proper user account management, billing management, subscription management
+- triggered email notifications/receipts for our various user actions (welcome, subscription, any transaction receipt, usage alerts, feature drops, account specific emails, etc..) that admin can view, test, update, create, and pause from the admin dashboard. notification activity needs to be viewable from admin. admin options to manual send.
+- verify user's subscription actions exists and work (i.e cancel, pause, etc..)
+- reports/support systems needs conversational ability to address connor support ticket.
 - any img type -> rm background -> convert to svg -  inherit svg upload functionality
 - claude --resume 31f50029-b621-492c-a461-ea4bd37790f6
 

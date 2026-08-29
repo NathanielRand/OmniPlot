@@ -64,6 +64,28 @@ export const GET: RequestHandler = async ({ request, params }) => {
 		});
 	} catch { /* index may not exist yet — return empty */ }
 
+	// Financial history for this user (needs the transactions/uid+created index)
+	let recentTransactions: object[] = [];
+	try {
+		const txSnap = await db.collection('transactions')
+			.where('uid', '==', params.uid)
+			.orderBy('created', 'desc')
+			.limit(20)
+			.get();
+		recentTransactions = txSnap.docs.map((doc) => {
+			const t = doc.data();
+			return {
+				id:             doc.id,
+				amount:         t.amount         ?? 0,
+				amountRefunded: t.amountRefunded ?? 0,
+				currency:       t.currency       ?? 'usd',
+				status:         t.status         ?? 'succeeded',
+				description:    t.description    ?? null,
+				created:        t.created?.toDate?.()?.toISOString() ?? null,
+			};
+		});
+	} catch { /* transactions collection or index may not exist yet */ }
+
 	return json({
 		uid:             params.uid,
 		displayName:     d.displayName  ?? '',
@@ -100,5 +122,6 @@ export const GET: RequestHandler = async ({ request, params }) => {
 		lastActiveAt: d.updatedAt?.toDate?.()?.toISOString()  ?? null,
 		shop,
 		recentJobs,
+		recentTransactions,
 	});
 };
