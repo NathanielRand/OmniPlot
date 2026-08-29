@@ -60,7 +60,20 @@ export const PATCH: RequestHandler = async ({ request }) => {
 	if (tier)         patch.tier            = tier;
 	if (status)       patch.status          = status;
 	if (clearSession) patch.activeSessionId = null;
-	if (removeShop)   { patch.shopId = null; patch.shopRole = null; patch.shopName = null; }
+
+	if (removeShop) {
+		patch.shopId = null;
+		patch.shopRole = null;
+		patch.shopName = null;
+
+		// Clearing only the user-doc pointer left the member doc behind,
+		// so isMember() in firestore.rules still granted shop access.
+		const userSnap = await db.doc(`users/${uid}`).get();
+		const shopId = userSnap.data()?.shopId;
+		if (shopId) {
+			await db.doc(`shops/${shopId}/members/${uid}`).delete();
+		}
+	}
 
 	await db.doc(`users/${uid}`).update(patch);
 

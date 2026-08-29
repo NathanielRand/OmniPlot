@@ -23,7 +23,7 @@ import {
 	type QueryConstraint,
 	type Unsubscribe,
 } from "firebase/firestore";
-import { db } from "./client";
+import { db, auth } from "./client";
 import type {
 	UserProfile,
 	Vehicle,
@@ -63,10 +63,37 @@ export const Collections = {
 	PATTERN_ADJUSTMENTS: "patternAdjustments",
 } as const;
 
+// ─── Authenticated server-route helper ────────
+// Shop/org mutations went through direct client Firestore writes, gated
+// only by security rules that can't express escalation/last-owner/seat
+// invariants. Those mutations now go through Admin-SDK server routes;
+// this is the shared fetch wrapper for calling them.
+async function authedFetch(path: string, init: RequestInit = {}): Promise<Response> {
+	const token = await auth.currentUser?.getIdToken();
+	const res = await fetch(path, {
+		...init,
+		headers: {
+			"Content-Type": "application/json",
+			...(token ? { Authorization: `Bearer ${token}` } : {}),
+			...(init.headers ?? {}),
+		},
+	});
+	if (!res.ok) {
+		const body = await res.json().catch(() => ({}));
+		throw new Error(body.error ?? "Request failed");
+	}
+	return res;
+}
+
 // ─── Converters ───────────────────────────────
 function fromTimestamp(val: unknown): Date {
 	if (val instanceof Timestamp) return val.toDate();
 	if (val instanceof Date) return val;
+	// Server routes serialize dates as ISO strings over JSON.
+	if (typeof val === "string") {
+		const d = new Date(val);
+		if (!Number.isNaN(d.getTime())) return d;
+	}
 	return new Date();
 }
 
@@ -831,73 +858,26 @@ export function toShopInvite(id: string, data: DocumentData): ShopInvite {
 }
 
 // ─── Shop CRUD ────────────────────────────────
+// Runs server-side (POST /api/shops) — writes to the orgs collection, and
+// firestore.rules only permits self-bootstrap create there, not the
+// multi-doc batch this needs. `ownerId` is implicit (the authed caller);
+// kept as a parameter so call sites don't change.
 export async function createShop(
-	ownerId: string,
+	_ownerId: string,
 	name: string,
 	plan: Shop["plan"] = "starter",
 ): Promise<Shop> {
-	const orgRef = doc(collection(db, Collections.ORGS));
-	const ref = doc(collection(db, Collections.SHOPS));
-	const now = serverTimestamp();
-	const seats = plan === "starter" ? 3 : plan === "team" ? 10 : 25;
-
-	const batch = writeBatch(db);
-
-	// A shop always has an owning org — created together so "shop with no
-	// org" is never a reachable state for anything written after Phase 1.
-	batch.set(orgRef, {
-		name,
-		ownerId,
-		createdAt: now,
-		updatedAt: now,
+	const res = await authedFetch("/api/shops", {
+		method: "POST",
+		body: JSON.stringify({ name, plan }),
 	});
-
-	batch.set(ref, {
-		orgId: orgRef.id,
-		name,
-		plan,
-		seats,
-		ownerId,
-		stripeCustomerId: null,
-		stripePriceId: null,
-		subscriptionStatus: null,
-		currentPeriodEnd: null,
-		createdAt: now,
-		updatedAt: now,
-	});
-
-	// Write the owner as first shop member
-	const memberRef = doc(db, Collections.SHOPS, ref.id, "members", ownerId);
-	batch.set(memberRef, {
-		uid: ownerId,
-		shopId: ref.id,
-		role: "owner",
-		joinedAt: now,
-	});
-
-	// Mirror as the org member record — the doc rules/server routes will
-	// actually read once role resolution moves off the client (Phase 2+).
-	const orgMemberRef = doc(db, Collections.ORGS, orgRef.id, "members", ownerId);
-	batch.set(orgMemberRef, {
-		uid: ownerId,
-		orgId: orgRef.id,
-		role: "owner",
-		shopIds: null, // org-wide — owner created the org
-		joinedAt: now,
-	});
-
-	// Stamp shopId + shopRole on the owner's user doc — kept as the
-	// default/last-active shop pointer; the org member doc is authoritative.
-	batch.update(doc(db, Collections.USERS, ownerId), {
-		shopId: ref.id,
-		shopRole: "owner",
-		updatedAt: now,
-	});
-
-	await batch.commit();
-
-	const snap = await getDoc(ref);
-	return toShop(ref.id, snap.data()!);
+	const d = await res.json();
+	return {
+		...d,
+		currentPeriodEnd: d.currentPeriodEnd ? new Date(d.currentPeriodEnd) : null,
+		createdAt: new Date(d.createdAt),
+		updatedAt: new Date(d.updatedAt),
+	};
 }
 
 export async function getShop(shopId: string): Promise<Shop | null> {
@@ -941,15 +921,11 @@ export function subscribeToShopMembers(
 	);
 }
 
+// Runs server-side (PATCH/DELETE /api/shops/[shopId]/members/[uid]) — the
+// route enforces the last-owner invariant and the role-escalation cap,
+// neither of which security rules can express.
 export async function removeShopMember(shopId: string, uid: string): Promise<void> {
-	const batch = writeBatch(db);
-	batch.delete(doc(db, Collections.SHOPS, shopId, "members", uid));
-	batch.update(doc(db, Collections.USERS, uid), {
-		shopId: null,
-		shopRole: null,
-		updatedAt: serverTimestamp(),
-	});
-	await batch.commit();
+	await authedFetch(`/api/shops/${shopId}/members/${uid}`, { method: "DELETE" });
 }
 
 export async function updateShopMemberRole(
@@ -957,38 +933,29 @@ export async function updateShopMemberRole(
 	uid: string,
 	role: ShopRole,
 ): Promise<void> {
-	const batch = writeBatch(db);
-	batch.update(doc(db, Collections.SHOPS, shopId, "members", uid), { role });
-	batch.update(doc(db, Collections.USERS, uid), {
-		shopRole: role,
-		updatedAt: serverTimestamp(),
+	await authedFetch(`/api/shops/${shopId}/members/${uid}`, {
+		method: "PATCH",
+		body: JSON.stringify({ role }),
 	});
-	await batch.commit();
 }
 
 // ─── Shop invites ─────────────────────────────
+// Runs server-side (POST /api/shops/[shopId]/invites) — the route caps the
+// invite's role at the caller's own, which a client write can't be trusted
+// to enforce.
 export async function createShopInvite(
 	shopId: string,
-	shopName: string,
-	createdBy: string,
+	_shopName: string,
+	_createdBy: string,
 	role: ShopRole = "tech",
 	email: string | null = null,
 ): Promise<ShopInvite> {
-	const ref = doc(collection(db, Collections.SHOP_INVITES));
-	const now = new Date();
-	const expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // 7 days
-	await setDoc(ref, {
-		shopId,
-		shopName,
-		role,
-		email,
-		createdBy,
-		status: "pending",
-		createdAt: Timestamp.fromDate(now),
-		expiresAt: Timestamp.fromDate(expiresAt),
+	const res = await authedFetch(`/api/shops/${shopId}/invites`, {
+		method: "POST",
+		body: JSON.stringify({ role, email }),
 	});
-	const snap = await getDoc(ref);
-	return toShopInvite(ref.id, snap.data()!);
+	const d = await res.json();
+	return { ...d, createdAt: new Date(d.createdAt), expiresAt: new Date(d.expiresAt) };
 }
 
 export async function getShopInvite(token: string): Promise<ShopInvite | null> {
@@ -997,47 +964,20 @@ export async function getShopInvite(token: string): Promise<ShopInvite | null> {
 	return toShopInvite(snap.id, snap.data());
 }
 
+// Runs server-side (POST /api/shops/invites/[token]/accept) — role comes
+// from the stored invite doc only, never from the caller, closing the
+// self-escalation gap a client write could exploit.
 export async function acceptShopInvite(
 	token: string,
-	uid: string,
-	displayName: string,
-	email: string,
+	_uid: string,
+	_displayName: string,
+	_email: string,
 ): Promise<void> {
-	const inviteRef = doc(db, Collections.SHOP_INVITES, token);
-	const inviteSnap = await getDoc(inviteRef);
-	if (!inviteSnap.exists()) throw new Error("Invite not found");
-
-	const invite = toShopInvite(inviteSnap.id, inviteSnap.data());
-	if (invite.status !== "pending") throw new Error("Invite is no longer valid");
-	if (invite.expiresAt < new Date()) throw new Error("Invite has expired");
-
-	const batch = writeBatch(db);
-
-	// Add member to shop
-	batch.set(doc(db, Collections.SHOPS, invite.shopId, "members", uid), {
-		uid,
-		shopId: invite.shopId,
-		role: invite.role,
-		displayName,
-		email,
-		joinedAt: serverTimestamp(),
-	});
-
-	// Stamp shopId + shopRole on the user doc
-	batch.update(doc(db, Collections.USERS, uid), {
-		shopId: invite.shopId,
-		shopRole: invite.role,
-		updatedAt: serverTimestamp(),
-	});
-
-	// Mark invite as accepted
-	batch.update(inviteRef, { status: "accepted" });
-
-	await batch.commit();
+	await authedFetch(`/api/shops/invites/${token}/accept`, { method: "POST" });
 }
 
 export async function revokeShopInvite(token: string): Promise<void> {
-	await updateDoc(doc(db, Collections.SHOP_INVITES, token), { status: "revoked" });
+	await authedFetch(`/api/shops/invites/${token}`, { method: "DELETE" });
 }
 
 export async function getShopInvitesByShop(shopId: string): Promise<ShopInvite[]> {
