@@ -191,11 +191,11 @@
 
 	const ZONES = $derived(mode === "ppf" ? PPF_ZONES : TINT_ZONES);
 
-	const totalPPF  = $derived(patternStore.vehicles.reduce((n, v) => n + patternStore.getPatterns(v.id, "ppf").length, 0));
-	const totalTint = $derived(patternStore.vehicles.reduce((n, v) => n + patternStore.getPatterns(v.id, "window-tint").length, 0));
+	const totalPPF  = $derived(patternStore.vehicles.filter(v => v.status === "published").reduce((n, v) => n + patternStore.getPatterns(v.id, "ppf", true).length, 0));
+	const totalTint = $derived(patternStore.vehicles.filter(v => v.status === "published").reduce((n, v) => n + patternStore.getPatterns(v.id, "window-tint", true).length, 0));
 
-	const vehiclesWithPPF  = $derived(patternStore.vehicles.filter(v => v.status === "published" && patternStore.getPatterns(v.id, "ppf").length > 0).length);
-	const vehiclesWithTint = $derived(patternStore.vehicles.filter(v => v.status === "published" && patternStore.getPatterns(v.id, "window-tint").length > 0).length);
+	const vehiclesWithPPF  = $derived(patternStore.vehicles.filter(v => v.status === "published" && patternStore.getPatterns(v.id, "ppf", true).length > 0).length);
+	const vehiclesWithTint = $derived(patternStore.vehicles.filter(v => v.status === "published" && patternStore.getPatterns(v.id, "window-tint", true).length > 0).length);
 
 	const avgPPFZones  = $derived(vehiclesWithPPF  > 0 ? Math.round(totalPPF  / vehiclesWithPPF)  : 0);
 	const avgTintZones = $derived(vehiclesWithTint > 0 ? Math.round(totalTint / vehiclesWithTint) : 0);
@@ -205,7 +205,7 @@
 		["All", ...new Set(
 			patternStore.vehicles
 				.filter((v) => v.status === "published")
-				.filter((v) => patternStore.getPatterns(v.id, mode === "ppf" ? "ppf" : "window-tint").length > 0)
+				.filter((v) => patternStore.getPatterns(v.id, mode === "ppf" ? "ppf" : "window-tint", true).length > 0)
 				.map((v) => v.make)
 				.sort()
 		)],
@@ -216,7 +216,7 @@
 		["All", ...new Set(
 			patternStore.vehicles
 				.filter((v) => v.status === "published")
-				.filter((v) => patternStore.getPatterns(v.id, mode === "ppf" ? "ppf" : "window-tint").length > 0)
+				.filter((v) => patternStore.getPatterns(v.id, mode === "ppf" ? "ppf" : "window-tint", true).length > 0)
 				.filter((v) => activeMake === "All" || v.make === activeMake)
 				.map((v) => String(v.year))
 				.sort((a, b) => Number(b) - Number(a))
@@ -240,7 +240,7 @@
 	const filtered = $derived(
 		patternStore.vehicles
 			.filter((v) => v.status === "published")
-			.filter((v) => patternStore.getPatterns(v.id, mode === "ppf" ? "ppf" : "window-tint").length > 0)
+			.filter((v) => patternStore.getPatterns(v.id, mode === "ppf" ? "ppf" : "window-tint", true).length > 0)
 			.filter((v) => {
 				const q = search.toLowerCase();
 				const matchSearch = !q || `${v.year} ${v.make} ${v.model}`.toLowerCase().includes(q);
@@ -253,7 +253,7 @@
 	// ─── Vehicle-specific patterns from store ─────
 	const vehiclePatterns = $derived(
 		selectedVehicle
-			? patternStore.getPatterns(selectedVehicle.id, mode === "ppf" ? "ppf" : "window-tint")
+			? patternStore.getPatterns(selectedVehicle.id, mode === "ppf" ? "ppf" : "window-tint", true)
 			: [],
 	);
 
@@ -529,7 +529,7 @@
 		{#if !selectedVehicle}
 			<div class="vehicle-grid" class:vehicle-grid--list={view === "list"}>
 				{#each filtered as vehicle (vehicle.id)}
-					{@const storeCount = patternStore.getPatterns(vehicle.id, mode === "ppf" ? "ppf" : "window-tint").length}
+					{@const storeCount = patternStore.getPatterns(vehicle.id, mode === "ppf" ? "ppf" : "window-tint", true).length}
 					<button
 						class="vehicle-card"
 						onclick={() => (selectedVehicle = vehicle)}
@@ -572,10 +572,14 @@
 
 				{#if filtered.length === 0}
 					<div class="lib-empty">
-						<p class="lib-empty__title">No vehicles found</p>
+						<p class="lib-empty__title">No patterns found</p>
 						<p class="lib-empty__sub">
-							Try a different search or <button class="lib-empty__request" onclick={() => (showRequestModal = true)}>request this vehicle</button>.
+							Try a different search or <button class="lib-empty__request" onclick={() => (showRequestModal = true)}>request a pattern</button>.
 						</p>
+						<a href="/library/upload" class="lib-empty__upload">
+							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+							Upload Pattern
+						</a>
 					</div>
 				{/if}
 			</div>
@@ -1312,10 +1316,29 @@
 	}
 
 	/* Empty */
-	.lib-empty { grid-column: 1 / -1; text-align: center; padding: 48px 0; color: var(--text-tertiary); }
+	.lib-empty { grid-column: 1 / -1; display: flex; flex-direction: column; align-items: center; text-align: center; padding: 48px 0; color: var(--text-tertiary); }
 	.lib-empty__title { font-size: 1rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; }
-	.lib-empty__sub   { font-size: 0.875rem; }
+	.lib-empty__sub   { font-size: 0.875rem; margin-bottom: 20px; }
 	.lib-empty__request { background: none; border: none; color: var(--text-brand); cursor: pointer; font-size: inherit; text-decoration: underline; font-family: inherit; }
+	.lib-empty__upload {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 11px 20px;
+		font-size: 0.9375rem;
+		font-weight: 600;
+		border-radius: var(--radius-md);
+		border: 1px solid color-mix(in srgb, var(--color-brand) 45%, transparent);
+		background: color-mix(in srgb, var(--color-brand) 10%, transparent);
+		color: var(--color-brand);
+		text-decoration: none;
+		white-space: nowrap;
+		transition: background 0.12s, border-color 0.12s;
+	}
+	.lib-empty__upload:hover {
+		background: color-mix(in srgb, var(--color-brand) 18%, transparent);
+		border-color: var(--color-brand);
+	}
 
 	/* Zone browser */
 	.zone-browser { display: flex; flex-direction: column; gap: 16px; }

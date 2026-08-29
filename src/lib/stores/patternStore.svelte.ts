@@ -342,13 +342,14 @@ function createPatternStore() {
 	}
 
 	// ─ Queries ─────────────────────────────────────────────────
-	function getPatterns(vehicleId: string, category?: PatternCategory): Pattern[] {
+	function getPatterns(vehicleId: string, category?: PatternCategory, publishedOnly = false): Pattern[] {
 		const all = patterns[vehicleId] ?? [];
-		return category ? all.filter((p) => p.category === category) : all;
+		const byCategory = category ? all.filter((p) => p.category === category) : all;
+		return publishedOnly ? byCategory.filter((p) => p.isPublished) : byCategory;
 	}
 
-	function hasPatterns(vehicleId: string, category?: PatternCategory): boolean {
-		return getPatterns(vehicleId, category).length > 0;
+	function hasPatterns(vehicleId: string, category?: PatternCategory, publishedOnly = false): boolean {
+		return getPatterns(vehicleId, category, publishedOnly).length > 0;
 	}
 
 	// ─ Mutations ────────────────────────────────────────────────

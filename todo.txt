@@ -1,3 +1,5 @@
+Still outstanding from before: none of the billing flows (pause, cancel-now, delete-account, clear-history, admin pause/unpause) have run against real Stripe test-mode webhooks. That test-mode pass is now more important given the API version change touches the same webhook path. Want me to run it?
+
 // ONGOING
 - user's window tint library incorrectly shows counter values . maybe its including admin/community/requests pattern counts in non-active status but idk, needs confirming. the user should only see counts for their own patterns, admin added patterns, or community approved patterns. when no patterns are present, we need to show a larger "upload pattern" btn blended into our existing "No vehicles found" (which really needs to say "no patterns found"). the "Try a different search or request this vehicle" should change to "request a pattern".
 - shops/teams/org needs overhaul. we need to be able to support an org having multiple shops and multiple groups of teams with varying roles/perms.
@@ -8,6 +10,9 @@
 
 
 // BACKLOG
+- pattern builder where the uses inputs the exact dimensions to manually craft the pattern directly from the studio. this give true sandbox and potentially unlimited types of patterns.
+- the platform is very vehicle focused which has been good but i want to expand our offerings to include other cut/print needs like residential/commercial windows, art designs that have nothing to do with vehicles or building, idk. How can we keep the vehicles flow and branding but ADD (not take away) features to support anm encourage more than vehicles use. Everything from our pattern library layout/sort/filters/search, pattern uploader.
+- select material should dynamically change the gray box "cut zone/print zone" on the studio canvas size to match. that way they nest patterns into that zone, it is accruate to the size of the material they have placed those patterns in.
 - any img type -> rm background -> convert to svg -  inherit svg upload functionality
 - the agent connection is throwing serial port errors.
 - multiple usdb connections seemd to have popped up. idk of the same or if it just detected multiple but there was a lot of connections. we should find a way to compress the unactive connections box size to clerarly differiate the the active connected vs inactive methods.
