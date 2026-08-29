@@ -5,6 +5,11 @@ import {
 	onAuthStateChanged,
 	signOut,
 	signInWithPopup,
+	linkWithPopup,
+	linkWithCredential,
+	linkWithPhoneNumber,
+	unlink,
+	EmailAuthProvider,
 	GoogleAuthProvider,
 	sendSignInLinkToEmail,
 	isSignInWithEmailLink,
@@ -29,6 +34,7 @@ import { userStore } from "$lib/stores";
 const EMAIL_KEY    = "omniplot_signin_email";
 const NAME_KEY     = "omniplot_signin_name";
 const SESSION_KEY  = "omniplot_session_id";
+const LINK_MODE_KEY = "omniplot_link_mode";
 export const PENDING_INVITE_KEY = "omniplot_pending_invite";
 
 // ─── Internal state ───────────────────────────
@@ -157,11 +163,12 @@ export async function sendMagicLink(
 	};
 	await sendSignInLinkToEmail(auth, email, actionCodeSettings);
 	localStorage.setItem(EMAIL_KEY, email);
+	localStorage.removeItem(LINK_MODE_KEY);
 	if (displayName) localStorage.setItem(NAME_KEY, displayName);
 }
 
 // Called from /verify on page load.
-// Returns true if sign-in was completed.
+// Returns true if sign-in (or, in link mode, account linking) was completed.
 export async function completeMagicLinkSignIn(): Promise<boolean> {
 	if (!isSignInWithEmailLink(auth, window.location.href)) return false;
 
@@ -171,6 +178,17 @@ export async function completeMagicLinkSignIn(): Promise<boolean> {
 		email = window.prompt("Please confirm the email address you signed in with") ?? "";
 	}
 	if (!email) return false;
+
+	// Settings → "Add email" flow: attach this email to the already-signed-in
+	// account instead of starting a new session.
+	if (localStorage.getItem(LINK_MODE_KEY) === "1" && auth.currentUser) {
+		const credential = EmailAuthProvider.credentialWithLink(email, window.location.href);
+		const { user } = await linkWithCredential(auth.currentUser, credential);
+		localStorage.removeItem(EMAIL_KEY);
+		localStorage.removeItem(LINK_MODE_KEY);
+		await updateUserProfile(user.uid, { email: user.email ?? email });
+		return true;
+	}
 
 	const { user } = await signInWithEmailLink(auth, email, window.location.href);
 	localStorage.removeItem(EMAIL_KEY);
@@ -184,6 +202,61 @@ export async function completeMagicLinkSignIn(): Promise<boolean> {
 	}
 
 	return true;
+}
+
+// ─── Link additional sign-in methods ──────────
+// All require an active session (auth.currentUser). Used from Settings → Security
+// so a user can add a second way to sign in (e.g. a phone-only account adding email).
+
+export async function linkGoogleAccount(): Promise<void> {
+	if (!auth.currentUser) throw new Error("Not signed in.");
+	await linkWithPopup(auth.currentUser, new GoogleAuthProvider());
+}
+
+// Sends the magic link in "link mode" — /verify will attach it to the current
+// session instead of signing in as a new user.
+export async function sendLinkEmail(email: string): Promise<void> {
+	if (!auth.currentUser) throw new Error("Not signed in.");
+	const actionCodeSettings = {
+		url: `${window.location.origin}/verify`,
+		handleCodeInApp: true,
+	};
+	await sendSignInLinkToEmail(auth, email, actionCodeSettings);
+	localStorage.setItem(EMAIL_KEY, email);
+	localStorage.setItem(LINK_MODE_KEY, "1");
+}
+
+export async function sendLinkPhoneOTP(
+	phoneNumber: string,
+	verifier: RecaptchaVerifier,
+): Promise<ConfirmationResult> {
+	if (!auth.currentUser) throw new Error("Not signed in.");
+	return linkWithPhoneNumber(auth.currentUser, phoneNumber, verifier);
+}
+
+// Called after confirmationResult.confirm(otp) succeeds for a phone link.
+export async function finishLinkPhone(phoneNumber: string): Promise<void> {
+	if (!auth.currentUser) return;
+	await updateUserProfile(auth.currentUser.uid, { phone: phoneNumber });
+}
+
+// Removes a linked provider. Firebase itself refuses to unlink the last
+// remaining provider, so callers still get a friendly error instead of a broken account.
+export async function unlinkProvider(providerId: string): Promise<void> {
+	if (!auth.currentUser) throw new Error("Not signed in.");
+	await unlink(auth.currentUser, providerId);
+
+	// Clear the corresponding profile field if no other provider still supplies it
+	const remaining = auth.currentUser.providerData;
+	if (providerId === "phone" && !remaining.some((p) => p.providerId === "phone")) {
+		await updateUserProfile(auth.currentUser.uid, { phone: null });
+	}
+	if (
+		(providerId === "password" || providerId === "google.com") &&
+		!remaining.some((p) => p.email)
+	) {
+		await updateUserProfile(auth.currentUser.uid, { email: "" });
+	}
 }
 
 // ─── Phone / OTP ──────────────────────────────

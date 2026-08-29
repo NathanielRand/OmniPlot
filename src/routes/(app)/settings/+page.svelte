@@ -2,7 +2,17 @@
 	import { onMount } from "svelte";
 	import Badge from "$lib/components/ui/Badge.svelte";
 	import Button from "$lib/components/ui/Button.svelte";
+	import PhoneInput from "$lib/components/ui/PhoneInput.svelte";
 	import { toastStore, themeStore, userStore, uiStore } from "$lib/stores";
+	import {
+		linkGoogleAccount,
+		sendLinkEmail,
+		sendLinkPhoneOTP,
+		finishLinkPhone,
+		unlinkProvider,
+		createRecaptchaVerifier,
+	} from "$lib/firebase/auth";
+	import type { ConfirmationResult, RecaptchaVerifier } from "firebase/auth";
 	import { PRICING_PLANS, SHOP_PRICING_PLANS } from "$lib/config";
 	import {
 		getShop,
@@ -27,6 +37,190 @@
 	let displayName = $state(userStore.user?.displayName ?? "");
 	const email = $derived(userStore.user?.email ?? "");
 	let saving = $state(false);
+
+	// ─── Auth method: link / unlink ────────────────
+	interface LinkedProvider { id: string; label: string }
+	let linkedProviders = $state<LinkedProvider[]>([]);
+
+	const PROVIDER_LABELS: Record<string, string> = {
+		"google.com": "Google",
+		password:     "Email",
+		phone:        "Phone",
+	};
+	// Every method OmniPlot supports, in display order
+	const ALL_PROVIDERS: { id: string; label: string }[] = [
+		{ id: "google.com", label: "Google" },
+		{ id: "password",   label: "Email" },
+		{ id: "phone",      label: "Phone" },
+	];
+
+	function loadLinkedProviders() {
+		const providers = auth.currentUser?.providerData ?? [];
+		linkedProviders = providers.map((p) => ({
+			id:    p.providerId,
+			label: PROVIDER_LABELS[p.providerId] ?? p.providerId,
+		}));
+	}
+
+	const unlinkedProviders = $derived(
+		ALL_PROVIDERS.filter((p) => !linkedProviders.some((lp) => lp.id === p.id)),
+	);
+
+	// ── Add-provider panel state ──
+	let addProviderOpen = $state<string | null>(null); // provider id currently being added
+	let linkingGoogle    = $state(false);
+	let linkEmailValue   = $state("");
+	let linkEmailSent    = $state(false);
+	let sendingLinkEmail = $state(false);
+
+	let linkPhoneValue     = $state("");
+	let linkPhoneOtp       = $state("");
+	let linkPhoneOtpSent   = $state(false);
+	let linkPhoneConfirm   = $state<ConfirmationResult | null>(null);
+	let linkPhoneRecaptchaEl = $state<HTMLElement | null>(null);
+	let linkPhoneRecaptcha   = $state<RecaptchaVerifier | null>(null);
+	let sendingPhoneOtp   = $state(false);
+	let verifyingPhoneOtp = $state(false);
+
+	let unlinkingProviderId = $state<string | null>(null);
+
+	function closeAddProvider() {
+		addProviderOpen = null;
+		linkEmailValue = "";
+		linkEmailSent = false;
+		linkPhoneValue = "";
+		linkPhoneOtp = "";
+		linkPhoneOtpSent = false;
+		linkPhoneConfirm = null;
+		try { linkPhoneRecaptcha?.clear(); } catch {}
+		linkPhoneRecaptcha = null;
+	}
+
+	async function handleLinkGoogle() {
+		linkingGoogle = true;
+		try {
+			await linkGoogleAccount();
+			loadLinkedProviders();
+			toastStore.success("Google linked", "You can now sign in with Google too.");
+			closeAddProvider();
+		} catch (err: unknown) {
+			const code = (err as { code?: string }).code ?? "";
+			const msg =
+				code === "auth/credential-already-in-use" ? "That Google account is already linked to a different OmniPlot login." :
+				code === "auth/popup-closed-by-user" ? "" :
+				err instanceof Error ? err.message : "";
+			if (msg) toastStore.error("Couldn't link Google", msg);
+		} finally {
+			linkingGoogle = false;
+		}
+	}
+
+	async function handleSendLinkEmail(e: Event) {
+		e.preventDefault();
+		if (!linkEmailValue) return;
+		sendingLinkEmail = true;
+		try {
+			await sendLinkEmail(linkEmailValue);
+			linkEmailSent = true;
+		} catch (err: unknown) {
+			const code = (err as { code?: string }).code ?? "";
+			const msg =
+				code === "auth/email-already-in-use" ? "That email is already linked to a different OmniPlot login." :
+				err instanceof Error ? err.message : "";
+			toastStore.error("Couldn't send link", msg || undefined);
+		} finally {
+			sendingLinkEmail = false;
+		}
+	}
+
+	function resetPhoneRecaptcha() {
+		try { linkPhoneRecaptcha?.clear(); } catch {}
+		linkPhoneRecaptcha = null;
+		if (linkPhoneRecaptchaEl) linkPhoneRecaptchaEl.innerHTML = "";
+	}
+
+	async function handleSendLinkPhoneOtp(e: Event) {
+		e.preventDefault();
+		if (!linkPhoneValue || !linkPhoneRecaptchaEl) return;
+		sendingPhoneOtp = true;
+		try {
+			resetPhoneRecaptcha();
+			linkPhoneRecaptcha = createRecaptchaVerifier(linkPhoneRecaptchaEl);
+			linkPhoneConfirm = await sendLinkPhoneOTP(linkPhoneValue, linkPhoneRecaptcha);
+			linkPhoneOtpSent = true;
+		} catch (err: unknown) {
+			resetPhoneRecaptcha();
+			const code = (err as { code?: string }).code ?? "";
+			const msg =
+				code === "auth/credential-already-in-use" ? "That phone number is already linked to a different OmniPlot login." :
+				code === "auth/too-many-requests" ? "Too many attempts. Try again later." :
+				err instanceof Error ? err.message : "";
+			toastStore.error("Couldn't send code", msg || undefined);
+		} finally {
+			sendingPhoneOtp = false;
+		}
+	}
+
+	async function handleVerifyLinkPhoneOtp(e: Event) {
+		e.preventDefault();
+		if (!linkPhoneOtp || !linkPhoneConfirm) return;
+		verifyingPhoneOtp = true;
+		try {
+			await linkPhoneConfirm.confirm(linkPhoneOtp);
+			await finishLinkPhone(linkPhoneValue);
+			loadLinkedProviders();
+			toastStore.success("Phone linked", "You can now sign in with this number too.");
+			closeAddProvider();
+		} catch {
+			toastStore.error("Invalid code", "Please check the code and try again.");
+		} finally {
+			verifyingPhoneOtp = false;
+		}
+	}
+
+	async function handleUnlink(providerId: string) {
+		if (linkedProviders.length <= 1) {
+			toastStore.warning("Can't remove last sign-in method", "Add another method before removing this one.");
+			return;
+		}
+		unlinkingProviderId = providerId;
+		try {
+			await unlinkProvider(providerId);
+			loadLinkedProviders();
+			toastStore.success("Sign-in method removed");
+		} catch (err: unknown) {
+			toastStore.error("Couldn't remove", err instanceof Error ? err.message : "");
+		} finally {
+			unlinkingProviderId = null;
+		}
+	}
+
+	// ─── Billing email ─────────────────────────────
+	// Defaults to the login email when the auth method provides one (Google, magic link).
+	// Phone-only accounts start with none and must add one to receive receipts.
+	let billingEmail    = $state(userStore.user?.billingEmail ?? userStore.user?.email ?? "");
+	let editingBillingEmail = $state(false);
+	let savingBillingEmail  = $state(false);
+
+	async function saveBillingEmail() {
+		if (!billingEmail.trim()) return;
+		savingBillingEmail = true;
+		try {
+			const token = await auth.currentUser?.getIdToken();
+			const res = await fetch("/api/billing/email", {
+				method:  "PATCH",
+				headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+				body:    JSON.stringify({ email: billingEmail.trim() }),
+			});
+			if (!res.ok) throw new Error((await res.json()).error ?? "Failed");
+			editingBillingEmail = false;
+			toastStore.success("Billing email updated", "Receipts will be sent here.");
+		} catch (err) {
+			toastStore.error("Could not update billing email", err instanceof Error ? err.message : "");
+		} finally {
+			savingBillingEmail = false;
+		}
+	}
 
 	async function saveProfile() {
 		const uid = userStore.user?.uid;
@@ -294,6 +488,14 @@
 		}
 		currentSessionId = localStorage.getItem("omniplot_session_id") ?? "";
 		loadShopData();
+		loadLinkedProviders();
+	});
+
+	// Keep the billing email field in sync with the profile until the user edits it
+	$effect(() => {
+		if (!editingBillingEmail) {
+			billingEmail = userStore.user?.billingEmail ?? userStore.user?.email ?? "";
+		}
 	});
 
 	async function loadShopData() {
@@ -553,17 +755,20 @@
 						/>
 					</div>
 					<div class="form-field">
-						<label for="email" class="form-label">Email</label>
+						<label for="email" class="form-label">Login email</label>
 						<input
 							id="email"
 							class="form-input"
 							type="email"
-							value={email}
+							value={email || "—"}
 							readonly
-							title="Email cannot be changed here"
+							title="Your login email is tied to how you sign in and can't be edited here"
 						/>
 					</div>
 				</div>
+				<p class="form-hint" style="margin-top:-12px;margin-bottom:20px">
+					Your login email is tied to your sign-in method — see <button class="btn-link-sm" style="display:inline" onclick={() => (activeTab = "security")}>Security</button> to check how you sign in. Want receipts sent somewhere else? Set a billing email under <button class="btn-link-sm" style="display:inline" onclick={() => (activeTab = "billing")}>Billing</button>.
+				</p>
 
 				<div class="form-actions">
 					<Button
@@ -731,6 +936,41 @@
 						Payment failed. Add or update a card below to restore access.
 					</div>
 				{/if}
+
+				<!-- ── Billing email ── -->
+				<div class="billing-sub-section">
+					<h3 class="settings-section-title" style="font-size:0.9375rem">Billing email</h3>
+					<p class="form-hint" style="margin-top:-4px;margin-bottom:12px">
+						Where we send receipts and invoices. Defaults to your login email if you signed in with one.
+					</p>
+					{#if editingBillingEmail}
+						<div class="form-field" style="max-width:340px">
+							<input
+								class="form-input"
+								type="email"
+								bind:value={billingEmail}
+								placeholder="you@shop.com"
+							/>
+						</div>
+						<div class="form-actions">
+							<Button variant="primary" size="sm" loading={savingBillingEmail} onclick={saveBillingEmail}>
+								Save
+							</Button>
+							<Button variant="ghost" size="sm" onclick={() => (editingBillingEmail = false)}>
+								Cancel
+							</Button>
+						</div>
+					{:else}
+						<div class="pm-row" style="max-width:340px">
+							<div class="pm-info">
+								<span class="pm-brand">{billingEmail || "No billing email set"}</span>
+							</div>
+							<button class="btn-link-sm" onclick={() => (editingBillingEmail = true)}>
+								{billingEmail ? "Change" : "Add email"}
+							</button>
+						</div>
+					{/if}
+				</div>
 
 				<!-- ── Payment methods ── -->
 				<div class="billing-sub-section">
@@ -1067,7 +1307,110 @@
 		{:else if activeTab === "security"}
 			<div class="settings-section">
 				<h2 class="settings-section-title">Security</h2>
-				<p class="settings-section-sub">Recent sign-in activity across your devices and browsers.</p>
+				<p class="settings-section-sub">How you sign in, and recent activity across your devices.</p>
+
+				<div class="billing-sub-section" style="margin-top:0">
+					<h3 class="settings-section-title" style="font-size:0.9375rem">Sign-in methods</h3>
+					<p class="form-hint" style="margin-top:-4px;margin-bottom:12px">
+						Add another way to sign in so you're never locked out — for example, add an email if you signed up with just a phone number.
+					</p>
+
+					{#if linkedProviders.length === 0}
+						<div class="billing-empty">No sign-in method found.</div>
+					{:else}
+						<div class="auth-method-list">
+							{#each linkedProviders as p (p.id)}
+								<div class="auth-method-row">
+									<span class="auth-method-label">{p.label}</span>
+									<div class="auth-method-actions">
+										<Badge variant="success" size="sm">Linked</Badge>
+										{#if linkedProviders.length > 1}
+											<button
+												class="btn-link-sm danger"
+												onclick={() => handleUnlink(p.id)}
+												disabled={unlinkingProviderId === p.id}
+											>
+												{unlinkingProviderId === p.id ? "Removing…" : "Remove"}
+											</button>
+										{/if}
+									</div>
+								</div>
+							{/each}
+						</div>
+					{/if}
+
+					{#if unlinkedProviders.length > 0}
+						<div class="auth-method-add-list">
+							{#each unlinkedProviders as p (p.id)}
+								<div class="auth-method-row auth-method-row--muted">
+									<span class="auth-method-label">{p.label}</span>
+									<button class="btn-link-sm" onclick={() => (addProviderOpen = addProviderOpen === p.id ? null : p.id)}>
+										{addProviderOpen === p.id ? "Cancel" : "Add"}
+									</button>
+								</div>
+
+								{#if addProviderOpen === p.id}
+									<div class="auth-method-add-panel">
+										{#if p.id === "google.com"}
+											<Button variant="secondary" size="sm" loading={linkingGoogle} onclick={handleLinkGoogle}>
+												Continue with Google
+											</Button>
+
+										{:else if p.id === "password"}
+											{#if linkEmailSent}
+												<p class="form-hint" style="margin:0">
+													Check <strong>{linkEmailValue}</strong> for a link to confirm. It expires shortly.
+												</p>
+											{:else}
+												<form onsubmit={handleSendLinkEmail} class="auth-method-form">
+													<input
+														class="form-input"
+														type="email"
+														placeholder="you@shop.com"
+														bind:value={linkEmailValue}
+														required
+													/>
+													<Button variant="secondary" size="sm" type="submit" loading={sendingLinkEmail}>
+														Send link
+													</Button>
+												</form>
+											{/if}
+
+										{:else if p.id === "phone"}
+											{#if !linkPhoneOtpSent}
+												<form onsubmit={handleSendLinkPhoneOtp} class="auth-method-form">
+													<PhoneInput bind:value={linkPhoneValue} required />
+													<Button variant="secondary" size="sm" type="submit" loading={sendingPhoneOtp}>
+														Send code
+													</Button>
+												</form>
+											{:else}
+												<form onsubmit={handleVerifyLinkPhoneOtp} class="auth-method-form">
+													<input
+														class="form-input"
+														type="text"
+														inputmode="numeric"
+														maxlength="6"
+														placeholder="000000"
+														bind:value={linkPhoneOtp}
+														autocomplete="one-time-code"
+														required
+													/>
+													<Button variant="secondary" size="sm" type="submit" loading={verifyingPhoneOtp}>
+														Verify
+													</Button>
+												</form>
+											{/if}
+											<div bind:this={linkPhoneRecaptchaEl}></div>
+										{/if}
+									</div>
+								{/if}
+							{/each}
+						</div>
+					{/if}
+				</div>
+
+				<div class="settings-divider" style="max-width:100%;margin:24px 0" aria-hidden="true"></div>
 
 				{#if sessionsLoading}
 					<div class="team-loading">
@@ -2064,6 +2407,57 @@
 		border-bottom: 1px solid var(--border-subtle);
 	}
 	.pm-row:last-child { border-bottom: none; }
+
+	/* Auth method */
+	.auth-method-list {
+		display: flex;
+		flex-direction: column;
+		border: 1px solid var(--border-subtle);
+		border-radius: var(--radius-md);
+		overflow: hidden;
+	}
+	.auth-method-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 11px 14px;
+		background: var(--bg-surface-2);
+		border-bottom: 1px solid var(--border-subtle);
+	}
+	.auth-method-row:last-child { border-bottom: none; }
+	.auth-method-row--muted { background: var(--bg-surface); }
+	.auth-method-label {
+		font-size: 0.875rem;
+		font-weight: 500;
+		color: var(--text-primary);
+	}
+	.auth-method-actions {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+	}
+	.auth-method-add-list {
+		display: flex;
+		flex-direction: column;
+		border: 1px dashed var(--border-subtle);
+		border-radius: var(--radius-md);
+		overflow: hidden;
+		margin-top: 8px;
+	}
+	.auth-method-add-panel {
+		padding: 12px 14px;
+		background: var(--bg-surface);
+		border-bottom: 1px solid var(--border-subtle);
+	}
+	.auth-method-form {
+		display: flex;
+		gap: 8px;
+		align-items: center;
+		flex-wrap: wrap;
+	}
+	.auth-method-form .form-input {
+		max-width: 260px;
+	}
 
 	.pm-brand-icon {
 		width: 32px;

@@ -20,7 +20,7 @@ export const POST: RequestHandler = async ({ request, url }) => {
 		// Create a Stripe customer if one doesn't exist yet
 		if (!customerId) {
 			const customer = await stripe.customers.create({
-				email:    userData.email    ?? undefined,
+				email:    userData.billingEmail ?? userData.email ?? undefined,
 				name:     userData.displayName ?? undefined,
 				metadata: { uid },
 			}, connectedAccount);

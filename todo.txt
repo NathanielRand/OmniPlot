@@ -1,13 +1,13 @@
 // ONGOING
 - proper user account management, billing management, subscription management
 - triggered email notifications/receipts for our various user actions (welcome, subscription, any transaction receipt, usage alerts, feature drops, account specific emails, etc..) that admin can view, test, update, create, and pause from the admin dashboard. notification activity needs to be viewable from admin. admin options to manual send.
-- verify user's subscription actions exists and work (i.e cancel, pause, etc..)
+- verify user's own subscription actions exists and work (i.e cancel, pause, etc..)
 - reports/support systems needs conversational ability to address connor support ticket.
-- any img type -> rm background -> convert to svg -  inherit svg upload functionality
-- claude --resume 31f50029-b621-492c-a461-ea4bd37790f6
+
 
 // UPCOMING
-- the agent connection is thorwing serial port errors.
+- any img type -> rm background -> convert to svg -  inherit svg upload functionality
+- the agent connection is throwing serial port errors.
 - multiple usdb connections seemd to have popped up. idk of the same or if it just detected multiple but there was a lot of connections. we should find a way to compress the unactive connections box size to clerarly differiate the the active connected vs inactive methods.
 - need optional end cut that cut with enough force to cleanly cut both layers of the roll to separate the job from the master roll completely.
 https://www.rvinyl.com/collections/chevrolet-precut-window-tint/products/chevrolet-silverado-2007-2013-2-door-avery-dennison-nr-nano-ceramic-ir-precut-window-tint?metaobject_handle=chevrolet-silverado-precut-window-tint

@@ -71,6 +71,7 @@ export function toUserProfile(id: string, data: DocumentData): UserProfile {
 	return {
 		uid: id,
 		email: data.email ?? "",
+		billingEmail: data.billingEmail ?? data.email ?? null,
 		displayName: data.displayName ?? "",
 		photoURL: data.photoURL ?? null,
 		phone: data.phone ?? null,
@@ -161,6 +162,9 @@ export async function createUserProfile(
 ): Promise<void> {
 	await setDoc(doc(db, Collections.USERS, uid), {
 		...data,
+		// Default the receipt email to whatever email the auth provider gave us
+		// (Google or magic-link); phone-only signups start with none until the user adds one.
+		billingEmail: data.billingEmail ?? data.email ?? null,
 		createdAt: serverTimestamp(),
 		updatedAt: serverTimestamp(),
 		tier: "free",

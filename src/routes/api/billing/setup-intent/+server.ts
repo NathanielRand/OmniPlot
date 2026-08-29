@@ -18,7 +18,7 @@ export const POST: RequestHandler = async ({ request }) => {
 
 		if (!customerId) {
 			const customer = await stripe.customers.create({
-				email:    userData.email    ?? undefined,
+				email:    userData.billingEmail ?? userData.email ?? undefined,
 				name:     userData.displayName ?? undefined,
 				metadata: { uid },
 			}, connectedAccount);

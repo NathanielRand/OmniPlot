@@ -8,6 +8,7 @@ export type UserTier = "free" | "lite" | "pro" | "admin";
 export interface UserProfile {
 	uid: string;
 	email: string;
+	billingEmail: string | null;
 	displayName: string;
 	photoURL: string | null;
 	phone: string | null;

@@ -8,13 +8,19 @@
 	let status = $state<"checking" | "success" | "invalid" | "error">("checking");
 	let errorMsg = $state("");
 	let _handled = false;
+	let wasLinkMode = false;
 
 	onMount(async () => {
+		wasLinkMode = localStorage.getItem("omniplot_link_mode") === "1";
 		try {
 			const completed = await completeMagicLinkSignIn();
 			if (completed) {
 				status = "success";
-				toastStore.success("Signed in", "Welcome to OmniPlot!");
+				if (wasLinkMode) {
+					toastStore.success("Email linked", "You can now sign in with this email too.");
+				} else {
+					toastStore.success("Signed in", "Welcome to OmniPlot!");
+				}
 				// $effect below handles redirect once auth state settles
 			} else {
 				status = "invalid";
@@ -22,7 +28,7 @@
 		} catch (err: unknown) {
 			status = "error";
 			errorMsg = err instanceof Error ? err.message : "Sign-in failed.";
-			toastStore.error("Sign-in failed", errorMsg);
+			toastStore.error(wasLinkMode ? "Couldn't link email" : "Sign-in failed", errorMsg);
 		}
 	});
 
@@ -32,6 +38,11 @@
 		if (!userStore.isAuth || !userStore.user) return;
 		if (_handled) return;
 		_handled = true;
+
+		if (wasLinkMode) {
+			setTimeout(() => goto("/settings?tab=security", { replaceState: true }), 800);
+			return;
+		}
 
 		const pendingToken = localStorage.getItem(PENDING_INVITE_KEY);
 		if (pendingToken) {
