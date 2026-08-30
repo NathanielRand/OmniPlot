@@ -812,6 +812,52 @@ export async function getOrg(orgId: string): Promise<Organization | null> {
 	return toOrganization(snap.id, snap.data());
 }
 
+export interface OrgSummary {
+	id: string;
+	name: string;
+	plan: Shop["plan"];
+	role: ShopRole;
+}
+
+// Runs server-side (GET /api/orgs) — enumerating "orgs this uid belongs
+// to" needs a collectionGroup("members") query, which the client SDK
+// can't scope the way the server route does (see route comment).
+export async function getUserOrgs(): Promise<OrgSummary[]> {
+	const res = await authedFetch("/api/orgs");
+	const d = await res.json();
+	return d.orgs;
+}
+
+export interface OrgShopSummary {
+	id: string;
+	orgId: string;
+	name: string;
+	plan: Shop["plan"];
+	seats: number;
+	ownerId: string;
+}
+
+// Runs server-side (GET /api/orgs/[orgId]/shops) — shops/{shopId} itself
+// stays deny-all client reads even for an org-wide member, so this is the
+// only way to list which shops an org has.
+export async function getOrgShops(orgId: string): Promise<OrgShopSummary[]> {
+	const res = await authedFetch(`/api/orgs/${orgId}/shops`);
+	const d = await res.json();
+	return d.shops;
+}
+
+// Runs server-side (PATCH /api/users/active-shop) — validates membership
+// and derives shopRole from the target shop's own member doc, so a
+// switcher can never carry over a role from whichever shop was active
+// before.
+export async function switchActiveShop(shopId: string): Promise<{ shopId: string; shopRole: ShopRole }> {
+	const res = await authedFetch("/api/users/active-shop", {
+		method: "PATCH",
+		body: JSON.stringify({ shopId }),
+	});
+	return res.json();
+}
+
 export function toOrgMember(data: DocumentData): OrgMember {
 	return {
 		uid: data.uid ?? "",

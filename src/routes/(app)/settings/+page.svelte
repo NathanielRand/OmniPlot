@@ -17,6 +17,9 @@
 	import {
 		getShop,
 		getOrg,
+		getUserOrgs,
+		getOrgShops,
+		switchActiveShop,
 		getShopMembers,
 		createShop,
 		createShopInvite,
@@ -26,6 +29,7 @@
 		revokeShopInvite,
 		updateUserProfile,
 	} from "$lib/firebase/firestore";
+	import type { OrgSummary } from "$lib/firebase/firestore";
 	import { auth } from "$lib/firebase/client";
 	import { signOutUser } from "$lib/firebase/auth";
 	import { goto } from "$app/navigation";
@@ -260,6 +264,9 @@
 	let creatingInvite = $state(false);
 	let newInviteLink  = $state("");
 	let copiedLink     = $state(false);
+	let userOrgs       = $state<OrgSummary[]>([]);
+	let switchingOrg   = $state(false);
+	let selectedOrgId  = $state("");
 
 	const SHOP_PLAN_LABELS: Record<ShopPlan, string> = {
 		starter: "Starter — 3 seats",
@@ -596,6 +603,7 @@
 		}
 		currentSessionId = localStorage.getItem("omniplot_session_id") ?? "";
 		loadShopData();
+		loadUserOrgs();
 		loadLinkedProviders();
 	});
 
@@ -604,6 +612,14 @@
 		if (!editingBillingEmail) {
 			billingEmail = userStore.user?.billingEmail ?? userStore.user?.email ?? "";
 		}
+	});
+
+	// Keep the org switcher's selection in sync with the actual active
+	// shop — including snapping back after a failed switch, since the
+	// select's DOM value doesn't reset itself when bound state is
+	// unchanged (a failed switch leaves shop.orgId exactly as it was).
+	$effect(() => {
+		selectedOrgId = shop?.orgId ?? "";
 	});
 
 	async function loadShopData() {
@@ -628,6 +644,41 @@
 		}
 	}
 
+	async function loadUserOrgs() {
+		try {
+			userOrgs = await getUserOrgs();
+		} catch {
+			userOrgs = [];
+		}
+	}
+
+	// Org switcher — only shown when the user belongs to more than one org.
+	// Picks that org's first shop (every org has exactly one shop in
+	// practice today); a multi-shop-per-org picker is future UI once
+	// slice A's POST /api/orgs/[orgId]/shops actually gets used to create
+	// a second shop under an org.
+	async function handleSwitchOrg(orgId: string) {
+		if (!orgId || orgId === shop?.orgId) return;
+		switchingOrg = true;
+		try {
+			const shops = await getOrgShops(orgId);
+			if (!shops.length) {
+				toastStore.error("No shop in this org yet");
+				selectedOrgId = shop?.orgId ?? "";
+				return;
+			}
+			await switchActiveShop(shops[0].id);
+			await loadShopData();
+			selectedOrgId = shop?.orgId ?? "";
+			toastStore.success("Switched team");
+		} catch (err) {
+			toastStore.error("Couldn't switch team", err instanceof Error ? err.message : "");
+			selectedOrgId = shop?.orgId ?? "";
+		} finally {
+			switchingOrg = false;
+		}
+	}
+
 	async function handleCreateShop(e: Event) {
 		e.preventDefault();
 		if (!newShopName || !userStore.user) return;
@@ -647,6 +698,7 @@
 				joinedAt: new Date(),
 			}];
 			if (s.orgId) org = await getOrg(s.orgId);
+			loadUserOrgs();
 			toastStore.success("Shop created", "Redirecting to billing…");
 			if (s.orgId) await redirectToOrgCheckout(s.orgId, "starter");
 		} catch (err) {
@@ -1243,6 +1295,23 @@
 				<p class="settings-section-sub">
 					Share OmniPlot with your shop under one subscription.
 				</p>
+
+				{#if userOrgs.length > 1}
+					<div class="form-field" style="margin-bottom:16px">
+						<label for="orgSwitcher" class="form-label">Org</label>
+						<select
+							id="orgSwitcher"
+							class="form-select"
+							disabled={switchingOrg}
+							bind:value={selectedOrgId}
+							onchange={(e) => handleSwitchOrg((e.target as HTMLSelectElement).value)}
+						>
+							{#each userOrgs as o (o.id)}
+								<option value={o.id}>{o.name} ({ROLE_LABELS[o.role]})</option>
+							{/each}
+						</select>
+					</div>
+				{/if}
 
 				{#if shopLoading}
 					<div class="team-loading">
