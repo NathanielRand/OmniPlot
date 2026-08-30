@@ -110,6 +110,16 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/orgs/$(orgId)/members/$(uid()));
     }
 
+    // A user with an org-wide grant (Phase 3 group, or org-wide OrgMember)
+    // can see a shop in the org switcher without being a direct
+    // shops/{shopId}/members/{uid} member of it — Phase 5 needs that shop
+    // to actually be readable, not just listable via the server route.
+    function canReadShop(shopId) {
+      return isMember(shopId)
+        || (get(/databases/$(database)/documents/shops/$(shopId)).data.get('orgId', null) != null
+            && isOrgMember(get(/databases/$(database)/documents/shops/$(shopId)).data.get('orgId', null)));
+    }
+
     // ─── Organizations ────────────────────────────────────────────────────
     // Read-only for clients. All create/update/delete — org, and shop and
     // invite mutations below — go through Admin SDK server routes
@@ -140,11 +150,11 @@ service cloud.firestore {
 
     // ─── Shops ────────────────────────────────────────────────────────────
     match /shops/{shopId} {
-      allow read:  if isMember(shopId);
+      allow read:  if canReadShop(shopId);
       allow write: if false;
 
       match /members/{memberId} {
-        allow read:  if isMember(shopId);
+        allow read:  if canReadShop(shopId);
         allow write: if false;
       }
     }
