@@ -273,6 +273,7 @@
 	let userOrgs       = $state<OrgSummary[]>([]);
 	let switchingOrg   = $state(false);
 	let selectedOrgId  = $state("");
+	let teamSubTab     = $state<"shop" | "groups">("shop");
 
 	// ─── Groups (Phase 5, slice C) ─────────────────
 	let groups            = $state<Group[]>([]);
@@ -638,6 +639,13 @@
 		selectedOrgId = shop?.orgId ?? "";
 	});
 
+	// If the caller's org role stops qualifying for Groups (org switch,
+	// role change) while that sub-tab is selected, fall back to Shop
+	// rather than rendering an empty pane with no tab button to leave it.
+	$effect(() => {
+		if (teamSubTab === "groups" && !isOrgManager) teamSubTab = "shop";
+	});
+
 	async function loadShopData() {
 		if (!userStore.user?.shopId) return;
 		shopLoading = true;
@@ -760,6 +768,12 @@
 	async function handleSwitchOrg(orgId: string) {
 		if (!orgId || orgId === shop?.orgId) return;
 		switchingOrg = true;
+		// Reset both before the async work — a stale `groups` list from the
+		// previous org would let handleDeleteGroup post a groupId that
+		// belongs to a different org (404), and a stale "groups" sub-tab
+		// selection can land on a tab the new org's role can't see.
+		groups = [];
+		teamSubTab = "shop";
 		try {
 			const shops = await getOrgShops(orgId);
 			if (!shops.length) {
@@ -1524,6 +1538,30 @@
 						</div>
 					{/if}
 
+					<!-- Shop vs Group management sub-tabs (Phase 5, slice D) — Groups
+					     only shown to org managers, matching the section's own gate. -->
+					<div class="settings-subtabs" style="display:flex;gap:4px;margin-bottom:16px;border-bottom:1px solid var(--border,#2a2a2a)">
+						<button
+							type="button"
+							class="btn-link-sm"
+							style="padding:6px 12px;font-weight:{teamSubTab === 'shop' ? 600 : 400}"
+							onclick={() => (teamSubTab = "shop")}
+						>
+							Shop
+						</button>
+						{#if isOrgManager}
+							<button
+								type="button"
+								class="btn-link-sm"
+								style="padding:6px 12px;font-weight:{teamSubTab === 'groups' ? 600 : 400}"
+								onclick={() => (teamSubTab = "groups")}
+							>
+								Groups
+							</button>
+						{/if}
+					</div>
+
+				{#if teamSubTab === "shop"}
 					<!-- Seat usage — seats are an org-wide pool; members.length is
 					     still just this active shop's members (only one shop per
 					     org exists in practice today — true cross-shop aggregation
@@ -1610,17 +1648,28 @@
 						{/if}
 					{/if}
 
+					<!-- Leave shop (non-owners) -->
+					{#if userStore.user?.shopRole !== "owner"}
+						<div class="settings-divider" style="max-width:100%;margin:24px 0" aria-hidden="true"></div>
+						<div class="danger-card">
+							<div>
+								<div class="danger-card__title">Leave shop</div>
+								<p class="danger-card__desc">You'll lose access to shared patterns and the team plan.</p>
+							</div>
+							<Button variant="danger" size="sm" onclick={handleLeaveShop}>Leave</Button>
+						</div>
+					{/if}
+				{/if}
+
+				{#if teamSubTab === "groups" && isOrgManager}
 					<!-- Groups (Phase 5, slice C) — org-level, scoped role grants.
 					     Gated on the org role (isOrgManager), not the shop role —
 					     the server routes check getOrgRole, not getShopRole. -->
-					{#if isOrgManager}
-						<div class="settings-divider" style="max-width:100%;margin:24px 0" aria-hidden="true"></div>
-						<div class="pending-invites__label" style="margin-bottom:8px">Groups</div>
-						<p class="settings-section-sub" style="margin-bottom:12px">
-							Grant a role across one or more shops without adding each person individually.
-						</p>
+					<p class="settings-section-sub" style="margin-bottom:12px">
+						Grant a role across one or more shops without adding each person individually.
+					</p>
 
-						{#if groupsLoading}
+					{#if groupsLoading}
 							<div class="team-loading">
 								<span class="spinner-sm" aria-label="Loading groups…"></span>
 							</div>
@@ -1713,18 +1762,6 @@
 								Create group
 							</Button>
 						</form>
-					{/if}
-
-					<!-- Leave shop (non-owners) -->
-					{#if userStore.user?.shopRole !== "owner"}
-						<div class="settings-divider" style="max-width:100%;margin:24px 0" aria-hidden="true"></div>
-						<div class="danger-card">
-							<div>
-								<div class="danger-card__title">Leave shop</div>
-								<p class="danger-card__desc">You'll lose access to shared patterns and the team plan.</p>
-							</div>
-							<Button variant="danger" size="sm" onclick={handleLeaveShop}>Leave</Button>
-						</div>
 					{/if}
 				{/if}
 			</div>
