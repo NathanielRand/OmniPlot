@@ -189,7 +189,7 @@ async function onDisputeEvent(dispute: Stripe.Dispute) {
 async function onCheckoutComplete(session: Stripe.Checkout.Session) {
 	if (session.mode !== 'subscription') return;
 
-	const { uid, type, shopId, tier, plan } = session.metadata ?? {};
+	const { uid, type, orgId, tier, plan } = session.metadata ?? {};
 	if (!uid) return;
 
 	const customerId   = session.customer as string;
@@ -202,15 +202,20 @@ async function onCheckoutComplete(session: Stripe.Checkout.Session) {
 	const unitAmount   = item?.price.unit_amount ?? 0;
 	const currency     = item?.price.currency ?? 'usd';
 
-	if (type === 'shop' && shopId) {
-		await getAdminDb().doc(`shops/${shopId}`).set({
+	if (type === 'org' && orgId) {
+		const seats = plan === 'starter' ? 3 : plan === 'team' ? 10 : plan === 'studio' ? 25 : undefined;
+		await getAdminDb().doc(`orgs/${orgId}`).set({
 			plan:               plan || 'starter',
+			...(seats ? { seats } : {}),
 			stripeCustomerId:   customerId,
 			stripePriceId:      priceId,
 			subscriptionStatus: 'active',
 			currentPeriodEnd:   periodEnd,
 			updatedAt:          FieldValue.serverTimestamp(),
 		}, { merge: true });
+		// No upgrade-confirmation email for org checkout — pre-existing gap
+		// (individual checkout has one via sendUpgradeEmail below; the shop
+		// path never had one either, so this isn't a new gap from rescoping).
 	} else {
 		// A real nested object, not dotted keys — `.set(..., {merge:true})`
 		// doesn't parse "subscription.status" as a path the way `.update()` does.
@@ -256,11 +261,11 @@ async function onSubscriptionUpdated(sub: Stripe.Subscription) {
 
 // ─── customer.subscription.deleted ───────────────────────────────────────────
 async function onSubscriptionDeleted(sub: Stripe.Subscription) {
-	const { uid, type, shopId } = sub.metadata ?? {};
+	const { uid, type, orgId } = sub.metadata ?? {};
 	if (!uid) return;
 
-	if (type === 'shop' && shopId) {
-		await getAdminDb().doc(`shops/${shopId}`).set({
+	if (type === 'org' && orgId) {
+		await getAdminDb().doc(`orgs/${orgId}`).set({
 			subscriptionStatus: 'canceled',
 			updatedAt:          FieldValue.serverTimestamp(),
 		}, { merge: true });
@@ -279,11 +284,11 @@ async function onPaymentFailed(invoice: Stripe.Invoice) {
 	if (!invoiceAny.subscription) return;
 	const sub = await stripe.subscriptions.retrieve(invoiceAny.subscription, {}, connectedAccount);
 
-	const { uid, type, shopId } = sub.metadata ?? {};
+	const { uid, type, orgId } = sub.metadata ?? {};
 	if (!uid) return;
 
-	if (type === 'shop' && shopId) {
-		await getAdminDb().doc(`shops/${shopId}`).set({
+	if (type === 'org' && orgId) {
+		await getAdminDb().doc(`orgs/${orgId}`).set({
 			subscriptionStatus: 'past_due',
 			updatedAt:          FieldValue.serverTimestamp(),
 		}, { merge: true });

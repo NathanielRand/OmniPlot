@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types';
 import Stripe from 'stripe';
 import { stripe, connectedAccount } from '$lib/server/stripe';
 import { getAdminDb, verifyIdToken } from '$lib/server/firebase-admin';
+import { getOrgRole, roleAtLeast } from '$lib/server/org-auth';
 
 export const POST: RequestHandler = async ({ request, url }) => {
 	try {
@@ -11,14 +12,21 @@ export const POST: RequestHandler = async ({ request, url }) => {
 			return json({ error: 'Unauthorized' }, { status: 401 });
 		}
 
-		const { type = 'individual', shopId } = await request.json();
+		const { type = 'individual', orgId } = await request.json();
 
 		let customerId: string | null = null;
 		let returnPath = '/settings?tab=billing';
 
 		const db = getAdminDb();
-		if (type === 'shop' && shopId) {
-			const snap = await db.doc(`shops/${shopId}`).get();
+		if (type === 'org' && orgId) {
+			// The old shop-scoped route accepted any shopId with no membership
+			// check — any authenticated user could open another org's billing
+			// portal. Gate it on org-owner here, in the same rescope pass.
+			const role = await getOrgRole(orgId, uid);
+			if (!role || !roleAtLeast(role, 'owner')) {
+				return json({ error: 'Forbidden' }, { status: 403 });
+			}
+			const snap = await db.doc(`orgs/${orgId}`).get();
 			customerId = snap.data()?.stripeCustomerId ?? null;
 			returnPath = '/settings?tab=team';
 		} else {

@@ -11,7 +11,7 @@ import { FieldValue } from 'firebase-admin/firestore';
  * webhook was correctly receiving events (e.g. Connor's).
  */
 export async function syncSubscriptionToFirestore(sub: Stripe.Subscription): Promise<boolean> {
-	const { uid, type, shopId } = sub.metadata ?? {};
+	const { uid, type, orgId } = sub.metadata ?? {};
 	if (!uid) return false;
 
 	const status            = sub.status;
@@ -33,7 +33,7 @@ export async function syncSubscriptionToFirestore(sub: Stripe.Subscription): Pro
 	// Backfill a missing user email from the Stripe customer — receipts and
 	// upgrade emails silently no-op without one, and a subscription with no
 	// email on file is invisible the same way an unattributed charge is.
-	if (!(type === 'shop' && shopId)) {
+	if (!(type === 'org' && orgId)) {
 		const userSnap = await db.doc(`users/${uid}`).get();
 		if (userSnap.exists && !userSnap.data()?.email) {
 			const customerId = typeof sub.customer === 'string' ? sub.customer : sub.customer.id;
@@ -45,8 +45,8 @@ export async function syncSubscriptionToFirestore(sub: Stripe.Subscription): Pro
 		}
 	}
 
-	if (type === 'shop' && shopId) {
-		await db.doc(`shops/${shopId}`).set({
+	if (type === 'org' && orgId) {
+		await db.doc(`orgs/${orgId}`).set({
 			stripeCustomerId:   typeof sub.customer === 'string' ? sub.customer : sub.customer.id,
 			stripePriceId:      priceId,
 			subscriptionStatus: status,
@@ -127,12 +127,12 @@ export async function attributeUid(charge: Stripe.Charge): Promise<string | null
 		.get();
 	if (!byCustomer.empty) return byCustomer.docs[0].id;
 
-	// Fall back to shops, which key subscriptions the same way.
-	const shopByCustomer = await db.collection('shops')
+	// Fall back to orgs, which key subscriptions the same way.
+	const orgByCustomer = await db.collection('orgs')
 		.where('stripeCustomerId', '==', customerId)
 		.limit(1)
 		.get();
-	if (!shopByCustomer.empty) return shopByCustomer.docs[0].data().ownerId ?? null;
+	if (!orgByCustomer.empty) return orgByCustomer.docs[0].data().ownerId ?? null;
 
 	return null;
 }

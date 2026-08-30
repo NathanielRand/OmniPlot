@@ -7,7 +7,7 @@ import { getAdminDb, verifyIdToken } from '$lib/server/firebase-admin';
 // Build the config_id key that the admin sync stamps on every price
 function buildConfigId(type: string, tier: string, plan: string, interval: 'month' | 'year'): string {
 	const suffix = interval === 'year' ? 'yearly' : 'monthly';
-	return type === 'shop' ? `shop_${plan}_${suffix}` : `${tier}_${suffix}`;
+	return type === 'org' ? `org_${plan}_${suffix}` : `${tier}_${suffix}`;
 }
 
 // Find the active Stripe price whose metadata.config_id matches
@@ -23,7 +23,7 @@ export const POST: RequestHandler = async ({ request, url }) => {
 			return json({ error: 'Unauthorized' }, { status: 401 });
 		}
 
-		const { type = 'individual', shopId, tier, plan, interval = 'month' } = await request.json();
+		const { type = 'individual', orgId, tier, plan, interval = 'month' } = await request.json();
 
 		const configId = buildConfigId(type, tier ?? '', plan ?? '', interval);
 		const priceId  = await resolvePriceId(configId);
@@ -38,9 +38,9 @@ export const POST: RequestHandler = async ({ request, url }) => {
 		// don't create duplicate customers on repeated checkout attempts.
 		const db = getAdminDb();
 		let customerId: string | undefined;
-		if (type === 'shop' && shopId) {
-			const shopSnap = await db.doc(`shops/${shopId}`).get();
-			customerId = shopSnap.data()?.stripeCustomerId ?? undefined;
+		if (type === 'org' && orgId) {
+			const orgSnap = await db.doc(`orgs/${orgId}`).get();
+			customerId = orgSnap.data()?.stripeCustomerId ?? undefined;
 		} else {
 			const userSnap = await db.doc(`users/${uid}`).get();
 			customerId = userSnap.data()?.subscription?.stripeCustomerId ?? undefined;
@@ -49,12 +49,12 @@ export const POST: RequestHandler = async ({ request, url }) => {
 		const meta: Record<string, string> = {
 			uid,
 			type,
-			shopId: shopId ?? '',
-			tier:   tier   ?? '',
-			plan:   plan   ?? '',
+			orgId: orgId ?? '',
+			tier:  tier  ?? '',
+			plan:  plan  ?? '',
 		};
 
-		const isShop = type === 'shop' && shopId;
+		const isOrg = type === 'org' && orgId;
 
 		const session = await stripe.checkout.sessions.create({
 			mode: 'subscription',
@@ -62,10 +62,10 @@ export const POST: RequestHandler = async ({ request, url }) => {
 			line_items: [{ price: priceId, quantity: 1 }],
 			metadata: meta,
 			subscription_data: { metadata: meta },
-			success_url: isShop
+			success_url: isOrg
 				? `${url.origin}/settings?tab=team&checkout=success`
 				: `${url.origin}/settings?tab=billing&checkout=success`,
-			cancel_url: isShop
+			cancel_url: isOrg
 				? `${url.origin}/settings?tab=team`
 				: `${url.origin}/pricing`,
 			allow_promotion_codes: true,

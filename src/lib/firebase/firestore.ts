@@ -795,9 +795,21 @@ export function toOrganization(id: string, data: DocumentData): Organization {
 		id,
 		name: data.name ?? "",
 		ownerId: data.ownerId ?? "",
+		plan: data.plan ?? "starter",
+		seats: data.seats ?? 1,
+		stripeCustomerId: data.stripeCustomerId ?? null,
+		stripePriceId: data.stripePriceId ?? null,
+		subscriptionStatus: data.subscriptionStatus ?? null,
+		currentPeriodEnd: data.currentPeriodEnd ? fromTimestamp(data.currentPeriodEnd) : null,
 		createdAt: fromTimestamp(data.createdAt),
 		updatedAt: fromTimestamp(data.updatedAt),
 	};
+}
+
+export async function getOrg(orgId: string): Promise<Organization | null> {
+	const snap = await getDoc(doc(db, Collections.ORGS, orgId));
+	if (!snap.exists()) return null;
+	return toOrganization(snap.id, snap.data());
 }
 
 export function toOrgMember(data: DocumentData): OrgMember {

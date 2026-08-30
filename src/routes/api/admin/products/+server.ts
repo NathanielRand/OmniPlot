@@ -21,12 +21,12 @@ const PRICE_CONFIG_TO_ENV: Record<string, string> = {
 	lite_yearly:          'VITE_STRIPE_LITE_YEARLY',
 	pro_monthly:          'VITE_STRIPE_PRO_MONTHLY',
 	pro_yearly:           'VITE_STRIPE_PRO_YEARLY',
-	shop_starter_monthly: 'VITE_STRIPE_SHOP_STARTER_MONTHLY',
-	shop_starter_yearly:  'VITE_STRIPE_SHOP_STARTER_YEARLY',
-	shop_team_monthly:    'VITE_STRIPE_SHOP_TEAM_MONTHLY',
-	shop_team_yearly:     'VITE_STRIPE_SHOP_TEAM_YEARLY',
-	shop_studio_monthly:  'VITE_STRIPE_SHOP_STUDIO_MONTHLY',
-	shop_studio_yearly:   'VITE_STRIPE_SHOP_STUDIO_YEARLY',
+	org_starter_monthly: 'VITE_STRIPE_SHOP_STARTER_MONTHLY',
+	org_starter_yearly:  'VITE_STRIPE_SHOP_STARTER_YEARLY',
+	org_team_monthly:    'VITE_STRIPE_SHOP_TEAM_MONTHLY',
+	org_team_yearly:     'VITE_STRIPE_SHOP_TEAM_YEARLY',
+	org_studio_monthly:  'VITE_STRIPE_SHOP_STUDIO_MONTHLY',
+	org_studio_yearly:   'VITE_STRIPE_SHOP_STUDIO_YEARLY',
 };
 
 export const GET: RequestHandler = async ({ request }) => {
@@ -209,13 +209,13 @@ export const POST: RequestHandler = async ({ request }) => {
 			}
 
 			for (const plan of SHOP_PRICING_PLANS) {
-				const configId = `shop_${plan.id}`;
+				const configId = `org_${plan.id}`;
 				const pid = await ensureProduct(
-					configId, `OmniPlot Shop — ${plan.name}`, plan.description,
-					{ type: 'shop', plan: plan.id, seats: String(plan.seats) },
+					configId, `OmniPlot Team — ${plan.name}`, plan.description,
+					{ type: 'org', plan: plan.id, seats: String(plan.seats) },
 				);
-				await ensurePrice(`${configId}_monthly`, pid, plan.price * 100,           'month', `Shop ${plan.name} Monthly`, { plan: plan.id });
-				await ensurePrice(`${configId}_yearly`,  pid, plan.yearlyPrice * 12 * 100, 'year',  `Shop ${plan.name} Yearly`,  { plan: plan.id });
+				await ensurePrice(`${configId}_monthly`, pid, plan.price * 100,           'month', `Team ${plan.name} Monthly`, { plan: plan.id });
+				await ensurePrice(`${configId}_yearly`,  pid, plan.yearlyPrice * 12 * 100, 'year',  `Team ${plan.name} Yearly`,  { plan: plan.id });
 			}
 
 			// Return env var mapping for ALL known config prices (new + existing)

@@ -16,6 +16,7 @@
 	import { PRICING_PLANS, SHOP_PRICING_PLANS } from "$lib/config";
 	import {
 		getShop,
+		getOrg,
 		getShopMembers,
 		createShop,
 		createShopInvite,
@@ -29,7 +30,7 @@
 	import { signOutUser } from "$lib/firebase/auth";
 	import { goto } from "$app/navigation";
 	import AddCardModal from "$lib/components/ui/AddCardModal.svelte";
-	import type { Shop, ShopMember, ShopInvite, ShopRole, ShopPlan } from "$lib/types";
+	import type { Shop, Organization, ShopMember, ShopInvite, ShopRole, ShopPlan } from "$lib/types";
 
 	let activeTab = $state<
 		"profile" | "billing" | "notifications" | "team" | "security" | "danger"
@@ -249,6 +250,7 @@
 
 	// ─── Team / Shop state ────────────────────────
 	let shop           = $state<Shop | null>(null);
+	let org            = $state<Organization | null>(null);
 	let members        = $state<ShopMember[]>([]);
 	let pendingInvites = $state<ShopInvite[]>([]);
 	let shopLoading    = $state(false);
@@ -521,7 +523,7 @@
 		}
 	}
 
-	async function handlePortal(type: "individual" | "shop" = "individual") {
+	async function handlePortal(type: "individual" | "org" = "individual") {
 		if (!userStore.user) return;
 		portalLoading = true;
 		try {
@@ -534,7 +536,7 @@
 				},
 				body: JSON.stringify({
 					type,
-					...(type === "shop" ? { shopId: userStore.user.shopId } : {}),
+					...(type === "org" ? { orgId: org?.id } : {}),
 				}),
 			});
 			if (!res.ok) throw new Error((await res.json()).error ?? "Portal unavailable");
@@ -547,7 +549,7 @@
 		}
 	}
 
-	async function redirectToShopCheckout(shopId: string, plan: ShopPlan, interval: 'month' | 'year' = 'month') {
+	async function redirectToOrgCheckout(orgId: string, plan: ShopPlan, interval: 'month' | 'year' = 'month') {
 		checkoutLoading = true;
 		try {
 			const token = await auth.currentUser?.getIdToken();
@@ -557,7 +559,7 @@
 					"Content-Type": "application/json",
 					...(token ? { Authorization: `Bearer ${token}` } : {}),
 				},
-				body: JSON.stringify({ type: "shop", shopId, plan, interval }),
+				body: JSON.stringify({ type: "org", orgId, plan, interval }),
 			});
 			if (!res.ok) throw new Error((await res.json()).error ?? "Checkout failed");
 			const { url } = await res.json();
@@ -616,6 +618,9 @@
 			shop = s;
 			members = m;
 			pendingInvites = i;
+			// Billing lives on the org as of Phase 4 — shop.plan/seats/etc are
+			// no longer the source of truth, just legacy fields nothing writes.
+			org = s?.orgId ? await getOrg(s.orgId) : null;
 		} catch {
 			// Non-fatal; user may not have Firestore rules set up yet
 		} finally {
@@ -641,8 +646,9 @@
 				email: userStore.user.email,
 				joinedAt: new Date(),
 			}];
+			if (s.orgId) org = await getOrg(s.orgId);
 			toastStore.success("Shop created", "Redirecting to billing…");
-			await redirectToShopCheckout(s.id, "starter");
+			if (s.orgId) await redirectToOrgCheckout(s.orgId, "starter");
 		} catch (err) {
 			toastStore.error("Couldn't create shop", err instanceof Error ? err.message : "");
 			creatingShop = false;
@@ -1295,45 +1301,53 @@
 					</form>
 
 				{:else}
-					<!-- Shop header -->
+					<!-- Shop header — plan/billing now come from the org (Phase 4);
+					     shop.plan/seats/subscriptionStatus are legacy fallbacks only,
+					     in case the org doc failed to load. -->
+					{@const orgPlan = org?.plan ?? shop.plan}
+					{@const orgSeats = org?.seats ?? shop.seats}
+					{@const orgStatus = org?.subscriptionStatus ?? shop.subscriptionStatus}
 					<div class="shop-header">
 						<div class="shop-header__icon" aria-hidden="true">{shop.name.charAt(0).toUpperCase()}</div>
 						<div class="shop-header__info">
 							<span class="shop-header__name">{shop.name}</span>
-							<span class="shop-header__plan">{SHOP_PLAN_LABELS[shop.plan]}</span>
+							<span class="shop-header__plan">{SHOP_PLAN_LABELS[orgPlan]}</span>
 						</div>
 						{#if userStore.user?.shopRole === "owner"}
-							{#if shop.subscriptionStatus === "active" || shop.subscriptionStatus === "trialing"}
-								<Button variant="secondary" size="sm" loading={portalLoading} onclick={() => handlePortal("shop")}>
+							{#if orgStatus === "active" || orgStatus === "trialing"}
+								<Button variant="secondary" size="sm" loading={portalLoading} onclick={() => handlePortal("org")}>
 									Manage billing
 								</Button>
-							{:else if shop.subscriptionStatus === "past_due"}
-								<Button variant="danger" size="sm" loading={portalLoading} onclick={() => handlePortal("shop")}>
+							{:else if orgStatus === "past_due"}
+								<Button variant="danger" size="sm" loading={portalLoading} onclick={() => handlePortal("org")}>
 									Update payment
 								</Button>
-							{:else}
-								<Button variant="primary" size="sm" loading={checkoutLoading} onclick={() => redirectToShopCheckout(shop!.id, shop!.plan)}>
+							{:else if org}
+								<Button variant="primary" size="sm" loading={checkoutLoading} onclick={() => redirectToOrgCheckout(org!.id, orgPlan)}>
 									Activate plan
 								</Button>
 							{/if}
 						{/if}
 					</div>
 
-					{#if shop.subscriptionStatus === "past_due"}
+					{#if orgStatus === "past_due"}
 						<div class="billing-alert" style="margin-bottom:16px">
 							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
-							Shop payment past due — team access may be restricted.
+							Team payment past due — team access may be restricted.
 						</div>
 					{/if}
 
-					<!-- Seat usage -->
-					{@const seatPct = Math.min(100, Math.round((members.length / shop.seats) * 100))}
+					<!-- Seat usage — seats are an org-wide pool; members.length is
+					     still just this active shop's members (only one shop per
+					     org exists in practice today — true cross-shop aggregation
+					     is Phase 5 UI work). -->
+					{@const seatPct = Math.min(100, Math.round((members.length / orgSeats) * 100))}
 					<div class="seat-usage">
 						<div class="usage-row">
 							<span class="usage-label">Seats used</span>
-							<span class="usage-val">{members.length} / {shop.seats}</span>
+							<span class="usage-val">{members.length} / {orgSeats}</span>
 						</div>
-						<div class="usage-bar-track" role="progressbar" aria-valuenow={members.length} aria-valuemax={shop.seats}>
+						<div class="usage-bar-track" role="progressbar" aria-valuenow={members.length} aria-valuemax={orgSeats}>
 							<div class="usage-bar-fill" class:usage-bar-fill--warn={seatPct >= 80} style="width:{seatPct}%"></div>
 						</div>
 					</div>

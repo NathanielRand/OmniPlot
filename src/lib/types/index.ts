@@ -60,12 +60,20 @@ export type ShopPlan = "starter" | "team" | "studio";
 export type ShopRole = "owner" | "manager" | "tech";
 export type InviteStatus = "pending" | "accepted" | "revoked";
 
-// Top of the hierarchy — the paying entity. Billing fields stay on Shop
-// until Phase 4 rescopes billing to the org.
+// Top of the hierarchy — the paying entity. Billing fields live here as of
+// Phase 4; Shop keeps its own copies too (checkout/webhook/ledger no longer
+// write them, but nothing reads-deletes the fields — additive migration,
+// same as every prior phase).
 export interface Organization {
 	id: string;
 	name: string;
 	ownerId: string;
+	plan: ShopPlan;
+	seats: number; // org-wide pool, shared across every shop under it
+	stripeCustomerId: string | null;
+	stripePriceId: string | null;
+	subscriptionStatus: "active" | "canceled" | "past_due" | "trialing" | null;
+	currentPeriodEnd: Date | null;
 	createdAt: Date;
 	updatedAt: Date;
 }

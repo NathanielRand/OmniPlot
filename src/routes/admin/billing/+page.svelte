@@ -208,7 +208,7 @@
 				{:else}
 					<div class="usage-card__value">{fmtNum(firebaseUsage?.firestoreShops ?? null)}</div>
 				{/if}
-				<div class="usage-card__limit">Shops billed independently via shop plans.</div>
+				<div class="usage-card__limit">Teams billed independently via org-level plans.</div>
 			</div>
 
 			<div class="usage-card">

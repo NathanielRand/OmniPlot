@@ -27,6 +27,12 @@ export const POST: RequestHandler = async ({ request }) => {
 	batch.set(orgRef, {
 		name,
 		ownerId: uid,
+		plan: shopPlan,
+		seats,
+		stripeCustomerId: null,
+		stripePriceId: null,
+		subscriptionStatus: null,
+		currentPeriodEnd: null,
 		createdAt: now,
 		updatedAt: now,
 	});
