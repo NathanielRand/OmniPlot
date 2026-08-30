@@ -28,13 +28,19 @@
 		updateShopMemberRole,
 		revokeShopInvite,
 		updateUserProfile,
+		getOrgGroups,
+		getGroupMembers,
+		createGroup,
+		deleteGroup,
+		addGroupMember,
+		removeGroupMember,
 	} from "$lib/firebase/firestore";
 	import type { OrgSummary } from "$lib/firebase/firestore";
 	import { auth } from "$lib/firebase/client";
 	import { signOutUser } from "$lib/firebase/auth";
 	import { goto } from "$app/navigation";
 	import AddCardModal from "$lib/components/ui/AddCardModal.svelte";
-	import type { Shop, Organization, ShopMember, ShopInvite, ShopRole, ShopPlan } from "$lib/types";
+	import type { Shop, Organization, Group, GroupMember, ShopMember, ShopInvite, ShopRole, ShopPlan } from "$lib/types";
 
 	let activeTab = $state<
 		"profile" | "billing" | "notifications" | "team" | "security" | "danger"
@@ -267,6 +273,16 @@
 	let userOrgs       = $state<OrgSummary[]>([]);
 	let switchingOrg   = $state(false);
 	let selectedOrgId  = $state("");
+
+	// ─── Groups (Phase 5, slice C) ─────────────────
+	let groups            = $state<Group[]>([]);
+	let groupsLoading      = $state(false);
+	let groupMembersMap    = $state<Record<string, GroupMember[]>>({});
+	let expandedGroupId    = $state<string | null>(null);
+	let newGroupName       = $state("");
+	let newGroupRole       = $state<ShopRole>("tech");
+	let newGroupOrgWide    = $state(false);
+	let creatingGroup      = $state(false);
 
 	const SHOP_PLAN_LABELS: Record<ShopPlan, string> = {
 		starter: "Starter — 3 seats",
@@ -637,10 +653,94 @@
 			// Billing lives on the org as of Phase 4 — shop.plan/seats/etc are
 			// no longer the source of truth, just legacy fields nothing writes.
 			org = s?.orgId ? await getOrg(s.orgId) : null;
+			if (org) await loadGroups(org.id);
 		} catch {
 			// Non-fatal; user may not have Firestore rules set up yet
 		} finally {
 			shopLoading = false;
+		}
+	}
+
+	async function loadGroups(orgId: string) {
+		groupsLoading = true;
+		try {
+			groups = await getOrgGroups(orgId);
+		} catch {
+			groups = [];
+		} finally {
+			groupsLoading = false;
+		}
+	}
+
+	async function handleCreateGroup(e: Event) {
+		e.preventDefault();
+		if (!newGroupName || !org) return;
+		if (!newGroupOrgWide && !shop) return; // shop-scoped needs an active shop; org-wide doesn't
+		creatingGroup = true;
+		try {
+			// Scoping to "this shop only" vs org-wide — a per-shop checkbox
+			// picker is deferred until an org actually has more than one
+			// shop in practice (slice A's route exists, but nothing has
+			// used it yet).
+			const shopIds = newGroupOrgWide ? null : [shop!.id];
+			await createGroup(org.id, newGroupName, newGroupRole, shopIds);
+			newGroupName = "";
+			newGroupOrgWide = false;
+			await loadGroups(org.id);
+			toastStore.success("Group created");
+		} catch (err) {
+			toastStore.error("Couldn't create group", err instanceof Error ? err.message : "");
+		} finally {
+			creatingGroup = false;
+		}
+	}
+
+	async function handleDeleteGroup(groupId: string) {
+		if (!org) return;
+		try {
+			await deleteGroup(org.id, groupId);
+			if (expandedGroupId === groupId) expandedGroupId = null;
+			await loadGroups(org.id);
+			toastStore.success("Group deleted");
+		} catch (err) {
+			toastStore.error("Couldn't delete group", err instanceof Error ? err.message : "");
+		}
+	}
+
+	async function toggleExpandGroup(groupId: string) {
+		if (expandedGroupId === groupId) {
+			expandedGroupId = null;
+			return;
+		}
+		expandedGroupId = groupId;
+		if (!org) return;
+		try {
+			const fetched = await getGroupMembers(org.id, groupId);
+			groupMembersMap = { ...groupMembersMap, [groupId]: fetched };
+		} catch {
+			groupMembersMap = { ...groupMembersMap, [groupId]: [] };
+		}
+	}
+
+	async function handleAddGroupMember(groupId: string, uid: string) {
+		if (!org || !uid) return;
+		try {
+			await addGroupMember(org.id, groupId, uid);
+			const fetched = await getGroupMembers(org.id, groupId);
+			groupMembersMap = { ...groupMembersMap, [groupId]: fetched };
+		} catch (err) {
+			toastStore.error("Couldn't add member", err instanceof Error ? err.message : "");
+		}
+	}
+
+	async function handleRemoveGroupMember(groupId: string, uid: string) {
+		if (!org) return;
+		try {
+			await removeGroupMember(org.id, groupId, uid);
+			const fetched = await getGroupMembers(org.id, groupId);
+			groupMembersMap = { ...groupMembersMap, [groupId]: fetched };
+		} catch (err) {
+			toastStore.error("Couldn't remove member", err instanceof Error ? err.message : "");
 		}
 	}
 
@@ -774,6 +874,24 @@
 
 	const isShopManager = $derived(
 		userStore.user?.shopRole === "owner" || userStore.user?.shopRole === "manager"
+	);
+
+	// Groups are an ORG-level permission (orgs/{orgId}/members/{uid}.role),
+	// distinct from shopRole — a shop-level role. Gating group creation on
+	// isShopManager let a shop manager who is only a "tech" at the org
+	// level see the form, then 403 on submit once the server's
+	// getOrgRole check ran. userOrgs carries the caller's real org role.
+	const currentOrgRole = $derived(
+		userOrgs.find((o) => o.id === shop?.orgId)?.role ?? null,
+	);
+	const isOrgManager = $derived(
+		currentOrgRole === "owner" || currentOrgRole === "manager",
+	);
+	const ROLE_RANK: Record<ShopRole, number> = { tech: 1, manager: 2, owner: 3 };
+	const grantableGroupRoles = $derived(
+		(Object.keys(ROLE_LABELS) as ShopRole[]).filter(
+			(r) => !currentOrgRole || ROLE_RANK[r] <= ROLE_RANK[currentOrgRole],
+		),
 	);
 
 	const TABS = [
@@ -1490,6 +1608,111 @@
 								{/each}
 							</div>
 						{/if}
+					{/if}
+
+					<!-- Groups (Phase 5, slice C) — org-level, scoped role grants.
+					     Gated on the org role (isOrgManager), not the shop role —
+					     the server routes check getOrgRole, not getShopRole. -->
+					{#if isOrgManager}
+						<div class="settings-divider" style="max-width:100%;margin:24px 0" aria-hidden="true"></div>
+						<div class="pending-invites__label" style="margin-bottom:8px">Groups</div>
+						<p class="settings-section-sub" style="margin-bottom:12px">
+							Grant a role across one or more shops without adding each person individually.
+						</p>
+
+						{#if groupsLoading}
+							<div class="team-loading">
+								<span class="spinner-sm" aria-label="Loading groups…"></span>
+							</div>
+						{:else}
+							{#each groups as g (g.id)}
+								{@const groupMembers = groupMembersMap[g.id] ?? []}
+								{@const addableMembers = members.filter((m) => !groupMembers.some((gm) => gm.uid === m.uid))}
+								<div class="member-row" style="flex-direction:column;align-items:stretch;gap:8px">
+									<div style="display:flex;align-items:center;gap:10px">
+										<button
+											class="btn-link-sm"
+											onclick={() => toggleExpandGroup(g.id)}
+										>
+											{expandedGroupId === g.id ? "▾" : "▸"} {g.name}
+										</button>
+										<span class="role-tag">{ROLE_LABELS[g.role]}</span>
+										<span class="pending-invite-exp">{g.shopIds ? `${g.shopIds.length} shop(s)` : "Org-wide"}</span>
+										<span style="margin-left:auto">
+											<button class="btn-link-sm danger" onclick={() => handleDeleteGroup(g.id)}>Delete</button>
+										</span>
+									</div>
+
+									{#if expandedGroupId === g.id}
+										<div style="padding-left:20px;display:flex;flex-direction:column;gap:6px">
+											{#each groupMembers as gm (gm.uid)}
+												{@const person = members.find((m) => m.uid === gm.uid)}
+												<div style="display:flex;align-items:center;gap:10px">
+													<span>{person?.displayName || person?.email || gm.uid}</span>
+													<button
+														class="btn-link-sm danger"
+														style="margin-left:auto"
+														onclick={() => handleRemoveGroupMember(g.id, gm.uid)}
+													>
+														Remove
+													</button>
+												</div>
+											{:else}
+												<span class="form-hint">No members yet.</span>
+											{/each}
+
+											{#if addableMembers.length > 0}
+												<select
+													class="form-select"
+													style="margin-top:6px"
+													onchange={(e) => {
+														const el = e.target as HTMLSelectElement;
+														if (el.value) handleAddGroupMember(g.id, el.value);
+														el.value = "";
+													}}
+												>
+													<option value="">+ Add member…</option>
+													{#each addableMembers as m (m.uid)}
+														<option value={m.uid}>{m.displayName || m.email}</option>
+													{/each}
+												</select>
+											{/if}
+										</div>
+									{/if}
+								</div>
+							{:else}
+								<p class="form-hint" style="margin-bottom:12px">No groups yet.</p>
+							{/each}
+						{/if}
+
+						<form onsubmit={handleCreateGroup} style="margin-top:12px;display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+							<div class="form-field" style="flex:1;min-width:160px">
+								<label for="newGroupName" class="form-label">New group name</label>
+								<input
+									id="newGroupName"
+									class="form-input"
+									type="text"
+									placeholder="Detailing crew"
+									bind:value={newGroupName}
+									required
+								/>
+							</div>
+							<div class="form-field">
+								<label for="newGroupRole" class="form-label">Role</label>
+								<select id="newGroupRole" class="form-select" bind:value={newGroupRole}>
+									{#each grantableGroupRoles as r (r)}
+										<option value={r}>{ROLE_LABELS[r]}</option>
+									{/each}
+								</select>
+							</div>
+							<label style="display:flex;align-items:center;gap:6px;padding-bottom:8px">
+								<input type="checkbox" bind:checked={newGroupOrgWide} />
+								<span class="form-hint">Org-wide</span>
+							</label>
+							<Button variant="secondary" size="sm" type="submit" loading={creatingGroup}>
+								Create group
+							</Button>
+						</form>
 					{/if}
 
 					<!-- Leave shop (non-owners) -->

@@ -38,6 +38,8 @@ import type {
 	ShopRole,
 	Organization,
 	OrgMember,
+	Group,
+	GroupMember,
 	PlotterDevice,
 	InsightPost,
 	PlotterErrorReport,
@@ -856,6 +858,78 @@ export async function switchActiveShop(shopId: string): Promise<{ shopId: string
 		body: JSON.stringify({ shopId }),
 	});
 	return res.json();
+}
+
+// ─── Groups (Phase 3 entity, Phase 5 client access) ───────────────────
+// Mutations already go through src/routes/api/orgs/[orgId]/groups/** as
+// of Phase 3. Listing is a direct client read — firestore.rules already
+// allows it (read if isOrgMember(orgId)), same pattern as orgs/shops.
+export function toGroup(id: string, data: DocumentData): Group {
+	return {
+		id,
+		orgId: data.orgId ?? "",
+		name: data.name ?? "",
+		role: data.role ?? "tech",
+		shopIds: data.shopIds ?? null,
+		createdAt: fromTimestamp(data.createdAt),
+		updatedAt: fromTimestamp(data.updatedAt),
+	};
+}
+
+export function toGroupMember(data: DocumentData): GroupMember {
+	return {
+		uid: data.uid ?? "",
+		orgId: data.orgId ?? "",
+		groupId: data.groupId ?? "",
+		joinedAt: fromTimestamp(data.joinedAt),
+	};
+}
+
+export async function getOrgGroups(orgId: string): Promise<Group[]> {
+	const snap = await getDocs(collection(db, Collections.ORGS, orgId, "groups"));
+	return snap.docs.map((d) => toGroup(d.id, d.data()));
+}
+
+export async function getGroupMembers(orgId: string, groupId: string): Promise<GroupMember[]> {
+	const snap = await getDocs(collection(db, Collections.ORGS, orgId, "groups", groupId, "groupMembers"));
+	return snap.docs.map((d) => toGroupMember(d.data()));
+}
+
+export async function createGroup(
+	orgId: string,
+	name: string,
+	role: ShopRole,
+	shopIds: string[] | null,
+): Promise<Group> {
+	const res = await authedFetch(`/api/orgs/${orgId}/groups`, {
+		method: "POST",
+		body: JSON.stringify({ name, role, shopIds }),
+	});
+	const d = await res.json();
+	return { ...d, createdAt: new Date(), updatedAt: new Date() };
+}
+
+export async function updateGroup(
+	orgId: string,
+	groupId: string,
+	patch: { name?: string; role?: ShopRole; shopIds?: string[] | null },
+): Promise<void> {
+	await authedFetch(`/api/orgs/${orgId}/groups/${groupId}`, {
+		method: "PATCH",
+		body: JSON.stringify(patch),
+	});
+}
+
+export async function deleteGroup(orgId: string, groupId: string): Promise<void> {
+	await authedFetch(`/api/orgs/${orgId}/groups/${groupId}`, { method: "DELETE" });
+}
+
+export async function addGroupMember(orgId: string, groupId: string, uid: string): Promise<void> {
+	await authedFetch(`/api/orgs/${orgId}/groups/${groupId}/members/${uid}`, { method: "POST" });
+}
+
+export async function removeGroupMember(orgId: string, groupId: string, uid: string): Promise<void> {
+	await authedFetch(`/api/orgs/${orgId}/groups/${groupId}/members/${uid}`, { method: "DELETE" });
 }
 
 export function toOrgMember(data: DocumentData): OrgMember {
