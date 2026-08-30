@@ -125,12 +125,18 @@ service cloud.firestore {
     // invite mutations below — go through Admin SDK server routes
     // (src/routes/api/shops/**), which enforce role-escalation caps,
     // last-owner, and seat invariants that rules can't express.
+    // isAdmin() is checked directly on each allow line (not folded into
+    // isMember/isOrgMember) so a normal member's read stays at its
+    // original get()/exists() cost — folding it into the helpers would
+    // add an extra get() to every call site, including nested ones
+    // (canReadShop calls isOrgMember), and rules only budget 10 document
+    // accesses per request.
     match /orgs/{orgId} {
-      allow read:  if isOrgMember(orgId);
+      allow read:  if isAdmin() || isOrgMember(orgId);
       allow write: if false;
 
       match /members/{memberId} {
-        allow read:  if isOrgMember(orgId);
+        allow read:  if isAdmin() || isOrgMember(orgId);
         allow write: if false;
       }
 
@@ -138,11 +144,11 @@ service cloud.firestore {
       // a group's role/shopIds changes every member's effective permission,
       // which is exactly the kind of chain rules can't safely evaluate.
       match /groups/{groupId} {
-        allow read:  if isOrgMember(orgId);
+        allow read:  if isAdmin() || isOrgMember(orgId);
         allow write: if false;
 
         match /groupMembers/{memberId} {
-          allow read:  if isOrgMember(orgId);
+          allow read:  if isAdmin() || isOrgMember(orgId);
           allow write: if false;
         }
       }
@@ -150,11 +156,11 @@ service cloud.firestore {
 
     // ─── Shops ────────────────────────────────────────────────────────────
     match /shops/{shopId} {
-      allow read:  if canReadShop(shopId);
+      allow read:  if isAdmin() || canReadShop(shopId);
       allow write: if false;
 
       match /members/{memberId} {
-        allow read:  if canReadShop(shopId);
+        allow read:  if isAdmin() || canReadShop(shopId);
         allow write: if false;
       }
     }

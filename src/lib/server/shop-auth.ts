@@ -22,8 +22,23 @@ export async function requireUid(request: Request): Promise<string | null> {
 	return verifyIdToken(request.headers.get("authorization"));
 }
 
-/** Reads the caller's role on a shop directly — the source of truth for these routes. */
+/** Platform tier check — distinct from any shop/org membership doc. */
+export async function isPlatformAdmin(uid: string): Promise<boolean> {
+	const snap = await getAdminDb().doc(`users/${uid}`).get();
+	return snap.data()?.tier === "admin";
+}
+
+/**
+ * Reads the caller's role on a shop. A platform admin resolves to "owner"
+ * unconditionally — even overriding an existing lower membership role —
+ * so admin has full access to every shop regardless of whether they were
+ * ever actually invited to it. This is the deliberate cross-tenant bypass
+ * requested for admin accounts; every route using this function inherits
+ * it automatically, including the role-escalation caps (roleOutranks
+ * against "owner" is never true, so admin can grant/change anything).
+ */
 export async function getShopRole(shopId: string, uid: string): Promise<ShopRole | null> {
+	if (await isPlatformAdmin(uid)) return "owner";
 	const snap = await getAdminDb().doc(`shops/${shopId}/members/${uid}`).get();
 	return (snap.data()?.role as ShopRole | undefined) ?? null;
 }
