@@ -11,7 +11,7 @@
 		},
 		{
 			icon: "M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5",
-			title: "12,400+ vehicle patterns",
+			title: "Unlimited patterns",
 			desc: "Professionally measured templates for every major make and model — PPF zones and window tint zones. New vehicles added weekly on request.",
 		},
 		{
@@ -76,7 +76,6 @@
 		["Auto-nesting", "✓", "✓", "✓"],
 		["Free tier", "✓", "✗", "✗"],
 		["Starting price", "$0", "$49/mo", "$39/mo"],
-		["Pattern library size", "12,400+", "~8,000", "~6,000"],
 		["SVG / DXF export", "✓", "Paid add-on", "✗"],
 		["Mobile responsive", "✓", "✗", "✗"],
 	];
@@ -84,19 +83,19 @@
 
 <svelte:head>
 	<title>OmniPlot — Professional PPF & Window Tint Cutting Software. No Install Required.</title>
-	<meta name="description" content="Web-based PPF & window tint cutting software. Works with any plotter. 12,400+ vehicle patterns for PPF and tint. No download, no install, any device." />
+	<meta name="description" content="Web-based PPF & window tint cutting software. Works with any plotter. Unlimited patterns for PPF and tint. No download, no install, any device." />
 
 	<!-- Open Graph -->
 	<meta property="og:type" content="website" />
 	<meta property="og:url" content="https://omniplot.app/" />
 	<meta property="og:title" content="OmniPlot — PPF & Window Tint Cutting Software" />
-	<meta property="og:description" content="Web-based cutting software for any plotter. 12,400+ vehicle patterns for PPF and window tint. No download required." />
+	<meta property="og:description" content="Web-based cutting software for any plotter. Unlimited patterns for PPF and window tint. No download required." />
 	<meta property="og:image" content="https://omniplot.app/og-image.png" />
 
 	<!-- Twitter Card -->
 	<meta name="twitter:card" content="summary_large_image" />
 	<meta name="twitter:title" content="OmniPlot — PPF & Window Tint Cutting Software" />
-	<meta name="twitter:description" content="Web-based cutting software for any plotter. 12,400+ vehicle patterns for PPF and window tint. No download required." />
+	<meta name="twitter:description" content="Web-based cutting software for any plotter. Unlimited patterns for PPF and window tint. No download required." />
 	<meta name="twitter:image" content="https://omniplot.app/og-image.png" />
 </svelte:head>
 
@@ -143,7 +142,7 @@
 			<span class="hero__proof-sep" aria-hidden="true">·</span>
 			<span class="hero__proof-item">✓ Works with any plotter</span>
 			<span class="hero__proof-sep" aria-hidden="true">·</span>
-			<span class="hero__proof-item">✓ 12,400+ PPF & tint patterns</span>
+			<span class="hero__proof-item">✓ Unlimited PPF & tint patterns</span>
 		</div>
 	</div>
 
@@ -370,7 +369,7 @@
 		</div>
 
 		<div class="steps">
-			{#each [["1", "Pick your vehicle", "Search 12,400+ patterns by make, model, and year. Select the zones you need — PPF panels or window tint zones."], ["2", "Arrange & optimize", "Drag patterns onto your material sheet. Hit auto-nest to maximize efficiency automatically."], ["3", "Send to plotter", "Export as HPGL (.plt) or connect directly via Web Serial. Job complete."]] as [num, title, desc]}
+			{#each [["1", "Pick your vehicle", "Search unlimited patterns by vehicle, residential, commerical, or custom. Select the zones you need — PPF panels or window tint zones."], ["2", "Arrange & optimize", "Drag patterns onto your material sheet. Hit auto-nest to maximize efficiency automatically."], ["3", "Send to plotter", "Export as HPGL (.plt) or connect directly via Web Serial. Job complete."]] as [num, title, desc]}
 				<div class="step">
 					<div class="step__num" aria-hidden="true">{num}</div>
 					<div class="step__content">
