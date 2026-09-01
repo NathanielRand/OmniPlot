@@ -392,6 +392,15 @@
 		return m[c] ?? c;
 	}
 
+	// Full name shown under the connection medallion — connLabel stays short for
+	// the log/trouble strings that already ship elsewhere in this file.
+	function connFullLabel(c: PlotterConnection): string {
+		const m: Record<PlotterConnection, string> = {
+			"cut-agent": "Cut Agent", "usb-serial": "USB Direct", "network": "Network", "download": "Download"
+		};
+		return m[c] ?? c;
+	}
+
 	function lastConnectedLabel(d: Date | null | undefined): string | null {
 		if (!d) return null;
 		const secs = (Date.now() - new Date(d).getTime()) / 1000;
@@ -442,6 +451,18 @@
 		if (pollTimer) clearInterval(pollTimer);
 	});
 </script>
+
+{#snippet connMedallionIcon(c: PlotterConnection)}
+	{#if c === "usb-serial"}
+		<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9h9M4 15h9"/><path d="M13 6h4l3 3v6l-3 3h-4"/><circle cx="7" cy="9" r="0.5" fill="currentColor"/><circle cx="7" cy="15" r="0.5" fill="currentColor"/><path d="M9 6V4M9 20v-2"/></svg>
+	{:else if c === "cut-agent"}
+		<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><circle cx="7" cy="7.5" r="1" fill="currentColor" stroke="none"/><circle cx="7" cy="16.5" r="1" fill="currentColor" stroke="none"/><path d="M12 7.5h6M12 16.5h6"/></svg>
+	{:else if c === "network"}
+		<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 8.5a15 15 0 0 1 20 0"/><path d="M5.5 12.5a10 10 0 0 1 13 0"/><path d="M9 16.5a5 5 0 0 1 6 0"/><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/></svg>
+	{:else}
+		<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 19h16"/></svg>
+	{/if}
+{/snippet}
 
 <div class="page">
 
@@ -540,6 +561,10 @@
 						{@const status = plotterStatus(plotter)}
 						<div class="plotter-card" class:plotter-card--cutting={status === "cutting"}>
 							<div class="plotter-card__main">
+								<div class="conn-medallion conn-medallion--{plotter.connection}" title={connFullLabel(plotter.connection)} aria-label={connFullLabel(plotter.connection)}>
+									{@render connMedallionIcon(plotter.connection)}
+									<span class="conn-medallion__label">{connLabel(plotter.connection)}</span>
+								</div>
 								<span class="status-pip status-pip--{status}" title={status}></span>
 								<div class="plotter-card__info">
 									<span class="plotter-name">{plotter.name}</span>
@@ -550,7 +575,6 @@
 								</div>
 								<div class="plotter-card__badges">
 									<span class="chip chip--proto">{plotter.protocol.toUpperCase()}</span>
-									<span class="chip chip--conn">{connLabel(plotter.connection)}</span>
 								</div>
 							</div>
 
@@ -1045,6 +1069,50 @@
 		display: flex;
 		align-items: center;
 		gap: 10px;
+	}
+
+	/* ─── Connection medallion ───
+	   Large icon+label badge so USB / Cut Agent / Network / Download are
+	   distinguishable at a glance, without reading the model line. */
+	.conn-medallion {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		flex-shrink: 0;
+		padding: 5px 10px 5px 6px;
+		border-radius: 999px;
+		border: 1px solid transparent;
+	}
+
+	.conn-medallion svg { flex-shrink: 0; }
+
+	.conn-medallion__label {
+		font-size: 0.7rem;
+		font-weight: 700;
+		letter-spacing: 0.03em;
+		text-transform: uppercase;
+		white-space: nowrap;
+	}
+
+	.conn-medallion--usb-serial {
+		background: rgba(96, 165, 250, 0.12);
+		border-color: rgba(96, 165, 250, 0.25);
+		color: #60a5fa;
+	}
+	.conn-medallion--cut-agent {
+		background: rgba(52, 211, 153, 0.12);
+		border-color: rgba(52, 211, 153, 0.25);
+		color: #34d399;
+	}
+	.conn-medallion--network {
+		background: rgba(251, 191, 36, 0.12);
+		border-color: rgba(251, 191, 36, 0.25);
+		color: #fbbf24;
+	}
+	.conn-medallion--download {
+		background: rgba(148, 163, 184, 0.12);
+		border-color: rgba(148, 163, 184, 0.25);
+		color: #94a3b8;
 	}
 
 	.status-pip {

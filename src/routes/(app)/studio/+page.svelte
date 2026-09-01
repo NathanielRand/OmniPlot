@@ -308,8 +308,9 @@
 	type CalPhase = 'idle' | 'probe-wait' | 'probe-busy' | 'probe-done' | 'probe-error';
 	// 'oa-unsupported' = plotter didn't respond to OA (firmware doesn't implement it)
 	// 'port-busy'      = agent left the serial port locked after a previous query timeout
+	// 'port-missing'   = the configured COM/tty path no longer exists (unplugged, renumbered)
 	// 'generic'        = any other error
-	type CalErrorKind = 'oa-unsupported' | 'port-busy' | 'generic';
+	type CalErrorKind = 'oa-unsupported' | 'port-busy' | 'port-missing' | 'generic';
 	let calPhase     = $state<CalPhase>('idle');
 	let calCapture   = $state<{ offsetIn: number; raw: string } | null>(null);
 	let calError     = $state<string | null>(null);
@@ -351,7 +352,15 @@
 
 		if (!res.ok) {
 			const msg = (res.error ?? '').toLowerCase();
-			if (msg.includes('busy') || msg.includes('in use') || msg.includes('cannot open')) {
+			if (
+				(msg.includes('not found') || msg.includes('no such file')) &&
+				(msg.includes('port') || msg.includes('tty') || msg.includes('com'))
+			) {
+				// The configured serial path doesn't exist on this machine — releasing
+				// a handle the agent doesn't hold won't fix this, unlike port-busy below.
+				calErrorKind = 'port-missing';
+				calError = res.error ?? 'Serial port not found';
+			} else if (msg.includes('busy') || msg.includes('in use') || msg.includes('cannot open')) {
 				// Agent left the port open from the previous query timeout.
 				calErrorKind = 'port-busy';
 				calError = res.error ?? 'Serial port busy';
@@ -2612,6 +2621,13 @@
 												calPhase = 'probe-wait';
 												calError = null;
 											}}>Release &amp; Retry</button>
+										{:else if calErrorKind === 'port-missing'}
+											<div class="cal-probe-error">
+												<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+												{calError}
+											</div>
+											<p class="cal-probe-hint" style="margin-top:6px">The configured port no longer exists on this machine — unplug and replug the USB cable, then use Auto-detect on the Plotters page to find its new path.</p>
+											<button class="cal-probe-btn" onclick={() => { calPhase = 'idle'; calError = null; }}>Dismiss</button>
 										{:else}
 											<div class="cal-probe-error">
 												<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
