@@ -18,7 +18,7 @@
 		detectAgentPorts,
 		scanNetworkViaAgent,
 	} from "$lib/utils/plotter-detect";
-	import { sendToPlotter, flushPlotter } from "$lib/utils/plotter-connection";
+	import { sendToPlotter, flushPlotter, reconnectSerialPort } from "$lib/utils/plotter-connection";
 	import type { PlotterDiagnostic } from "$lib/utils/plotter-errors";
 	import PlotterDiagPanel from "$lib/components/ui/PlotterDiagPanel.svelte";
 	import type { PlotterDevice, PlotterConnection, PlotterConfig, CutJob } from "$lib/types";
@@ -62,6 +62,8 @@
 		serialPort: "",
 		baudRate:   9600,
 		agentUrl:   "http://localhost:7878",
+		vendorId:   undefined as number | undefined,
+		productId:  undefined as number | undefined,
 	});
 
 	// ─── Derived ─────────────────────────────────
@@ -163,7 +165,8 @@
 
 		if (best) {
 			form = { ...form, name: best.preset.name ?? "", presetName: best.preset.name ?? form.presetName,
-				connection: best.source === "agent-usb" ? "cut-agent" : "usb-serial" };
+				connection: best.source === "agent-usb" ? "cut-agent" : "usb-serial",
+				vendorId: best.vendorId, productId: best.productId };
 			toastStore.success("Plotter detected", best.detail);
 		} else {
 			toastStore.info("No plotter detected", "Try selecting your device manually.");
@@ -205,6 +208,9 @@
 			baudRate:   form.baudRate || preset.baudRate,
 			agentUrl:   form.connection === "cut-agent"  ? form.agentUrl   : undefined,
 			compatNote: preset.compatNote,
+			vendorId:   form.connection === "usb-serial" ? form.vendorId  : undefined,
+			productId:  form.connection === "usb-serial" ? form.productId : undefined,
+			lastConnectedAt: null,
 			createdAt: new Date(), updatedAt: new Date(),
 		};
 
@@ -221,7 +227,8 @@
 
 	function resetForm() {
 		form = { name: "", presetName: PLOTTER_PRESETS[0].name, connection: "cut-agent",
-			ipAddress: "", port: 9100, serialPort: "", baudRate: 9600, agentUrl: "http://localhost:7878" };
+			ipAddress: "", port: 9100, serialPort: "", baudRate: 9600, agentUrl: "http://localhost:7878",
+			vendorId: undefined, productId: undefined };
 		networkDevices = [];
 		addStep = "form";
 	}
@@ -238,17 +245,50 @@
 		}
 	}
 
-	function handleSetActive(plotter: PlotterDevice) {
-		const preset = PLOTTER_PRESETS.find(p => p.name === plotter.presetName);
-		if (preset) {
-			plotterStore.applyPreset(preset);
-			plotterStore.switchConnection(plotter.connection);
-			if (plotter.serialPort) plotterStore.update({ serialPort: plotter.serialPort });
-			if (plotter.agentUrl)   plotterStore.update({ agentUrl: plotter.agentUrl });
-			if (plotter.ipAddress)  plotterStore.update({ ipAddress: plotter.ipAddress });
-			if (plotter.port)       plotterStore.update({ port: plotter.port });
-			toastStore.success("Active plotter set", `${plotter.name} is now active in Studio.`);
+	let reconnecting = $state<string | null>(null); // plotter id currently reconnecting
+
+	async function markConnected(plotter: PlotterDevice) {
+		const now = new Date();
+		plotters = plotters.map(p => p.id === plotter.id ? { ...p, lastConnectedAt: now } : p);
+		try {
+			await savePlotter({ ...plotter, lastConnectedAt: now });
+		} catch {
+			// Best-effort — active state is already applied locally
 		}
+	}
+
+	async function handleSetActive(plotter: PlotterDevice) {
+		const preset = PLOTTER_PRESETS.find(p => p.name === plotter.presetName);
+		if (!preset) return;
+
+		plotterStore.applyPreset(preset);
+		plotterStore.switchConnection(plotter.connection);
+		if (plotter.serialPort) plotterStore.update({ serialPort: plotter.serialPort });
+		if (plotter.agentUrl)   plotterStore.update({ agentUrl: plotter.agentUrl });
+		if (plotter.ipAddress)  plotterStore.update({ ipAddress: plotter.ipAddress });
+		if (plotter.port)       plotterStore.update({ port: plotter.port });
+
+		if (plotter.connection === "usb-serial" && plotter.vendorId !== undefined) {
+			// Quick reconnect — matches the saved USB identity against already-authorized
+			// ports (navigator.serial.getPorts()), so no browser picker dialog is shown.
+			reconnecting = plotter.id;
+			const info = await reconnectSerialPort(plotter.baudRate ?? preset.baudRate ?? 9600, {
+				vendorId: plotter.vendorId, productId: plotter.productId,
+			});
+			reconnecting = null;
+			if (info) {
+				plotterStore.update({ vendorId: info.vendorId, productId: info.productId });
+				plotterStore.persistConnSettings();
+				toastStore.success("Reconnected", `${plotter.name} is now active in Studio.`);
+				await markConnected(plotter);
+				return;
+			}
+			toastStore.warning("Reconnect needed", `${plotter.name} isn't authorized in this browser — grant USB access from the Studio page.`);
+			return;
+		}
+
+		toastStore.success("Active plotter set", `${plotter.name} is now active in Studio.`);
+		await markConnected(plotter);
 	}
 
 	const TEST_HPGL = "IN;SP1;VS10;FS80;PU0,0;PD1016,0,1016,1016,0,1016,0,0;PU508,508;CI250;PU;SP0;"; // 1" × 1" box + circle
@@ -350,6 +390,15 @@
 			"cut-agent": "Agent", "usb-serial": "USB", "network": "Network", "download": "Download"
 		};
 		return m[c] ?? c;
+	}
+
+	function lastConnectedLabel(d: Date | null | undefined): string | null {
+		if (!d) return null;
+		const secs = (Date.now() - new Date(d).getTime()) / 1000;
+		if (secs < 60) return "just now";
+		if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
+		if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
+		return `${Math.floor(secs / 86400)}d ago`;
 	}
 
 	function logClass(type: string) {
@@ -496,6 +545,7 @@
 									<span class="plotter-name">{plotter.name}</span>
 									<span class="plotter-model">{plotter.manufacturer} {plotter.model} · max {(plotter.maxMediaWidthMm / 25.4).toFixed(1)}"
 										{#if plotter.ipAddress} · {plotter.ipAddress}:{plotter.port ?? 9100}{:else if plotter.serialPort} · {plotter.serialPort}{/if}
+										{#if lastConnectedLabel(plotter.lastConnectedAt)} · last connected {lastConnectedLabel(plotter.lastConnectedAt)}{/if}
 									</span>
 								</div>
 								<div class="plotter-card__badges">
@@ -513,7 +563,9 @@
 									{#if status === "cutting"}● Cutting{:else if status === "offline"}● Agent offline{:else}● Ready{/if}
 								</span>
 								<div class="card-actions">
-									<button class="card-btn" onclick={() => handleSetActive(plotter)}>Set active</button>
+									<button class="card-btn" onclick={() => handleSetActive(plotter)} disabled={reconnecting === plotter.id}>
+										{reconnecting === plotter.id ? "Reconnecting…" : plotter.connection === "usb-serial" ? "Reconnect" : "Set active"}
+									</button>
 									<button class="card-btn" onclick={() => handleTestCut(plotter)}>Test cut</button>
 									<button class="card-btn" onclick={() => handleFlush(plotter)} disabled={flushing === plotter.id}>
 										{flushing === plotter.id ? "Flushing…" : "Flush"}

@@ -432,7 +432,7 @@ function _presetStorageKey(name: string) {
 
 // Per-connection-type settings — restored when switching back to a connection type.
 const CONNECTION_PERSIST: Partial<Record<string, Array<keyof PlotterConfig>>> = {
-	"usb-serial": ["baudRate"],
+	"usb-serial": ["baudRate", "vendorId", "productId"],
 	"network":    ["ipAddress", "port"],
 	"cut-agent":  ["agentUrl", "baudRate", "serialPort"],
 	"download":   [],
@@ -519,6 +519,8 @@ function createPlotterStore() {
 		ipAddress: (_savedConnSettings.ipAddress as string | undefined) ?? "192.168.1.100",
 		port: (_savedConnSettings.port as number | undefined) ?? 9100,
 		serialPort: (_savedConnSettings.serialPort as string | undefined),
+		vendorId: (_savedConnSettings.vendorId as number | undefined),
+		productId: (_savedConnSettings.productId as number | undefined),
 	});
 
 	return {
@@ -557,6 +559,13 @@ function createPlotterStore() {
 			const saved = _loadConnSettings(newType);
 			config = { ...config, ...saved, connection: newType };
 			if (opts?.save !== false) _saveActiveConnection(newType);
+		},
+		// Persists the current connection type's settings (e.g. vendorId/productId
+		// captured right after a successful USB connect) without switching type.
+		// Needed because switchConnection only saves the OLD type's settings —
+		// changes made while already on a type are otherwise lost on reload.
+		persistConnSettings() {
+			_saveConnSettings(config.connection, config);
 		},
 	};
 }

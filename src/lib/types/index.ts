@@ -370,6 +370,9 @@ export interface PlotterDevice {
 	serialPort?: string;
 	agentUrl?: string;
 	compatNote?: string;
+	vendorId?: number;   // USB VID — captured on connect, used to auto-match this device on reconnect
+	productId?: number;  // USB PID
+	lastConnectedAt?: Date | null;
 	createdAt: Date;
 	updatedAt: Date;
 }
@@ -403,6 +406,8 @@ export interface PlotterConfig {
 	baudRate?: number;
 	serialPort?: string;
 	agentUrl?: string;  // Cut-Agent URL, default "http://localhost:7878"
+	vendorId?: number;  // USB VID of the last-connected serial device — used to auto-match on reconnect
+	productId?: number; // USB PID
 
 	// Compatibility note shown in UI (e.g. for Silhouette proprietary protocol)
 	compatNote?: string;

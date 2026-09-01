@@ -97,16 +97,39 @@ let _cachedPort: any | null = null;
 
 export type SerialPortInfo = { label: string; vendorId?: number; productId?: number };
 
-// Silently reconnects to the first previously-authorized port without showing
-// the browser selection dialog. Called on page mount to restore a USB connection
-// that was active before navigation. Returns null if no port is available.
-export async function reconnectSerialPort(baudRate: number): Promise<SerialPortInfo | null> {
+// Silently reconnects to a previously-authorized port without showing the
+// browser selection dialog. Called on page mount to restore a USB connection
+// that was active before navigation. If `match` (vendorId/productId) is given
+// and more than one authorized port exists, connects only to the port whose
+// USB identity matches — returns null rather than guessing when the match
+// isn't found among multiple candidates, since opening the wrong physical
+// device would silently mis-attribute the connection (e.g. to the wrong
+// saved PlotterDevice). Falls back to the sole authorized port when there's
+// exactly one, or when no match was requested at all.
+export async function reconnectSerialPort(
+    baudRate: number,
+    match?: { vendorId?: number; productId?: number },
+): Promise<SerialPortInfo | null> {
     if (!("serial" in navigator)) return null;
     try {
         const serial = (navigator as any).serial;
         const ports: any[] = await serial.getPorts();
         if (!ports.length) return null;
-        const port = ports[0];
+
+        let port = ports[0];
+        if (match?.vendorId !== undefined) {
+            const found = ports.find((p) => {
+                const info = p.getInfo?.() ?? {};
+                return info.usbVendorId === match.vendorId &&
+                    (match.productId === undefined || info.usbProductId === match.productId);
+            });
+            if (found) {
+                port = found;
+            } else if (ports.length > 1) {
+                return null;
+            }
+        }
+
         _cachedPort = port;
         await _ensurePortOpen(port, baudRate);
         const info = port.getInfo?.() ?? {};

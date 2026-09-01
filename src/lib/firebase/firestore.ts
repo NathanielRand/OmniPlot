@@ -1144,6 +1144,9 @@ function toPlotterDevice(id: string, data: DocumentData): PlotterDevice {
 		serialPort:      data.serialPort,
 		agentUrl:        data.agentUrl,
 		compatNote:      data.compatNote,
+		vendorId:        data.vendorId,
+		productId:       data.productId,
+		lastConnectedAt: data.lastConnectedAt ? fromTimestamp(data.lastConnectedAt) : null,
 		createdAt:       fromTimestamp(data.createdAt),
 		updatedAt:       fromTimestamp(data.updatedAt),
 	};
@@ -1160,9 +1163,17 @@ export async function getUserPlotters(uid: string): Promise<PlotterDevice[]> {
 }
 
 export async function savePlotter(plotter: PlotterDevice): Promise<void> {
+	// Firestore's setDoc rejects explicit `undefined` field values (throws
+	// "Unsupported field value: undefined"). PlotterDevice has several optional
+	// fields (vendorId, ipAddress, serialPort, ...) that are `undefined` rather
+	// than omitted depending on connection type — strip them before writing.
+	const data: Record<string, unknown> = { ...plotter, updatedAt: serverTimestamp() };
+	for (const key of Object.keys(data)) {
+		if (data[key] === undefined) delete data[key];
+	}
 	await setDoc(
 		doc(db, Collections.PLOTTERS, plotter.id),
-		{ ...plotter, updatedAt: serverTimestamp() },
+		data,
 		{ merge: true },
 	);
 }

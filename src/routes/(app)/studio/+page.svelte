@@ -301,6 +301,7 @@
 	// ─── Connection UI state ───────────────────────
 	let agentProbeStatus = $state<"probing" | "online" | "offline">("probing");
 	let connecting       = $state(false);
+	let autoReconnecting = false; // guards the background USB auto-reconnect in runDiscovery against overlapping 8s poll ticks
 	let showConfig       = $state(false);
 
 	// ─── Roll alignment calibration ───────────────
@@ -574,6 +575,32 @@
 						d.id === target.id ? { ...d, status: "connected" } : d
 					);
 				}
+				// Silently reconnect a USB device the user has connected to before (VID/PID
+				// matches the last-saved usb-serial config) without requiring a click —
+				// covers the case where it's plugged back in mid-session, not just on mount.
+				if (
+					target.source === "usb" && target.status === "detected" && !serialPortInfo &&
+					!autoReconnecting &&
+					plotterStore.config.vendorId !== undefined &&
+					target.vendorId === plotterStore.config.vendorId &&
+					target.productId === plotterStore.config.productId
+				) {
+					autoReconnecting = true;
+					reconnectSerialPort(target.preset.baudRate ?? plotterStore.config.baudRate ?? 9600, {
+						vendorId: target.vendorId, productId: target.productId,
+					}).then((info) => {
+						if (!info) return;
+						serialPortInfo = info;
+						plotterStore.applyPreset(target.preset);
+						plotterStore.switchConnection("usb-serial");
+						discoveredDevices = discoveredDevices.map(d =>
+							d.id === target.id ? { ...d, status: "connected" } : d
+						);
+						toastStore.success(`Reconnected · ${target.preset.name}`, "USB Direct (auto-detected)");
+					}).finally(() => {
+						autoReconnecting = false;
+					});
+				}
 			}
 		}
 	}
@@ -603,6 +630,8 @@
 					serialPortInfo = await connectSerialPort(device.preset.baudRate ?? plotterStore.config.baudRate ?? 9600);
 					plotterStore.applyPreset(device.preset);
 					plotterStore.switchConnection("usb-serial");
+					plotterStore.update({ vendorId: serialPortInfo.vendorId, productId: serialPortInfo.productId });
+					plotterStore.persistConnSettings();
 					selectedDeviceId = device.id;
 					discoveredDevices = discoveredDevices.map(d =>
 						d.id === device.id ? { ...d, status: "connected" } : d
@@ -650,6 +679,8 @@
 			const matched = matchPortToPreset(portInfo.vendorId, portInfo.productId);
 			if (matched) plotterStore.applyPreset(matched.preset);
 			plotterStore.switchConnection("usb-serial");
+			plotterStore.update({ vendorId: portInfo.vendorId, productId: portInfo.productId });
+			plotterStore.persistConnSettings();
 			await runDiscovery();
 			toastStore.success("USB port authorized", portInfo.label);
 		} catch (err: any) {
@@ -1213,9 +1244,14 @@
 		// If the user had a USB-serial connection before navigation, try to restore it
 		// silently using the already-authorized port (no browser dialog required).
 		if (plotterStore.config.connection === "usb-serial") {
-			reconnectSerialPort(plotterStore.config.baudRate ?? 9600).then((info) => {
+			const savedVid = plotterStore.config.vendorId;
+			const savedPid = plotterStore.config.productId;
+			reconnectSerialPort(plotterStore.config.baudRate ?? 9600, { vendorId: savedVid, productId: savedPid }).then((info) => {
 				if (info) {
 					serialPortInfo = info;
+					if (info.vendorId !== undefined) plotterStore.update({ vendorId: info.vendorId, productId: info.productId });
+					const matched = matchPortToPreset(info.vendorId, info.productId);
+					toastStore.success(`Reconnected · ${matched?.preset.name ?? info.label}`, "USB Direct");
 					discoveredDevices = discoveredDevices.map(d =>
 						d.source === "usb" ? { ...d, status: "connected" } : d,
 					);
