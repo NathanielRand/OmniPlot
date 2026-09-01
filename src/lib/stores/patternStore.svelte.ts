@@ -545,3 +545,32 @@ export const TINT_ZONES_LIST: Array<{ value: PatternZone; label: string }> = [
 	{ value: "vent-window-right",   label: "Vent Window Right" },
 	{ value: "custom",              label: "Custom" },
 ];
+
+export const RESIDENTIAL_ZONES_LIST: Array<{ value: PatternZone; label: string }> = [
+	{ value: "res-picture-window",     label: "Picture Window" },
+	{ value: "res-living-room-window", label: "Living Room Window" },
+	{ value: "res-bedroom-window",     label: "Bedroom Window" },
+	{ value: "res-kitchen-window",     label: "Kitchen Window" },
+	{ value: "res-bathroom-window",    label: "Bathroom Window" },
+	{ value: "res-sunroom-window",     label: "Sunroom Window" },
+	{ value: "res-basement-window",    label: "Basement Window" },
+	{ value: "res-garage-window",      label: "Garage Window" },
+	{ value: "res-skylight",           label: "Skylight" },
+	{ value: "res-sliding-glass-door", label: "Sliding Glass Door" },
+	{ value: "res-front-door-glass",   label: "Front Door Glass" },
+	{ value: "res-front-door-sidelight", label: "Front Door Sidelight" },
+	{ value: "custom",                 label: "Custom" },
+];
+
+export const COMMERCIAL_ZONES_LIST: Array<{ value: PatternZone; label: string }> = [
+	{ value: "com-storefront-window",       label: "Storefront Window" },
+	{ value: "com-display-window",          label: "Display Window" },
+	{ value: "com-entry-door-glass",        label: "Entry Door Glass" },
+	{ value: "com-lobby-window",            label: "Lobby Window" },
+	{ value: "com-office-window",           label: "Office Window" },
+	{ value: "com-conference-room-window",  label: "Conference Room Window" },
+	{ value: "com-curtain-wall",            label: "Curtain Wall Panel" },
+	{ value: "com-transom-window",          label: "Transom Window" },
+	{ value: "com-skylight",                label: "Skylight" },
+	{ value: "custom",                      label: "Custom" },
+];

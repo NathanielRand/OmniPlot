@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from "$app/navigation";
 	import { userStore, toastStore } from "$lib/stores";
-	import { patternStore, PPF_ZONES_LIST, TINT_ZONES_LIST, MIRROR_PAIRS } from "$lib/stores/patternStore.svelte";
+	import { patternStore, PPF_ZONES_LIST, TINT_ZONES_LIST, RESIDENTIAL_ZONES_LIST, COMMERCIAL_ZONES_LIST, MIRROR_PAIRS } from "$lib/stores/patternStore.svelte";
 	import { addUserPattern } from "$lib/firebase/firestore";
 	import SvgPathInput from "$lib/components/ui/SvgPathInput.svelte";
 	import VehicleCombobox from "$lib/components/ui/VehicleCombobox.svelte";
@@ -46,6 +46,20 @@
 	let individualSlots = $state<IndividualSlot[]>([{ zone: "" as PatternZone | "", widthInches: 0, heightInches: 0, svgPath: "" }]);
 	let indivErrors = $state<Record<number, Record<string, string>>>({});
 
+	// ─── Project type ─────────────────────────────
+	type ProjectType = "custom" | "vehicle" | "residential" | "commercial";
+	let projectType = $state<ProjectType>("vehicle");
+	let customName      = $state(""); // "custom" projects
+	let propertyAddress = $state(""); // "residential" / "commercial"
+	let propertyLabel   = $state(""); // "residential" / "commercial"
+
+	const identityTitle = $derived(
+		projectType === "vehicle"     ? "Vehicle" :
+		projectType === "custom"      ? "Pattern Name" :
+		projectType === "residential" ? "Property" :
+		"Property",
+	);
+
 	let vehicle = $state({
 		make:      "",
 		models:    [] as string[],
@@ -53,8 +67,14 @@
 		bodyStyle: "sedan" as BodyStyle,
 	});
 
+	const identitySummary = $derived(
+		projectType === "vehicle"     ? `${vehicle.years.join(", ")} ${vehicle.make} ${vehicle.models.join(" / ")}` :
+		projectType === "custom"      ? customName.trim() :
+		propertyLabel.trim() || propertyAddress.trim(),
+	);
+
 	let pattern = $state({
-		category:     "ppf" as PatternCategory,
+		category:     "window-tint" as PatternCategory,
 		zones:        [] as PatternZone[],
 		coverage:     "full" as PatternCoverage,
 		widthInches:  0,
@@ -83,10 +103,13 @@
 	);
 
 	const zoneList = $derived(
-		pattern.category === "ppf" ? PPF_ZONES_LIST : TINT_ZONES_LIST,
+		projectType === "residential" ? RESIDENTIAL_ZONES_LIST :
+		projectType === "commercial"  ? COMMERCIAL_ZONES_LIST :
+		projectType === "custom"      ? [{ value: "custom" as PatternZone, label: "Custom" }] :
+		pattern.category === "ppf"    ? PPF_ZONES_LIST : TINT_ZONES_LIST,
 	);
 
-	// Reset zones when category changes (zone lists are disjoint)
+	// Reset zones when category or pattern type changes (zone lists are disjoint)
 	$effect(() => { zoneList; pattern.zones = []; });
 
 	$effect(() => {
@@ -194,20 +217,32 @@
 	}
 
 	// ─── Validation ───────────────────────────────
-	function validateVehicle(): boolean {
+	function validateIdentity(): boolean {
 		const e: Record<string, string> = {};
-		if (!vehicle.make.trim())    e.make   = "Make is required";
-		if (!vehicle.models.length)  e.models = "Add at least one model";
-		if (!vehicle.years.length)   e.years  = "Add at least one year or range";
+		if (projectType === "vehicle") {
+			if (!vehicle.make.trim())    e.make   = "Make is required";
+			if (!vehicle.models.length)  e.models = "Add at least one model";
+			if (!vehicle.years.length)   e.years  = "Add at least one year or range";
+		} else if (projectType === "custom") {
+			if (!customName.trim())      e.customName = "Pattern name is required";
+		} else {
+			if (!propertyAddress.trim()) e.propertyAddress = "Address is required";
+		}
 		errors = { ...errors, ...e };
 		return Object.keys(e).length === 0;
 	}
 
 	function validate(): boolean {
 		const e: Record<string, string> = {};
-		if (!vehicle.make.trim())    e.make   = "Make is required";
-		if (!vehicle.models.length)  e.models = "Add at least one model";
-		if (!vehicle.years.length)   e.years  = "Add at least one year or range";
+		if (projectType === "vehicle") {
+			if (!vehicle.make.trim())    e.make   = "Make is required";
+			if (!vehicle.models.length)  e.models = "Add at least one model";
+			if (!vehicle.years.length)   e.years  = "Add at least one year or range";
+		} else if (projectType === "custom") {
+			if (!customName.trim())      e.customName = "Pattern name is required";
+		} else {
+			if (!propertyAddress.trim()) e.propertyAddress = "Address is required";
+		}
 		if (!pattern.zones.length)   e.zones  = "Select at least one zone";
 		if (!pattern.widthInches  || pattern.widthInches  <= 0) e.width  = "Enter a positive width";
 		if (!pattern.heightInches || pattern.heightInches <= 0) e.height = "Enter a positive height";
@@ -237,13 +272,45 @@
 		return Object.keys(errs).length === 0;
 	}
 
+	// ─── Identity payload (branches on projectType) ───
+	function identityPayload() {
+		if (projectType === "vehicle") {
+			return {
+				projectType,
+				make:      vehicle.make.trim(),
+				models:    vehicle.models,
+				years:     vehicle.years,
+				bodyStyle: vehicle.bodyStyle,
+			};
+		}
+		if (projectType === "custom") {
+			return {
+				projectType,
+				make:        "Custom",
+				models:      [customName.trim()],
+				years:       [] as string[],
+				bodyStyle:   "sedan" as BodyStyle,
+				patternName: customName.trim(),
+			};
+		}
+		return {
+			projectType,
+			make:          projectType === "residential" ? "Residential" : "Commercial",
+			models:        [propertyLabel.trim() || propertyAddress.trim()],
+			years:         [] as string[],
+			bodyStyle:     "sedan" as BodyStyle,
+			address:       propertyAddress.trim(),
+			propertyLabel: propertyLabel.trim() || undefined,
+		};
+	}
+
 	// ─── Submit ───────────────────────────────────
 	async function handleSubmit(e: SubmitEvent) {
 		e.preventDefault();
 		if (!userStore.user) { toastStore.error("Not signed in", "Please log in first."); return; }
 
 		if (uploadMode === "multi" && multiMethod === "individual") {
-			if (!validateVehicle() || !validateIndividual()) return;
+			if (!validateIdentity() || !validateIndividual()) return;
 			submitting = true;
 			try {
 				let saved = 0;
@@ -252,10 +319,7 @@
 					await addUserPattern({
 						ownerId:           userStore.user.uid,
 						submitToCommunity: mode === "community",
-						make:              vehicle.make.trim(),
-						models:            vehicle.models,
-						years:             vehicle.years,
-						bodyStyle:         vehicle.bodyStyle,
+						...identityPayload(),
 						category:          pattern.category,
 						zones:             [zone],
 						name:              zoneLabel(zone),
@@ -284,7 +348,7 @@
 		}
 
 		if (multiMode) {
-			if (!validateVehicle() || !validateMulti()) return;
+			if (!validateIdentity() || !validateMulti()) return;
 			submitting = true;
 			try {
 				const active = multiSlots.filter(s => !s.skip && s.zone);
@@ -294,10 +358,7 @@
 					await addUserPattern({
 						ownerId:           userStore.user.uid,
 						submitToCommunity: mode === "community",
-						make:              vehicle.make.trim(),
-						models:            vehicle.models,
-						years:             vehicle.years,
-						bodyStyle:         vehicle.bodyStyle,
+						...identityPayload(),
 						category:          pattern.category,
 						zones:             [zone],
 						name:              zoneLabel(zone),
@@ -327,10 +388,7 @@
 			await addUserPattern({
 				ownerId:           userStore.user.uid,
 				submitToCommunity: mode === "community",
-				make:              vehicle.make.trim(),
-				models:            vehicle.models,
-				years:             vehicle.years,
-				bodyStyle:         vehicle.bodyStyle,
+				...identityPayload(),
 				category:          pattern.category,
 				zones:             pattern.zones,
 				name,
@@ -350,6 +408,10 @@
 	}
 
 	function resetForm() {
+		projectType      = "vehicle";
+		customName       = "";
+		propertyAddress  = "";
+		propertyLabel    = "";
 		vehicle    = { make: "", models: [], years: [], bodyStyle: "sedan" };
 		pattern    = { category: "ppf", zones: [], coverage: "full", widthInches: 0, heightInches: 0, svgPath: "", notes: "" };
 		modelInput = "";
@@ -384,7 +446,7 @@
 				{#if multiSavedCount > 1}
 					<h2 class="success-title">{multiSavedCount} Patterns Saved</h2>
 					<p class="success-body">
-						<strong>{multiSavedCount} patterns</strong> for the <strong>{vehicle.years.join(", ")} {vehicle.make} {vehicle.models.join(" / ")}</strong> are now in your library.
+						<strong>{multiSavedCount} patterns</strong> for <strong>{identitySummary}</strong> are now in your library.
 						{#if mode === "community"}
 							They've been queued for review — once approved they will appear in the public library.
 						{/if}
@@ -392,7 +454,7 @@
 				{:else}
 					<h2 class="success-title">Pattern Saved</h2>
 					<p class="success-body">
-						<strong>{vehicle.years.join(", ")} {vehicle.make} {vehicle.models.join(" / ")}</strong> pattern
+						<strong>{identitySummary}</strong> pattern
 						({uploadMode === "multi" && multiMethod === "individual"
 							? individualSlots.map(s => zoneLabel(s.zone as PatternZone)).join(" + ")
 							: multiMode
@@ -462,94 +524,158 @@
 		<div class="form-wrap">
 			<form class="upload-form" onsubmit={handleSubmit} novalidate>
 
-				<!-- Vehicle -->
+				<!-- Pattern Type -->
 				<section class="form-section">
 					<h2 class="section-title">
 						<span class="section-num">1</span>
-						Vehicle
+						Pattern Type
 					</h2>
 
-					<div class="field-row field-row--2">
-						<div class="field" class:field--error={!!errors.years}>
-							<label class="field__label">Year(s)</label>
-							<div class="multitag" class:multitag--error={!!errors.years}>
-								{#each vehicle.years as y (y)}
+					<div class="type-grid" role="radiogroup" aria-label="Pattern type">
+						<button type="button" class="type-card" class:type-card--active={projectType === "vehicle"} onclick={() => (projectType = "vehicle")} aria-pressed={projectType === "vehicle"}>
+							<span class="type-card__icon" aria-hidden="true">
+								<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5 17a2 2 0 1 0 4 0 2 2 0 0 0-4 0zM15 17a2 2 0 1 0 4 0 2 2 0 0 0-4 0z"/><path d="M5 17H3v-6l2-5h11l3 5h1a1 1 0 0 1 1 1v5h-2M9 17h6"/></svg>
+							</span>
+							<span class="type-card__title">Vehicle</span>
+							<span class="type-card__sub">PPF or window tint for a make/model/year</span>
+						</button>
+						<button type="button" class="type-card" class:type-card--active={projectType === "residential"} onclick={() => (projectType = "residential")} aria-pressed={projectType === "residential"}>
+							<span class="type-card__icon" aria-hidden="true">
+								<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M9 21v-6h6v6"/></svg>
+							</span>
+							<span class="type-card__title">Residential</span>
+							<span class="type-card__sub">Window film for a home or property</span>
+						</button>
+						<button type="button" class="type-card" class:type-card--active={projectType === "commercial"} onclick={() => (projectType = "commercial")} aria-pressed={projectType === "commercial"}>
+							<span class="type-card__icon" aria-hidden="true">
+								<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="1"/><path d="M9 21v-4h6v4M8 7h1M8 11h1M8 15h1M15 7h1M15 11h1M15 15h1"/></svg>
+							</span>
+							<span class="type-card__title">Commercial</span>
+							<span class="type-card__sub">Window film for a storefront or building</span>
+						</button>
+						<button type="button" class="type-card" class:type-card--active={projectType === "custom"} onclick={() => (projectType = "custom")} aria-pressed={projectType === "custom"}>
+							<span class="type-card__icon" aria-hidden="true">
+								<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18"/></svg>
+							</span>
+							<span class="type-card__title">Custom</span>
+							<span class="type-card__sub">Anything else — just give it a name</span>
+						</button>
+					</div>
+				</section>
+
+				<!-- Identity -->
+				<section class="form-section">
+					<h2 class="section-title">
+						<span class="section-num">2</span>
+						{identityTitle}
+					</h2>
+
+					{#if projectType === "vehicle"}
+						<div class="field-row field-row--2">
+							<div class="field" class:field--error={!!errors.years}>
+								<label class="field__label">Year(s)</label>
+								<div class="multitag" class:multitag--error={!!errors.years}>
+									{#each vehicle.years as y (y)}
+										<span class="chip">
+											<span class="chip__label">{y}</span>
+											<button type="button" class="chip__remove" aria-label="Remove {y}" onclick={() => { vehicle.years = vehicle.years.filter(x => x !== y); }}>×</button>
+										</span>
+									{/each}
+									<input
+										class="year-input"
+										type="text"
+										placeholder={vehicle.years.length ? "Add year or range…" : "2024 or 2020-2024"}
+										bind:value={yearInput}
+										onkeydown={onYearKeydown}
+										onblur={commitYear}
+									/>
+								</div>
+								{#if errors.years}<span class="field__error">{errors.years}</span>{/if}
+							</div>
+							<div class="field" class:field--error={errors.make}>
+								<label class="field__label" for="make">Make</label>
+								<VehicleCombobox id="make" bind:value={vehicle.make} placeholder="Chevrolet" options={allMakes} error={!!errors.make}/>
+								{#if errors.make}<span class="field__error">{errors.make}</span>{/if}
+							</div>
+						</div>
+
+						<div class="field" class:field--error={!!errors.models}>
+							<label class="field__label" for="model-input">Model</label>
+							<div class="multitag" class:multitag--error={!!errors.models}>
+								{#each vehicle.models as m (m)}
 									<span class="chip">
-										<span class="chip__label">{y}</span>
-										<button type="button" class="chip__remove" aria-label="Remove {y}" onclick={() => { vehicle.years = vehicle.years.filter(x => x !== y); }}>×</button>
+										<span class="chip__label">{m}</span>
+										<button type="button" class="chip__remove" aria-label="Remove {m}" onclick={() => { vehicle.models = vehicle.models.filter(x => x !== m); }}>×</button>
 									</span>
 								{/each}
-								<input
-									class="year-input"
-									type="text"
-									placeholder={vehicle.years.length ? "Add year or range…" : "2024 or 2020-2024"}
-									bind:value={yearInput}
-									onkeydown={onYearKeydown}
-									onblur={commitYear}
+								<VehicleCombobox
+									id="model-input"
+									bind:value={modelInput}
+									placeholder={vehicle.models.length ? "Add another…" : "Silverado 1500 Crew Cab"}
+									options={makeModels.filter(m => !vehicle.models.includes(m))}
+									oncommit={(m) => { if (!vehicle.models.includes(m)) vehicle.models = [...vehicle.models, m]; }}
 								/>
 							</div>
-							{#if errors.years}<span class="field__error">{errors.years}</span>{/if}
+							{#if errors.models}<span class="field__error">{errors.models}</span>{/if}
 						</div>
-						<div class="field" class:field--error={errors.make}>
-							<label class="field__label" for="make">Make</label>
-							<VehicleCombobox id="make" bind:value={vehicle.make} placeholder="Chevrolet" options={allMakes} error={!!errors.make}/>
-							{#if errors.make}<span class="field__error">{errors.make}</span>{/if}
-						</div>
-					</div>
 
-					<div class="field" class:field--error={!!errors.models}>
-						<label class="field__label" for="model-input">Model</label>
-						<div class="multitag" class:multitag--error={!!errors.models}>
-							{#each vehicle.models as m (m)}
-								<span class="chip">
-									<span class="chip__label">{m}</span>
-									<button type="button" class="chip__remove" aria-label="Remove {m}" onclick={() => { vehicle.models = vehicle.models.filter(x => x !== m); }}>×</button>
-								</span>
-							{/each}
-							<VehicleCombobox
-								id="model-input"
-								bind:value={modelInput}
-								placeholder={vehicle.models.length ? "Add another…" : "Silverado 1500 Crew Cab"}
-								options={makeModels.filter(m => !vehicle.models.includes(m))}
-								oncommit={(m) => { if (!vehicle.models.includes(m)) vehicle.models = [...vehicle.models, m]; }}
-							/>
+						<div class="field field--half">
+							<label class="field__label" for="bodyStyle">Body Style</label>
+							<select id="bodyStyle" class="field__select" bind:value={vehicle.bodyStyle}>
+								<option value="sedan">Sedan</option>
+								<option value="coupe">Coupe</option>
+								<option value="suv">SUV / Crossover</option>
+								<option value="truck">Truck</option>
+								<option value="convertible">Convertible</option>
+								<option value="wagon">Wagon</option>
+								<option value="hatchback">Hatchback</option>
+							</select>
 						</div>
-						{#if errors.models}<span class="field__error">{errors.models}</span>{/if}
-					</div>
 
-					<div class="field field--half">
-						<label class="field__label" for="bodyStyle">Body Style</label>
-						<select id="bodyStyle" class="field__select" bind:value={vehicle.bodyStyle}>
-							<option value="sedan">Sedan</option>
-							<option value="coupe">Coupe</option>
-							<option value="suv">SUV / Crossover</option>
-							<option value="truck">Truck</option>
-							<option value="convertible">Convertible</option>
-							<option value="wagon">Wagon</option>
-							<option value="hatchback">Hatchback</option>
-						</select>
-					</div>
+					{:else if projectType === "custom"}
+						<div class="field" class:field--error={!!errors.customName}>
+							<label class="field__label" for="customName">Pattern Name</label>
+							<input id="customName" class="field__input" type="text" bind:value={customName} placeholder="Custom cut project"/>
+							{#if errors.customName}<span class="field__error">{errors.customName}</span>{/if}
+						</div>
+
+					{:else}
+						<div class="field-row field-row--2">
+							<div class="field" class:field--error={!!errors.propertyAddress}>
+								<label class="field__label" for="propertyAddress">Address</label>
+								<input id="propertyAddress" class="field__input" type="text" bind:value={propertyAddress} placeholder="123 Main St, Springfield"/>
+								{#if errors.propertyAddress}<span class="field__error">{errors.propertyAddress}</span>{/if}
+							</div>
+							<div class="field">
+								<label class="field__label" for="propertyLabel">
+									{projectType === "residential" ? "Property Name" : "Business Name"}
+									<span class="field__hint">Optional</span>
+								</label>
+								<input id="propertyLabel" class="field__input" type="text" bind:value={propertyLabel} placeholder={projectType === "residential" ? "Smith Residence" : "Main St Storefront"}/>
+							</div>
+						</div>
+					{/if}
 				</section>
 
 				<!-- Pattern Details -->
 				<section class="form-section">
 					<h2 class="section-title">
-						<span class="section-num">2</span>
+						<span class="section-num">3</span>
 						Pattern Details
 					</h2>
 
 					<div class="field">
 						<span class="field__label">Category</span>
 						<div class="radio-group" role="radiogroup" aria-label="Pattern category">
-							<label class="radio-option" class:radio-option--active={pattern.category === "ppf"}>
-								<input type="radio" name="category" value="ppf" bind:group={pattern.category}/>
-								<span class="radio-option__label">PPF</span>
-								<span class="radio-option__sub">Paint Protection Film</span>
-							</label>
 							<label class="radio-option" class:radio-option--active={pattern.category === "window-tint"}>
 								<input type="radio" name="category" value="window-tint" bind:group={pattern.category}/>
 								<span class="radio-option__label">Window Tint</span>
 								<span class="radio-option__sub">Glass precut patterns</span>
+							</label>
+							<label class="radio-option" class:radio-option--active={pattern.category === "ppf"}>
+								<input type="radio" name="category" value="ppf" bind:group={pattern.category}/>
+								<span class="radio-option__label">PPF</span>
+								<span class="radio-option__sub">Paint Protection Film</span>
 							</label>
 						</div>
 					</div>
@@ -583,6 +709,14 @@
 							</label>
 						</div>
 					</div>
+				</section>
+
+				<!-- Pattern Importer -->
+				<section class="form-section">
+					<h2 class="section-title">
+						<span class="section-num">4</span>
+						Pattern Importer
+					</h2>
 
 					{#if uploadMode === "multi"}
 						<div class="field">
@@ -640,6 +774,8 @@
 											{#if slotErrs.height}<span class="field__error">{slotErrs.height}</span>{/if}
 										</div>
 									</div>
+									<div class="stage-divider" role="separator" aria-hidden="true"></div>
+
 									<div class="field" class:field--error={!!slotErrs.svgPath}>
 										<label class="field__label">Pattern Importer</label>
 										<SvgPathInput bind:value={slot.svgPath}/>
@@ -775,6 +911,8 @@
 							</div>
 						</div>
 
+						<div class="stage-divider" role="separator" aria-hidden="true"></div>
+
 						<div class="field" class:field--error={errors.svgPath}>
 							<label class="field__label" for="svgPath">
 								Pattern Importer
@@ -791,6 +929,15 @@
 							{#if errors.svgPath}<span class="field__error">{errors.svgPath}</span>{/if}
 						</div>
 					{/if}
+
+				</section>
+
+				<!-- Notes -->
+				<section class="form-section">
+					<h2 class="section-title">
+						<span class="section-num">5</span>
+						Notes
+					</h2>
 
 					<div class="field">
 						<label class="field__label" for="notes">
@@ -999,7 +1146,7 @@
 
 	/* ─── Form wrap ─── */
 	.form-wrap {
-		max-width: 720px;
+		max-width: 960px;
 		margin: 0 auto;
 		padding: 32px 16px 64px;
 	}
@@ -1035,7 +1182,7 @@
 		height: 24px;
 		border-radius: 50%;
 		background: var(--color-brand);
-		color: #fff;
+		color: #080a0f;
 		font-size: 0.8125rem;
 		font-weight: 700;
 		display: flex;
@@ -1045,6 +1192,8 @@
 	}
 
 	/* ─── Fields ─── */
+	.stage-divider { height: 1px; background: var(--border-subtle); margin: 4px 0 6px; }
+
 	.field-row { display: grid; gap: 14px; }
 	.field-row--2 { grid-template-columns: 1fr 1fr; }
 	.field-row--3 { grid-template-columns: 100px 1fr 1fr; }
@@ -1116,6 +1265,44 @@
 	}
 	.radio-option__label { font-size: 0.9375rem; font-weight: 600; color: var(--text-primary); }
 	.radio-option__sub { font-size: 0.8125rem; color: var(--text-tertiary); }
+
+	/* ─── Project type grid ─── */
+	.type-grid {
+		display: grid;
+		grid-template-columns: repeat(4, 1fr);
+		gap: 10px;
+	}
+	.type-card {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 6px;
+		padding: 14px;
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-md);
+		background: var(--bg-surface);
+		cursor: pointer;
+		text-align: left;
+		transition: border-color 0.12s, background 0.12s;
+	}
+	.type-card:hover { background: var(--bg-surface-2); }
+	.type-card--active {
+		border-color: var(--color-brand);
+		background: color-mix(in srgb, var(--color-brand) 8%, var(--bg-surface-2));
+	}
+	.type-card__icon {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 34px;
+		height: 34px;
+		border-radius: var(--radius-md);
+		color: var(--text-secondary);
+		background: var(--bg-surface-2);
+	}
+	.type-card--active .type-card__icon { color: var(--color-brand); }
+	.type-card__title { font-size: 0.9375rem; font-weight: 600; color: var(--text-primary); }
+	.type-card__sub { font-size: 0.8125rem; color: var(--text-tertiary); line-height: 1.3; }
 
 	/* ─── Vehicle match ─── */
 	.vehicle-match {
@@ -1450,6 +1637,7 @@
 		.field-row--2 { grid-template-columns: 1fr; }
 		.field--half { max-width: 100%; }
 		.radio-group { flex-direction: column; }
+		.type-grid { grid-template-columns: 1fr 1fr; }
 		.svg-field { grid-template-columns: 1fr; }
 		.svg-preview { height: 120px; aspect-ratio: auto; }
 		.form-section { padding: 16px; }

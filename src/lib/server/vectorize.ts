@@ -362,6 +362,115 @@ export function runTrace(buf: Buffer): Promise<string> {
 	});
 }
 
+// ─── Background-removal cutout ────────────────────────────────────────────────
+//
+// Alternative to preprocessForTrace's global threshold: instead of assuming a
+// black shape on a white background, this flood-fills from the four image
+// corners over pixels similar in color to the corner, marking everything
+// reachable as "background". What's left (unreached) is the foreground
+// silhouette — works well for product-style photos shot against a fairly
+// uniform backdrop, and unlike a global threshold it tolerates midtone or
+// colored backgrounds. The output binary mask is fed through the same
+// morphOpen + runTrace path used by preprocessForTrace, so it gets the same
+// anti-aliased edge quality and outer-contour filtering.
+
+// BFS flood fill over 4-connected neighbors whose color is within `tolerance`
+// of the running region-average color (so gentle gradients/vignettes in a
+// "solid" backdrop don't stop the fill early). Marks visited pixels in `bg`.
+function floodFillBackground(
+	data: Buffer, width: number, height: number, stride: number,
+	seeds: [number, number][], tolerance: number,
+): Uint8Array {
+	const bg = new Uint8Array(width * height);
+	const stack: number[] = [];
+	for (const [sx, sy] of seeds) {
+		const idx = sy * width + sx;
+		if (!bg[idx]) { bg[idx] = 1; stack.push(idx); }
+	}
+
+	const colorAt = (idx: number) => {
+		const i = idx * 4;
+		return [data[i], data[i + 1], data[i + 2]] as const;
+	};
+
+	while (stack.length) {
+		const idx = stack.pop()!;
+		const x = idx % width, y = (idx / width) | 0;
+		const [r, g, b] = colorAt(idx);
+
+		const tryNeighbor = (nx: number, ny: number) => {
+			if (nx < 0 || ny < 0 || nx >= width || ny >= height) return;
+			const nidx = ny * width + nx;
+			if (bg[nidx]) return;
+			const [nr, ng, nb] = colorAt(nidx);
+			const dist = Math.abs(nr - r) + Math.abs(ng - g) + Math.abs(nb - b);
+			if (dist <= tolerance) { bg[nidx] = 1; stack.push(nidx); }
+		};
+		tryNeighbor(x - 1, y);
+		tryNeighbor(x + 1, y);
+		tryNeighbor(x, y - 1);
+		tryNeighbor(x, y + 1);
+	}
+
+	return bg;
+}
+
+export async function preprocessCutout(inputBuffer: Buffer, targetLongEdge = TARGET_LONG_EDGE, tolerance = 24): Promise<Buffer> {
+	const meta     = await sharp(inputBuffer).metadata();
+	const origLong = Math.max(meta.width ?? 1, meta.height ?? 1);
+	const scaleRatio = Math.max(1, targetLongEdge / origLong);
+	const usmM2 = Math.max(0.5, Math.min(2.0, scaleRatio * 0.4));
+
+	// Upscale + sharpen, keep full color (background removal needs it) —
+	// mirrors preprocessForTrace's resize/sharpen but skips grayscale/threshold.
+	const { data, info } = await sharp(inputBuffer)
+		.resize(targetLongEdge, targetLongEdge, { fit: 'inside', kernel: sharp.kernel.lanczos3 })
+		.sharpen({ sigma: 1.5, m1: 0, m2: usmM2 })
+		.removeAlpha()
+		.ensureAlpha(1) // normalise to RGBA so raw buffer stride is predictable
+		.raw()
+		.toBuffer({ resolveWithObject: true });
+
+	const { width, height } = info;
+	const stride = width * 4;
+
+	// Seed the flood fill from a strip of border pixels (not just 4 corners) so a
+	// backdrop with slight lighting variation across the frame still connects.
+	const seeds: [number, number][] = [];
+	const step = Math.max(1, Math.round(Math.min(width, height) / 100));
+	for (let x = 0; x < width; x += step) { seeds.push([x, 0]); seeds.push([x, height - 1]); }
+	for (let y = 0; y < height; y += step) { seeds.push([0, y]); seeds.push([width - 1, y]); }
+
+	const bg = floodFillBackground(data, width, height, stride, seeds, tolerance);
+
+	// Build binary mask: white = foreground (kept), black = background (removed).
+	// blackOnWhite tracing expects black shape on white — invert here so the
+	// foreground silhouette is what potrace traces.
+	const mask = Buffer.alloc(stride * height);
+	for (let y = 0; y < height; y++) {
+		for (let x = 0; x < width; x++) {
+			const idx = y * width + x;
+			const v = bg[idx] ? 255 : 0; // background → white, foreground → black
+			const i = y * stride + x * 4;
+			mask[i] = mask[i + 1] = mask[i + 2] = v; mask[i + 3] = 255;
+		}
+	}
+
+	// Anti-alias the mask boundary the same way preprocessForTrace does, then
+	// morphOpen to clean up flood-fill noise at the silhouette edge.
+	const antialiased = await sharp(mask, { raw: { width, height, channels: 4 } })
+		.blur(1.5)
+		.threshold(128)
+		.toFormat('png')
+		.toBuffer();
+
+	const img = await readJimp(antialiased);
+	const morphRadius = Math.max(2, Math.min(5, Math.round(2 * Math.sqrt(scaleRatio))));
+	morphOpen(img, morphRadius);
+
+	return jimpToBuffer(img);
+}
+
 export async function preprocessForTrace(inputBuffer: Buffer, targetLongEdge = TARGET_LONG_EDGE): Promise<Buffer> {
 	const meta     = await sharp(inputBuffer).metadata();
 	const origLong = Math.max(meta.width ?? 1, meta.height ?? 1);

@@ -226,6 +226,29 @@ export type PatternZone =
 	| "quarter-window-right"
 	| "vent-window-left"
 	| "vent-window-right"
+	// ── Residential zones ──────────────────────
+	| "res-front-door-glass"
+	| "res-front-door-sidelight"
+	| "res-picture-window"
+	| "res-living-room-window"
+	| "res-bedroom-window"
+	| "res-bathroom-window"
+	| "res-kitchen-window"
+	| "res-sliding-glass-door"
+	| "res-basement-window"
+	| "res-garage-window"
+	| "res-sunroom-window"
+	| "res-skylight"
+	// ── Commercial zones ───────────────────────
+	| "com-storefront-window"
+	| "com-entry-door-glass"
+	| "com-display-window"
+	| "com-lobby-window"
+	| "com-office-window"
+	| "com-conference-room-window"
+	| "com-curtain-wall"
+	| "com-transom-window"
+	| "com-skylight"
 	| "custom";
 
 export type PatternCoverage = "full" | "partial" | "edge-only";
@@ -503,6 +526,11 @@ export interface UserPattern {
 	isPublished: boolean;       // admin approved — visible in public library
 	status: UserPatternStatus;
 	adminNotes?: string;
+	// Project type — what kind of surface this pattern was measured from
+	projectType?: "vehicle" | "custom" | "residential" | "commercial"; // defaults to "vehicle" when absent
+	patternName?: string;      // "custom" projects: free-text project name
+	address?: string;          // "residential"/"commercial": property address
+	propertyLabel?: string;    // "residential"/"commercial": e.g. "Smith Residence", "Main St Storefront"
 	// Vehicle (embedded — may not exist in public catalog)
 	vehicleId?: string;        // set if linking to existing public vehicle
 	make: string;

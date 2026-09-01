@@ -586,12 +586,15 @@ export async function addUserPattern(
 	data: Omit<UserPattern, "id" | "createdAt" | "updatedAt" | "status" | "isPublished">,
 ): Promise<string> {
 	const ref = doc(collection(db, Collections.USER_PATTERNS));
-	const { vehicleId, notes, adminNotes, ...rest } = data;
+	const { vehicleId, notes, adminNotes, patternName, address, propertyLabel, ...rest } = data;
 	await setDoc(ref, {
 		...rest,
-		...(vehicleId  ? { vehicleId }  : {}),
-		...(notes      ? { notes }      : {}),
-		...(adminNotes ? { adminNotes } : {}),
+		...(vehicleId     ? { vehicleId }     : {}),
+		...(notes         ? { notes }         : {}),
+		...(adminNotes    ? { adminNotes }    : {}),
+		...(patternName   ? { patternName }   : {}),
+		...(address       ? { address }       : {}),
+		...(propertyLabel ? { propertyLabel } : {}),
 		isPublished: false,
 		status: data.submitToCommunity ? "pending" : "private",
 		createdAt: serverTimestamp(),

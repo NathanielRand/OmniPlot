@@ -17,14 +17,304 @@
 	let { value = $bindable(""), id = "svgPath", error = false, showMirror = false, mirrorOrigLabel, mirrorFlipLabel, onMultiExtract, autoExtract = false, onVectorizingChange }: Props = $props();
 
 	// ─── Tab state ────────────────────────────────
-	type Tab = "vectorize" | "paste" | "trace";
-	let tab = $state<Tab>("vectorize");
+	// No default — nothing is selected/run until the user explicitly picks a
+	// method. Picking a method processes the uploaded image for real.
+	type Tab = "vectorize" | "cutout" | "paste" | "trace";
+	let tab = $state<Tab | null>(null);
 
 	// ─── Per-tab state ────────────────────────────
 	let traceErr      = $state("");
 	let tracing       = $state(false);
 	let vectorizeErr  = $state("");
 	let vectorizing   = $state(false);
+	let cutoutErr     = $state("");
+	let pasteErr      = $state("");
+
+	// ─── Manual paste: full SVG code (extracted) vs raw path data (used as-is) ──
+	type PasteMode = "svg" | "path";
+	let pasteMode     = $state<PasteMode>("svg");
+	let pastedSvgText = $state("");
+
+	function extractPastedSvg() {
+		if (!pastedSvgText.trim()) return;
+		pasteErr = "";
+		try {
+			value = processSvgText(pastedSvgText);
+		} catch (err) {
+			pasteErr = err instanceof Error ? err.message : "Could not extract path data.";
+		}
+	}
+
+	// ─── Uploaded source image (input) ─────────────
+	// Persisted across method switches so a change of import type can re-run the
+	// selected pipeline against the same source instead of asking to re-upload.
+	let uploadedFile        = $state<File | null>(null);
+	let uploadedPreviewUrl  = $state("");
+	// True once the user has provided *some* input — either a file or raw path
+	// data — at which point the method picker / contour options are revealed.
+	const hasStarted = $derived(!!uploadedFile || !!value.trim());
+
+	// Cache of the output already produced for each method, keyed by tab —
+	// so switching back to a method that already ran on this input re-shows
+	// its result (and matching contour/layer state) instead of re-running
+	// (and re-billing) the pipeline.
+	interface TabResult {
+		value: string;
+		detectedLayers: { d: string; area: number }[];
+		layerSelection: boolean[];
+	}
+	let resultsByTab = $state<Partial<Record<Tab, TabResult>>>({});
+
+	function setUploadedFile(file: File) {
+		uploadedFile = file;
+		if (uploadedPreviewUrl) URL.revokeObjectURL(uploadedPreviewUrl);
+		uploadedPreviewUrl = URL.createObjectURL(file);
+		resetInputView();
+		// New source image — any cached outputs and errors belong to the old one.
+		resultsByTab = {};
+		value = "";
+		tab = null;
+		vectorizeErr = "";
+		cutoutErr    = "";
+		pasteErr     = "";
+		traceErr     = "";
+	}
+
+	function tabError(t: Tab): string {
+		if (t === "vectorize") return vectorizeErr;
+		if (t === "cutout")    return cutoutErr;
+		if (t === "paste")     return pasteErr;
+		return traceErr;
+	}
+
+	// Runs the pipeline for a given tab against a given file — real processing,
+	// not a cached/faked result — then caches the output so switching back to
+	// this method later doesn't re-run it.
+	async function runForTab(t: Tab, file: File) {
+		if (t === "vectorize") await runVectorize(file);
+		else if (t === "cutout") await runCutout(file);
+		else if (t === "paste") await runPasteExtract(file);
+		else await runTraceImage(file);
+		if (!tabError(t) && value.trim()) {
+			resultsByTab = { ...resultsByTab, [t]: { value, detectedLayers, layerSelection } };
+		}
+	}
+
+	// Single handler for every file input in this component (initial upload,
+	// per-tab dropzones, and the "Replace" control on the Input preview).
+	// Uploading only stores the image — no method runs until the user picks one.
+	function handleFileSelected(e: Event) {
+		const file = (e.target as HTMLInputElement).files?.[0];
+		(e.target as HTMLInputElement).value = "";
+		if (!file) return;
+		setUploadedFile(file);
+	}
+
+	// Switching import type re-uses the already-uploaded input. If this method
+	// already ran on it, its cached output is restored instead of re-running.
+	function switchTab(next: Tab) {
+		tab = next;
+		if (!uploadedFile) return;
+		const cached = resultsByTab[next];
+		if (cached !== undefined) {
+			value           = cached.value;
+			detectedLayers  = cached.detectedLayers;
+			layerSelection  = cached.layerSelection;
+		} else {
+			runForTab(next, uploadedFile);
+		}
+	}
+
+	// ─── Layer filtering (outer/inner contour detection) ─────────────────
+	// Lossless SVG extraction (Vectorize's SVG branch, Path Data upload) can pull
+	// in nested contours from the source file — e.g. a "ribbon" shape whose outer
+	// boundary and inner hole are both traced, producing a visible double line.
+	// By default we auto-keep a single contour (the outer one) per extracted file;
+	// users can flip to "inner" or manage each detected layer individually.
+	let layerAutoKeep    = $state(true);
+	let layerPreference  = $state<"outer" | "inner">("outer");
+	let layerManualMode  = $state(false);
+	let detectedLayers   = $state<{ d: string; area: number }[]>([]);
+	let layerSelection   = $state<boolean[]>([]);
+	let layerManageOpen  = $state(false);
+
+	// Splits an already-normalized (0-100) multi-subpath d string into its
+	// individual M…Z contours, each with its signed shoelace area (sampling
+	// M/L/C endpoints — sufficient to rank contours by size/nesting).
+	function splitLayers(d: string): { d: string; area: number }[] {
+		const segs = d.match(/M[^Mm]*/gi)?.map(s => s.trim()).filter(Boolean) ?? [d];
+		return segs.map(seg => ({ d: seg, area: approxSignedAreaClient(seg) }));
+	}
+
+	function approxSignedAreaClient(subpathD: string): number {
+		const pts: [number, number][] = [];
+		const re = /([MCLZz])([-\d.\s,e]+)?/gi;
+		let m: RegExpExecArray | null;
+		while ((m = re.exec(subpathD)) !== null) {
+			const type = m[1].toUpperCase();
+			const args = m[2] ? m[2].trim().split(/[\s,]+/).filter(Boolean).map(Number) : [];
+			if (type === 'M' && args.length >= 2) pts.push([args[0], args[1]]);
+			else if (type === 'L' && args.length >= 2) pts.push([args[0], args[1]]);
+			else if (type === 'C' && args.length >= 6) pts.push([args[4], args[5]]);
+		}
+		if (pts.length < 3) return 0;
+		let area = 0;
+		for (let i = 0; i < pts.length; i++) {
+			const j = (i + 1) % pts.length;
+			area += pts[i][0] * pts[j][1] - pts[j][0] * pts[i][1];
+		}
+		return area / 2;
+	}
+
+	// Recomputes `value` from the currently-selected layers.
+	function rebuildFromSelection() {
+		const selected = detectedLayers.filter((_, i) => layerSelection[i]);
+		value = (selected.length ? selected : detectedLayers).map(l => l.d).join(' ');
+	}
+
+	// Called whenever a losslessly-extracted SVG (multi-layer capable) is loaded.
+	// Detects contours; if more than one, applies the auto-keep preference unless
+	// the user has already taken manual control of layer selection.
+	function processDetectedLayers(fullD: string): string {
+		const layers = splitLayers(fullD);
+		detectedLayers  = layers;
+		layerManageOpen = false;
+		if (layers.length <= 1) {
+			layerManualMode = false;
+			layerSelection  = layers.map(() => true);
+			return fullD;
+		}
+		if (!layerAutoKeep) {
+			layerManualMode = false;
+			layerSelection  = layers.map(() => true);
+			return fullD;
+		}
+		layerManualMode = false;
+		const ranked = layers.map((l, i) => ({ i, abs: Math.abs(l.area) })).sort((a, b) => b.abs - a.abs);
+		const chosen = layerPreference === "outer" ? ranked[0].i : (ranked[1]?.i ?? ranked[0].i);
+		layerSelection = layers.map((_, i) => i === chosen);
+		return layers[chosen].d;
+	}
+
+	function toggleLayer(i: number) {
+		layerManualMode = true;
+		layerSelection = layerSelection.map((sel, idx) => idx === i ? !sel : sel);
+		rebuildFromSelection();
+	}
+
+	function resetLayersToAuto() {
+		layerManualMode = false;
+		if (detectedLayers.length <= 1 || !layerAutoKeep) {
+			layerSelection = detectedLayers.map(() => true);
+			rebuildFromSelection();
+			return;
+		}
+		const ranked = detectedLayers.map((l, i) => ({ i, abs: Math.abs(l.area) })).sort((a, b) => b.abs - a.abs);
+		const chosen = layerPreference === "outer" ? ranked[0].i : (ranked[1]?.i ?? ranked[0].i);
+		layerSelection = detectedLayers.map((_, i) => i === chosen);
+		rebuildFromSelection();
+	}
+
+	// Ranking (largest → smallest by |area|) of the currently detected layers —
+	// index 0 is treated as the "Outer" contour, everything else as "Inner"
+	// (a simplification when there are more than two nested contours).
+	const layerRankOrder = $derived(
+		detectedLayers
+			.map((l, i) => ({ i, abs: Math.abs(l.area) }))
+			.sort((a, b) => b.abs - a.abs)
+			.map(r => r.i)
+	);
+	function layerBadge(i: number): "Outer" | "Inner" {
+		return layerRankOrder[0] === i ? "Outer" : "Inner";
+	}
+
+	// Quick action from the subpath-count warning banner — jump straight to
+	// "keep the single outer contour" without opening the layer panel.
+	function quickKeepOuter() {
+		const layers = splitLayers(value);
+		if (layers.length <= 1) return;
+		detectedLayers  = layers;
+		const ranked = layers.map((l, i) => ({ i, abs: Math.abs(l.area) })).sort((a, b) => b.abs - a.abs);
+		const chosen = ranked[0].i;
+		layerSelection  = layers.map((_, i) => i === chosen);
+		layerAutoKeep   = true;
+		layerPreference = "outer";
+		layerManualMode = true;
+		value = layers[chosen].d;
+	}
+
+	// ─── Pre-upload contour preference ────────────────────────────────────
+	// Lets the user resolve ahead of time how nested contours should be
+	// handled, instead of only after the fact in the layer panel.
+	type ContourPref = "outer" | "inner" | "all";
+	const contourPref = $derived(!layerAutoKeep ? "all" : layerPreference) as ContourPref;
+	function setContourPref(pref: ContourPref) {
+		// Explicit choice from the picker always wins over any prior manual
+		// layer selection — this is meant to resolve the outcome up front.
+		if (pref === "all") {
+			layerAutoKeep   = false;
+			layerManualMode = false;
+			layerSelection  = detectedLayers.map(() => true);
+			rebuildFromSelection();
+			return;
+		}
+		layerAutoKeep   = true;
+		layerPreference = pref;
+		layerManualMode = false;
+		resetLayersToAuto();
+	}
+
+	// ─── Input (uploaded image) zoom / pan / fullscreen — mirrors the output preview ──
+	let inputFullscreen = $state(false);
+	$effect(() => {
+		if (!inputFullscreen) return;
+		const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") inputFullscreen = false; };
+		window.addEventListener("keydown", onKey);
+		return () => window.removeEventListener("keydown", onKey);
+	});
+
+	let inputZoom      = $state(1);
+	let inputPanX      = $state(0);
+	let inputPanY      = $state(0);
+	let inputIsPanning = $state(false);
+	type InputDragOrigin = { clientX: number; clientY: number; panX: number; panY: number };
+	let inputDragOrigin: InputDragOrigin | null = null;
+
+	function resetInputView() { inputZoom = 1; inputPanX = 0; inputPanY = 0; }
+
+	function inputOnWheel(e: WheelEvent) {
+		e.preventDefault();
+		const factor = e.deltaY < 0 ? 1.18 : 1 / 1.18;
+		inputZoom = Math.min(8, Math.max(1, inputZoom * factor));
+		if (inputZoom === 1) { inputPanX = 0; inputPanY = 0; }
+	}
+	function inputOnPointerDown(e: PointerEvent) {
+		if (e.button !== 0 || inputZoom <= 1) return;
+		(e.currentTarget as Element).setPointerCapture(e.pointerId);
+		inputIsPanning  = true;
+		inputDragOrigin = { clientX: e.clientX, clientY: e.clientY, panX: inputPanX, panY: inputPanY };
+	}
+	function inputOnPointerMove(e: PointerEvent) {
+		if (!inputIsPanning || !inputDragOrigin) return;
+		inputPanX = inputDragOrigin.panX + (e.clientX - inputDragOrigin.clientX);
+		inputPanY = inputDragOrigin.panY + (e.clientY - inputDragOrigin.clientY);
+	}
+	function inputOnPointerUp(e: PointerEvent) {
+		(e.currentTarget as Element).releasePointerCapture(e.pointerId);
+		inputIsPanning  = false;
+		inputDragOrigin = null;
+	}
+	function inputZoomIn()  { inputZoom = Math.min(8, inputZoom * 1.25); }
+	function inputZoomOut() { inputZoom = Math.max(1, inputZoom / 1.25); if (inputZoom === 1) { inputPanX = 0; inputPanY = 0; } }
+
+	// ─── Fullscreen preview (output) ────────────────────────────────────────
+	let previewFullscreen = $state(false);
+	$effect(() => {
+		if (!previewFullscreen) return;
+		const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") previewFullscreen = false; };
+		window.addEventListener("keydown", onKey);
+		return () => window.removeEventListener("keydown", onKey);
+	});
 
 	// ─── Scan animation state ─────────────────────
 	let scanImageUrl     = $state("");
@@ -278,7 +568,7 @@
 			document.body.removeChild(container);
 		}
 
-		return normalizeSvgPath(d, 3, ctm);
+		return processDetectedLayers(normalizeSvgPath(d, 3, ctm));
 	}
 
 	// ─── Vectorize (SVG or any raster image → normalized path) ──
@@ -291,9 +581,7 @@
 	// raster images go to /api/vectorize-multi instead: the server crops each shape
 	// individually, upscales each crop to full resolution, and potraces separately —
 	// giving every shape the same quality as a dedicated single-shape upload.
-	async function handleVectorize(e: Event) {
-		const file = (e.target as HTMLInputElement).files?.[0];
-		if (!file) return;
+	async function runVectorize(file: File) {
 		vectorizeErr = "";
 		vectorizing = true;
 		onVectorizingChange?.(true);
@@ -429,7 +717,60 @@
 				if (isRaster) stopScanAnimation();
 				_abortCtrl = null;
 			}
-			(e.target as HTMLInputElement).value = "";
+		}
+	}
+
+	// ─── Cutout (upscale/sharpen → remove background → trace silhouette) ────
+	// Simpler experimental alternative to Vectorize: instead of a global
+	// black/white threshold, the server flood-fills the background from the
+	// image borders (tolerant of gentle lighting variation) and traces only
+	// what's left — the foreground silhouette. Works best on photos shot
+	// against a fairly uniform backdrop.
+	async function runCutout(file: File) {
+		cutoutErr   = "";
+		vectorizing = true;
+		onVectorizingChange?.(true);
+		startScanAnimation(file, false);
+
+		_abortCtrl = new AbortController();
+		const { signal } = _abortCtrl;
+		try {
+			const fd = new FormData();
+			fd.append("image", file);
+			const res = await fetch("/api/vectorize-cutout", { method: "POST", body: fd, signal });
+			if (!res.ok) {
+				const body = await res.text().catch(() => "");
+				let msg = "";
+				try { msg = (JSON.parse(body) as { message?: string }).message ?? ""; } catch { msg = body; }
+				throw new Error(msg || `Server error ${res.status}`);
+			}
+			const { svg } = await res.json() as { svg: string };
+			value = smoothBezierJunctions(processSvgText(svg));
+		} catch (err) {
+			if (signal.aborted) return;
+			cutoutErr = err instanceof Error ? err.message : "Background removal failed.";
+		} finally {
+			if (vectorizing) {
+				vectorizing = false;
+				onVectorizingChange?.(false);
+				stopScanAnimation();
+				_abortCtrl = null;
+			}
+		}
+	}
+
+	// ─── Path Data: SVG file upload (extracts <path> d= losslessly) ────────
+	async function runPasteExtract(file: File) {
+		pasteErr = "";
+		const isSvg = file.type === "image/svg+xml" || file.name.toLowerCase().endsWith(".svg");
+		if (!isSvg) {
+			pasteErr = "Path Data only accepts SVG files — switch to Vectorize for raster images, or paste path data directly below.";
+			return;
+		}
+		try {
+			value = processSvgText(await file.text());
+		} catch (err) {
+			pasteErr = err instanceof Error ? err.message : "Could not extract path data.";
 		}
 	}
 
@@ -587,9 +928,7 @@
 	}
 
 	// ─── Image trace ─────────────────────────────
-	async function handleImageFile(e: Event) {
-		const file = (e.target as HTMLInputElement).files?.[0];
-		if (!file) return;
+	async function runTraceImage(file: File) {
 		traceErr = "";
 		tracing = true;
 		try {
@@ -598,7 +937,6 @@
 			traceErr = err instanceof Error ? err.message : "Tracing failed.";
 		} finally {
 			tracing = false;
-			(e.target as HTMLInputElement).value = "";
 		}
 	}
 
@@ -628,29 +966,172 @@
 </script>
 
 <div class="spi">
-	<!-- ─── Tab bar ─── -->
-	<div class="spi__tabs" role="tablist">
-		<button type="button" class="spi__tab" class:spi__tab--active={tab === "vectorize"}
-			role="tab" aria-selected={tab === "vectorize"} onclick={() => (tab = "vectorize")}>
-			<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-			Vectorize
-			<span class="spi__badge spi__badge--rec">Recommended</span>
+	{#if !hasStarted}
+		<!-- ─── Stage 1: single generic upload — method choice is revealed after input is given ─── -->
+		<label class="spi__drop spi__drop--initial">
+			<input type="file" accept=".svg,image/svg+xml,image/*" onchange={handleFileSelected} class="spi__file-input"/>
+			<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+			<span class="spi__drop-label">Click to upload a pattern image</span>
+			<span class="spi__drop-sub">SVG, PNG, JPG, WebP, BMP — we'll pick the best import method automatically</span>
+		</label>
+		<div class="spi__or-divider"><span>or paste manually</span></div>
+		<div class="spi__paste-toggle" role="radiogroup" aria-label="Paste input type">
+			<button type="button" class="spi__paste-toggle-btn" class:spi__paste-toggle-btn--active={pasteMode === "svg"}
+				onclick={() => (pasteMode = "svg")}>Full SVG code</button>
+			<button type="button" class="spi__paste-toggle-btn" class:spi__paste-toggle-btn--active={pasteMode === "path"}
+				onclick={() => (pasteMode = "path")}>Raw path data</button>
+		</div>
+		{#if pasteMode === "svg"}
+			<textarea
+				class="spi__textarea"
+				bind:value={pastedSvgText}
+				onblur={extractPastedSvg}
+				rows="6"
+				spellcheck="false"
+				placeholder={"<svg xmlns=\"http://www.w3.org/2000/svg\" ...>\n  <path d=\"M 5,5 L 95,5 95,95 5,95 Z\"/>\n</svg>"}
+			></textarea>
+			{#if pasteErr}<p class="spi__err">{pasteErr}</p>{/if}
+			<span class="spi__paste-hint">Path data will be extracted automatically when you click away.</span>
+		{:else}
+			<textarea
+				{id}
+				class="spi__textarea"
+				class:spi__textarea--error={error && !value.trim()}
+				bind:value
+				rows="6"
+				spellcheck="false"
+				placeholder={"M 5,5 L 95,5 95,95 5,95 Z\nM 50,5 L 95,80 5,80 Z\nM 15,50 C 15,15 85,15 85,50 C 85,85 15,85 15,50 Z"}
+			></textarea>
+			<span class="spi__paste-hint">Used exactly as pasted — must already be in 0–100 normalized space.</span>
+		{/if}
+	{:else}
+	<!-- ─── Method picker (revealed once an input exists) ─── -->
+	<div class="spi__section">
+	<span class="spi__section-title">Import method</span>
+	<div class="spi__methods" role="tablist" aria-label="Pattern import method">
+		<button type="button" class="spi__method" class:spi__method--active={tab === "vectorize"}
+			role="tab" aria-selected={tab === "vectorize"} onclick={() => switchTab("vectorize")}>
+			<span class="spi__method-icon" aria-hidden="true">
+				<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+			</span>
+			<span class="spi__method-body">
+				<span class="spi__method-title">Vectorize <span class="spi__badge spi__badge--rec">Recommended</span></span>
+				<span class="spi__method-sub">Any image — SVG extracted losslessly, raster traced to precise curves</span>
+			</span>
 		</button>
-		<button type="button" class="spi__tab" class:spi__tab--active={tab === "paste"}
-			role="tab" aria-selected={tab === "paste"} onclick={() => (tab = "paste")}>
-			<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.1 2.1 0 013 3L12 15l-4 1 1-4z"/></svg>
-			Paste
+		<button type="button" class="spi__method" class:spi__method--active={tab === "cutout"}
+			role="tab" aria-selected={tab === "cutout"} onclick={() => switchTab("cutout")}>
+			<span class="spi__method-icon" aria-hidden="true">
+				<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 9a3 3 0 100-6 3 3 0 000 6z"/><path d="M6 21a3 3 0 100-6 3 3 0 000 6z"/><path d="M20 4L8.12 15.88"/><path d="M14.47 14.48L20 20"/><path d="M8.12 8.12L12 12"/></svg>
+			</span>
+			<span class="spi__method-body">
+				<span class="spi__method-title">Cutout <span class="spi__badge spi__badge--exp">Experimental</span></span>
+				<span class="spi__method-sub">Photo on a plain background — auto-removed, then the silhouette is traced</span>
+			</span>
 		</button>
-		<button type="button" class="spi__tab" class:spi__tab--active={tab === "trace"}
-			role="tab" aria-selected={tab === "trace"} onclick={() => (tab = "trace")}>
-			<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
-			Trace Image
-			<span class="spi__badge spi__badge--exp">Experimental</span>
+		<button type="button" class="spi__method" class:spi__method--active={tab === "paste"}
+			role="tab" aria-selected={tab === "paste"} onclick={() => switchTab("paste")}>
+			<span class="spi__method-icon" aria-hidden="true">
+				<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.1 2.1 0 013 3L12 15l-4 1 1-4z"/></svg>
+			</span>
+			<span class="spi__method-body">
+				<span class="spi__method-title">Path Data</span>
+				<span class="spi__method-sub">Upload an SVG to extract its path data, or paste it directly</span>
+			</span>
+		</button>
+		<button type="button" class="spi__method" class:spi__method--active={tab === "trace"}
+			role="tab" aria-selected={tab === "trace"} onclick={() => switchTab("trace")}>
+			<span class="spi__method-icon" aria-hidden="true">
+				<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
+			</span>
+			<span class="spi__method-body">
+				<span class="spi__method-title">Trace Image <span class="spi__badge spi__badge--exp">Experimental</span></span>
+				<span class="spi__method-sub">B&W image, traced entirely in-browser</span>
+			</span>
 		</button>
 	</div>
+	</div>
 
-	<!-- ─── Content + preview ─── -->
+	<!-- ─── Contour preference ─── -->
+	<div class="spi__section">
+	<span class="spi__section-title">Multiple contours in a file</span>
+	<div class="spi__contour-pref">
+		<div class="spi__contour-pref-group" role="radiogroup" aria-label="Contour handling">
+			<button type="button" class="spi__contour-pref-btn" class:spi__contour-pref-btn--active={contourPref === "outer"}
+				onclick={() => setContourPref("outer")}>Keep outer only</button>
+			<button type="button" class="spi__contour-pref-btn" class:spi__contour-pref-btn--active={contourPref === "inner"}
+				onclick={() => setContourPref("inner")}>Keep inner only</button>
+			<button type="button" class="spi__contour-pref-btn" class:spi__contour-pref-btn--active={contourPref === "all"}
+				onclick={() => setContourPref("all")}>
+				Keep all layers
+				{#if detectedLayers.length > 1}
+					<span class="spi__contour-pref-badge">{detectedLayers.length}</span>
+				{/if}
+			</button>
+			<button type="button" class="spi__contour-pref-btn" class:spi__contour-pref-btn--active={layerManageOpen}
+				disabled={detectedLayers.length <= 1}
+				onclick={() => (layerManageOpen = !layerManageOpen)}>Manage layers manually</button>
+		</div>
+	</div>
+	</div>
+
+	<!-- ─── Content + preview: Input / Output, side-by-side ─── -->
+	<div class="spi__section">
+	<span class="spi__section-title">Previews</span>
+	<div class="spi__workarea">
 	<div class="spi__body">
+		<span class="spi__io-label">Input</span>
+		{#if uploadedFile}
+			{#if inputFullscreen}
+				<button type="button" class="spi__pview-backdrop" aria-label="Close fullscreen preview" onclick={() => (inputFullscreen = false)}></button>
+			{/if}
+			<div class="spi__pview" class:spi__pview--fullscreen={inputFullscreen}>
+				<button type="button" class="spi__pview-expand-btn" onclick={() => (inputFullscreen = !inputFullscreen)}
+					title={inputFullscreen ? "Exit fullscreen" : "Expand fullscreen"} aria-label={inputFullscreen ? "Exit fullscreen preview" : "Expand fullscreen preview"}>
+					{#if inputFullscreen}
+						<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+					{:else}
+						<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+					{/if}
+				</button>
+				<div class="spi__pview-toolbar">
+					<button type="button" class="spi__pview-btn" onclick={inputZoomOut} title="Zoom out">
+						<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+					</button>
+					<span class="spi__pview-zoom">{Math.round(inputZoom * 100)}%</span>
+					<button type="button" class="spi__pview-btn" onclick={inputZoomIn} title="Zoom in">
+						<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+					</button>
+					<button type="button" class="spi__pview-btn spi__pview-fit" onclick={resetInputView} title="Reset to fit">
+						<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+						Fit
+					</button>
+				</div>
+				<div class="spi__io-imgwrap"
+					role="img"
+					aria-label="Uploaded input preview — scroll to zoom, drag to pan"
+					onwheel={inputOnWheel}
+					onpointerdown={inputOnPointerDown}
+					onpointermove={inputOnPointerMove}
+					onpointerup={inputOnPointerUp}
+					style="cursor: {inputIsPanning ? 'grabbing' : (inputZoom > 1 ? 'grab' : 'default')}"
+				>
+					<img src={uploadedPreviewUrl} alt="Uploaded input" class="spi__io-img"
+						style="transform: translate({inputPanX}px, {inputPanY}px) scale({inputZoom});"/>
+				</div>
+			</div>
+			<label class="spi__io-replace">
+				<input type="file" accept=".svg,image/svg+xml,image/*" onchange={handleFileSelected} class="spi__file-input"/>
+				Replace image
+			</label>
+		{:else}
+			<div class="spi__pview">
+				<div class="spi__pview-empty">
+					<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+					<span>No image uploaded</span>
+				</div>
+			</div>
+		{/if}
 		<div class="spi__input">
 
 			{#if tab === "vectorize"}
@@ -706,12 +1187,14 @@
 						</div>
 					{/if}
 				{:else}
-					<label class="spi__drop">
-						<input type="file" accept=".svg,image/svg+xml,image/*" onchange={handleVectorize} class="spi__file-input"/>
-						<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-						<span class="spi__drop-label">Click to upload a file</span>
-						<span class="spi__drop-sub">SVG — extracted losslessly &nbsp;·&nbsp; PNG, JPG, WebP, BMP — converted to precise bezier curves</span>
-					</label>
+					{#if !uploadedFile}
+						<label class="spi__drop">
+							<input type="file" accept=".svg,image/svg+xml,image/*" onchange={handleFileSelected} class="spi__file-input"/>
+							<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+							<span class="spi__drop-label">Click to upload a file</span>
+							<span class="spi__drop-sub">SVG — extracted losslessly &nbsp;·&nbsp; PNG, JPG, WebP, BMP — converted to precise bezier curves</span>
+						</label>
+					{/if}
 					{#if vectorizeErr}
 						<p class="spi__err">{vectorizeErr}</p>
 					{/if}
@@ -723,18 +1206,77 @@
 					{/if}
 				{/if}
 
-			{:else if tab === "paste"}
-				<textarea
-					{id}
-					class="spi__textarea"
-					class:spi__textarea--error={error && !value.trim()}
-					bind:value
-					rows="6"
-					spellcheck="false"
-					placeholder={"M 5,5 L 95,5 95,95 5,95 Z\nM 50,5 L 95,80 5,80 Z\nM 15,50 C 15,15 85,15 85,50 C 85,85 15,85 15,50 Z"}
-				></textarea>
+			{:else if tab === "cutout"}
+				<!-- Cutout: upscale/sharpen → remove background → trace silhouette -->
+				{#if vectorizing}
+					<div class="spi__tracing">
+						<span class="spi__spinner" aria-hidden="true"></span>
+						<span>Removing background…</span>
+					</div>
+				{:else}
+					{#if !uploadedFile}
+						<label class="spi__drop">
+							<input type="file" accept="image/*" onchange={handleFileSelected} class="spi__file-input"/>
+							<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M6 9a3 3 0 100-6 3 3 0 000 6z"/><path d="M6 21a3 3 0 100-6 3 3 0 000 6z"/><path d="M20 4L8.12 15.88"/><path d="M14.47 14.48L20 20"/><path d="M8.12 8.12L12 12"/></svg>
+							<span class="spi__drop-label">Click to upload a photo</span>
+							<span class="spi__drop-sub">Best with a fairly uniform backdrop — background is auto-removed, then the silhouette is traced</span>
+						</label>
+					{/if}
+					{#if cutoutErr}
+						<p class="spi__err">{cutoutErr}</p>
+					{/if}
+					{#if value && tab === "cutout"}
+						<p class="spi__success">
+							<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+							Background removed and outline traced — check preview.
+						</p>
+					{/if}
+				{/if}
 
-			{:else}
+			{:else if tab === "paste"}
+				{#if !uploadedFile}
+					<label class="spi__upload-row">
+						<input type="file" accept=".svg,image/svg+xml" onchange={handleFileSelected} class="spi__file-input"/>
+						<span class="spi__upload-row-btn">
+							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+							Upload SVG to extract path data
+						</span>
+					</label>
+				{/if}
+				{#if pasteErr}
+					<p class="spi__err">{pasteErr}</p>
+				{/if}
+				<div class="spi__or-divider"><span>or paste manually</span></div>
+				<div class="spi__paste-toggle" role="radiogroup" aria-label="Paste input type">
+					<button type="button" class="spi__paste-toggle-btn" class:spi__paste-toggle-btn--active={pasteMode === "svg"}
+						onclick={() => (pasteMode = "svg")}>Full SVG code</button>
+					<button type="button" class="spi__paste-toggle-btn" class:spi__paste-toggle-btn--active={pasteMode === "path"}
+						onclick={() => (pasteMode = "path")}>Raw path data</button>
+				</div>
+				{#if pasteMode === "svg"}
+					<textarea
+						class="spi__textarea"
+						bind:value={pastedSvgText}
+						onblur={extractPastedSvg}
+						rows="6"
+						spellcheck="false"
+						placeholder={"<svg xmlns=\"http://www.w3.org/2000/svg\" ...>\n  <path d=\"M 5,5 L 95,5 95,95 5,95 Z\"/>\n</svg>"}
+					></textarea>
+					<span class="spi__paste-hint">Path data will be extracted automatically when you click away.</span>
+				{:else}
+					<textarea
+						{id}
+						class="spi__textarea"
+						class:spi__textarea--error={error && !value.trim()}
+						bind:value
+						rows="6"
+						spellcheck="false"
+						placeholder={"M 5,5 L 95,5 95,95 5,95 Z\nM 50,5 L 95,80 5,80 Z\nM 15,50 C 15,15 85,15 85,50 C 85,85 15,85 15,50 Z"}
+					></textarea>
+					<span class="spi__paste-hint">Used exactly as pasted — must already be in 0–100 normalized space.</span>
+				{/if}
+
+			{:else if tab === "trace"}
 				<!-- Trace Image: in-browser B&W tracing -->
 				{#if tracing}
 					<div class="spi__tracing">
@@ -742,12 +1284,14 @@
 						<span>Tracing shape…</span>
 					</div>
 				{:else}
-					<label class="spi__drop">
-						<input type="file" accept="image/png,image/jpeg,image/webp" onchange={handleImageFile} class="spi__file-input"/>
-						<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-						<span class="spi__drop-label">Click to upload a B&W image</span>
-						<span class="spi__drop-sub">PNG, JPG or WebP — shape traced in-browser</span>
-					</label>
+					{#if !uploadedFile}
+						<label class="spi__drop">
+							<input type="file" accept="image/png,image/jpeg,image/webp" onchange={handleFileSelected} class="spi__file-input"/>
+							<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+							<span class="spi__drop-label">Click to upload a B&W image</span>
+							<span class="spi__drop-sub">PNG, JPG or WebP — shape traced in-browser</span>
+						</label>
+					{/if}
 					{#if traceErr}
 						<p class="spi__err">{traceErr}</p>
 					{/if}
@@ -758,6 +1302,11 @@
 						</p>
 					{/if}
 				{/if}
+			{:else}
+				<div class="spi__choose-method">
+					<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+					<span>Choose an import method above to process this image.</span>
+				</div>
 			{/if}
 
 		</div>
@@ -765,7 +1314,22 @@
 	</div>
 
 	<!-- ─── Zoomable preview panel ─── -->
-	<div class="spi__pview">
+	<div class="spi__pview-col">
+	<span class="spi__io-label">Output</span>
+	{#if previewFullscreen}
+		<button type="button" class="spi__pview-backdrop" aria-label="Close fullscreen preview" onclick={() => (previewFullscreen = false)}></button>
+	{/if}
+	<div class="spi__pview" class:spi__pview--fullscreen={previewFullscreen}>
+		{#if previewPath || scanImageUrl}
+			<button type="button" class="spi__pview-expand-btn" onclick={() => (previewFullscreen = !previewFullscreen)}
+				title={previewFullscreen ? "Exit fullscreen" : "Expand fullscreen"} aria-label={previewFullscreen ? "Exit fullscreen preview" : "Expand fullscreen preview"}>
+				{#if previewFullscreen}
+					<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+				{:else}
+					<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+				{/if}
+			</button>
+		{/if}
 		{#if scanImageUrl}
 			<!-- Scan effect: image with a sweeping beam tracking progress -->
 			<div class="spi__scan-view" aria-hidden="true">
@@ -794,9 +1358,16 @@
 							<pattern id="spi-grid-l" width="10" height="10" patternUnits="userSpaceOnUse">
 								<path d="M 10 0 L 0 0 0 10" fill="none" stroke="var(--border-default)" stroke-width="0.3" opacity="0.5"/>
 							</pattern>
+							<filter id="spi-fade-blur-l" x="-50%" y="-50%" width="200%" height="200%">
+								<feGaussianBlur stdDeviation="6"/>
+							</filter>
+							<mask id="spi-fade-mask-l" maskUnits="userSpaceOnUse" x="-9999" y="-9999" width="19998" height="19998">
+								<path d={previewPath} fill="none" stroke="#fff" stroke-width="24" stroke-linejoin="round" stroke-linecap="round" filter="url(#spi-fade-blur-l)"/>
+							</mask>
 						</defs>
 						<rect x="0" y="0" width="100" height="100" fill="url(#spi-grid-l)"/>
-						<path d={previewPath} fill="rgba(0,229,255,0.07)" stroke="var(--color-brand)" stroke-width="1.5" stroke-linecap="round"/>
+						<path d={previewPath} fill="var(--color-brand)" opacity="1" mask="url(#spi-fade-mask-l)"/>
+						<path d={previewPath} fill="none" stroke="var(--color-brand)" stroke-width="1.1" stroke-linecap="round"/>
 					</svg>
 					<span class="spi__mirror-lbl">{mirrorOrigLabel ?? "As uploaded"}</span>
 				</div>
@@ -807,9 +1378,16 @@
 							<pattern id="spi-grid-r" width="10" height="10" patternUnits="userSpaceOnUse">
 								<path d="M 10 0 L 0 0 0 10" fill="none" stroke="var(--border-default)" stroke-width="0.3" opacity="0.5"/>
 							</pattern>
+							<filter id="spi-fade-blur-r" x="-50%" y="-50%" width="200%" height="200%">
+								<feGaussianBlur stdDeviation="6"/>
+							</filter>
+							<mask id="spi-fade-mask-r" maskUnits="userSpaceOnUse" x="-9999" y="-9999" width="19998" height="19998">
+								<path d={previewPath} transform="matrix(-1 0 0 1 100 0)" fill="none" stroke="#fff" stroke-width="24" stroke-linejoin="round" stroke-linecap="round" filter="url(#spi-fade-blur-r)"/>
+							</mask>
 						</defs>
 						<rect x="0" y="0" width="100" height="100" fill="url(#spi-grid-r)"/>
-						<path d={previewPath} transform="matrix(-1 0 0 1 100 0)" fill="rgba(0,229,255,0.07)" stroke="var(--color-brand)" stroke-width="1.5" stroke-linecap="round"/>
+						<path d={previewPath} transform="matrix(-1 0 0 1 100 0)" fill="var(--color-brand)" opacity="1" mask="url(#spi-fade-mask-r)"/>
+						<path d={previewPath} transform="matrix(-1 0 0 1 100 0)" fill="none" stroke="var(--color-brand)" stroke-width="1.1" stroke-linecap="round"/>
 					</svg>
 					<span class="spi__mirror-lbl">{mirrorFlipLabel ?? "Mirrored"}</span>
 				</div>
@@ -844,9 +1422,16 @@
 					<pattern id="spi-grid" width="10" height="10" patternUnits="userSpaceOnUse">
 						<path d="M 10 0 L 0 0 0 10" fill="none" stroke="var(--border-default)" stroke-width="0.3" opacity="0.5"/>
 					</pattern>
+					<filter id="spi-fade-blur" x="-50%" y="-50%" width="200%" height="200%">
+						<feGaussianBlur stdDeviation={6 / zoom}/>
+					</filter>
+					<mask id="spi-fade-mask" maskUnits="userSpaceOnUse" x="-9999" y="-9999" width="19998" height="19998">
+						<path d={previewPath} fill="none" stroke="#fff" stroke-width={24 / zoom} stroke-linejoin="round" stroke-linecap="round" filter="url(#spi-fade-blur)"/>
+					</mask>
 				</defs>
 				<rect x="-9999" y="-9999" width="19998" height="19998" fill="url(#spi-grid)"/>
-				<path d={previewPath} fill="rgba(0,229,255,0.07)" stroke="var(--color-brand)" stroke-width={1.5 / zoom} stroke-linecap="round"/>
+				<path d={previewPath} fill="var(--color-brand)" opacity="1" mask="url(#spi-fade-mask)"/>
+				<path d={previewPath} fill="none" stroke="var(--color-brand)" stroke-width={1.1 / zoom} stroke-linecap="round"/>
 			</svg>
 		{:else}
 			<div class="spi__pview-empty">
@@ -855,22 +1440,44 @@
 			</div>
 		{/if}
 	</div>
+	</div>
+	</div>
+	</div>
 
-	<!-- Coordinate space note — shown for paste and after trace -->
-	<p class="spi__note">
-		Coordinates must be in <strong>0–100 normalized space</strong> — the nesting engine scales to real dimensions using your width/height values. Traced images are auto-normalized.
-	</p>
+	{#if detectedLayers.length > 1 && layerManageOpen}
+		<div class="spi__layers">
+			<ul class="spi__layers-list">
+				{#each detectedLayers as layer, i (i)}
+					<li class="spi__layers-item">
+						<label>
+							<input type="checkbox" checked={layerSelection[i] ?? false} onchange={() => toggleLayer(i)}/>
+							Layer {i + 1}
+							<span class="spi__layers-badge" class:spi__layers-badge--outer={layerBadge(i) === "Outer"}>{layerBadge(i)}</span>
+						</label>
+						<span class="spi__layers-item-area">{Math.abs(layer.area) < 0.01 ? "~0" : Math.abs(layer.area).toFixed(1)} area</span>
+					</li>
+				{/each}
+			</ul>
+			{#if layerManualMode}
+				<button type="button" class="spi__layers-manage-btn" onclick={resetLayersToAuto}>Reset to auto</button>
+			{/if}
+		</div>
+	{/if}
 
 	{#if subpathCount > 1}
 		<div class="spi__subpath-warn">
 			<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" style="flex-shrink:0;margin-top:1px"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
 			<span>This path has <strong>{subpathCount} separate contours</strong>. The cutter will lift the blade between them — verify the shape is intentionally multi-part.</span>
+			<button type="button" class="spi__extract-btn spi__extract-btn--outer" onclick={quickKeepOuter}>
+				Keep outermost layer
+			</button>
 			{#if onMultiExtract}
 				<button type="button" class="spi__extract-btn" onclick={() => onMultiExtract!(extractSubpaths(value))}>
 					Split into {subpathCount} patterns →
 				</button>
 			{/if}
 		</div>
+	{/if}
 	{/if}
 </div>
 
@@ -881,53 +1488,89 @@
 		gap: 6px;
 	}
 
-	/* ─── Tab bar ─── */
-	.spi__tabs {
+	/* ─── Section grouping (method / contour / input-output) ─── */
+	.spi__section {
 		display: flex;
-		gap: 2px;
+		flex-direction: column;
+		gap: 10px;
+	}
+	.spi__section + .spi__section {
+		margin-top: 22px;
+		padding-top: 22px;
+		border-top: 1px solid var(--border-subtle);
+	}
+	.spi__section-title {
+		font-size: 0.9375rem;
+		font-weight: 700;
+		letter-spacing: 0.02em;
+		text-transform: uppercase;
+		color: var(--text-tertiary);
+	}
+
+	/* ─── Method picker (2×2 card grid) ─── */
+	.spi__methods {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 8px;
+	}
+
+	.spi__method {
+		display: flex;
+		align-items: flex-start;
+		gap: 10px;
+		padding: 11px 12px;
 		background: var(--bg-surface-2);
 		border: 1px solid var(--border-default);
 		border-radius: var(--radius-md);
-		padding: 3px;
-		width: fit-content;
+		cursor: pointer;
+		text-align: left;
+		font-family: var(--font-body);
+		transition: background 0.12s, border-color 0.12s;
+	}
+	.spi__method:hover {
+		border-color: color-mix(in srgb, var(--color-brand) 40%, var(--border-default));
+	}
+	.spi__method--active {
+		background: color-mix(in srgb, var(--color-brand) 7%, var(--bg-surface-2));
+		border-color: var(--color-brand);
 	}
 
-	.spi__tab {
+	.spi__method-icon {
 		display: flex;
 		align-items: center;
-		gap: 7px;
-		padding: 8px 16px;
-		font-size: 0.9375rem;
-		font-weight: 500;
-		font-family: var(--font-body);
+		justify-content: center;
+		width: 30px;
+		height: 30px;
+		flex-shrink: 0;
+		border-radius: var(--radius-md);
+		background: var(--bg-surface-3, var(--bg-surface));
+		border: 1px solid var(--border-default);
 		color: var(--text-tertiary);
-		background: transparent;
-		border: none;
-		border-radius: calc(var(--radius-md) - 2px);
-		cursor: pointer;
-		transition: background 0.12s, color 0.12s;
-		white-space: nowrap;
+		transition: color 0.12s, border-color 0.12s;
 	}
-	.spi__tab:hover { color: var(--text-secondary); }
-
-	/* Vertical divider between tabs */
-	.spi__tab + .spi__tab {
-		position: relative;
-	}
-	.spi__tab + .spi__tab::before {
-		content: '';
-		position: absolute;
-		left: -1px;
-		top: 18%;
-		height: 64%;
-		width: 1px;
-		background: var(--border-default);
+	.spi__method--active .spi__method-icon {
+		color: var(--color-brand);
+		border-color: color-mix(in srgb, var(--color-brand) 35%, transparent);
 	}
 
-	.spi__tab--active {
-		background: var(--bg-surface);
+	.spi__method-body {
+		display: flex;
+		flex-direction: column;
+		gap: 3px;
+		min-width: 0;
+	}
+	.spi__method-title {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 0.875rem;
+		font-weight: 600;
 		color: var(--text-primary);
-		box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+	}
+	.spi__method-sub {
+		font-size: 0.75rem;
+		color: var(--text-tertiary);
+		line-height: 1.4;
 	}
 
 	.spi__badge {
@@ -949,9 +1592,226 @@
 		color: #f59e0b;
 	}
 
+	@media (max-width: 480px) {
+		.spi__methods { grid-template-columns: 1fr; }
+	}
+
+	/* ─── Contour preference ─── */
+	.spi__contour-pref {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 12px;
+		padding: 12px 14px;
+		background: var(--bg-surface-2);
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-md);
+	}
+	.spi__contour-pref-group {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 3px;
+		background: var(--bg-surface-3, var(--bg-surface));
+		border: 1px solid var(--border-default);
+		border-radius: 99px;
+		padding: 3px;
+	}
+	.spi__contour-pref-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		padding: 8px 13px;
+		font-size: 0.8125rem;
+		font-weight: 600;
+		font-family: var(--font-body);
+		color: var(--text-tertiary);
+		background: transparent;
+		border: none;
+		border-radius: 99px;
+		cursor: pointer;
+		white-space: nowrap;
+		transition: background 0.12s, color 0.12s;
+	}
+	.spi__contour-pref-btn:hover { color: var(--text-secondary); }
+	.spi__contour-pref-btn--active {
+		background: var(--color-brand);
+		color: #080a0f;
+	}
+	.spi__contour-pref-btn:disabled {
+		opacity: 0.4;
+		cursor: not-allowed;
+	}
+	.spi__contour-pref-badge {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		min-width: 17px;
+		height: 17px;
+		padding: 0 5px;
+		font-size: 0.6875rem;
+		font-weight: 700;
+		border-radius: 99px;
+		background: color-mix(in srgb, currentColor 18%, transparent);
+	}
+	@media (max-width: 640px) {
+		.spi__contour-pref-group { border-radius: var(--radius-md); }
+		.spi__contour-pref-btn { flex: 1 1 calc(50% - 3px); justify-content: center; }
+	}
+	@media (max-width: 480px) {
+		.spi__contour-pref { flex-direction: column; align-items: stretch; }
+		.spi__contour-pref-group { justify-content: space-between; }
+	}
+
+	/* ─── Work area: Input / Output side-by-side (50/50) on desktop,
+	   Output stacked ABOVE Input on mobile ─── */
+	.spi__workarea {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 12px;
+		align-items: start;
+	}
+	@media (max-width: 640px) {
+		.spi__workarea { grid-template-columns: 1fr; }
+		.spi__pview-col { order: -1; }
+	}
+
+	/* ─── Input / Output labeled row ─── */
+	.spi__io-label {
+		display: block;
+		font-size: 0.75rem;
+		font-weight: 700;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		color: var(--text-tertiary);
+		margin-bottom: 6px;
+	}
+	.spi__pview-col {
+		display: flex;
+		flex-direction: column;
+		min-width: 0;
+	}
+	.spi__io-imgwrap {
+		position: absolute;
+		inset: 0;
+		overflow: hidden;
+		touch-action: none;
+	}
+	.spi__io-img {
+		width: 100%;
+		height: 100%;
+		object-fit: contain;
+		display: block;
+		transform-origin: center center;
+		pointer-events: none;
+	}
+	.spi__io-replace {
+		display: inline-flex;
+		align-self: flex-start;
+		align-items: center;
+		gap: 5px;
+		padding: 5px 10px;
+		font-size: 0.75rem;
+		font-weight: 600;
+		color: var(--text-secondary);
+		background: var(--bg-surface-2);
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-md);
+		cursor: pointer;
+		margin-top: 6px;
+		transition: border-color 0.12s, color 0.12s;
+	}
+	.spi__io-replace:hover {
+		border-color: var(--color-brand);
+		color: var(--text-primary);
+	}
+
+	/* ─── Stage 1: initial upload dropzone ─── */
+	.spi__drop--initial {
+		min-height: 160px;
+	}
+
 	/* ─── Body: input only, full width ─── */
 	.spi__body {
 		display: block;
+		min-width: 0;
+	}
+
+	/* ─── Path Data tab: upload row + divider ─── */
+	.spi__upload-row {
+		display: block;
+		cursor: pointer;
+	}
+	.spi__upload-row-btn {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 7px;
+		padding: 10px 14px;
+		border: 1.5px dashed var(--border-default);
+		border-radius: var(--radius-md);
+		font-size: 0.875rem;
+		font-weight: 600;
+		color: var(--text-secondary);
+		transition: border-color 0.12s, background 0.12s, color 0.12s;
+	}
+	.spi__upload-row:hover .spi__upload-row-btn {
+		border-color: var(--color-brand);
+		background: color-mix(in srgb, var(--color-brand) 5%, transparent);
+		color: var(--text-primary);
+	}
+
+	.spi__or-divider {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		margin: 10px 0 6px;
+		font-size: 0.75rem;
+		font-weight: 600;
+		color: var(--text-tertiary);
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+	}
+	.spi__or-divider::before, .spi__or-divider::after {
+		content: '';
+		flex: 1;
+		height: 1px;
+		background: var(--border-default);
+	}
+
+	/* ─── Paste mode toggle: full SVG code vs raw path data ─── */
+	.spi__paste-toggle {
+		display: flex;
+		gap: 4px;
+		margin-bottom: 8px;
+		background: var(--bg-surface-2);
+		border: 1px solid var(--border-default);
+		border-radius: 99px;
+		padding: 3px;
+		width: fit-content;
+	}
+	.spi__paste-toggle-btn {
+		padding: 6px 14px;
+		font-size: 0.8125rem;
+		font-weight: 600;
+		font-family: var(--font-body);
+		color: var(--text-tertiary);
+		background: transparent;
+		border: none;
+		border-radius: 99px;
+		cursor: pointer;
+		white-space: nowrap;
+		transition: background 0.12s, color 0.12s;
+	}
+	.spi__paste-toggle-btn:hover { color: var(--text-secondary); }
+	.spi__paste-toggle-btn--active {
+		background: var(--color-brand);
+		color: #080a0f;
+	}
+	.spi__paste-hint {
+		display: block;
+		margin-top: 6px;
+		font-size: 0.75rem;
+		color: var(--text-tertiary);
 	}
 
 	/* ─── Paste tab ─── */
@@ -1056,10 +1916,52 @@
 	.spi__pview {
 		position: relative;
 		height: 280px;
+		min-width: 0;
 		border: 1px solid var(--border-default);
 		border-radius: var(--radius-md);
 		background: var(--bg-surface-3);
 		overflow: hidden;
+	}
+
+	.spi__pview--fullscreen {
+		position: fixed;
+		inset: 24px;
+		height: auto;
+		z-index: 1001;
+		box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+	}
+
+	.spi__pview-backdrop {
+		position: fixed;
+		inset: 0;
+		z-index: 1000;
+		background: rgba(0,0,0,0.6);
+		border: none;
+		padding: 0;
+		cursor: default;
+	}
+
+	.spi__pview-expand-btn {
+		position: absolute;
+		top: 8px;
+		left: 8px;
+		z-index: 2;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 26px;
+		height: 26px;
+		background: var(--bg-surface-2);
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-md);
+		color: var(--text-secondary);
+		cursor: pointer;
+		box-shadow: 0 1px 4px rgba(0,0,0,0.18);
+		transition: color 0.12s, border-color 0.12s;
+	}
+	.spi__pview-expand-btn:hover {
+		color: var(--color-brand);
+		border-color: color-mix(in srgb, var(--color-brand) 40%, var(--border-default));
 	}
 
 	.spi__pview-toolbar {
@@ -1134,6 +2036,22 @@
 		font-size: 0.875rem;
 	}
 
+	/* ─── No method chosen yet ─── */
+	.spi__choose-method {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 8px;
+		min-height: 130px;
+		padding: 20px 16px;
+		border: 1.5px dashed var(--border-default);
+		border-radius: var(--radius-md);
+		text-align: center;
+		color: var(--text-tertiary);
+		font-size: 0.875rem;
+	}
+
 	/* ─── Mirror pair preview ─── */
 	.spi__mirror-bar {
 		position: absolute;
@@ -1189,6 +2107,64 @@
 		flex-shrink: 0;
 	}
 
+	/* ─── Layer detection panel ─── */
+	.spi__layers {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		font-size: 0.8125rem;
+		color: var(--text-secondary);
+		padding: 10px 12px;
+		background: var(--bg-surface-2);
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-md);
+		margin: 0;
+	}
+	.spi__layers-manage-btn {
+		align-self: flex-start;
+		background: none;
+		border: none;
+		padding: 0;
+		font-size: 0.75rem;
+		font-weight: 600;
+		font-family: var(--font-body);
+		color: var(--color-brand);
+		cursor: pointer;
+	}
+	.spi__layers-manage-btn:hover { text-decoration: underline; }
+
+	.spi__layers-list {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 5px;
+	}
+	.spi__layers-item {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 10px;
+		padding: 5px 8px;
+		background: var(--bg-surface-3, var(--bg-surface));
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-md);
+	}
+	.spi__layers-item label {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		cursor: pointer;
+		font-weight: 500;
+		color: var(--text-primary);
+	}
+	.spi__layers-item-area {
+		font-size: 0.6875rem;
+		color: var(--text-tertiary);
+		font-variant-numeric: tabular-nums;
+	}
+
 	/* ─── Multi-subpath warning ─── */
 	.spi__subpath-warn {
 		display: flex;
@@ -1206,7 +2182,6 @@
 	}
 
 	.spi__extract-btn {
-		margin-left: auto;
 		flex-shrink: 0;
 		background: color-mix(in srgb, var(--color-brand) 14%, transparent);
 		border: 1px solid color-mix(in srgb, var(--color-brand) 35%, transparent);
@@ -1223,17 +2198,34 @@
 	.spi__extract-btn:hover {
 		background: color-mix(in srgb, var(--color-brand) 22%, transparent);
 	}
+	.spi__extract-btn--outer {
+		margin-left: auto;
+		background: var(--bg-surface-3, var(--bg-surface));
+		border-color: var(--border-default);
+		color: var(--text-secondary);
+	}
+	.spi__extract-btn--outer:hover {
+		border-color: color-mix(in srgb, var(--color-brand) 40%, var(--border-default));
+		color: var(--text-primary);
+		background: var(--bg-surface-3, var(--bg-surface));
+	}
 
-	/* ─── Note ─── */
-	.spi__note {
-		font-size: 0.8125rem;
+	.spi__layers-badge {
+		display: inline-block;
+		padding: 1px 6px;
+		font-size: 0.625rem;
+		font-weight: 700;
+		letter-spacing: 0.03em;
+		text-transform: uppercase;
+		border-radius: 99px;
+		background: var(--bg-surface-2);
 		color: var(--text-tertiary);
-		line-height: 1.5;
-		padding: 6px 10px;
-		background: color-mix(in srgb, #f59e0b 8%, var(--bg-surface-2));
-		border: 1px solid color-mix(in srgb, #f59e0b 22%, transparent);
-		border-radius: var(--radius-md);
-		margin: 0;
+		border: 1px solid var(--border-default);
+	}
+	.spi__layers-badge--outer {
+		background: color-mix(in srgb, var(--color-brand) 14%, transparent);
+		border-color: color-mix(in srgb, var(--color-brand) 35%, transparent);
+		color: var(--color-brand);
 	}
 
 	/* ─── Scan animation (preview panel) ─── */
