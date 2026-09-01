@@ -1132,17 +1132,21 @@
 	.chip__remove:hover { background: color-mix(in srgb, var(--color-danger, #f44) 15%, transparent); color: var(--color-danger, #f44); }
 
 	.zone-add-select {
-		background: transparent;
-		border: none;
+		background: color-mix(in srgb, var(--color-brand) 10%, var(--bg-surface-2));
+		border: 1px dashed color-mix(in srgb, var(--color-brand) 35%, transparent);
+		border-radius: 5px;
 		font-size: 0.9375rem;
 		font-family: var(--font-body);
-		color: var(--text-tertiary);
+		font-weight: 600;
+		color: var(--color-brand);
 		cursor: pointer;
-		padding: 4px 6px;
+		padding: 5px 10px;
 		appearance: none;
 		-webkit-appearance: none;
+		transition: background 0.15s, border-color 0.15s;
 	}
-	.zone-add-select:focus { outline: none; color: var(--color-brand); }
+	.zone-add-select:hover { background: color-mix(in srgb, var(--color-brand) 18%, var(--bg-surface-2)); }
+	.zone-add-select:focus { outline: none; border-style: solid; box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-brand) 20%, transparent); }
 
 	/* ─── Form wrap ─── */
 	.form-wrap {
