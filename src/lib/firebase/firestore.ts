@@ -148,11 +148,14 @@ export function toUserProfile(id: string, data: DocumentData): UserProfile {
 export function toVehicle(id: string, data: DocumentData): Vehicle {
 	return {
 		id,
-		make: data.make ?? "",
-		model: data.model ?? "",
-		year: data.year ?? 0,
+		projectType: data.projectType ?? "vehicle",
+		make: data.make,
+		model: data.model,
+		year: data.year,
 		variant: data.variant,
-		bodyStyle: data.bodyStyle ?? "sedan",
+		bodyStyle: data.bodyStyle,
+		address: data.address,
+		propertyLabel: data.propertyLabel,
 		patternCount: data.patternCount ?? 0,
 		thumbnailUrl: data.thumbnailUrl,
 		createdAt: fromTimestamp(data.createdAt),
@@ -166,6 +169,7 @@ export function toPattern(id: string, data: DocumentData): Pattern {
 	return {
 		id,
 		vehicleId: data.vehicleId ?? "",
+		projectType: data.projectType ?? "vehicle",
 		category: data.category ?? "ppf",
 		zone: data.zone,
 		name: data.name ?? "",
@@ -268,9 +272,10 @@ export async function searchVehicles(term: string): Promise<Vehicle[]> {
 	const lower = term.toLowerCase();
 	return all.filter(
 		(v) =>
-			v.make.toLowerCase().includes(lower) ||
-			v.model.toLowerCase().includes(lower) ||
-			String(v.year).includes(lower),
+			(v.make ?? "").toLowerCase().includes(lower) ||
+			(v.model ?? "").toLowerCase().includes(lower) ||
+			String(v.year ?? "").includes(lower) ||
+			(v.propertyLabel ?? "").toLowerCase().includes(lower),
 	);
 }
 
@@ -417,10 +422,13 @@ export async function writeSessionId(uid: string, sessionId: string): Promise<vo
 export function toVehicleEntry(id: string, data: DocumentData): VehicleEntry {
 	return {
 		id,
-		make: data.make ?? "",
-		model: data.model ?? "",
-		year: data.year ?? 0,
-		bodyStyle: data.bodyStyle ?? "sedan",
+		projectType: data.projectType ?? "vehicle",
+		make: data.make,
+		model: data.model,
+		year: data.year,
+		bodyStyle: data.bodyStyle,
+		address: data.address,
+		propertyLabel: data.propertyLabel,
 		tags: data.tags ?? [],
 		popular: data.popular ?? false,
 		status: data.status ?? "draft",
@@ -487,10 +495,13 @@ export async function setVehicleDoc(v: VehicleEntry): Promise<void> {
 	await setDoc(
 		doc(db, Collections.VEHICLES, v.id),
 		{
-			make: v.make,
-			model: v.model,
-			year: v.year,
-			bodyStyle: v.bodyStyle,
+			projectType: v.projectType ?? "vehicle",
+			make: v.make ?? null,
+			model: v.model ?? null,
+			year: v.year ?? null,
+			bodyStyle: v.bodyStyle ?? null,
+			address: v.address ?? null,
+			propertyLabel: v.propertyLabel ?? null,
 			tags: v.tags,
 			popular: v.popular ?? false,
 			status: v.status,
@@ -517,6 +528,7 @@ export async function setPatternDoc(p: Pattern): Promise<void> {
 		doc(db, Collections.PATTERNS, p.id),
 		{
 			vehicleId: p.vehicleId,
+			projectType: p.projectType ?? "vehicle",
 			category: p.category,
 			zone: p.zone,
 			name: p.name,
@@ -737,10 +749,13 @@ export async function batchSeedData(
 		...vehicles.map((v) => ({
 			ref: doc(db, Collections.VEHICLES, v.id),
 			data: {
-				make: v.make,
-				model: v.model,
-				year: v.year,
-				bodyStyle: v.bodyStyle,
+				projectType: v.projectType ?? "vehicle",
+				make: v.make ?? null,
+				model: v.model ?? null,
+				year: v.year ?? null,
+				bodyStyle: v.bodyStyle ?? null,
+				address: v.address ?? null,
+				propertyLabel: v.propertyLabel ?? null,
 				tags: v.tags,
 				popular: v.popular ?? false,
 				status: v.status,
@@ -751,6 +766,7 @@ export async function batchSeedData(
 			ref: doc(db, Collections.PATTERNS, p.id),
 			data: {
 				vehicleId: p.vehicleId,
+				projectType: p.projectType ?? "vehicle",
 				category: p.category,
 				zone: p.zone,
 				name: p.name,

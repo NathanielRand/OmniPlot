@@ -21,6 +21,7 @@
 
 	// ─── State ────────────────────────────────────
 	let tab            = $state<"library" | "mine">("library");
+	let projectType    = $state<"vehicle" | "residential" | "commercial" | "custom">("vehicle");
 	let mode           = $state<"ppf" | "tint">("ppf");
 	let search         = $state("");
 	let activeMake     = $state("All");
@@ -206,7 +207,7 @@
 			patternStore.vehicles
 				.filter((v) => v.status === "published")
 				.filter((v) => patternStore.getPatterns(v.id, mode === "ppf" ? "ppf" : "window-tint", true).length > 0)
-				.map((v) => v.make)
+				.map((v) => v.make ?? "")
 				.sort()
 		)],
 	);
@@ -240,15 +241,26 @@
 	const filtered = $derived(
 		patternStore.vehicles
 			.filter((v) => v.status === "published")
-			.filter((v) => patternStore.getPatterns(v.id, mode === "ppf" ? "ppf" : "window-tint", true).length > 0)
+			.filter((v) => (v.projectType ?? "vehicle") === projectType)
+			.filter((v) => projectType !== "vehicle" || patternStore.getPatterns(v.id, mode === "ppf" ? "ppf" : "window-tint", true).length > 0)
+			.filter((v) => projectType === "vehicle" || patternStore.getPatterns(v.id, undefined, true).length > 0)
 			.filter((v) => {
 				const q = search.toLowerCase();
-				const matchSearch = !q || `${v.year} ${v.make} ${v.model}`.toLowerCase().includes(q);
-				const matchMake   = activeMake === "All" || v.make === activeMake;
-				const matchYear   = activeYear === "All" || String(v.year) === activeYear;
+				const matchSearch = !q || `${v.year ?? ""} ${v.make ?? ""} ${v.model ?? ""} ${v.propertyLabel ?? ""} ${v.address ?? ""}`.toLowerCase().includes(q);
+				const matchMake   = projectType !== "vehicle" || activeMake === "All" || v.make === activeMake;
+				const matchYear   = projectType !== "vehicle" || activeYear === "All" || String(v.year) === activeYear;
 				return matchSearch && matchMake && matchYear;
 			}),
 	);
+
+	function switchProjectType(p: typeof projectType) {
+		projectType = p;
+		selectedVehicle = null;
+		activeMake = "All";
+		activeYear = "All";
+		activeZone = "All zones";
+		search = "";
+	}
 
 	// ─── Vehicle-specific patterns from store ─────
 	const vehiclePatterns = $derived(
@@ -377,6 +389,7 @@
 			/>
 		</div>
 
+		{#if projectType === "vehicle"}
 		<div class="lib-section-label">Make</div>
 		<div class="lib-filter-pills">
 			{#each MAKES as make}
@@ -398,6 +411,7 @@
 					aria-pressed={activeYear === year}>{year}</button>
 			{/each}
 		</div>
+		{/if}
 
 		<div class="lib-section-label">Zone</div>
 		<div class="lib-filter-pills">
@@ -474,6 +488,15 @@
 		</div>
 
 		{#if tab === "library"}
+		<!-- Project type switcher -->
+		<div class="mode-switcher" role="group" aria-label="Project type">
+			<button class="mode-btn" class:active={projectType === "vehicle"} onclick={() => switchProjectType("vehicle")} aria-pressed={projectType === "vehicle"}>Vehicle</button>
+			<button class="mode-btn" class:active={projectType === "residential"} onclick={() => switchProjectType("residential")} aria-pressed={projectType === "residential"}>Residential</button>
+			<button class="mode-btn" class:active={projectType === "commercial"} onclick={() => switchProjectType("commercial")} aria-pressed={projectType === "commercial"}>Commercial</button>
+			<button class="mode-btn" class:active={projectType === "custom"} onclick={() => switchProjectType("custom")} aria-pressed={projectType === "custom"}>Custom</button>
+		</div>
+
+		{#if projectType === "vehicle"}
 		<!-- Mode switcher -->
 		<div class="mode-switcher" role="group" aria-label="Pattern mode">
 			<button
@@ -497,12 +520,15 @@
 				{#if totalTint > 0}<span class="mode-count">{totalTint}</span>{/if}
 			</button>
 		</div>
+		{/if}
 
 		<!-- Header -->
 		<div class="library__header">
 			<div>
 				<h1 class="library__title">
-					{mode === "ppf" ? "PPF Pattern Library" : "Window Tint Library"}
+					{projectType !== "vehicle"
+						? `${projectType[0].toUpperCase()}${projectType.slice(1)} Library`
+						: (mode === "ppf" ? "PPF Pattern Library" : "Window Tint Library")}
 				</h1>
 				<p class="library__sub">
 					{filtered.length} vehicles · {selectedVehicle
@@ -529,23 +555,37 @@
 		{#if !selectedVehicle}
 			<div class="vehicle-grid" class:vehicle-grid--list={view === "list"}>
 				{#each filtered as vehicle (vehicle.id)}
-					{@const storeCount = patternStore.getPatterns(vehicle.id, mode === "ppf" ? "ppf" : "window-tint", true).length}
+					{@const storeCount = patternStore.getPatterns(vehicle.id, projectType === "vehicle" ? (mode === "ppf" ? "ppf" : "window-tint") : undefined, true).length}
 					<button
 						class="vehicle-card"
 						onclick={() => (selectedVehicle = vehicle)}
-						aria-label="Select {vehicle.year} {vehicle.make} {vehicle.model}"
+						aria-label="Select {projectType === 'vehicle' ? `${vehicle.year} ${vehicle.make} ${vehicle.model}` : (vehicle.propertyLabel || vehicle.address || vehicle.model || 'project')}"
 					>
 						<div class="vehicle-card__thumb">
+							{#if projectType === "vehicle"}
 							<svg width="80" height="40" viewBox="0 0 24 14" fill="none" stroke="var(--color-brand)" stroke-width="0.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-								<path d={BODY_STYLE_ICON[vehicle.bodyStyle] ?? BODY_STYLE_ICON.sedan}/>
+								<path d={BODY_STYLE_ICON[vehicle.bodyStyle ?? "sedan"] ?? BODY_STYLE_ICON.sedan}/>
 								<ellipse cx="6.5" cy="14" rx="2" ry="1.5"/>
 								<ellipse cx="17.5" cy="14" rx="2" ry="1.5"/>
 							</svg>
+							{:else}
+							<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--color-brand)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+								{#if projectType === "residential"}<path d="M3 11l9-7 9 7v9a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><path d="M9 22V12h6v10"/>
+								{:else if projectType === "commercial"}<path d="M4 21V7l8-4 8 4v14"/><path d="M9 9h1M14 9h1M9 13h1M14 13h1M9 17h1M14 17h1"/>
+								{:else}<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/>{/if}
+							</svg>
+							{/if}
 						</div>
 						<div class="vehicle-card__body">
+							{#if projectType === "vehicle"}
 							<div class="vehicle-card__year-make">{vehicle.make}</div>
 							<div class="vehicle-card__model">{vehicle.model}</div>
+							{:else}
+							<div class="vehicle-card__year-make">{vehicle.propertyLabel || vehicle.model || "Project"}</div>
+							<div class="vehicle-card__model">{vehicle.address || ""}</div>
+							{/if}
 							<div class="vehicle-card__meta">
+								{#if projectType === "vehicle"}
 								<span
 									class="year-badge"
 									class:year-badge--active={activeYear === String(vehicle.year)}
@@ -557,6 +597,7 @@
 									onclick={(e) => { e.stopPropagation(); activeYear = activeYear === String(vehicle.year) ? "All" : String(vehicle.year); }}
 									onkeydown={(e: KeyboardEvent) => { e.stopPropagation(); if (e.key === "Enter" || e.key === " ") activeYear = activeYear === String(vehicle.year) ? "All" : String(vehicle.year); }}
 								>{vehicle.year}</span>
+								{/if}
 								{#if storeCount > 0}
 									<Badge variant="default" size="sm">
 										{storeCount} {mode === "tint" ? "windows" : "patterns"}

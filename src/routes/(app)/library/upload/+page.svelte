@@ -8,7 +8,7 @@
 	import type { PatternCategory, PatternZone, PatternCoverage } from "$lib/types";
 	import type { VehicleEntry } from "$lib/stores/patternStore.svelte";
 
-	type BodyStyle = VehicleEntry["bodyStyle"];
+	type BodyStyle = NonNullable<VehicleEntry["bodyStyle"]>;
 
 	// ─── Top-level mode: private or community ────
 	let mode = $state<"private" | "community">("private");
@@ -89,15 +89,15 @@
 
 	// ─── Derived ──────────────────────────────────
 	const allMakes = $derived(
-		[...new Set(patternStore.vehicles.map(v => v.make))].sort(),
+		[...new Set(patternStore.vehicles.map(v => v.make ?? ""))].sort(),
 	);
 
 	const makeModels = $derived(
 		vehicle.make.trim()
 			? [...new Set(
 				patternStore.vehicles
-					.filter(v => v.make.toLowerCase() === vehicle.make.trim().toLowerCase())
-					.map(v => v.model),
+					.filter(v => (v.make ?? "").toLowerCase() === vehicle.make.trim().toLowerCase())
+					.map(v => v.model ?? ""),
 			)].sort()
 			: [],
 	);

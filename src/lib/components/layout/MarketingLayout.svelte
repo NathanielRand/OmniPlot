@@ -257,10 +257,17 @@
 			<div class="mkt-footer__links">
 				<div class="mkt-footer__col">
 					<h4 class="mkt-footer__col-title">Product</h4>
-					<a href="/#features" class="mkt-footer__link">Features</a>
+					<a href="/features" class="mkt-footer__link">Features</a>
 					<a href="/pricing" class="mkt-footer__link">Pricing</a>
 					<a href="/changelog" class="mkt-footer__link">Changelog</a>
 					<a href="/faq" class="mkt-footer__link">FAQ</a>
+				</div>
+				<div class="mkt-footer__col">
+					<h4 class="mkt-footer__col-title">Solutions</h4>
+					<a href="/solutions/vehicle" class="mkt-footer__link">Vehicle</a>
+					<a href="/solutions/residential" class="mkt-footer__link">Residential</a>
+					<a href="/solutions/commercial" class="mkt-footer__link">Commercial</a>
+					<a href="/solutions/custom" class="mkt-footer__link">Custom</a>
 				</div>
 				<div class="mkt-footer__col">
 					<h4 class="mkt-footer__col-title">Company</h4>
@@ -513,7 +520,7 @@
 
 	.mkt-footer__links {
 		display: grid;
-		grid-template-columns: repeat(3, 1fr);
+		grid-template-columns: repeat(4, 1fr);
 		gap: 32px;
 	}
 

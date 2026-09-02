@@ -42,15 +42,15 @@
 	let showDeleteConfirm = $state(false);
 
 	const allMakes = $derived(
-		[...new Set(patternStore.vehicles.map(v => v.make))].sort(),
+		[...new Set(patternStore.vehicles.map(v => v.make ?? ""))].sort(),
 	);
 
 	const makeModels = $derived(
 		vehicle.make.trim()
 			? [...new Set(
 				patternStore.vehicles
-					.filter(v => v.make.toLowerCase() === vehicle.make.trim().toLowerCase())
-					.map(v => v.model),
+					.filter(v => (v.make ?? "").toLowerCase() === vehicle.make.trim().toLowerCase())
+					.map(v => v.model ?? ""),
 			)].sort()
 			: [],
 	);

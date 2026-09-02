@@ -160,14 +160,20 @@ export interface ShopInvite {
 	expiresAt: Date;
 }
 
+// ─── Project types (vehicle / residential / commercial / custom) ──
+export type ProjectType = "vehicle" | "residential" | "commercial" | "custom";
+
 // ─── Vehicle & Patterns ───────────────────────
 export interface Vehicle {
 	id: string;
-	make: string;
-	model: string;
-	year: number;
+	// Defaults to "vehicle" when absent — preserves existing vehicle-only data.
+	projectType?: ProjectType;
+	// Vehicle subjects only.
+	make?: string;
+	model?: string;
+	year?: number;
 	variant?: string;
-	bodyStyle:
+	bodyStyle?:
 		| "sedan"
 		| "coupe"
 		| "suv"
@@ -175,6 +181,9 @@ export interface Vehicle {
 		| "convertible"
 		| "wagon"
 		| "hatchback";
+	// Residential/commercial/custom subjects use these instead of make/model/year.
+	address?: string;
+	propertyLabel?: string;
 	patternCount: number;
 	thumbnailUrl?: string;
 	createdAt: Date;
@@ -183,7 +192,14 @@ export interface Vehicle {
 	tags: string[];
 }
 
-export type PatternCategory = "ppf" | "window-tint";
+export type PatternCategory =
+	| "ppf"
+	| "window-tint"
+	| "vinyl"
+	| "htv"
+	| "gasket"
+	| "stencil"
+	| "signage";
 
 export type PatternZone =
 	// ── PPF zones ─────────────────────────────
@@ -256,6 +272,8 @@ export type PatternCoverage = "full" | "partial" | "edge-only";
 export interface Pattern {
 	id: string;
 	vehicleId: string;
+	// Defaults to "vehicle" when absent — preserves existing vehicle-only data.
+	projectType?: ProjectType;
 	category: PatternCategory;
 	zone: PatternZone;
 	name: string;
@@ -468,10 +486,15 @@ export type RequestStatus = "queued" | "in-progress" | "done";
 
 export interface VehicleEntry {
 	id: string;
-	make: string;
-	model: string;
-	year: number;
-	bodyStyle: "sedan" | "coupe" | "suv" | "truck" | "convertible" | "wagon" | "hatchback";
+	// Defaults to "vehicle" when absent — preserves existing vehicle-only data.
+	projectType?: ProjectType;
+	make?: string;
+	model?: string;
+	year?: number;
+	bodyStyle?: "sedan" | "coupe" | "suv" | "truck" | "convertible" | "wagon" | "hatchback";
+	// Residential/commercial/custom subjects use these instead of make/model/year.
+	address?: string;
+	propertyLabel?: string;
 	tags: string[];
 	popular?: boolean;
 	status: PatternStatus;
@@ -527,7 +550,7 @@ export interface UserPattern {
 	status: UserPatternStatus;
 	adminNotes?: string;
 	// Project type — what kind of surface this pattern was measured from
-	projectType?: "vehicle" | "custom" | "residential" | "commercial"; // defaults to "vehicle" when absent
+	projectType?: ProjectType; // defaults to "vehicle" when absent
 	patternName?: string;      // "custom" projects: free-text project name
 	address?: string;          // "residential"/"commercial": property address
 	propertyLabel?: string;    // "residential"/"commercial": e.g. "Smith Residence", "Main St Storefront"

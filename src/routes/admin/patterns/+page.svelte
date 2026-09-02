@@ -90,8 +90,8 @@
 				const subModel = sub.models[0] ?? "";
 				const subYear  = Number(sub.years[0]) || new Date().getFullYear();
 				const existing = patternStore.vehicles.find(
-					(v) => v.make.toLowerCase() === sub.make.toLowerCase() &&
-					       v.model.toLowerCase() === subModel.toLowerCase() &&
+					(v) => (v.make ?? "").toLowerCase() === sub.make.toLowerCase() &&
+					       (v.model ?? "").toLowerCase() === subModel.toLowerCase() &&
 					       v.year === subYear,
 				);
 				vehicleId = existing
@@ -249,21 +249,30 @@
 	// ─── Add Vehicle modal ────────────────────────
 	let showAddModal = $state(false);
 	let newVehicle = $state({
+		projectType: "vehicle" as VehicleEntry["projectType"],
 		year: new Date().getFullYear(), make: "", model: "",
-		bodyStyle: "sedan" as VehicleEntry["bodyStyle"],
+		bodyStyle: "sedan" as NonNullable<VehicleEntry["bodyStyle"]>,
+		address: "", propertyLabel: "",
 		status: "draft" as PatternStatus,
 	});
 
 	function handleAddVehicle() {
-		if (!newVehicle.make.trim() || !newVehicle.model.trim()) return;
+		const isVehicle = newVehicle.projectType === "vehicle";
+		if (isVehicle && (!newVehicle.make.trim() || !newVehicle.model.trim())) return;
+		if (!isVehicle && !newVehicle.propertyLabel.trim() && !newVehicle.model.trim()) return;
 		patternStore.addVehicle({
-			make: newVehicle.make.trim(), model: newVehicle.model.trim(),
-			year: newVehicle.year, bodyStyle: newVehicle.bodyStyle,
+			projectType: newVehicle.projectType,
+			make: isVehicle ? newVehicle.make.trim() : undefined,
+			model: isVehicle ? newVehicle.model.trim() : (newVehicle.model.trim() || undefined),
+			year: isVehicle ? newVehicle.year : undefined,
+			bodyStyle: isVehicle ? newVehicle.bodyStyle : undefined,
+			address: isVehicle ? undefined : newVehicle.address.trim() || undefined,
+			propertyLabel: isVehicle ? undefined : newVehicle.propertyLabel.trim() || undefined,
 			status: newVehicle.status, tags: [],
 			updatedAt: new Date().toISOString().split("T")[0],
 		});
 		showAddModal = false;
-		newVehicle = { year: new Date().getFullYear(), make: "", model: "", bodyStyle: "sedan", status: "draft" };
+		newVehicle = { projectType: "vehicle", year: new Date().getFullYear(), make: "", model: "", bodyStyle: "sedan", address: "", propertyLabel: "", status: "draft" };
 	}
 
 	// ─── Edit Vehicle modal ───────────────────────
@@ -276,7 +285,13 @@
 
 	function openEditVehicle(v: VehicleEntry) {
 		editVehicleTarget = v;
-		editVehicleForm = { year: v.year, make: v.make, model: v.model, bodyStyle: v.bodyStyle, status: v.status };
+		editVehicleForm = {
+			year: v.year ?? new Date().getFullYear(),
+			make: v.make ?? "",
+			model: v.model ?? "",
+			bodyStyle: v.bodyStyle ?? "sedan",
+			status: v.status,
+		};
 	}
 
 	function saveEditVehicle() {
@@ -707,10 +722,20 @@ onMount(() => {
 		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 		<div class="modal" onclick={(e) => e.stopPropagation()}>
 			<div class="modal__header">
-				<h2 class="modal__title">Add Vehicle</h2>
+				<h2 class="modal__title">Add Subject</h2>
 				<button class="modal__close" onclick={() => (showAddModal = false)} aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
 			</div>
 			<form class="modal__body" onsubmit={(e) => { e.preventDefault(); handleAddVehicle(); }}>
+				<div class="form-group">
+					<label class="form-label" for="av-project-type">Project Type</label>
+					<select id="av-project-type" class="form-input" bind:value={newVehicle.projectType}>
+						<option value="vehicle">Vehicle</option>
+						<option value="residential">Residential</option>
+						<option value="commercial">Commercial</option>
+						<option value="custom">Custom</option>
+					</select>
+				</div>
+				{#if newVehicle.projectType === "vehicle"}
 				<div class="form-row">
 					<div class="form-group"><label class="form-label" for="av-year">Year</label><input id="av-year" type="number" class="form-input" bind:value={newVehicle.year} min="1990" max="2030" required /></div>
 					<div class="form-group" style="flex:2"><label class="form-label" for="av-make">Make</label><input id="av-make" type="text" class="form-input" bind:value={newVehicle.make} placeholder="e.g. Toyota" required /></div>
@@ -720,9 +745,17 @@ onMount(() => {
 					<div class="form-group"><label class="form-label" for="av-body">Body Style</label><select id="av-body" class="form-input" bind:value={newVehicle.bodyStyle}>{#each ["sedan","coupe","suv","truck","hatchback","wagon","convertible"] as s}<option value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>{/each}</select></div>
 					<div class="form-group"><label class="form-label" for="av-status">Status</label><select id="av-status" class="form-input" bind:value={newVehicle.status}><option value="draft">Draft</option><option value="review">Review</option><option value="published">Published</option></select></div>
 				</div>
+				{:else}
+				<div class="form-group"><label class="form-label" for="av-label">{newVehicle.projectType === "custom" ? "Project Name" : "Property Label"}</label><input id="av-label" type="text" class="form-input" bind:value={newVehicle.propertyLabel} placeholder={newVehicle.projectType === "custom" ? "e.g. Apparel HTV Kit" : "e.g. Smith Residence"} required /></div>
+				{#if newVehicle.projectType !== "custom"}
+				<div class="form-group"><label class="form-label" for="av-address">Address</label><input id="av-address" type="text" class="form-input" bind:value={newVehicle.address} placeholder="e.g. 123 Main St" /></div>
+				{/if}
+				<div class="form-group"><label class="form-label" for="av-model2">Notes / Model</label><input id="av-model2" type="text" class="form-input" bind:value={newVehicle.model} placeholder="Optional detail" /></div>
+				<div class="form-group"><label class="form-label" for="av-status2">Status</label><select id="av-status2" class="form-input" bind:value={newVehicle.status}><option value="draft">Draft</option><option value="review">Review</option><option value="published">Published</option></select></div>
+				{/if}
 				<div class="modal__actions">
 					<button type="button" class="btn-ghost" onclick={() => (showAddModal = false)}>Cancel</button>
-					<button type="submit" class="btn-primary">Add Vehicle</button>
+					<button type="submit" class="btn-primary">Add Subject</button>
 				</div>
 			</form>
 		</div>

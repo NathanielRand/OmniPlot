@@ -601,14 +601,68 @@ export const APP_NAV = [
 ] as const;
 
 export const MARKETING_NAV = [
-	{ label: "Features",  href: "/#features" },
-	{ label: "Pricing",   href: "/pricing" },
-	{ label: "Insights",  href: "/insights" },
-	{ label: "Agent",     href: "/agent" },
-	{ label: "FAQ",       href: "/faq" },
-	{ label: "Changelog", href: "/changelog" },
-	{ label: "About",     href: "/about" },
-	{ label: "Support",   href: "/support" },
+	{ label: "Features",    href: "/features" },
+	{ label: "Solutions",   href: "/solutions/vehicle" },
+	{ label: "Pricing",     href: "/pricing" },
+	{ label: "Insights",    href: "/insights" },
+	{ label: "Agent",       href: "/agent" },
+	{ label: "FAQ",         href: "/faq" },
+	{ label: "Changelog",   href: "/changelog" },
+	{ label: "About",       href: "/about" },
+	{ label: "Support",     href: "/support" },
+] as const;
+
+export const SOLUTIONS_NAV = [
+	{ label: "Vehicle",     href: "/solutions/vehicle" },
+	{ label: "Residential", href: "/solutions/residential" },
+	{ label: "Commercial",  href: "/solutions/commercial" },
+	{ label: "Custom",      href: "/solutions/custom" },
+] as const;
+
+// ─── Feature list (shared: homepage + /features) ──
+export const FEATURES = [
+	{
+		icon: "M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z",
+		title: "Any plotter, any brand",
+		desc: "Export to universal HPGL (.plt) format. Roland, Graphtec, Mimaki, USCutter, VEVOR — if it cuts, OmniPlot drives it.",
+		detail: "OmniPlot talks directly to your cutter over serial or network, or exports a portable HPGL/SVG/DXF file for any RIP software you already run. No brand lock-in, no proprietary driver installs, no dongles.",
+	},
+	{
+		icon: "M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5",
+		title: "Unlimited patterns",
+		desc: "Professionally measured templates for every major make and model — PPF zones and window tint zones. New vehicles added weekly on request.",
+		detail: "Beyond the vehicle catalog, upload and save your own patterns for residential, commercial, and custom jobs — gaskets, signage, apparel, device skins, and more. Every pattern you save is private to your shop unless you choose to submit it to the public library.",
+	},
+	{
+		icon: "M13 2L3 14h9l-1 8 10-12h-9l1-8z",
+		title: "Auto-nesting optimizer",
+		desc: "Maximize material efficiency automatically. Our skyline bin-packing algorithm places pieces with minimal waste.",
+		detail: "Multiple sort-order trials plus a pairwise swap improvement pass squeeze more parts onto every roll, with real shoelace-formula efficiency reporting — not a rough bounding-box estimate.",
+	},
+	{
+		icon: "M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z",
+		title: "No install. Ever.",
+		desc: "Runs in any browser on desktop, tablet, or your shop iPad. Zero drivers. Zero software. Just open and cut.",
+		detail: "The optional lightweight cutting agent bridges your browser to serial/USB plotters when needed — everything else, from design to nesting to export, runs entirely client-side in the browser you already have open.",
+	},
+	{
+		icon: "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z",
+		title: "Secure & private",
+		desc: "Jobs stored securely in Firebase. Patterns served from Google Cloud CDN. We never share your data.",
+		detail: "Team and shop accounts get role-based access control, so techs see only what they need while owners keep full visibility across jobs, patterns, and plotter fleet.",
+	},
+	{
+		icon: "M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 00-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0020 4.77 5.07 5.07 0 0019.91 1S18.73.65 16 2.48a13.38 13.38 0 00-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 005 4.77a5.44 5.44 0 00-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 009 18.13V22",
+		title: "Open format compatible",
+		desc: "Export to SVG and DXF for use in Inkscape, FlexiSIGN, or AutoCAD. Your data is always yours.",
+		detail: "No proprietary file lock-in. Every pattern and cut job can be exported to a standard format, so your library stays portable even if your toolchain changes.",
+	},
+	{
+		icon: "M22 12h-4l-3 9L9 3l-3 9H2",
+		title: "Plotter diagnostics",
+		desc: "Built-in error classification for serial, network, and agent connections — with step-by-step recovery guidance.",
+		detail: "When a cut fails, OmniPlot classifies the failure (connection drop, buffer overrun, out-of-material, and more) and walks the operator through numbered recovery steps, with auto-escalation to OmniPlot support for hard failures.",
+	},
 ] as const;
 
 export const ADMIN_NAV = [

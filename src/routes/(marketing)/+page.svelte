@@ -2,39 +2,7 @@
 	import Button from "$lib/components/ui/Button.svelte";
 	import Badge from "$lib/components/ui/Badge.svelte";
 	import { uiStore } from "$lib/stores";
-
-	const FEATURES = [
-		{
-			icon: "M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z",
-			title: "Any plotter, any brand",
-			desc: "Export to universal HPGL (.plt) format. Roland, Graphtec, Mimaki, USCutter, VEVOR — if it cuts, OmniPlot drives it.",
-		},
-		{
-			icon: "M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5",
-			title: "Unlimited patterns",
-			desc: "Professionally measured templates for every major make and model — PPF zones and window tint zones. New vehicles added weekly on request.",
-		},
-		{
-			icon: "M13 2L3 14h9l-1 8 10-12h-9l1-8z",
-			title: "Auto-nesting optimizer",
-			desc: "Maximize material efficiency automatically. Our shelf-packing algorithm places pieces with minimal waste.",
-		},
-		{
-			icon: "M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z",
-			title: "No install. Ever.",
-			desc: "Runs in any browser on desktop, tablet, or your shop iPad. Zero drivers. Zero software. Just open and cut.",
-		},
-		{
-			icon: "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z",
-			title: "Secure & private",
-			desc: "Jobs stored securely in Firebase. Patterns served from Google Cloud CDN. We never share your data.",
-		},
-		{
-			icon: "M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 00-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0020 4.77 5.07 5.07 0 0019.91 1S18.73.65 16 2.48a13.38 13.38 0 00-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 005 4.77a5.44 5.44 0 00-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 009 18.13V22",
-			title: "Open source compatible",
-			desc: "Export to SVG and DXF for use in Inkscape, FlexiSIGN, or AutoCAD. Your data is always yours.",
-		},
-	];
+	import { FEATURES } from "$lib/config";
 
 	const LOGOS = [
 		"Roland",
@@ -356,6 +324,9 @@
 					<p class="feature-card__desc">{feat.desc}</p>
 				</div>
 			{/each}
+		</div>
+		<div class="features-cta">
+			<a href="/features" class="features-cta__link">See all features in depth →</a>
 		</div>
 	</div>
 </section>
@@ -710,6 +681,21 @@
 		display: grid;
 		grid-template-columns: repeat(3, 1fr);
 		gap: 16px;
+	}
+
+	.features-cta {
+		text-align: center;
+		margin-top: 32px;
+	}
+
+	.features-cta__link {
+		color: var(--color-brand);
+		font-weight: 600;
+		text-decoration: none;
+	}
+
+	.features-cta__link:hover {
+		text-decoration: underline;
 	}
 
 	.feature-card {

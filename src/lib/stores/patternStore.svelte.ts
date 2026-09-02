@@ -462,6 +462,9 @@ export const patternStore = createPatternStore();
 export function getVehicleName(vehicleId: string): string {
 	const v = INITIAL_VEHICLES.find((e) => e.id === vehicleId);
 	if (!v) return vehicleId;
+	if ((v.projectType ?? "vehicle") !== "vehicle") {
+		return v.propertyLabel || v.model || v.address || vehicleId;
+	}
 	return `${v.year} ${v.make} ${v.model}`;
 }
 
