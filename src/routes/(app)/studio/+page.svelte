@@ -8,6 +8,7 @@
 		userStore,
 		shopStore,
 		agentStore,
+		confirmStore,
 	} from "$lib/stores";
 	import { autoNest, smartNest, findNextPosition, samplePolygonArea, getSvgPathBBox, type PlacementResult } from "$lib/utils/nesting";
 	import {
@@ -122,22 +123,47 @@
 		estimateCutTime(canvasStore.items, plotterStore.config.cuttingSpeed),
 	);
 
-	// ─── Horizontal roll canvas dimensions ─────────
-	// Roll width = fixed HEIGHT of canvas (Y axis = cross-cut dimension).
-	// Roll length used = dynamic WIDTH of canvas (X axis = direction feed).
-	// Canvas crops to actual content extent + buffer — never pads to full roll width.
-	const displaySheetW = $derived.by(() => {
+	// ─── Roll canvas dimensions (in the sheet's own, unrotated frame) ──
+	// Internally the sheet is still laid out with length along X and roll
+	// width along Y — that matches how items are positioned/nested. It gets
+	// visually rotated 90° at render time (see .roll-frame / .material-sheet
+	// below) so the roll's width reads as screen-horizontal, without having
+	// to touch any item coordinate or shape math.
+	const displaySheetLength = $derived.by(() => {
 		const inBounds = canvasStore.items.filter((i) => !i.outOfBounds);
-		if (!inBounds.length) return 12;
+		if (!inBounds.length) return 20;
 		return Math.max(...inBounds.map((i) => i.x + i.width));
 	});
-	const displaySheetH = $derived.by(() => {
+	// Canvas cross-dimension always mirrors the selected roll's physical
+	// width — it's a visual stand-in for the roll, so it must track the roll
+	// size directly rather than being clamped/cropped to content extent.
+	const displaySheetWidth = $derived.by(() => {
 		const rollWidth = canvasStore.sheet.widthInches;
 		const oobStrip = outOfBoundsCount > 0 ? 20 : 0;
+		return rollWidth + oobStrip;
+	});
+
+	// ─── Merged roll label (name, length, width, used) ────
+	// Material names in config bake the width/length into the string itself
+	// (e.g. "Tint Roll 20\" × 100ft"), which duplicated the width/used figures
+	// shown separately elsewhere on the canvas. Strip that suffix here so the
+	// one on-canvas label can show real, current values instead of a mix of
+	// baked-in text and live numbers that can drift apart (e.g. after a custom
+	// roll length is set below).
+	const materialBaseName = $derived.by(() => {
+		const stripped = canvasStore.sheet.name
+			.replace(/\s*\d+(?:\.\d+)?"\s*(?:[×x]\s*\d+(?:\.\d+)?\s*f?t?\.?)?\s*$/i, "")
+			.trim();
+		return stripped || canvasStore.sheet.name;
+	});
+	const rollLengthFt = $derived(canvasStore.sheet.heightInches / 12);
+	// Actual used length, independent of displaySheetLength's cosmetic 20"
+	// fallback (which only exists to keep the empty canvas a visible size) —
+	// with no in-bounds patterns, nothing has actually been used yet.
+	const usedLengthFt = $derived.by(() => {
 		const inBounds = canvasStore.items.filter((i) => !i.outOfBounds);
-		if (!inBounds.length) return Math.min(rollWidth, 12) + oobStrip;
-		const maxY = Math.max(...inBounds.map((i) => i.y + i.height));
-		return Math.min(maxY + 4, rollWidth) + oobStrip;
+		if (!inBounds.length) return 0;
+		return Math.max(...inBounds.map((i) => i.x + i.width)) / 12;
 	});
 
 	// ─── Transposed sheet for nesting ─────────────
@@ -149,6 +175,34 @@
 			widthInches: sheet.heightInches,
 			heightInches: sheet.widthInches,
 		};
+	}
+
+	// ─── Auto-fit zoom on roll-width change (user-toggleable) ─────
+	// On by default. Fits by WIDTH only — not min(width, height) like the
+	// "Fit to view" toolbar action — so the roll's fixed left gutter
+	// (canvas-content's 48px padding) is mirrored exactly on the right,
+	// keeping the whole roll width in view regardless of its length.
+	let autoFitZoomOnRollChange = $state(
+		typeof localStorage !== "undefined"
+			? localStorage.getItem("op-auto-fit-zoom") !== "false"
+			: true,
+	);
+	$effect(() => {
+		if (typeof localStorage !== "undefined") {
+			localStorage.setItem("op-auto-fit-zoom", String(autoFitZoomOnRollChange));
+		}
+	});
+
+	function fitWidthToView() {
+		if (!canvasEl) return;
+		const viewW = canvasEl.clientWidth;
+		const PAD = 96; // 48px canvas-content padding × 2 — the left gutter, mirrored on the right
+		const rollPxW = displaySheetWidth * 48;
+		if (viewW > PAD && rollPxW > 0) {
+			canvasStore.setZoom(Math.max(3, Math.min(100, ((viewW - PAD) / rollPxW) * 100)));
+		}
+		canvasEl.scrollLeft = 0;
+		canvasEl.scrollTop = 0;
 	}
 
 	// ─── Re-nest items on new sheet ───────────────
@@ -170,11 +224,87 @@
 				);
 			}
 		}
-		fitToView();
+		if (autoFitZoomOnRollChange) {
+			fitWidthToView();
+		} else if (canvasEl) {
+			canvasEl.scrollLeft = 0;
+			canvasEl.scrollTop = 0;
+		}
 	}
 
 	// ─── Active panel tab ─────────────────────────
-	let panelTab = $state<"properties" | "patterns" | "plotter">("properties");
+	let panelTab = $state<"properties" | "patterns" | "plotter">("patterns");
+	// Which pattern card's accordion is open in the Patterns tab (move/rotate/flip controls).
+	let expandedItemId = $state<string | null>(null);
+	// Axis currently being scrub-dragged (for the position field's drag cursor/highlight state).
+	let scrubbingAxis = $state<"x" | "y" | null>(null);
+
+	// ─── Position field: click-drag "scrub" like Figma/design-tool number fields ──
+	// Dragging the X/Y tag left/right adjusts that axis live, in real time, without
+	// needing to click into the input, select the text, and retype a number.
+	function scrubPosition(e: PointerEvent, item: CanvasItem, axis: "x" | "y") {
+		if (e.button !== 0) return;
+		e.preventDefault();
+		e.stopPropagation();
+		const handle = e.currentTarget as HTMLElement;
+		const startClientX = e.clientX;
+		const startVal = axis === "x" ? item.x : item.y;
+		let dragged = false;
+		scrubbingAxis = axis;
+		handle.setPointerCapture(e.pointerId);
+
+		function onMove(ev: PointerEvent) {
+			const dx = ev.clientX - startClientX;
+			if (Math.abs(dx) > 2) dragged = true;
+			const sensitivity = ev.shiftKey ? 0.02 : 0.15; // shift = fine adjustment
+			const next = Math.max(0, +(startVal + dx * sensitivity).toFixed(2));
+			canvasStore.updateItem(item.id, axis === "x" ? { x: next } : { y: next });
+		}
+		function onUp(ev: PointerEvent) {
+			handle.releasePointerCapture(e.pointerId);
+			window.removeEventListener("pointermove", onMove);
+			window.removeEventListener("pointerup", onUp);
+			scrubbingAxis = null;
+			// A drag-free click on the tag focuses the adjacent input for direct typing.
+			if (!dragged) {
+				const input = handle.parentElement?.querySelector("input");
+				input?.focus();
+				input?.select();
+			}
+		}
+		window.addEventListener("pointermove", onMove);
+		window.addEventListener("pointerup", onUp);
+	}
+
+	// Arrow-key nudge on the position inputs: ↑/↓ step by 0.1", shift+↑/↓ steps by 1".
+	function nudgePosition(e: KeyboardEvent, item: CanvasItem, axis: "x" | "y") {
+		if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+		e.preventDefault();
+		const step = e.shiftKey ? 1 : 0.1;
+		const dir = e.key === "ArrowUp" ? 1 : -1;
+		const current = axis === "x" ? item.x : item.y;
+		const next = Math.max(0, +(current + dir * step).toFixed(2));
+		canvasStore.updateItem(item.id, axis === "x" ? { x: next } : { y: next });
+	}
+
+	// ─── Settings panel collapse (expanded = 1/3 screen width) ──
+	let panelCollapsed = $state(
+		typeof localStorage !== "undefined"
+			? localStorage.getItem("op-panel-collapsed") === "true"
+			: false,
+	);
+	$effect(() => {
+		if (typeof localStorage !== "undefined") {
+			localStorage.setItem("op-panel-collapsed", String(panelCollapsed));
+		}
+	});
+
+	// Jump to the Plotter tab, expanding the settings panel if it's collapsed —
+	// used by the toolbar plotter badge's Connect/View button.
+	function openPlotterTab() {
+		panelTab = "plotter";
+		panelCollapsed = false;
+	}
 
 	// ─── Canvas interaction ───────────────────────
 	let canvasEl = $state<HTMLDivElement | null>(null);
@@ -192,6 +322,31 @@
 	function onCanvasClick(e: MouseEvent) {
 		if ((e.target as HTMLElement).closest(".cut-item")) return;
 		canvasStore.deselect();
+	}
+
+	// ─── Delete key removes the selected pattern(s) ───
+	function onWindowKeydown(e: KeyboardEvent) {
+		if (e.key !== "Delete" && e.key !== "Backspace") return;
+		const target = e.target as HTMLElement | null;
+		if (target?.closest("input, textarea, select, [contenteditable]")) return;
+		if (canvasStore.selected.length === 0) return;
+		e.preventDefault();
+		canvasStore.removeSelected();
+	}
+
+	// ─── Clear all patterns from the canvas ───────
+	async function handleClearCanvas() {
+		const count = canvasStore.items.length;
+		if (count === 0) return;
+		const ok = await confirmStore.ask({
+			title: "Clear all patterns from the canvas?",
+			message: "This can be undone with Undo.",
+			details: [{ label: "Patterns on sheet", value: String(count) }],
+			confirmLabel: "Clear canvas",
+			variant: "danger",
+		});
+		if (!ok) return;
+		canvasStore.clear();
 	}
 
 	// ─── Actions ──────────────────────────────────
@@ -432,6 +587,90 @@
 	// Max cutting width of the selected plotter in inches
 	const plotterMaxWidthIn = $derived(plotterStore.config.maxMediaWidthMm / 25.4);
 
+	// ─── Plotter tab status badge ─────────────────
+	// missing = no cutter connected or detected; warn = detected but not
+	// connected / near width limit / agent needs update; error = material
+	// exceeds plotter's max width; ok = connected and compatible.
+	const plotterStatusInfo = $derived.by(() => {
+		if (compat === "overflow") return { label: "Error — material too wide", tone: "error" };
+		if (!isConnected) {
+			return liveDevices.length > 0
+				? { label: "Out of sync — detected, not connected", tone: "warn" }
+				: { label: "Missing — no cutter detected", tone: "missing" };
+		}
+		if (compat === "tight" || agentStore.needsUpdate) {
+			return { label: "Warning — check connection", tone: "warn" };
+		}
+		return { label: "Connected", tone: "ok" };
+	});
+
+	// ─── Toolbar plotter status badge ─────────────
+	// Quick-glance card in the main toolbar: name, connection medallion, and
+	// live status. Reacts to every signal that can change it — connect/
+	// disconnect (isConnected/serialPortInfo), the agent going offline
+	// (agentStore.status), a job starting/finishing (cutting/cutProgress),
+	// and material/plotter width compatibility (compat).
+	type ToolbarConnType = "usb-serial" | "cut-agent" | "network" | "download";
+	interface ToolbarPlotterBadge {
+		state: "cutting" | "connected" | "detected" | "scanning" | "none";
+		name: string | null;
+		connType: ToolbarConnType | null;
+		detail: string;
+		tone: "ok" | "warn" | "error" | "missing" | "cutting";
+	}
+	const toolbarPlotterBadge = $derived.by((): ToolbarPlotterBadge => {
+		if (isConnected) {
+			if (cutting) {
+				return {
+					state: "cutting",
+					name: plotterStore.config.name,
+					connType: plotterStore.config.connection as ToolbarConnType,
+					detail: cutProgress ? `Cutting · ${cutProgress.sent}/${cutProgress.total}` : "Cutting…",
+					tone: "cutting",
+				};
+			}
+			if (compat === "overflow") {
+				return {
+					state: "connected",
+					name: plotterStore.config.name,
+					connType: plotterStore.config.connection as ToolbarConnType,
+					detail: "Material too wide for this plotter",
+					tone: "error",
+				};
+			}
+			if (compat === "tight" || agentStore.needsUpdate) {
+				return {
+					state: "connected",
+					name: plotterStore.config.name,
+					connType: plotterStore.config.connection as ToolbarConnType,
+					detail: agentStore.needsUpdate ? "Agent update required" : "Near max cutting width",
+					tone: "warn",
+				};
+			}
+			return {
+				state: "connected",
+				name: plotterStore.config.name,
+				connType: plotterStore.config.connection as ToolbarConnType,
+				detail: "Connected · ready to cut",
+				tone: "ok",
+			};
+		}
+		if (liveDevices.length > 0) {
+			const d = liveDevices.find((x) => x.id === selectedDeviceId) ?? liveDevices[0];
+			return {
+				state: "detected",
+				name: d.preset.name,
+				connType: d.source === "agent" ? "cut-agent" : "usb-serial",
+				detail: liveDevices.length > 1 ? `${liveDevices.length} cutters found — not connected` : "Detected · not connected",
+				tone: "warn",
+			};
+		}
+		if (discoveryPhase === "scanning") {
+			return { state: "scanning", name: null, connType: null, detail: "Scanning for cutters…", tone: "missing" };
+		}
+		return { state: "none", name: null, connType: null, detail: "No plotter detected", tone: "missing" };
+	});
+
 	// ─── Metered feature gates ────────────────────
 	// Re-derives whenever user or shop subscription changes (real-time listener).
 	const cutCheck = $derived(
@@ -446,6 +685,19 @@
 		shopStore.shop?.subscriptionStatus !== "active" &&
 		shopStore.shop?.subscriptionStatus !== "trialing",
 	);
+	// Cut-btn counter: unlimited for pro/admin or an active/trialing shop seat
+	// (free/lite are rate-limited to 1 cut per period, not a pool, so their
+	// "remaining" is just whether cutCheck currently allows one).
+	const cutsRemainingDisplay = $derived.by(() => {
+		if (!userStore.user) return "∞";
+		const unlimited =
+			userStore.user.tier === "pro" ||
+			userStore.user.tier === "admin" ||
+			shopStore.shop?.subscriptionStatus === "active" ||
+			shopStore.shop?.subscriptionStatus === "trialing";
+		if (unlimited) return "∞";
+		return cutCheck.allowed ? "1" : "0";
+	});
 	// Pre-compute export lock states for use in template
 	const pltLocked = $derived(!cutCheck.allowed);
 	const dxfLocked = $derived(isFree);
@@ -1036,23 +1288,39 @@
 		}
 	}
 
-	function handleExport(format: "hpgl" | "svg" | "dxf") {
+	// ─── Export confirmation ───────────────────────
+	// Format the user picked from the dropdown, pending confirmation of how
+	// many patterns will actually be included (out-of-bounds pieces are
+	// silently skipped by the generators, so the count needs to reflect that).
+	let pendingExportFormat = $state<"hpgl" | "svg" | "dxf" | null>(null);
+
+	function requestExport(format: "hpgl" | "svg" | "dxf") {
+		showExport = false;
 		if (!canvasStore.items.length) {
 			toastStore.warning("Nothing to export", "Add patterns first.");
 			return;
 		}
-		// DXF is a Lite+ feature
 		if (format === "dxf" && isFree) {
 			toastStore.info("Lite plan required", "DXF export is available on Lite and above.");
 			uiStore.openPricing();
 			return;
 		}
-		// PLT download counts as a cut — enforce the same cut-rate limit
 		if (format === "hpgl" && !cutCheck.allowed) {
 			toastStore.warning("Cut limit reached", cutCheck.reason ?? "Upgrade to continue.");
 			uiStore.openPricing();
 			return;
 		}
+		pendingExportFormat = format;
+	}
+
+	function confirmExport() {
+		if (pendingExportFormat) handleExport(pendingExportFormat);
+		pendingExportFormat = null;
+	}
+
+	// Preconditions (has items, plan gates) are already checked by requestExport
+	// before pendingExportFormat is set, so this just performs the download.
+	function handleExport(format: "hpgl" | "svg" | "dxf") {
 		const exportSlug = `omniplot-${new Date().toISOString().slice(0, 10)}`;
 		if (format === "hpgl") {
 			downloadHpgl(canvasStore.state, plotterStore.config, exportSlug);
@@ -1140,12 +1408,6 @@
 	});
 	const hasMultipleVehicles = $derived(vehicleGroups.length > 1);
 
-	// ─── Selected item ────────────────────────────
-	const selectedItem = $derived(
-		canvasStore.selected.length === 1
-			? canvasStore.items.find((i) => i.id === canvasStore.selected[0])
-			: null,
-	);
 
 	// ─── Zoom shortcuts ───────────────────────────
 	let showExport = $state(false);
@@ -1177,8 +1439,8 @@
 		const viewW = canvasEl.clientWidth;
 		const viewH = canvasEl.clientHeight;
 		const PAD = 96; // 48px canvas-content padding × 2
-		const rollPxW = displaySheetW * 48;
-		const rollPxH = displaySheetH * 48;
+		const rollPxW = displaySheetWidth * 48;
+		const rollPxH = displaySheetLength * 48;
 		if (viewH > PAD && viewW > PAD && rollPxH > 0 && rollPxW > 0) {
 			const zoomH = ((viewH - PAD) / rollPxH) * 100;
 			const zoomW = ((viewW - PAD) / rollPxW) * 100;
@@ -1306,37 +1568,205 @@
 	<title>Studio — OmniPlot</title>
 </svelte:head>
 
+<svelte:window onkeydown={onWindowKeydown} />
+
+{#snippet connTypeIcon(c: "usb-serial" | "cut-agent" | "network" | "download")}
+	{#if c === "usb-serial"}
+		<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9h9M4 15h9"/><path d="M13 6h4l3 3v6l-3 3h-4"/><circle cx="7" cy="9" r="0.5" fill="currentColor"/><circle cx="7" cy="15" r="0.5" fill="currentColor"/><path d="M9 6V4M9 20v-2"/></svg>
+	{:else if c === "cut-agent"}
+		<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><circle cx="7" cy="7.5" r="1" fill="currentColor" stroke="none"/><circle cx="7" cy="16.5" r="1" fill="currentColor" stroke="none"/><path d="M12 7.5h6M12 16.5h6"/></svg>
+	{:else if c === "network"}
+		<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 8.5a15 15 0 0 1 20 0"/><path d="M5.5 12.5a10 10 0 0 1 13 0"/><path d="M9 16.5a5 5 0 0 1 6 0"/><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/></svg>
+	{:else}
+		<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 19h16"/></svg>
+	{/if}
+{/snippet}
+
 {#snippet patternCard(item: CanvasItem)}
-	<div
-		class="pattern-card"
-		class:active={canvasStore.selected.includes(item.id)}
-		role="button"
-		tabindex="0"
-		aria-pressed={canvasStore.selected.includes(item.id)}
-		onclick={() => canvasStore.select(item.id)}
-		onkeydown={(e) => e.key === "Enter" && canvasStore.select(item.id)}
-	>
-		<div class="pattern-card__thumb" style="border-color: {item.color}20">
-			<svg width="44" height="30" viewBox="0 0 100 90" aria-hidden="true">
-				<path d={item.pattern.svgPath} fill="none" stroke={item.color} stroke-width="2" />
-			</svg>
-		</div>
-		<div class="pattern-card__info">
-			<div class="pattern-card__name">{item.label ?? item.pattern.name}</div>
-			<div class="pattern-card__meta">{item.width.toFixed(1)}" × {item.height.toFixed(1)}"</div>
-		</div>
-		<button
-			class="pattern-card__del"
-			onclick={(e) => { e.stopPropagation(); canvasStore.select(item.id); canvasStore.removeSelected(); }}
-			aria-label="Remove {item.label}"
+	<div class="pattern-card-wrap">
+		<div
+			class="pattern-card"
+			class:active={canvasStore.selected.includes(item.id)}
+			class:expanded={expandedItemId === item.id}
+			role="button"
+			tabindex="0"
+			aria-pressed={canvasStore.selected.includes(item.id)}
+			aria-expanded={expandedItemId === item.id}
+			onclick={() => {
+				canvasStore.select(item.id);
+				expandedItemId = expandedItemId === item.id ? null : item.id;
+			}}
+			onkeydown={(e) => {
+				if (e.key === "Enter" || e.key === " ") {
+					e.preventDefault();
+					canvasStore.select(item.id);
+					expandedItemId = expandedItemId === item.id ? null : item.id;
+				}
+			}}
 		>
-			<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"
-				><path d="M18 6L6 18M6 6l12 12" /></svg>
-		</button>
+			<div class="pattern-card__thumb" style="border-color: {item.color}20">
+				<svg width="44" height="30" viewBox="0 0 100 90" aria-hidden="true">
+					<path d={item.pattern.svgPath} fill="none" stroke={item.color} stroke-width="2" />
+				</svg>
+			</div>
+			<div class="pattern-card__info">
+				<div class="pattern-card__name">{item.label ?? item.pattern.name}</div>
+				<div class="pattern-card__meta">{item.width.toFixed(1)}" × {item.height.toFixed(1)}"</div>
+			</div>
+			<svg
+				class="pattern-card__chevron"
+				class:pattern-card__chevron--open={expandedItemId === item.id}
+				width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+			>
+				<polyline points="6 9 12 15 18 9" />
+			</svg>
+			<button
+				class="pattern-card__del"
+				onclick={(e) => {
+					e.stopPropagation();
+					canvasStore.select(item.id);
+					canvasStore.removeSelected();
+					if (expandedItemId === item.id) expandedItemId = null;
+				}}
+				aria-label="Remove {item.label}"
+			>
+				<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"
+					><path d="M18 6L6 18M6 6l12 12" /></svg>
+			</button>
+		</div>
+
+		{#if expandedItemId === item.id}
+			<div class="pattern-card__panel">
+				<!-- Position: drag the X/Y tag to scrub the value live (like a design-tool
+				     number field), click it to jump into the input and type, or use
+				     ↑/↓ (+ shift for coarse steps) once focused. -->
+				<div class="pattern-card__group">
+					<div class="pattern-card__group-label">
+						<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="5 9 2 12 5 15" /><polyline points="9 5 12 2 15 5" /><polyline points="15 19 12 22 9 19" /><polyline points="19 9 22 12 19 15" /><line x1="2" y1="12" x2="22" y2="12" /><line x1="12" y1="2" x2="12" y2="22" /></svg>
+						Position
+					</div>
+					<div class="pattern-card__field-row">
+						<div class="pattern-card__field">
+							<span
+								class="pattern-card__field-tag"
+								class:scrubbing={scrubbingAxis === "x"}
+								role="slider"
+								tabindex="0"
+								aria-label="X position — drag to adjust, click to type"
+								aria-valuenow={item.x}
+								onpointerdown={(e) => scrubPosition(e, item, "x")}
+							>X</span>
+							<input
+								type="number"
+								class="pattern-card__field-input"
+								value={item.x.toFixed(2)}
+								step="0.1"
+								aria-label="X position"
+								onclick={(e) => e.stopPropagation()}
+								onkeydown={(e) => nudgePosition(e, item, "x")}
+								onchange={(e) =>
+									canvasStore.updateItem(item.id, {
+										x: parseFloat((e.target as HTMLInputElement).value),
+									})}
+							/>
+							<span class="pattern-card__field-unit">in</span>
+						</div>
+						<div class="pattern-card__field">
+							<span
+								class="pattern-card__field-tag"
+								class:scrubbing={scrubbingAxis === "y"}
+								role="slider"
+								tabindex="0"
+								aria-label="Y position — drag to adjust, click to type"
+								aria-valuenow={item.y}
+								onpointerdown={(e) => scrubPosition(e, item, "y")}
+							>Y</span>
+							<input
+								type="number"
+								class="pattern-card__field-input"
+								value={item.y.toFixed(2)}
+								step="0.1"
+								aria-label="Y position"
+								onclick={(e) => e.stopPropagation()}
+								onkeydown={(e) => nudgePosition(e, item, "y")}
+								onchange={(e) =>
+									canvasStore.updateItem(item.id, {
+										y: parseFloat((e.target as HTMLInputElement).value),
+									})}
+							/>
+							<span class="pattern-card__field-unit">in</span>
+						</div>
+					</div>
+				</div>
+
+				<!-- Size: read-only, so it's visually distinct from the editable
+				     position fields above (chips, not inputs — nothing to click into). -->
+				<div class="pattern-card__group">
+					<div class="pattern-card__group-label">
+						<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" /></svg>
+						Size
+					</div>
+					<div class="pattern-card__size-row">
+						<span class="pattern-card__size-chip">{item.width.toFixed(2)}" <em>W</em></span>
+						<span class="pattern-card__size-chip">{item.height.toFixed(2)}" <em>H</em></span>
+					</div>
+				</div>
+
+				<div class="pattern-card__group">
+					<div class="pattern-card__group-label">
+						<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 11-3.5-7.1" /><polyline points="21 3 21 9 15 9" /></svg>
+						Transform
+					</div>
+					<div class="pattern-card__row">
+						<span class="pattern-card__rot-value">{item.rotation}°</span>
+						<button
+							class="pattern-card__ctrl-btn"
+							onclick={(e) => { e.stopPropagation(); canvasStore.updateItem(item.id, { rotation: (item.rotation + 270) % 360 }); }}
+							aria-label="Rotate -90°"
+							title="Rotate -90°"
+						>
+							<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14L4 9l5-5" /><path d="M4 9h10a6 6 0 010 12h-1" /></svg>
+						</button>
+						<button
+							class="pattern-card__ctrl-btn"
+							onclick={(e) => { e.stopPropagation(); canvasStore.updateItem(item.id, { rotation: (item.rotation + 90) % 360 }); }}
+							aria-label="Rotate +90°"
+							title="Rotate +90°"
+						>
+							<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 14l5-5-5-5" /><path d="M20 9H10a6 6 0 000 12h1" /></svg>
+						</button>
+						<button
+							class="pattern-card__ctrl-btn pattern-card__ctrl-btn--wide"
+							class:active={item.flippedH}
+							onclick={(e) => { e.stopPropagation(); canvasStore.updateItem(item.id, { flippedH: !item.flippedH }); }}
+						>Flip H</button>
+						<button
+							class="pattern-card__ctrl-btn pattern-card__ctrl-btn--wide"
+							class:active={item.flippedV}
+							onclick={(e) => { e.stopPropagation(); canvasStore.updateItem(item.id, { flippedV: !item.flippedV }); }}
+						>Flip V</button>
+					</div>
+					<div class="pattern-card__row">
+						<button
+							class="pattern-card__ctrl-btn pattern-card__ctrl-btn--wide"
+							class:active={item.locked}
+							onclick={(e) => { e.stopPropagation(); canvasStore.updateItem(item.id, { locked: !item.locked }); }}
+						>{item.locked ? "Locked" : "Lock position"}</button>
+					</div>
+				</div>
+			</div>
+		{/if}
 	</div>
 {/snippet}
 
 <div class="studio">
+	<!-- Header wrapper: keeps the toolbar + optional banners as ONE grid item,
+	     so .studio__body always lands in the grid's 1fr row regardless of how
+	     many of the conditional banners below are actually rendered (grid
+	     auto-placement fills explicit row tracks in DOM order, so with fewer
+	     items than declared rows, body would otherwise slide into an earlier
+	     "auto" track and leave the real 1fr track empty — a big dead zone). -->
+	<div class="studio__header">
 	<!-- ─── Canvas Toolbar ─── -->
 	<div class="studio__toolbar">
 		<!-- Tool group -->
@@ -1490,7 +1920,7 @@
 		<div class="zoom-control" role="group" aria-label="Zoom">
 			<button
 				class="tool-btn"
-				onclick={() => canvasStore.setZoom(canvasStore.zoom - 10)}
+				onclick={() => canvasStore.setZoom(canvasStore.zoom - 5)}
 				aria-label="Zoom out"
 			>
 				<svg
@@ -1509,7 +1939,7 @@
 			</div>
 			<button
 				class="tool-btn"
-				onclick={() => canvasStore.setZoom(canvasStore.zoom + 10)}
+				onclick={() => canvasStore.setZoom(canvasStore.zoom + 5)}
 				aria-label="Zoom in"
 			>
 				<svg
@@ -1594,6 +2024,59 @@
 			>
 		</button>
 
+		<!-- Clear canvas -->
+		<button
+			class="tool-btn tool-btn--danger"
+			title="Clear all patterns from canvas"
+			onclick={handleClearCanvas}
+			disabled={canvasStore.items.length === 0}
+			aria-label="Clear canvas"
+		>
+			<svg
+				width="14"
+				height="14"
+				viewBox="0 0 24 24"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="2"
+				stroke-linecap="round"
+				stroke-linejoin="round"
+				aria-hidden="true"
+				><polyline points="3 6 5 6 21 6" /><path
+					d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"
+				/></svg
+			>
+		</button>
+
+		<!-- Spacer -->
+		<div style="flex:1" aria-hidden="true"></div>
+
+		<!-- Plotter status badge: quick-glance name, connection type, and live status -->
+		<div
+			class="plotter-badge plotter-badge--{toolbarPlotterBadge.tone}"
+			title="{toolbarPlotterBadge.name ?? 'No plotter'} · {toolbarPlotterBadge.detail}"
+			role="status"
+			aria-live="polite"
+		>
+			<span class="plotter-badge__dot" aria-hidden="true"></span>
+			{#if toolbarPlotterBadge.connType}
+				<span class="plotter-badge__medallion plotter-badge__medallion--{toolbarPlotterBadge.connType}">
+					{@render connTypeIcon(toolbarPlotterBadge.connType)}
+				</span>
+			{/if}
+			<span class="plotter-badge__text">
+				<span class="plotter-badge__name">{toolbarPlotterBadge.name ?? "No plotter"}</span>
+				<span class="plotter-badge__detail">{toolbarPlotterBadge.detail}</span>
+			</span>
+			<button
+				class="plotter-badge__action"
+				onclick={openPlotterTab}
+				title={toolbarPlotterBadge.state === "connected" || toolbarPlotterBadge.state === "cutting" ? "View plotter settings" : "Connect a plotter"}
+			>
+				{toolbarPlotterBadge.state === "connected" || toolbarPlotterBadge.state === "cutting" ? "View" : "Connect"}
+			</button>
+		</div>
+
 		<!-- Spacer -->
 		<div style="flex:1" aria-hidden="true"></div>
 
@@ -1610,11 +2093,10 @@
 		<!-- Community template upload -->
 		<a class="community-btn" href="/library/upload" data-tour="community-upload" title="Upload a cut pattern to the community library" aria-label="Upload a cut pattern to the community library">
 			<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-			<span class="community-btn__label">Upload Pattern</span>
 		</a>
 
 		<!-- Export button -->
-		<button class="export-btn" onclick={() => (showExport = !showExport)}>
+		<button class="export-btn" onclick={() => (showExport = !showExport)} title="Export" aria-label="Export">
 			<svg
 				width="13"
 				height="13"
@@ -1629,7 +2111,6 @@
 					d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"
 				/></svg
 			>
-			Export
 		</button>
 
 		<!-- Manual mode reminder — shown whenever a live connection is active -->
@@ -1689,7 +2170,8 @@
 						d="M20 4L8.12 15.88M14.47 14.48L20 20M8.12 8.12L12 12"
 					/></svg
 				>
-				Send to Plotter
+				Cut
+				<span class="cut-btn__count">{cutsRemainingDisplay}</span>
 			{/if}
 		</button>
 	</div>
@@ -1702,7 +2184,7 @@
 			onclick={() => (showExport = false)}
 		></div>
 		<div class="export-dropdown animate-slide-down">
-			<button class="export-option" class:export-option--locked={pltLocked} onclick={() => handleExport("hpgl")}>
+			<button class="export-option" class:export-option--locked={pltLocked} onclick={() => requestExport("hpgl")}>
 				<div class="export-option__icon">PLT</div>
 				<div class="export-option__body">
 					<div class="export-option__title">
@@ -1712,14 +2194,14 @@
 					<div class="export-option__desc">Universal plotter format. Works with any cutter.</div>
 				</div>
 			</button>
-			<button class="export-option" onclick={() => handleExport("svg")}>
+			<button class="export-option" onclick={() => requestExport("svg")}>
 				<div class="export-option__icon">SVG</div>
 				<div class="export-option__body">
 					<div class="export-option__title">SVG file</div>
 					<div class="export-option__desc">For FlexiSIGN, Inkscape, Illustrator.</div>
 				</div>
 			</button>
-			<button class="export-option" class:export-option--locked={dxfLocked} onclick={() => handleExport("dxf")}>
+			<button class="export-option" class:export-option--locked={dxfLocked} onclick={() => requestExport("dxf")}>
 				<div class="export-option__icon">DXF</div>
 				<div class="export-option__body">
 					<div class="export-option__title">
@@ -1729,6 +2211,26 @@
 					<div class="export-option__desc">For AutoCAD-compatible tools and CNC software.</div>
 				</div>
 			</button>
+		</div>
+	{/if}
+
+	<!-- ─── Export confirmation dialog ─── -->
+	{#if pendingExportFormat}
+		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+		<div class="export-confirm-backdrop" onclick={() => (pendingExportFormat = null)}></div>
+		<div class="export-confirm animate-slide-down" role="alertdialog" aria-modal="true" aria-labelledby="export-confirm-title">
+			<p id="export-confirm-title" class="export-confirm__title">
+				Export {cutCount} {cutCount === 1 ? "pattern" : "patterns"} as .{pendingExportFormat}?
+			</p>
+			{#if outOfBoundsCount > 0}
+				<p class="export-confirm__note">
+					{outOfBoundsCount} {outOfBoundsCount === 1 ? "piece" : "pieces"} outside the material zone won't be included.
+				</p>
+			{/if}
+			<div class="export-confirm__actions">
+				<button class="export-confirm__btn export-confirm__btn--ghost" onclick={() => (pendingExportFormat = null)}>Cancel</button>
+				<button class="export-confirm__btn export-confirm__btn--primary" onclick={confirmExport}>Export</button>
+			</div>
 		</div>
 	{/if}
 
@@ -1781,9 +2283,10 @@
 			</div>
 		</div>
 	{/if}
+	</div>
 
 	<!-- ─── Main area ─── -->
-	<div class="studio__body">
+	<div class="studio__body" class:studio__body--collapsed={panelCollapsed}>
 		<!-- Canvas -->
 		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 		<div
@@ -1804,22 +2307,44 @@
 			<div
 				class="canvas-content"
 			>
-				<!-- Material sheet -->
+				<!-- Roll frame: the visual footprint after the 90° rotation below —
+				     width = roll width (screen-horizontal), height = length used (screen-vertical) -->
 				<div
-					class="material-sheet"
+					class="roll-frame"
 					style="
-            width: {displaySheetW * 48 * canvasStore.zoom / 100}px;
-            height: {displaySheetH * 48 * canvasStore.zoom / 100}px;
+            width: {displaySheetWidth * 48 * canvasStore.zoom / 100}px;
+            height: {displaySheetLength * 48 * canvasStore.zoom / 100}px;
           "
 				>
-					<span class="sheet-label">{canvasStore.sheet.name}</span>
-					<span class="sheet-dim">
-						<span class="sheet-dim__roll">{canvasStore.sheet.widthInches}"<span class="sheet-dim__unit"> roll</span></span>
-						<span class="sheet-dim__sep">·</span>
-						<span class="sheet-dim__used">{displaySheetW.toFixed(1)}"<span class="sheet-dim__unit"> used</span></span>
+					<!-- Single merged label (name, length, width, live used-length) — was
+					     previously split into a name line above the canvas and a
+					     separate width/used line below it, which read as duplicated info. -->
+					<span class="sheet-label">
+						{materialBaseName} ({rollLengthFt}ft) {canvasStore.sheet.widthInches}" Wide - {usedLengthFt.toFixed(1)}/{rollLengthFt} USED
 					</span>
-					<!-- Roll-width boundary line: shows the edge of the cut zone -->
-					{#if canvasStore.sheet.widthInches <= displaySheetH}
+
+					<!-- Ghost roll-direction guide: length runs top-to-bottom on screen
+					     (see the rotation note above the .material-sheet block below), so
+					     this is just context for which way the physical roll feeds/unrolls
+					     while cutting — purely decorative, not part of the sheet itself. -->
+					<div class="print-direction" aria-hidden="true">
+						<span class="print-direction__text">Prints this way</span>
+						<svg class="print-direction__arrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M6 13l6 6 6-6"/></svg>
+					</div>
+
+					<!-- Material sheet: laid out in its own natural frame (length along X,
+					     roll width along Y — matching how items are positioned/nested),
+					     then rotated 90° into the roll-frame above so the roll's width
+					     reads as screen-horizontal without touching any item math. -->
+					<div
+						class="material-sheet"
+						style="
+            width: {displaySheetLength * 48 * canvasStore.zoom / 100}px;
+            height: {displaySheetWidth * 48 * canvasStore.zoom / 100}px;
+          "
+					>
+					<!-- Roll-width boundary line: only needed when the out-of-bounds strip pushes the canvas wider than the roll -->
+					{#if canvasStore.sheet.widthInches < displaySheetWidth}
 						<div
 							class="roll-boundary"
 							style="top: {canvasStore.sheet.widthInches * 48 * canvasStore.zoom / 100}px"
@@ -1938,6 +2463,18 @@
 										style="background: {item.color}"
 									></div>
 								{/each}
+								<button
+									class="cut-item__del"
+									onclick={(e) => {
+										e.stopPropagation();
+										canvasStore.select(item.id);
+										canvasStore.removeSelected();
+									}}
+									title="Delete (Del)"
+									aria-label="Delete {item.label ?? item.pattern.name}"
+								>
+									<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12" /></svg>
+								</button>
 							{/if}
 							{#if item.outOfBounds}
 								<div class="cut-item__oob-badge" aria-label="Won't cut — outside material zone">
@@ -1947,8 +2484,10 @@
 							{/if}
 						</div>
 					{/each}
+					</div>
 
 					{#if canvasStore.items.length === 0}
+						<!-- Kept outside the rotated .material-sheet so this reads normally, not sideways -->
 						<div class="canvas-empty">
 							<div class="canvas-empty__icon" aria-hidden="true">
 								<svg
@@ -1979,9 +2518,27 @@
 		</div>
 
 		<!-- Right panel -->
-		<aside class="studio__panel">
+		<aside class="studio__panel" class:studio__panel--collapsed={panelCollapsed}>
+			<button
+				class="panel-collapse-btn"
+				onclick={() => (panelCollapsed = !panelCollapsed)}
+				title={panelCollapsed ? "Expand settings panel" : "Collapse settings panel"}
+				aria-label={panelCollapsed ? "Expand settings panel" : "Collapse settings panel"}
+				aria-expanded={!panelCollapsed}
+			>
+				<svg class="panel-collapse-btn__gear" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+					<circle cx="12" cy="12" r="3" />
+					<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+				</svg>
+				<svg class="panel-collapse-btn__chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="transform: rotate({panelCollapsed ? 180 : 0}deg); transition: transform 0.18s;">
+					<polyline points="9 18 15 12 9 6" />
+				</svg>
+			</button>
+
+			{#if !panelCollapsed}
+			<div class="panel-content">
 			<div class="panel-tabs" role="tablist" data-tour="panel-tabs">
-				{#each ["properties", "patterns", "plotter"] as const as tab}
+				{#each ["patterns", "plotter", "properties"] as const as tab}
 					<button
 						class="panel-tab"
 						class:active={panelTab === tab}
@@ -1991,86 +2548,26 @@
 						aria-controls="panel-{tab}"
 					>
 						{tab.charAt(0).toUpperCase() + tab.slice(1)}
+						{#if tab === "patterns" && canvasStore.items.length > 0}
+							<span class="panel-tab__badge" title="{canvasStore.items.length} patterns on sheet">{canvasStore.items.length}</span>
+						{:else if tab === "properties" && canvasStore.items.length > 0}
+							<span class="panel-tab__badge panel-tab__badge--eff" title="Nesting efficiency">{Math.round(efficiency * 100)}%</span>
+						{:else if tab === "plotter"}
+							<span
+								class="panel-tab__dot panel-tab__dot--{plotterStatusInfo.tone}"
+								title={plotterStatusInfo.label}
+								aria-label="Plotter status: {plotterStatusInfo.label}"
+							></span>
+						{/if}
 					</button>
 				{/each}
 			</div>
 
 			<div class="panel-body" id="panel-{panelTab}" role="tabpanel">
-				<!-- Properties tab -->
+				<!-- Properties tab (material / roll settings — per-pattern move,
+				     rotate, and flip controls live on each card's accordion
+				     in the Patterns tab now) -->
 				{#if panelTab === "properties"}
-					{#if selectedItem}
-						<div class="prop-section">
-							<div class="prop-label">
-								Selection · {selectedItem.label}
-							</div>
-							<div class="prop-row">
-								<span class="prop-name">X</span>
-								<input
-									type="number"
-									class="prop-input"
-									value={selectedItem.x.toFixed(2)}
-									step="0.1"
-									aria-label="X position"
-									onchange={(e) =>
-										canvasStore.updateItem(
-											selectedItem.id,
-											{
-												x: parseFloat(
-													(
-														e.target as HTMLInputElement
-													).value,
-												),
-											},
-										)}
-								/>
-								<span class="prop-name">Y</span>
-								<input
-									type="number"
-									class="prop-input"
-									value={selectedItem.y.toFixed(2)}
-									step="0.1"
-									aria-label="Y position"
-									onchange={(e) =>
-										canvasStore.updateItem(
-											selectedItem.id,
-											{
-												y: parseFloat(
-													(
-														e.target as HTMLInputElement
-													).value,
-												),
-											},
-										)}
-								/>
-							</div>
-							<div class="prop-row">
-								<span class="prop-name">W</span>
-								<input
-									type="text"
-									class="prop-input"
-									value="{selectedItem.width.toFixed(2)}"
-									readonly
-									aria-label="Width"
-								/>
-								<span class="prop-name">H</span>
-								<input
-									type="text"
-									class="prop-input"
-									value="{selectedItem.height.toFixed(2)}"
-									readonly
-									aria-label="Height"
-								/>
-							</div>
-						</div>
-					{:else}
-						<div class="panel-placeholder">
-							<p>
-								Select a pattern on the canvas to edit its
-								properties.
-							</p>
-						</div>
-					{/if}
-
 					<div class="prop-section">
 						<div class="prop-label">Material</div>
 						<select
@@ -2118,6 +2615,30 @@
 								>{w}"</button
 								>
 							{/each}
+						<label class="auto-fit-toggle">
+							<input type="checkbox" bind:checked={autoFitZoomOnRollChange} />
+							Auto-fit zoom on roll change
+						</label>
+						</div>
+					</div>
+
+					<div class="prop-section">
+						<div class="prop-label">Roll Length</div>
+						<div class="roll-length-row">
+							<input
+								type="number"
+								class="prop-input"
+								min="1"
+								step="1"
+								value={rollLengthFt}
+								aria-label="Roll length in feet"
+								onchange={(e) => {
+									const ft = parseFloat((e.target as HTMLInputElement).value);
+									if (!Number.isFinite(ft) || ft <= 0) return;
+									renestOnSheet({ ...canvasStore.sheet, heightInches: ft * 12 });
+								}}
+							/>
+							<span class="roll-length-unit">ft</span>
 						</div>
 					</div>
 
@@ -2688,11 +3209,20 @@
 
 				{/if}
 			</div>
+			</div>
+			{/if}
 		</aside>
 	</div>
 
 	<!-- ─── Status bar ─── -->
-	<div class="studio__statusbar" role="status" aria-label="Job metrics" data-tour="statusbar">
+	<!-- left offset tracks the app sidebar's current width (200px open / 52px collapsed) so this stays flush with the main content area, not just the canvas column -->
+	<div
+		class="studio__statusbar"
+		style="left: {uiStore.sidebarOpen ? 200 : 52}px"
+		role="status"
+		aria-label="Job metrics"
+		data-tour="statusbar"
+	>
 		<div class="status-metric">
 			<span class="status-metric__label">Material Usage</span>
 			<span class="status-metric__value-row">
@@ -2706,7 +3236,7 @@
 				{/if}
 			</span>
 		</div>
-		{#each [["Cut Paths", `${cutCount}`, ""], ["Est. Cut Time", formatCutTime(cutTimeSecs), ""], ["Roll", `${canvasStore.sheet.widthInches}" × ${displaySheetW.toFixed(0)}"`, ""], ["Excluded", `${outOfBoundsCount}`, outOfBoundsCount > 0 ? "warn" : ""], ["Cursor", `${cursorX.toFixed(1)}" , ${cursorY.toFixed(1)}"`, ""]] as [label, value, cls]}
+		{#each [["Cut Paths", `${cutCount}`, ""], ["Est. Cut Time", formatCutTime(cutTimeSecs), ""], ["Roll", `${canvasStore.sheet.widthInches}" × ${displaySheetLength.toFixed(0)}"`, ""], ["Excluded", `${outOfBoundsCount}`, outOfBoundsCount > 0 ? "warn" : ""], ["Cursor", `${cursorX.toFixed(1)}" , ${cursorY.toFixed(1)}"`, ""]] as [label, value, cls]}
 			<div class="status-metric">
 				<span class="status-metric__label">{label}</span>
 				<span
@@ -2736,9 +3266,21 @@
 
 <style>
 	.studio {
+		--statusbar-h: 44px;
 		display: grid;
-		grid-template-rows: auto auto auto auto 1fr auto;
-		height: 100%;
+		/* Status bar is fixed to the viewport (see .studio__statusbar) and no
+		   longer takes a row here — its height (--statusbar-h) is reserved via
+		   padding-bottom on the canvas/panel scroll areas instead, so it never
+		   overlaps their content. */
+		grid-template-rows: auto 1fr;
+		/* Anchored directly to the viewport (minus the 52px app topbar) rather
+		   than height:100% up through the app-shell/app-main ancestor chain —
+		   on tall/vertical monitors that percentage chain was falling short of
+		   the true viewport, leaving dead space between this grid's 1fr row
+		   and the .studio__statusbar footer, which IS viewport-fixed. Anchoring
+		   both to the same reference (the viewport) guarantees they meet. */
+		height: calc(100vh - 52px);
+		height: calc(100dvh - 52px);
 		overflow: hidden;
 		position: relative;
 	}
@@ -2820,7 +3362,11 @@
 		padding: 6px 12px;
 		background: var(--bg-surface);
 		border-bottom: 1px solid var(--border-subtle);
-		flex-wrap: wrap;
+		/* Never drop to a second row (that's what was pushing "Send to Plotter"
+		   down) — scroll horizontally instead if everything doesn't fit. */
+		flex-wrap: nowrap;
+		overflow-x: auto;
+		overflow-y: hidden;
 		position: relative;
 		z-index: 10;
 	}
@@ -2862,6 +3408,11 @@
 	.tool-btn:disabled {
 		opacity: 0.35;
 		cursor: not-allowed;
+	}
+
+	.tool-btn--danger:hover:not(:disabled) {
+		background: var(--color-danger);
+		color: #fff;
 	}
 
 	/* AI Nest mode toggle — star icon, active = ON state with brand fill */
@@ -2971,7 +3522,8 @@
 		display: flex;
 		align-items: center;
 		gap: 5px;
-		padding: 5px 11px;
+		height: 34px;
+		padding: 0 12px;
 		font-size: 0.8125rem;
 		font-weight: 600;
 		border-radius: var(--radius-md);
@@ -3046,7 +3598,8 @@
 		display: flex;
 		align-items: center;
 		gap: 5px;
-		padding: 5px 12px;
+		height: 34px;
+		padding: 0 12px;
 		font-size: 0.8125rem;
 		font-weight: 500;
 		font-family: var(--font-body);
@@ -3056,6 +3609,7 @@
 		color: var(--text-primary);
 		cursor: pointer;
 		transition: background 0.12s;
+		flex-shrink: 0;
 	}
 
 	.export-btn:hover {
@@ -3092,6 +3646,128 @@
 		display: none;
 	}
 
+	/* ─── Toolbar plotter status badge ────── */
+	.plotter-badge {
+		display: flex;
+		align-items: center;
+		gap: 7px;
+		height: 34px;
+		padding: 0 7px 0 11px;
+		border-radius: var(--radius-md);
+		border: 1px solid var(--border-default);
+		background: var(--bg-surface-2);
+		max-width: 280px;
+		flex-shrink: 1;
+		min-width: 0;
+	}
+
+	.plotter-badge__dot {
+		width: 7px;
+		height: 7px;
+		border-radius: 50%;
+		flex-shrink: 0;
+	}
+	.plotter-badge--ok .plotter-badge__dot {
+		background: var(--color-success);
+	}
+	.plotter-badge--warn .plotter-badge__dot {
+		background: var(--color-warning);
+	}
+	.plotter-badge--error .plotter-badge__dot {
+		background: var(--color-danger);
+		box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-danger) 25%, transparent);
+	}
+	.plotter-badge--missing .plotter-badge__dot {
+		background: var(--text-tertiary);
+	}
+	.plotter-badge--cutting .plotter-badge__dot {
+		background: var(--color-brand);
+		animation: plotter-badge-pulse 1.1s ease-in-out infinite;
+	}
+	@keyframes plotter-badge-pulse {
+		0%, 100% { opacity: 1; transform: scale(1); }
+		50% { opacity: 0.4; transform: scale(0.7); }
+	}
+
+	/* Small version of the connection-type medallions from the connected-plotters page */
+	.plotter-badge__medallion {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 18px;
+		height: 18px;
+		border-radius: 5px;
+		flex-shrink: 0;
+	}
+	.plotter-badge__medallion--usb-serial {
+		background: rgba(96, 165, 250, 0.14);
+		color: #60a5fa;
+	}
+	.plotter-badge__medallion--cut-agent {
+		background: rgba(52, 211, 153, 0.14);
+		color: #34d399;
+	}
+	.plotter-badge__medallion--network {
+		background: rgba(251, 191, 36, 0.14);
+		color: #fbbf24;
+	}
+	.plotter-badge__medallion--download {
+		background: rgba(148, 163, 184, 0.14);
+		color: #94a3b8;
+	}
+
+	.plotter-badge__text {
+		display: flex;
+		flex-direction: column;
+		min-width: 0;
+		line-height: 1.25;
+	}
+	.plotter-badge__name {
+		font-size: 0.75rem;
+		font-weight: 600;
+		color: var(--text-primary);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		max-width: 150px;
+	}
+	.plotter-badge__detail {
+		font-size: 0.625rem;
+		color: var(--text-tertiary);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		max-width: 150px;
+	}
+	.plotter-badge--cutting .plotter-badge__detail {
+		color: var(--color-brand);
+		font-weight: 600;
+	}
+	.plotter-badge--error .plotter-badge__detail {
+		color: var(--color-danger);
+	}
+
+	.plotter-badge__action {
+		flex-shrink: 0;
+		margin-left: 2px;
+		padding: 4px 9px;
+		font-size: 0.6875rem;
+		font-weight: 600;
+		font-family: var(--font-body);
+		border-radius: 999px;
+		border: 1px solid var(--border-default);
+		background: var(--bg-surface-3);
+		color: var(--text-secondary);
+		cursor: pointer;
+		white-space: nowrap;
+		transition: background 0.12s, color 0.12s, border-color 0.12s;
+	}
+	.plotter-badge__action:hover {
+		background: var(--color-brand);
+		color: var(--bg-surface);
+		border-color: var(--color-brand);
+	}
+
 	.offline-tip {
 		display: flex;
 		align-items: center;
@@ -3110,7 +3786,8 @@
 		display: flex;
 		align-items: center;
 		gap: 6px;
-		padding: 6px 16px;
+		height: 34px;
+		padding: 0 16px;
 		font-size: 0.8125rem;
 		font-weight: 600;
 		font-family: var(--font-body);
@@ -3123,6 +3800,7 @@
 			opacity 0.15s,
 			transform 0.1s;
 		white-space: nowrap;
+		flex-shrink: 0;
 	}
 
 	.cut-btn:hover {
@@ -3139,6 +3817,83 @@
 		color: var(--text-secondary);
 	}
 	.cut-btn--locked:hover { opacity: 0.55; }
+
+	.cut-btn__count {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		min-width: 18px;
+		height: 18px;
+		padding: 0 5px;
+		border-radius: 999px;
+		background: rgba(0, 0, 0, 0.18);
+		font-size: 0.6875rem;
+		font-weight: 700;
+		font-family: var(--font-mono);
+	}
+
+	/* Export confirmation dialog */
+	.export-confirm-backdrop {
+		position: fixed;
+		inset: 0;
+		z-index: 39;
+		background: rgba(0, 0, 0, 0.4);
+	}
+	.export-confirm {
+		position: fixed;
+		top: 50%;
+		left: 50%;
+		transform: translate(-50%, -50%);
+		z-index: 40;
+		background: var(--bg-surface);
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-lg);
+		padding: 20px;
+		width: 320px;
+		max-width: calc(100vw - 32px);
+		box-shadow: var(--shadow-lg);
+	}
+	.export-confirm__title {
+		font-size: 0.9375rem;
+		font-weight: 600;
+		color: var(--text-primary);
+		margin: 0 0 4px;
+	}
+	.export-confirm__note {
+		font-size: 0.75rem;
+		color: var(--color-warning);
+		margin: 0;
+	}
+	.export-confirm__actions {
+		display: flex;
+		justify-content: flex-end;
+		gap: 8px;
+		margin-top: 18px;
+	}
+	.export-confirm__btn {
+		padding: 7px 14px;
+		font-size: 0.8125rem;
+		font-weight: 600;
+		font-family: var(--font-body);
+		border-radius: var(--radius-md);
+		cursor: pointer;
+		border: 1px solid transparent;
+	}
+	.export-confirm__btn--ghost {
+		background: none;
+		border-color: var(--border-default);
+		color: var(--text-secondary);
+	}
+	.export-confirm__btn--ghost:hover {
+		background: var(--interactive-hover);
+	}
+	.export-confirm__btn--primary {
+		background: var(--color-brand);
+		color: #000;
+	}
+	.export-confirm__btn--primary:hover {
+		opacity: 0.9;
+	}
 
 	/* Export dropdown */
 	.export-dropdown-backdrop {
@@ -3338,8 +4093,16 @@
 	/* ─── Body ────── */
 	.studio__body {
 		display: grid;
-		grid-template-columns: 1fr 340px;
+		grid-template-columns: 1fr min(33.333vw, 480px);
 		overflow: hidden;
+		transition: grid-template-columns 0.2s ease;
+	}
+	.studio__body--collapsed {
+		/* Not literal 0 — reserves just enough track width that the collapse
+		   button (which straddles this column's left edge) stays inside
+		   .studio__body's own box instead of getting clipped by its
+		   overflow: hidden on the right. */
+		grid-template-columns: 1fr 24px;
 	}
 
 	/* ─── Canvas ────── */
@@ -3348,6 +4111,9 @@
 		overflow: auto;
 		background: var(--canvas-bg);
 		cursor: crosshair;
+		/* Reserve space for the viewport-fixed status bar so it never covers
+		   the bottom of the canvas content. */
+		padding-bottom: var(--statusbar-h);
 	}
 
 	/* Minor grid lines live directly on canvas-area so they scroll naturally */
@@ -3383,60 +4149,74 @@
 		padding: 48px;
 	}
 
-	.material-sheet {
+	/* Visual footprint after the 90° rotation: width = roll width, height = length used */
+	.roll-frame {
 		position: relative;
-		background: rgba(255, 255, 255, 0.03);
-		border: 1px dashed var(--border-default);
-		border-radius: 2px;
 		flex-shrink: 0;
 	}
 
+	/* Laid out in its own natural frame (length along X, roll width along Y —
+	   matching the item x/y coordinate space), then rotated 90° clockwise into
+	   .roll-frame above so the roll's width reads as screen-horizontal. The
+	   rotate+translateY(-100%) pair (around a top-left origin) is what makes
+	   the rotated box land back inside .roll-frame's bounds instead of
+	   swinging off to the side. */
+	.material-sheet {
+		position: absolute;
+		top: 0;
+		left: 0;
+		background: rgba(255, 255, 255, 0.03);
+		border: 1px dashed var(--border-default);
+		border-radius: 2px;
+		transform-origin: top left;
+		transform: rotate(90deg) translateY(-100%);
+	}
+
+	/* Single merged label above the canvas — name, roll length, width, and the
+	   live used-length, all in one place instead of split above/below the roll. */
 	.sheet-label {
 		position: absolute;
-		top: -22px;
+		top: -24px;
 		left: 0;
 		font-family: var(--font-mono);
 		font-size: 0.75rem;
-		color: var(--text-secondary);
-		white-space: nowrap;
-	}
-
-	.sheet-dim {
-		position: absolute;
-		bottom: -26px;
-		right: 0;
-		font-family: var(--font-mono);
-		font-size: 0.8rem;
+		font-weight: 600;
 		color: var(--text-primary);
 		white-space: nowrap;
+	}
+
+	/* Ghost roll-direction guide — vertical "Prints this way" + arrow sitting
+	   just left of the roll, centered top-to-bottom, faint/non-interactive. */
+	.print-direction {
+		position: absolute;
+		top: 0;
+		bottom: 0;
+		left: -34px;
+		width: 22px;
 		display: flex;
-		align-items: baseline;
-		gap: 6px;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 8px;
+		opacity: 0.85;
+		/* --text-brand is the theme-mapped accent (blue in light mode, cyan in
+		   dark mode — see app.css) rather than a hardcoded brand hex, so this
+		   stays legible and on-brand in both themes automatically. */
+		color: var(--text-brand);
+		pointer-events: none;
 	}
-
-	.sheet-dim__roll {
-		font-size: 0.9rem;
-		font-weight: 600;
-		letter-spacing: -0.02em;
+	.print-direction__text {
+		writing-mode: vertical-rl;
+		transform: rotate(180deg);
+		font-family: var(--font-mono);
+		font-size: 0.625rem;
+		font-weight: 700;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+		white-space: nowrap;
 	}
-
-	.sheet-dim__used {
-		font-size: 0.9rem;
-		font-weight: 600;
-		letter-spacing: -0.02em;
-		color: var(--color-brand);
-	}
-
-	.sheet-dim__unit {
-		font-size: 0.65rem;
-		font-weight: 400;
-		color: var(--text-tertiary);
-		letter-spacing: 0;
-	}
-
-	.sheet-dim__sep {
-		color: var(--text-tertiary);
-		font-size: 0.65rem;
+	.print-direction__arrow {
+		flex-shrink: 0;
 	}
 
 	/* Cut items */
@@ -3531,6 +4311,28 @@
 		cursor: se-resize;
 	}
 
+	.cut-item__del {
+		position: absolute;
+		top: -8px;
+		right: -8px;
+		width: 16px;
+		height: 16px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: var(--color-danger);
+		color: #fff;
+		border: 1.5px solid var(--bg-surface);
+		border-radius: 50%;
+		cursor: pointer;
+		z-index: 6;
+		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+		transition: transform 0.1s;
+	}
+	.cut-item__del:hover {
+		transform: scale(1.15);
+	}
+
 	.cut-item__label {
 		position: absolute;
 		bottom: -16px;
@@ -3576,24 +4378,92 @@
 	}
 
 	/* ─── Right panel ────── */
+	/* overflow is intentionally NOT set here — .panel-collapse-btn is a direct
+	   child of this element, positioned to straddle its left edge, and an
+	   overflow:hidden here would clip it (it did — that's why the button used
+	   to get cut off on whichever side stuck outside the panel's box). Actual
+	   content clipping/scrolling happens one level in, on .panel-content. */
 	.studio__panel {
+		position: relative;
 		background: var(--bg-surface);
 		border-left: 1px solid var(--border-subtle);
 		display: flex;
 		flex-direction: column;
+		min-width: 0;
+	}
+	.studio__panel--collapsed {
+		border-left: none;
+	}
+
+	.panel-content {
+		display: flex;
+		flex-direction: column;
+		flex: 1;
+		min-width: 0;
+		min-height: 0;
 		overflow: hidden;
+	}
+
+	/* Collapse toggle — sits centered on the panel's left border, well clear
+	   of the tab row and panel content on every side. */
+	.panel-collapse-btn {
+		position: absolute;
+		top: 50%;
+		left: -24px;
+		transform: translateY(-50%);
+		z-index: 20;
+		width: 44px;
+		height: 80px;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 8px;
+		padding: 10px 6px;
+		box-sizing: border-box;
+		background: var(--bg-surface-2);
+		color: var(--text-secondary);
+		border: 1px solid var(--border-default);
+		border-radius: 12px;
+		cursor: pointer;
+		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
+		transition:
+			background 0.12s,
+			color 0.12s,
+			border-color 0.12s;
+	}
+	.panel-collapse-btn:hover {
+		background: var(--color-brand);
+		color: var(--bg-surface);
+		border-color: var(--color-brand);
+	}
+	.panel-collapse-btn__gear {
+		opacity: 0.7;
+		flex-shrink: 0;
+	}
+	.panel-collapse-btn:hover .panel-collapse-btn__gear {
+		opacity: 1;
+	}
+	.panel-collapse-btn__chevron {
+		flex-shrink: 0;
 	}
 
 	.panel-tabs {
 		display: flex;
 		border-bottom: 1px solid var(--border-subtle);
+		padding: 0 6px;
+		gap: 2px;
 	}
 
 	.panel-tab {
 		flex: 1;
-		padding: 10px 0;
-		font-size: 0.75rem;
-		font-weight: 500;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 7px;
+		padding: 13px 4px;
+		font-size: 0.8719rem;
+		font-weight: 600;
 		font-family: var(--font-body);
 		color: var(--text-tertiary);
 		background: none;
@@ -3603,6 +4473,53 @@
 		transition:
 			color 0.12s,
 			border-color 0.12s;
+	}
+
+	.panel-tab__badge {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		min-width: 21px;
+		height: 21px;
+		padding: 0 6px;
+		border-radius: 10px;
+		font-size: 0.7556rem;
+		font-weight: 700;
+		font-family: var(--font-mono);
+		background: var(--bg-surface-3);
+		color: var(--text-secondary);
+		line-height: 1;
+	}
+	.panel-tab.active .panel-tab__badge {
+		background: var(--color-brand);
+		color: var(--bg-surface);
+	}
+	.panel-tab__badge--eff {
+		background: color-mix(in srgb, var(--color-success) 22%, white);
+		color: color-mix(in srgb, var(--color-success) 55%, black);
+	}
+	.panel-tab.active .panel-tab__badge--eff {
+		background: color-mix(in srgb, var(--color-success) 30%, white);
+		color: color-mix(in srgb, var(--color-success) 55%, black);
+	}
+
+	.panel-tab__dot {
+		width: 7px;
+		height: 7px;
+		border-radius: 50%;
+		flex-shrink: 0;
+	}
+	.panel-tab__dot--ok {
+		background: var(--color-success);
+	}
+	.panel-tab__dot--warn {
+		background: var(--color-warning);
+	}
+	.panel-tab__dot--error {
+		background: var(--color-danger);
+	}
+	.panel-tab__dot--missing {
+		background: var(--text-tertiary);
 	}
 
 	.panel-tab:hover {
@@ -3616,44 +4533,44 @@
 	.panel-body {
 		flex: 1;
 		overflow-y: auto;
-		padding: 14px;
+		padding: 22px 20px calc(22px + var(--statusbar-h)) 20px;
 		display: flex;
 		flex-direction: column;
-		gap: 4px;
+		gap: 8px;
 	}
 
 	.panel-placeholder {
-		padding: 24px 0;
+		padding: 32px 0;
 		text-align: center;
 		color: var(--text-tertiary);
-		font-size: 0.8125rem;
+		font-size: 0.93rem;
 	}
 
 	/* Properties */
 	.prop-section {
-		margin-bottom: 18px;
+		margin-bottom: 28px;
 	}
 
 	.prop-label {
 		font-family: var(--font-mono);
-		font-size: 0.625rem;
+		font-size: 0.9974rem;
 		color: var(--text-tertiary);
 		text-transform: uppercase;
 		letter-spacing: 0.1em;
-		margin-bottom: 8px;
+		margin-bottom: 12px;
 	}
 
 	.prop-row {
 		display: flex;
 		align-items: center;
-		gap: 6px;
-		margin-bottom: 6px;
+		gap: 10px;
+		margin-bottom: 10px;
 	}
 
 	.prop-name {
-		font-size: 0.75rem;
+		font-size: 1.1509rem;
 		color: var(--text-secondary);
-		min-width: 14px;
+		min-width: 18px;
 	}
 
 	.prop-input {
@@ -3661,9 +4578,9 @@
 		background: var(--bg-surface-2);
 		border: 1px solid var(--border-default);
 		border-radius: var(--radius-md);
-		padding: 5px 7px;
+		padding: 9px 11px;
 		font-family: var(--font-mono);
-		font-size: 0.6875rem;
+		font-size: 1.1509rem;
 		color: var(--text-primary);
 		outline: none;
 		transition: border-color 0.12s;
@@ -3678,9 +4595,9 @@
 		background: var(--bg-surface-2);
 		border: 1px solid var(--border-default);
 		border-radius: var(--radius-md);
-		padding: 6px 8px;
+		padding: 10px 12px;
 		font-family: var(--font-mono);
-		font-size: 0.6875rem;
+		font-size: 1.1509rem;
 		color: var(--text-primary);
 		outline: none;
 		cursor: pointer;
@@ -3694,12 +4611,12 @@
 
 	.prop-btn {
 		width: 100%;
-		padding: 7px 12px;
+		padding: 12px 16px;
 		background: var(--color-brand);
 		color: #000;
 		border: none;
 		border-radius: var(--radius-md);
-		font-size: 0.8rem;
+		font-size: 1.1509rem;
 		font-weight: 600;
 		cursor: pointer;
 		text-align: center;
@@ -3710,21 +4627,21 @@
 		background: transparent;
 		color: var(--text-secondary);
 		border: 1px solid var(--border-default);
-		margin-top: 4px;
+		margin-top: 6px;
 	}
 
 	.prop-note {
-		font-size: 0.72rem;
+		font-size: 1.0742rem;
 		color: var(--text-tertiary);
-		margin-top: 4px;
-		line-height: 1.4;
+		margin-top: 6px;
+		line-height: 1.5;
 	}
 	.prop-note--usb-hint {
 		color: var(--color-warning, #F7B731);
 	}
 	.prop-note--disclaimer {
-		margin-top: 6px;
-		padding: 6px 8px;
+		margin-top: 10px;
+		padding: 10px 12px;
 		background: var(--bg-surface-2);
 		border-left: 2px solid var(--border-default);
 		border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
@@ -3739,43 +4656,43 @@
 	.live-badge {
 		display: inline-flex;
 		align-items: center;
-		gap: 3px;
-		font-size: 0.6rem;
+		gap: 4px;
+		font-size: 0.9207rem;
 		font-weight: 700;
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
-		padding: 1px 5px;
-		border-radius: 3px;
+		padding: 2px 7px;
+		border-radius: 4px;
 		background: color-mix(in srgb, var(--color-success, #00D68F) 15%, transparent);
 		color: var(--color-success, #00D68F);
 		border: 1px solid color-mix(in srgb, var(--color-success, #00D68F) 30%, transparent);
 	}
 	.cut-time-badge {
 		display: inline-flex;
-		font-size: 0.58rem;
+		font-size: 0.8839rem;
 		font-weight: 600;
 		text-transform: uppercase;
 		letter-spacing: 0.03em;
-		padding: 1px 4px;
-		border-radius: 3px;
+		padding: 2px 6px;
+		border-radius: 4px;
 		background: var(--bg-surface-3);
 		color: var(--text-tertiary);
 		vertical-align: middle;
-		margin-left: 3px;
+		margin-left: 4px;
 	}
 
 	.conn-status {
 		display: flex;
 		align-items: center;
-		gap: 6px;
-		font-size: 0.8rem;
+		gap: 8px;
+		font-size: 1.1509rem;
 		color: var(--text-primary);
-		margin-bottom: 4px;
+		margin-bottom: 6px;
 	}
 	.conn-status--ok { color: var(--color-success, #00D68F); }
 	.conn-dot {
-		width: 7px;
-		height: 7px;
+		width: 8px;
+		height: 8px;
 		border-radius: 50%;
 		background: currentColor;
 		flex-shrink: 0;
@@ -3784,19 +4701,19 @@
 	.prop-slider-row {
 		display: flex;
 		align-items: center;
-		gap: 8px;
-		margin-bottom: 8px;
+		gap: 10px;
+		margin-bottom: 10px;
 	}
 	.prop-slider-name {
-		font-size: 0.75rem;
+		font-size: 1.1509rem;
 		color: var(--text-secondary);
-		min-width: 72px;
+		min-width: 84px;
 	}
 
 	.prop-slider {
 		flex: 1;
 		-webkit-appearance: none;
-		height: 3px;
+		height: 4px;
 		background: var(--bg-surface-3);
 		border-radius: 2px;
 		outline: none;
@@ -3805,8 +4722,8 @@
 
 	.prop-slider::-webkit-slider-thumb {
 		-webkit-appearance: none;
-		width: 12px;
-		height: 12px;
+		width: 15px;
+		height: 15px;
 		border-radius: 50%;
 		background: var(--color-brand-dim);
 		cursor: pointer;
@@ -3815,7 +4732,7 @@
 
 	.prop-slider-val {
 		font-family: var(--font-mono);
-		font-size: 0.6875rem;
+		font-size: 0.844rem;
 		color: var(--text-tertiary);
 		min-width: 28px;
 		text-align: right;
@@ -3845,16 +4762,19 @@
 		display: flex;
 		justify-content: space-between;
 		font-family: var(--font-mono);
-		font-size: 0.625rem;
+		font-size: 0.7672rem;
 		color: var(--text-tertiary);
 	}
 
 	/* Pattern cards */
+	.pattern-card-wrap {
+		margin-bottom: 8px;
+	}
 	.pattern-card {
 		display: flex;
 		align-items: center;
 		gap: 10px;
-		padding: 9px;
+		padding: 10px;
 		background: var(--bg-surface-2);
 		border: 1px solid var(--border-subtle);
 		border-radius: var(--radius-md);
@@ -3862,7 +4782,6 @@
 		transition:
 			border-color 0.12s,
 			background 0.12s;
-		margin-bottom: 6px;
 	}
 
 	.pattern-card:hover {
@@ -3871,6 +4790,189 @@
 	}
 	.pattern-card.active {
 		border-color: var(--color-brand-dim);
+	}
+	.pattern-card.expanded {
+		border-radius: var(--radius-md) var(--radius-md) 0 0;
+		border-bottom-color: transparent;
+	}
+
+	.pattern-card__chevron {
+		flex-shrink: 0;
+		color: var(--text-tertiary);
+		transition: transform 0.15s, color 0.12s;
+	}
+	.pattern-card__chevron--open {
+		transform: rotate(180deg);
+		color: var(--text-secondary);
+	}
+
+	/* Accordion: per-pattern move / rotate / flip controls */
+	.pattern-card__panel {
+		display: flex;
+		flex-direction: column;
+		gap: 14px;
+		padding: 14px 12px 16px;
+		background: var(--bg-surface-2);
+		border: 1px solid var(--border-subtle);
+		border-top: 1px dashed var(--border-default);
+		border-radius: 0 0 var(--radius-md) var(--radius-md);
+	}
+	.pattern-card__row {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		flex-wrap: wrap;
+	}
+
+	/* Labeled sub-groups (Position / Size / Transform) inside the accordion */
+	.pattern-card__group {
+		display: flex;
+		flex-direction: column;
+		gap: 7px;
+	}
+	.pattern-card__group-label {
+		display: flex;
+		align-items: center;
+		gap: 5px;
+		font-family: var(--font-mono);
+		font-size: 0.6875rem;
+		font-weight: 600;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--text-tertiary);
+	}
+	.pattern-card__group-label svg {
+		flex-shrink: 0;
+		opacity: 0.8;
+	}
+
+	/* Position fields — scrubbable tag + typeable input, Figma-style */
+	.pattern-card__field-row {
+		display: flex;
+		gap: 8px;
+	}
+	.pattern-card__field {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		align-items: stretch;
+		background: var(--bg-surface);
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-md);
+		overflow: hidden;
+		transition: border-color 0.12s;
+	}
+	.pattern-card__field:focus-within {
+		border-color: var(--color-brand-dim);
+	}
+	.pattern-card__field-tag {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		min-width: 26px;
+		padding: 0 8px;
+		background: var(--bg-surface-3);
+		color: var(--text-secondary);
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		font-weight: 700;
+		cursor: ew-resize;
+		user-select: none;
+		touch-action: none;
+		transition: background 0.12s, color 0.12s;
+	}
+	.pattern-card__field-tag:hover {
+		background: var(--color-brand-muted);
+		color: var(--color-brand-dim);
+	}
+	.pattern-card__field-tag.scrubbing {
+		background: var(--color-brand-dim);
+		color: var(--bg-surface);
+	}
+	.pattern-card__field-input {
+		flex: 1;
+		min-width: 0;
+		width: 100%;
+		background: none;
+		border: none;
+		outline: none;
+		padding: 8px 4px 8px 8px;
+		font-family: var(--font-mono);
+		font-size: 0.9375rem;
+		color: var(--text-primary);
+		-moz-appearance: textfield;
+	}
+	.pattern-card__field-input::-webkit-outer-spin-button,
+	.pattern-card__field-input::-webkit-inner-spin-button {
+		-webkit-appearance: none;
+		margin: 0;
+	}
+	.pattern-card__field-unit {
+		display: flex;
+		align-items: center;
+		padding-right: 9px;
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		color: var(--text-tertiary);
+	}
+
+	/* Size chips — read-only, deliberately styled unlike the editable fields above */
+	.pattern-card__size-row {
+		display: flex;
+		gap: 8px;
+	}
+	.pattern-card__size-chip {
+		flex: 1;
+		text-align: center;
+		padding: 7px 8px;
+		background: var(--bg-surface-3);
+		border: 1px solid var(--border-subtle);
+		border-radius: var(--radius-md);
+		font-family: var(--font-mono);
+		font-size: 0.875rem;
+		color: var(--text-secondary);
+	}
+	.pattern-card__size-chip em {
+		font-style: normal;
+		color: var(--text-tertiary);
+		font-size: 0.75rem;
+		margin-left: 3px;
+	}
+
+	.pattern-card__rot-value {
+		font-family: var(--font-mono);
+		font-size: 0.9rem;
+		color: var(--text-secondary);
+		min-width: 34px;
+	}
+	.pattern-card__ctrl-btn {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 6px;
+		height: 32px;
+		padding: 0 10px;
+		background: var(--bg-surface-3);
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-sm);
+		color: var(--text-secondary);
+		cursor: pointer;
+		font-size: 0.8125rem;
+		font-weight: 600;
+		font-family: var(--font-body);
+		transition: background 0.12s, border-color 0.12s, color 0.12s;
+	}
+	.pattern-card__ctrl-btn--wide {
+		flex: 1;
+	}
+	.pattern-card__ctrl-btn:hover {
+		border-color: var(--color-brand-dim);
+		color: var(--text-primary);
+	}
+	.pattern-card__ctrl-btn.active {
+		background: color-mix(in srgb, var(--color-brand-dim) 16%, var(--bg-surface-2));
+		border-color: var(--color-brand-dim);
+		color: var(--color-brand-dim);
 	}
 
 	.pattern-card__thumb {
@@ -3891,7 +4993,7 @@
 		min-width: 0;
 	}
 	.pattern-card__name {
-		font-size: 0.75rem;
+		font-size: 0.9207rem;
 		font-weight: 500;
 		color: var(--text-primary);
 		overflow: hidden;
@@ -3900,7 +5002,7 @@
 	}
 	.pattern-card__meta {
 		font-family: var(--font-mono);
-		font-size: 0.625rem;
+		font-size: 0.7672rem;
 		color: var(--text-tertiary);
 	}
 
@@ -3946,7 +5048,7 @@
 	}
 
 	.vehicle-section__name {
-		font-size: 0.6875rem;
+		font-size: 0.844rem;
 		font-weight: 600;
 		text-transform: uppercase;
 		letter-spacing: 0.07em;
@@ -3955,7 +5057,7 @@
 	}
 
 	.vehicle-section__count {
-		font-size: 0.6875rem;
+		font-size: 0.844rem;
 		font-family: var(--font-mono, monospace);
 		color: var(--text-tertiary, var(--text-muted));
 		background: var(--bg-surface-2, var(--bg-elevated));
@@ -3969,7 +5071,7 @@
 		display: inline-flex;
 		align-items: center;
 		padding: 0 5px;
-		font-size: 0.6875rem;
+		font-size: 0.844rem;
 		font-family: var(--font-mono, monospace);
 		font-weight: 600;
 		background: var(--bg-surface-2, var(--bg-elevated));
@@ -3981,7 +5083,15 @@
 	}
 
 	/* ─── Status bar ────── */
+	/* Fixed to the actual browser viewport bottom (not the .studio grid flow)
+	   so it stays put regardless of canvas/panel scroll or content height.
+	   `left` is set inline to track the app sidebar's current width. */
 	.studio__statusbar {
+		position: fixed;
+		bottom: 0;
+		right: 0;
+		height: var(--statusbar-h);
+		z-index: 30;
 		display: flex;
 		align-items: stretch;
 		background: var(--bg-surface);
@@ -3999,7 +5109,7 @@
 
 	.status-metric__label {
 		font-family: var(--font-mono);
-		font-size: 0.5625rem;
+		font-size: 0.6905rem;
 		color: var(--text-tertiary);
 		text-transform: uppercase;
 		letter-spacing: 0.1em;
@@ -4008,7 +5118,7 @@
 
 	.status-metric__value {
 		font-family: var(--font-mono);
-		font-size: 0.8125rem;
+		font-size: 0.9974rem;
 		font-weight: 500;
 		color: var(--text-primary);
 	}
@@ -4029,7 +5139,7 @@
 	/* Shown when smartNestGain is set — shows efficiency gain vs baseline */
 	.ai-badge {
 		font-family: var(--font-mono);
-		font-size: 0.625rem;
+		font-size: 0.7672rem;
 		font-weight: 700;
 		letter-spacing: 0.03em;
 		padding: 1px 5px;
@@ -4042,15 +5152,6 @@
 	}
 
 	/* ─── Responsive ────── */
-	@media (max-width: 1280px) {
-		/* Collapse community upload button to icon-only to keep toolbar compact */
-		.community-btn__label {
-			display: none;
-		}
-		.community-btn {
-			padding: 5px 8px;
-		}
-	}
 
 	@media (max-width: 1024px) {
 		.studio__body {
@@ -4067,6 +5168,10 @@
 		}
 		.cut-btn span {
 			display: none;
+		}
+		/* App sidebar is hidden entirely below this breakpoint (see AppShell) */
+		.studio__statusbar {
+			left: 0 !important;
 		}
 	}
 
@@ -4088,6 +5193,33 @@
 		gap: 4px;
 	}
 
+	.auto-fit-toggle {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		margin-top: 8px;
+		font-size: 0.9207rem;
+		color: var(--text-secondary);
+		cursor: pointer;
+	}
+	.auto-fit-toggle input {
+		cursor: pointer;
+	}
+
+	.roll-length-row {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+	.roll-length-row .prop-input {
+		flex: 0 0 80px;
+	}
+	.roll-length-unit {
+		font-size: 0.9207rem;
+		color: var(--text-tertiary);
+		font-family: var(--font-mono);
+	}
+
 	.roll-pill {
 		padding: 4px 10px;
 		border-radius: 99px;
@@ -4095,7 +5227,7 @@
 		background: var(--bg-surface-2);
 		color: var(--text-secondary);
 		font-family: var(--font-mono);
-		font-size: 0.625rem;
+		font-size: 0.7672rem;
 		cursor: pointer;
 		transition:
 			background 0.12s,
@@ -4138,13 +5270,18 @@
 		top: 3px;
 		right: 6px;
 		font-family: var(--font-mono);
-		font-size: 0.5rem;
+		font-size: 0.6138rem;
 		letter-spacing: 0.06em;
 		font-weight: 600;
 		text-transform: uppercase;
 		padding: 1px 5px;
 		border-radius: 3px;
 		white-space: nowrap;
+		/* Counter-rotate: .material-sheet (this label's ancestor) is rotated
+		   90° to make the roll width read as screen-horizontal, so this needs
+		   the inverse rotation to stay upright and legible. */
+		transform-origin: top right;
+		transform: rotate(-90deg) translateY(-100%);
 	}
 	.plotter-limit-line--overflow .plotter-limit-label {
 		background: rgba(255, 60, 60, 0.15);
@@ -4168,7 +5305,7 @@
 		background: var(--bg-surface-2);
 		border: 1px solid var(--border-default);
 		border-radius: var(--radius-md);
-		font-size: 0.8rem;
+		font-size: 0.9821rem;
 		font-weight: 600;
 		font-family: var(--font-body);
 		color: var(--text-primary);
@@ -4209,7 +5346,7 @@
 		gap: 1px;
 	}
 	.detect-result__name {
-		font-size: 0.75rem;
+		font-size: 0.9207rem;
 		font-weight: 600;
 		color: var(--text-primary);
 		overflow: hidden;
@@ -4217,7 +5354,7 @@
 		white-space: nowrap;
 	}
 	.detect-result__detail {
-		font-size: 0.625rem;
+		font-size: 0.7672rem;
 		font-family: var(--font-mono);
 		color: var(--text-tertiary);
 		overflow: hidden;
@@ -4226,7 +5363,7 @@
 	}
 	.detect-badge {
 		font-family: var(--font-mono);
-		font-size: 0.5rem;
+		font-size: 0.6138rem;
 		font-weight: 700;
 		letter-spacing: 0.04em;
 		padding: 2px 6px;
@@ -4252,7 +5389,7 @@
 		align-items: center;
 		gap: 3px;
 		font-family: var(--font-mono);
-		font-size: 0.5rem;
+		font-size: 0.6138rem;
 		font-weight: 700;
 		letter-spacing: 0.05em;
 		text-transform: uppercase;
@@ -4272,14 +5409,14 @@
 	}
 	.plotter-spec {
 		font-family: var(--font-mono);
-		font-size: 0.5625rem;
+		font-size: 0.6905rem;
 		color: var(--text-tertiary);
 	}
 	.plotter-spec strong { color: var(--text-secondary); }
 
 	/* Compatibility warnings */
 	.compat-warn {
-		font-size: 0.72rem;
+		font-size: 0.8839rem;
 		color: var(--color-danger);
 		background: rgba(255, 77, 109, 0.06);
 		border: 1px solid rgba(255, 77, 109, 0.2);
@@ -4294,7 +5431,7 @@
 		border-color: rgba(255, 181, 71, 0.25);
 	}
 	.compat-tight {
-		font-size: 0.72rem;
+		font-size: 0.8839rem;
 		color: var(--color-warning, #ffb547);
 		background: rgba(255, 181, 71, 0.06);
 		border: 1px solid rgba(255, 181, 71, 0.2);
@@ -4313,7 +5450,7 @@
 	.prop-input--grow { flex: 1; }
 	.prop-input--port { width: 64px; }
 	.prop-input-sep {
-		font-size: 0.875rem;
+		font-size: 1.0742rem;
 		color: var(--text-tertiary);
 		flex-shrink: 0;
 	}
@@ -4341,7 +5478,7 @@
 		border: 1px solid var(--border-default);
 		border-radius: var(--radius-sm);
 		font-family: var(--font-mono);
-		font-size: 0.6875rem;
+		font-size: 0.844rem;
 		color: var(--text-primary);
 		cursor: pointer;
 		text-align: left;
@@ -4354,7 +5491,7 @@
 	}
 	.network-device__ip   { flex: 1; font-weight: 600; }
 	.network-device__port { color: var(--text-tertiary); }
-	.network-device__ms   { font-size: 0.5625rem; color: var(--text-tertiary); margin-left: auto; }
+	.network-device__ms   { font-size: 0.6905rem; color: var(--text-tertiary); margin-left: auto; }
 
 	/* ─── Connection method cards ────── */
 	.conn-method-cards {
@@ -4413,7 +5550,7 @@
 		gap: 1px;
 	}
 	.conn-method-card__name {
-		font-size: 0.75rem;
+		font-size: 0.9207rem;
 		font-weight: 600;
 		color: var(--text-primary);
 		white-space: nowrap;
@@ -4422,7 +5559,7 @@
 	}
 	.conn-method-card__status {
 		font-family: var(--font-mono);
-		font-size: 0.5625rem;
+		font-size: 0.6905rem;
 		color: var(--text-tertiary);
 		white-space: nowrap;
 		overflow: hidden;
@@ -4462,7 +5599,7 @@
 		gap: 1px;
 	}
 	.plotter-active-bar__label {
-		font-size: 0.75rem;
+		font-size: 0.9207rem;
 		font-weight: 600;
 		color: var(--text-primary);
 		overflow: hidden;
@@ -4471,13 +5608,13 @@
 	}
 	.plotter-active-bar__sub {
 		font-family: var(--font-mono);
-		font-size: 0.5625rem;
+		font-size: 0.6905rem;
 		color: var(--text-tertiary);
 	}
 
 	.plotter-disconnect-btn {
 		padding: 4px 10px;
-		font-size: 0.7rem;
+		font-size: 0.8593rem;
 		font-weight: 600;
 		font-family: var(--font-body);
 		background: transparent;
@@ -4502,7 +5639,7 @@
 		width: 100%;
 		padding: 9px 12px;
 		margin-top: 10px;
-		font-size: 0.8rem;
+		font-size: 0.9821rem;
 		font-weight: 600;
 		font-family: var(--font-body);
 		background: var(--color-brand);
@@ -4545,13 +5682,13 @@
 	.cal-mount-btn {
 		flex: 1; display: flex; flex-direction: column; align-items: center; gap: 1px;
 		padding: 5px 4px; background: var(--bg-surface-2); border: 1px solid var(--border-subtle);
-		border-radius: var(--radius-md); font-size: 0.6875rem; font-weight: 500;
+		border-radius: var(--radius-md); font-size: 0.844rem; font-weight: 500;
 		color: var(--text-secondary); cursor: pointer; transition: all 0.12s; font-family: var(--font-body);
 	}
 	.cal-mount-btn:hover:not(:disabled) { border-color: var(--border-default); color: var(--text-primary); }
 	.cal-mount-btn--active { border-color: #00e5ff60; background: color-mix(in srgb, #00e5ff 10%, var(--bg-surface-2)); color: #00e5ff; }
 	.cal-mount-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-	.cal-mount-dim { font-size: 0.5625rem; font-family: var(--font-mono); opacity: 0.7; }
+	.cal-mount-dim { font-size: 0.6905rem; font-family: var(--font-mono); opacity: 0.7; }
 
 	.cal-custom-row {
 		display: flex; align-items: center; gap: 6px; margin: 4px 0;
@@ -4559,13 +5696,13 @@
 	.cal-custom-input {
 		width: 60px; padding: 3px 6px; background: var(--bg-surface-2);
 		border: 1px solid var(--border-default); border-radius: var(--radius-md);
-		font-family: var(--font-mono); font-size: 0.8125rem; color: var(--text-primary);
+		font-family: var(--font-mono); font-size: 0.9974rem; color: var(--text-primary);
 		text-align: right;
 	}
-	.cal-custom-unit { font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-tertiary); }
+	.cal-custom-unit { font-family: var(--font-mono); font-size: 0.9207rem; color: var(--text-tertiary); }
 	.cal-apply-btn {
 		padding: 3px 10px; background: var(--bg-surface-3); border: 1px solid var(--border-default);
-		border-radius: var(--radius-md); font-size: 0.75rem; color: var(--text-secondary); cursor: pointer;
+		border-radius: var(--radius-md); font-size: 0.9207rem; color: var(--text-secondary); cursor: pointer;
 		font-family: var(--font-body); transition: all 0.12s;
 	}
 	.cal-apply-btn:hover { background: var(--interactive-hover); color: var(--text-primary); }
@@ -4577,11 +5714,11 @@
 	}
 	.cal-probe-header {
 		display: flex; align-items: center; gap: 5px;
-		font-size: 0.6875rem; font-weight: 600; color: var(--text-tertiary);
+		font-size: 0.844rem; font-weight: 600; color: var(--text-tertiary);
 		text-transform: uppercase; letter-spacing: 0.07em;
 	}
 	.cal-probe-hint {
-		font-size: 0.75rem; color: var(--text-tertiary); line-height: 1.5; margin: 0;
+		font-size: 0.9207rem; color: var(--text-tertiary); line-height: 1.5; margin: 0;
 	}
 	.cal-probe-hint--active { color: var(--text-secondary); }
 	.cal-probe-hint strong { color: var(--text-primary); }
@@ -4590,7 +5727,7 @@
 	.cal-probe-btn {
 		display: flex; align-items: center; gap: 5px; padding: 5px 10px;
 		background: var(--bg-surface-3); border: 1px solid var(--border-default);
-		border-radius: var(--radius-md); font-size: 0.75rem; font-weight: 500;
+		border-radius: var(--radius-md); font-size: 0.9207rem; font-weight: 500;
 		color: var(--text-secondary); cursor: pointer; font-family: var(--font-body); transition: all 0.12s;
 	}
 	.cal-probe-btn:hover { border-color: var(--border-default); color: var(--text-primary); }
@@ -4598,7 +5735,7 @@
 		border-color: #00e5ff50; color: #00e5ff; background: color-mix(in srgb, #00e5ff 8%, var(--bg-surface-3));
 	}
 	.cal-probe-btn--capture:hover { background: color-mix(in srgb, #00e5ff 15%, var(--bg-surface-3)); }
-	.cal-probe-btn--cancel { font-size: 0.6875rem; }
+	.cal-probe-btn--cancel { font-size: 0.844rem; }
 
 	.cal-probe-spinner {
 		width: 16px; height: 16px; border: 2px solid var(--border-subtle);
@@ -4608,19 +5745,19 @@
 
 	.cal-probe-result {
 		display: flex; align-items: center; gap: 5px;
-		font-size: 0.75rem; color: var(--text-secondary);
+		font-size: 0.9207rem; color: var(--text-secondary);
 	}
 	.cal-probe-result strong { color: #2ecc71; }
 
 	.cal-probe-error {
 		display: flex; align-items: flex-start; gap: 5px;
-		font-size: 0.75rem; color: rgba(255,100,100,0.9); line-height: 1.4;
+		font-size: 0.9207rem; color: rgba(255,100,100,0.9); line-height: 1.4;
 	}
 
 	.cal-test-cut-btn {
 		display: flex; align-items: center; gap: 5px; margin: 6px 0 2px;
 		padding: 5px 10px; background: transparent; border: 1px dashed var(--border-default);
-		border-radius: var(--radius-md); font-size: 0.75rem; color: var(--text-tertiary);
+		border-radius: var(--radius-md); font-size: 0.9207rem; color: var(--text-tertiary);
 		cursor: pointer; font-family: var(--font-body); transition: all 0.12s; width: 100%;
 	}
 	.cal-test-cut-btn:hover { border-color: var(--border-default); color: var(--text-secondary); background: var(--interactive-hover); }
@@ -4640,7 +5777,7 @@
 		background: transparent;
 		border: 1px dashed var(--border-default);
 		border-radius: var(--radius-md);
-		font-size: 0.75rem;
+		font-size: 0.9207rem;
 		font-weight: 500;
 		font-family: var(--font-body);
 		color: var(--text-tertiary);
@@ -4662,7 +5799,7 @@
 		background: var(--bg-surface-2);
 		border: 1px solid var(--border-subtle);
 		border-radius: var(--radius-md);
-		font-size: 0.72rem;
+		font-size: 0.8839rem;
 		color: var(--text-tertiary);
 		margin-bottom: 2px;
 	}
@@ -4690,7 +5827,7 @@
 		border: 1px solid var(--border-default);
 		border-radius: var(--radius-md);
 		box-shadow: 0 4px 16px rgba(0,0,0,0.28);
-		font-size: 0.695rem;
+		font-size: 0.8532rem;
 		font-family: var(--font-body);
 		font-weight: 400;
 		color: var(--text-secondary);
@@ -4737,7 +5874,7 @@
 	}
 
 	.discovery-title {
-		font-size: 0.78rem;
+		font-size: 0.9575rem;
 		font-weight: 600;
 		color: var(--text-secondary);
 		white-space: nowrap;
@@ -4754,7 +5891,7 @@
 		background: transparent;
 		border: 1px solid var(--border-default);
 		border-radius: var(--radius-sm);
-		font-size: 0.72rem;
+		font-size: 0.8839rem;
 		font-weight: 500;
 		font-family: var(--font-body);
 		color: var(--text-tertiary);
@@ -4871,7 +6008,7 @@
 	}
 
 	.device-name {
-		font-size: 0.8rem;
+		font-size: 0.9821rem;
 		font-weight: 600;
 		color: var(--text-primary);
 		white-space: nowrap;
@@ -4880,7 +6017,7 @@
 	}
 
 	.device-via {
-		font-size: 0.69rem;
+		font-size: 0.847rem;
 		color: var(--text-tertiary);
 		white-space: nowrap;
 	}
@@ -4891,7 +6028,7 @@
 		flex-shrink: 0;
 		padding: 2px 7px;
 		border-radius: 999px;
-		font-size: 0.67rem;
+		font-size: 0.8225rem;
 		font-weight: 600;
 		text-transform: uppercase;
 		letter-spacing: 0.04em;
@@ -4923,20 +6060,20 @@
 		background: var(--bg-surface-3, rgba(255,255,255,0.06));
 		border: 1px solid var(--border-subtle);
 		border-radius: 4px;
-		font-size: 0.68rem;
+		font-size: 0.8348rem;
 		color: var(--text-secondary);
 		white-space: nowrap;
 	}
 	.device-spec-chip--mono {
 		font-family: var(--font-mono, monospace);
-		font-size: 0.66rem;
+		font-size: 0.8102rem;
 		color: var(--text-tertiary);
 	}
 
 	/* ── Hardware identity line ──────────────── */
 
 	.device-hw-line {
-		font-size: 0.69rem;
+		font-size: 0.847rem;
 		color: var(--text-tertiary);
 		font-style: italic;
 		overflow: hidden;
@@ -4958,7 +6095,7 @@
 	.device-action-test {
 		padding: 5px 12px;
 		border-radius: var(--radius-sm);
-		font-size: 0.73rem;
+		font-size: 0.8961rem;
 		font-weight: 500;
 		font-family: var(--font-body);
 		cursor: pointer;
@@ -5005,7 +6142,7 @@
 	.device-action-update {
 		padding: 5px 12px;
 		border-radius: var(--radius-sm);
-		font-size: 0.73rem;
+		font-size: 0.8961rem;
 		font-weight: 600;
 		font-family: var(--font-body);
 		text-decoration: none;
@@ -5028,7 +6165,7 @@
 		background: rgba(245, 158, 11, 0.08);
 		border: 1px solid rgba(245, 158, 11, 0.35);
 		border-radius: var(--radius-md);
-		font-size: 0.75rem;
+		font-size: 0.9207rem;
 		color: var(--text-secondary);
 		line-height: 1.4;
 	}
@@ -5070,7 +6207,7 @@
 		border-radius: 50%;
 		background: rgba(245, 158, 11, 0.25);
 		color: #f59e0b;
-		font-size: 0.6rem;
+		font-size: 0.7366rem;
 		font-weight: 700;
 		flex-shrink: 0;
 	}
@@ -5079,7 +6216,7 @@
 		align-items: center;
 		padding: 2px 8px;
 		border-radius: var(--radius-sm);
-		font-size: 0.6875rem;
+		font-size: 0.844rem;
 		font-weight: 600;
 		cursor: pointer;
 		border: 1px solid rgba(245, 158, 11, 0.5);
@@ -5096,7 +6233,7 @@
 	/* ── Offline message ─────────────────────── */
 
 	.device-offline-msg {
-		font-size: 0.69rem;
+		font-size: 0.847rem;
 		color: var(--text-disabled, #6b7280);
 		font-style: italic;
 	}
@@ -5138,7 +6275,7 @@
 
 	.discovery-check-label {
 		flex: 1;
-		font-size: 0.73rem;
+		font-size: 0.8961rem;
 		color: var(--text-secondary);
 	}
 
@@ -5147,7 +6284,7 @@
 		background: transparent;
 		border: 1px solid var(--border-default);
 		border-radius: var(--radius-sm);
-		font-size: 0.69rem;
+		font-size: 0.847rem;
 		font-weight: 500;
 		font-family: var(--font-body);
 		color: var(--text-tertiary);
@@ -5163,7 +6300,7 @@
 
 	.discovery-empty__tip {
 		margin: 4px 0 0;
-		font-size: 0.69rem;
+		font-size: 0.847rem;
 		color: var(--text-tertiary);
 		line-height: 1.5;
 	}
@@ -5193,7 +6330,7 @@
 
 	.discovery-advanced__summary {
 		padding: 7px 11px;
-		font-size: 0.72rem;
+		font-size: 0.8839rem;
 		font-weight: 500;
 		color: var(--text-tertiary);
 		cursor: pointer;
@@ -5227,7 +6364,7 @@
 		display: flex;
 		flex-direction: column;
 		gap: 4px;
-		font-size: 0.72rem;
+		font-size: 0.8839rem;
 		font-weight: 500;
 		color: var(--text-secondary);
 	}
@@ -5237,7 +6374,7 @@
 		background: var(--bg-surface);
 		border: 1px solid var(--border-default);
 		border-radius: var(--radius-sm);
-		font-size: 0.73rem;
+		font-size: 0.8961rem;
 		font-family: var(--font-body);
 		color: var(--text-primary);
 		outline: none;

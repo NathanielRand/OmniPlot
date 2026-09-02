@@ -244,6 +244,29 @@
 	<div class="app-body">
 		<!-- Sidebar -->
 		<aside class="sidebar" aria-label="Sidebar">
+			<button
+				class="sidebar__collapse-btn"
+				onclick={uiStore.toggleSidebar}
+				aria-label={uiStore.sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+				title={uiStore.sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+			>
+				<svg
+					width="14"
+					height="14"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2.5"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					class="sidebar__collapse-icon"
+					class:sidebar__collapse-icon--flipped={!uiStore.sidebarOpen}
+					aria-hidden="true"
+				>
+					<path d="M15 18l-6-6 6-6" />
+				</svg>
+			</button>
+
 			<nav class="sidebar__nav">
 				{#each APP_NAV as item}
 					<a
@@ -370,30 +393,6 @@
 						</button>
 					</div>
 				{/if}
-
-				<button
-					class="sidebar__collapse-btn"
-					onclick={uiStore.toggleSidebar}
-					aria-label={uiStore.sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
-					title={uiStore.sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
-				>
-					<svg
-						width="14"
-						height="14"
-						viewBox="0 0 24 24"
-						fill="none"
-						stroke="currentColor"
-						stroke-width="2"
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						class="sidebar__collapse-icon"
-						class:sidebar__collapse-icon--flipped={!uiStore.sidebarOpen}
-						aria-hidden="true"
-					>
-						<path d="M15 18l-6-6 6-6"/>
-					</svg>
-					<span class="sidebar__collapse-label">Collapse</span>
-				</button>
 			</div>
 		</aside>
 
@@ -740,11 +739,12 @@
 	}
 
 	.sidebar {
+		position: relative;
 		background: var(--bg-surface);
 		border-right: 1px solid var(--border-subtle);
 		display: flex;
 		flex-direction: column;
-		overflow: hidden;
+		overflow: visible;
 		width: 200px;
 		transition: width 0.22s var(--ease-smooth);
 	}
@@ -880,33 +880,33 @@
 	}
 
 	/* ─── Collapse toggle button ─── */
+	/* Floats halfway down the sidebar's right border, straddling it — mirrors
+	   the same collapse-toggle treatment used on the Studio settings panel. */
 	.sidebar__collapse-btn {
+		position: absolute;
+		top: 50%;
+		right: -13px;
+		transform: translateY(-50%);
+		z-index: 6;
+		width: 26px;
+		height: 46px;
 		display: flex;
 		align-items: center;
-		gap: 8px;
-		width: 100%;
-		padding: 7px 10px;
-		border-radius: var(--radius-md);
-		border: none;
-		background: transparent;
-		color: var(--text-tertiary);
+		justify-content: center;
+		padding: 0;
+		border-radius: 8px;
+		border: 1px solid var(--border-default);
+		background: var(--bg-surface-2);
+		color: var(--text-secondary);
 		cursor: pointer;
-		font-size: 0.8125rem;
-		font-family: var(--font-body);
-		font-weight: 500;
-		transition: background 0.12s, color 0.12s, padding 0.22s;
-		white-space: nowrap;
-		overflow: hidden;
+		box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+		transition: background 0.12s, color 0.12s, border-color 0.12s;
 	}
 
 	.sidebar__collapse-btn:hover {
-		background: var(--interactive-hover);
-		color: var(--text-primary);
-	}
-
-	.sidebar-collapsed .sidebar__collapse-btn {
-		padding: 7px;
-		justify-content: center;
+		background: var(--color-brand);
+		color: var(--bg-surface);
+		border-color: var(--color-brand);
 	}
 
 	.sidebar__collapse-icon {
@@ -916,19 +916,6 @@
 
 	.sidebar__collapse-icon--flipped {
 		transform: rotate(180deg);
-	}
-
-	.sidebar__collapse-label {
-		opacity: 1;
-		max-width: 100px;
-		overflow: hidden;
-		transition: opacity 0.15s, max-width 0.22s;
-	}
-
-	.sidebar-collapsed .sidebar__collapse-label {
-		opacity: 0;
-		max-width: 0;
-		pointer-events: none;
 	}
 
 	.app-main {
