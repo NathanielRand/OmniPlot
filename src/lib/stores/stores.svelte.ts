@@ -379,6 +379,17 @@ function createCanvasStore() {
 		state.sheet = sheet;
 	}
 
+	function setBufferInches(v: number) {
+		// Clamp to a sane range — a wildly negative buffer can self-intersect
+		// a piece's own inflated silhouette, and there's no reason to allow
+		// buffers larger than a roll is ever going to be.
+		state.bufferInches = Math.max(-5, Math.min(12, v));
+	}
+
+	function setRulerStep(v: 5 | 10 | 20 | 30) {
+		state.rulerStepInches = v;
+	}
+
 	function clear() {
 		snapshot();
 		state.items = [];
@@ -422,6 +433,8 @@ function createCanvasStore() {
 		updateItem,
 		setItems,
 		setSheet,
+		setBufferInches,
+		setRulerStep,
 		clear,
 		setTool(t: CanvasState["tool"]) {
 			state.tool = t;

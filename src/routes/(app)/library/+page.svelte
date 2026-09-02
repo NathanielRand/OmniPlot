@@ -5,7 +5,7 @@
 	import Badge from "$lib/components/ui/Badge.svelte";
 	import Button from "$lib/components/ui/Button.svelte";
 	import { uid, getItemColor } from "$lib/utils";
-	import { autoNest } from "$lib/utils/nesting";
+	import { bestNest } from "$lib/utils/nesting";
 	import { getUserPatterns, updateUserPattern, deleteUserPattern, addPatternAdjustmentRequest } from "$lib/firebase/firestore";
 	import type { CanvasItem, Pattern, PatternZone, UserPattern } from "$lib/types";
 	import type { VehicleEntry } from "$lib/stores/patternStore.svelte";
@@ -307,7 +307,7 @@
 			widthInches:  canvasStore.sheet.heightInches,
 			heightInches: canvasStore.sheet.widthInches,
 		};
-		const nested = autoNest([...canvasStore.items, newItem], ts);
+		const nested = bestNest([...canvasStore.items, newItem], ts, true, canvasStore.state.bufferInches);
 		canvasStore.setItems(nested);
 
 		const placed = nested.find((i) => i.id === newItem.id);

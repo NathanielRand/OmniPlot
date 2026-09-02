@@ -582,8 +582,10 @@ export const DEFAULT_CANVAS_STATE = {
 	tool: "select" as const,
 	showGrid: true,
 	showRulers: true,
+	rulerStepInches: 5,
 	snapToGrid: false,
 	gridSizeInches: 0.5,
+	bufferInches: 0.05,
 };
 
 // ─── HPGL constants ───────────────────────────

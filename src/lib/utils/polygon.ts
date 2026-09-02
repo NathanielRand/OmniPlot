@@ -72,15 +72,39 @@ export function reflectPolygon(pts: Polygon): Polygon {
 
 // Expand each vertex outward from the polygon's centroid by `amount` inches.
 // Approximation for convex shapes; used to add inter-piece spacing.
+// True polygon offset: push every EDGE outward by `amount` along its own
+// normal, then re-derive each vertex as the miter intersection of its two
+// adjacent offset edges. (The previous implementation scaled each vertex
+// radially away from the centroid — for anything but a near-circular shape
+// that under/over-shoots the intended clearance, worst at elongated
+// rectangles' corners. Two items placed exactly PAD apart could then still
+// register as overlapping here, sending finalDeclash's nudge loop to its
+// 500-iteration cap and silently adding up to 5" of bogus extra gap.)
+// Requires `pts` to be CCW (wrap callers with ensureCCW first).
 export function inflatePolygon(pts: Polygon, amount: number): Polygon {
-	if (amount === 0) return pts;
-	const c = centroid(pts);
-	return pts.map(p => {
-		const dx = p.x - c.x;
-		const dy = p.y - c.y;
+	if (amount === 0 || pts.length < 3) return pts;
+	const n = pts.length;
+	const edgeNormal = (a: Point, b: Point): Point => {
+		const dx = b.x - a.x, dy = b.y - a.y;
 		const len = Math.sqrt(dx * dx + dy * dy);
-		if (len < 1e-9) return p;
-		return { x: p.x + (dx / len) * amount, y: p.y + (dy / len) * amount };
+		if (len < 1e-9) return { x: 0, y: 0 };
+		// Outward normal for a CCW polygon: rotate the edge vector -90°.
+		return { x: dy / len, y: -dx / len };
+	};
+	return pts.map((p, i) => {
+		const prev = pts[(i - 1 + n) % n];
+		const next = pts[(i + 1) % n];
+		const n1 = edgeNormal(prev, p);
+		const n2 = edgeNormal(p, next);
+		let bis = { x: n1.x + n2.x, y: n1.y + n2.y };
+		const bisLen = Math.sqrt(bis.x * bis.x + bis.y * bis.y);
+		if (bisLen < 1e-9) bis = n1; // ~180° turn — normals cancel, fall back
+		else bis = { x: bis.x / bisLen, y: bis.y / bisLen };
+		// Miter length = amount / cos(half the turn angle between edges).
+		// Cap the miter at sharp/reflex corners so it can't blow up.
+		const cosHalf = bis.x * n1.x + bis.y * n1.y;
+		const miter = cosHalf > 0.15 ? amount / cosHalf : amount;
+		return { x: p.x + bis.x * miter, y: p.y + bis.y * miter };
 	});
 }
 
@@ -241,9 +265,18 @@ function isEar(pts: Polygon, i: number): boolean {
 	return true;
 }
 
+// Defense in depth: full ear-clip triangulation is O(n^2), and nfpGeneral
+// then pairs every triangle of A against every triangle of B (O(n^2 * m^2)
+// total). Callers are expected to hand in already-coarse polygons, but if
+// something ever slips through with a large vertex count, fall back to a
+// single convex-hull piece rather than triangulating it — an approximation
+// beats hanging the tab.
+const MAX_DECOMPOSE_VERTICES = 30;
+
 export function convexDecompose(pts: Polygon): Polygon[] {
 	const poly = ensureCCW([...pts]);
 	if (poly.length < 3) return [];
+	if (poly.length > MAX_DECOMPOSE_VERTICES) return [ensureCCW(convexHull(poly))];
 
 	// Already convex? return as-is.
 	let convex = true;
@@ -384,4 +417,42 @@ export function nfpCandidates(
 	}
 
 	return pts;
+}
+
+// ─── True overlap verification ───────────────
+// nfpGeneral's forbidden zone is a UNION of pairwise convex-part NFPs — at
+// the seams between decomposed parts that union can have small false-free
+// gaps (a point that reads as "outside every part-NFP" while the full
+// concave shapes actually still overlap there). That's a real correctness
+// gap, not floating-point noise: the anchor-search can and does pick points
+// a few hundredths of an inch inside the true silhouette.
+//
+// This is the final authoritative check after the candidate search, so it
+// deliberately does NOT go through convex decomposition again — decompose
+// is itself triangulation-based (ear-clipping) and can produce a bad/stale
+// triangle on degenerate input (see MAX_DECOMPOSE_VERTICES fallback above),
+// which would make a "verification" step trust the same kind of imperfect
+// approximation it exists to catch. Two SIMPLE polygons (convex or concave)
+// overlap iff any edge of one crosses any edge of the other, OR one is
+// entirely inside the other with no edges crossing at all — operating
+// directly on the real (sampled) boundary is exact for both cases and
+// doesn't depend on triangulation being correct.
+export function polygonsOverlap(A: Polygon, B: Polygon): boolean {
+	if (A.length < 3 || B.length < 3) return false;
+
+	const na = A.length, nb = B.length;
+	for (let i = 0; i < na; i++) {
+		const a1 = A[i], a2 = A[(i + 1) % na];
+		for (let j = 0; j < nb; j++) {
+			const b1 = B[j], b2 = B[(j + 1) % nb];
+			if (segmentsIntersect(a1, a2, b1, b2)) return true;
+		}
+	}
+	// No edges cross — either fully separate, or one wholly contains the
+	// other (e.g. a tiny piece nested inside a large one). One containment
+	// check per side is enough since no edge crossing means "inside" is
+	// all-or-nothing for a given pair.
+	if (pointInPolygon(A[0], B)) return true;
+	if (pointInPolygon(B[0], A)) return true;
+	return false;
 }

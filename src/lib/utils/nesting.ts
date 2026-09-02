@@ -30,9 +30,15 @@ import {
 	nfpCandidates,
 	pointInPolygon,
 	ensureCCW,
+	polygonsOverlap,
 } from "./polygon";
 
-const PADDING_INCHES = 0.05;
+// Minimum clearance kept between placed pieces (and between a piece and the
+// roll edge), in inches. Defaults to a sane cut buffer but is user-settable
+// per material sheet (canvasStore.sheet.bufferInches) — the top-level nest
+// functions below reassign this before packing. A negative value means
+// intentional overlap; the user has to explicitly opt into that.
+let PADDING_INCHES = 0.05;
 
 // ─── Module-level caches ──────────────────────
 const _sampleCache  = new Map<string, Array<{ x: number; y: number }>>();
@@ -108,7 +114,7 @@ function samplePathInchPoints(
 	nominalH: number,
 	samples = 120,
 ): Array<{ x: number; y: number }> {
-	const cacheKey = `${nominalW}|${nominalH}|${svgPath}`;
+	const cacheKey = `${nominalW}|${nominalH}|${samples}|${svgPath}`;
 	if (_sampleCache.has(cacheKey)) return _sampleCache.get(cacheKey)!;
 
 	const fallback = [
@@ -289,12 +295,13 @@ function bestFitPack(
 	sheet: MaterialSheet,
 	allowRotation: boolean,
 	scoring: "left" | "compact" = "left",
+	floorY = 0,
 ): CanvasItem[] {
 	const sheetW = sheet.widthInches;
 	const sheetH = sheet.heightInches;
 	const pad    = PADDING_INCHES;
 
-	let skyline: SkylineSegment[] = [{ x: 0, y: 0, width: sheetW }];
+	let skyline: SkylineSegment[] = [{ x: 0, y: floorY, width: sheetW }];
 	let overflowRow = 0;
 	const placed: CanvasItem[] = [];
 
@@ -360,6 +367,113 @@ function bestFitPack(
 function layoutLen(placed: CanvasItem[]): number {
 	const ib = placed.filter((i) => !i.outOfBounds);
 	return ib.length ? Math.max(...ib.map((i) => i.x + i.width)) : 0;
+}
+
+// ─── Row-balance group pass ───────────────────
+// bestFitPack is a greedy, order-dependent skyline packer: given a batch of
+// identical (or same-footprint) items, its per-item local choices tend to
+// converge on a "balanced" split across orientations (e.g. half sideways,
+// half not) even when an *unbalanced* split minimizes total roll length —
+// classic greedy-vs-global mismatch. rotationImprovementPass can't fix this
+// either: it evaluates one item's rotation at a time and, because
+// buildOrientations always offers every rotation regardless of what's
+// pre-set, a full repack after a single flip just re-derives the same
+// greedy local optimum. Reaching the true optimum requires explicitly
+// searching how many same-footprint items go in each orientation, which is
+// exactly what this pass does — for items whose only two candidate
+// orientations are a simple 90° transpose of the same rectangle (windows,
+// panels, anything without asymmetric per-rotation area), group them by
+// shared footprint and solve the small "how many rows of each orientation"
+// sub-problem directly, then bin-pack any leftover (ungroupable) items into
+// the remaining width with the existing greedy packer.
+function rowBalanceGroupPass(
+	items: CanvasItem[],
+	sheet: MaterialSheet,
+	allowRotation: boolean,
+): CanvasItem[] | null {
+	if (!allowRotation) return null;
+	const rollWidth = sheet.widthInches;
+	const pad = PADDING_INCHES;
+
+	type Group = { long: number; short: number; items: CanvasItem[] };
+	const groups = new Map<string, Group>();
+	const ungrouped: CanvasItem[] = [];
+
+	for (const item of items) {
+		const orientations = buildOrientations(item, rollWidth, true);
+		// Only groupable if it reduces to exactly one distinct rectangle
+		// (i.e. every offered rotation is either that rectangle or its
+		// 90° transpose) — asymmetric shapes whose 4 rotations give 3-4
+		// distinct bboxes aren't a fit for this row-count search.
+		const footprints = new Set(orientations.map((o) => [o.w, o.h].sort((a, b) => a - b).map((n) => n.toFixed(2)).join("x")));
+		if (footprints.size !== 1) {
+			ungrouped.push(item);
+			continue;
+		}
+		const [a, b] = orientations[0].w >= orientations[0].h
+			? [orientations[0].w, orientations[0].h]
+			: [orientations[0].h, orientations[0].w];
+		const key = `${a.toFixed(2)}x${b.toFixed(2)}`;
+		const g = groups.get(key) ?? { long: a, short: b, items: [] };
+		g.items.push(item);
+		groups.set(key, g);
+	}
+
+	if (groups.size === 0) return null; // nothing to gain over the generic packer
+
+	// Pack biggest-footprint groups first so later groups fill leftover width.
+	const orderedGroups = [...groups.values()].sort((a, b) => b.long * b.short - a.long * a.short);
+
+	const placed: CanvasItem[] = [];
+	let y = 0;
+
+	for (const g of orderedGroups) {
+		const k = g.items.length;
+		const remaining = rollWidth - y;
+
+		// n1 items "long side crosswise" (row height = long, per-item length = short)
+		// n2 items "long side along length" (row height = short, per-item length = long)
+		let bestSplit: { n1: number; n2: number; maxLen: number } | null = null;
+		for (let n1 = 0; n1 <= k; n1++) {
+			const n2 = k - n1;
+			const rowsHeight = (n1 > 0 ? g.long + pad : 0) + (n2 > 0 ? g.short + pad : 0);
+			if (rowsHeight > remaining + 0.001) continue;
+			const len1 = n1 > 0 ? n1 * (g.short + pad) - pad : 0;
+			const len2 = n2 > 0 ? n2 * (g.long + pad) - pad : 0;
+			const maxLen = Math.max(len1, len2);
+			if (!bestSplit || maxLen < bestSplit.maxLen - 0.001) bestSplit = { n1, n2, maxLen };
+		}
+
+		if (!bestSplit) {
+			// Doesn't fit at all in the remaining width — hand back to the
+			// generic packer rather than force a bad placement.
+			ungrouped.push(...g.items);
+			continue;
+		}
+
+		const { n1, n2 } = bestSplit;
+		let x = 0;
+		for (let i = 0; i < n1; i++) {
+			const item = g.items[i];
+			placed.push({ ...item, x, y, width: g.short, height: g.long, rotation: 90, outOfBounds: false });
+			x += g.short + pad;
+		}
+		if (n1 > 0) y += g.long + pad;
+		x = 0;
+		for (let i = n1; i < k; i++) {
+			const item = g.items[i];
+			placed.push({ ...item, x, y, width: g.long, height: g.short, rotation: 0, outOfBounds: false });
+			x += g.long + pad;
+		}
+		if (n2 > 0) y += g.short + pad;
+	}
+
+	if (ungrouped.length > 0) {
+		const rest = bestFitPack(ungrouped, sheet, allowRotation, "left", y);
+		placed.push(...rest);
+	}
+
+	return placed;
 }
 
 // ─── Rotation improvement pass ────────────────
@@ -822,8 +936,10 @@ export function autoNest(
 	items: CanvasItem[],
 	sheet: MaterialSheet,
 	allowRotation = true,
+	bufferInches = PADDING_INCHES,
 ): CanvasItem[] {
 	if (!items.length) return items;
+	PADDING_INCHES = bufferInches;
 
 	const pairs    = detectComplementaryPairs(items);
 	const sortFns  = getSortHeuristics();
@@ -887,7 +1003,9 @@ export function smartNest(
 	items: CanvasItem[],
 	sheet: MaterialSheet,
 	allowRotation = true,
+	bufferInches = PADDING_INCHES,
 ): SmartNestResult {
+	PADDING_INCHES = bufferInches;
 	if (!items.length) {
 		return { items, improvementPct: 0, trialsRun: 0 };
 	}
@@ -920,21 +1038,32 @@ export function smartNest(
 
 	let best = bestOverOrderings(orderings, sheet, allowRotation, withinBudget);
 	const trialsRun = orderings.length * 2; // × 2 scoring modes
+	const trace: Record<string, string> = { phase2_bestOverOrderings: layoutLen(best).toFixed(2) };
+
+	// Phase 2.5: explicit row-count rebalance for same-footprint items —
+	// see rowBalanceGroupPass for why the generic greedy packer above can
+	// get stuck on a symmetric split that isn't actually length-optimal.
+	const rowBalanced = rowBalanceGroupPass(items, sheet, allowRotation);
+	if (rowBalanced && layoutLen(rowBalanced) < layoutLen(best) - 0.001) best = rowBalanced;
+	trace.phase2_5_rowBalance = layoutLen(best).toFixed(2);
 
 	// Phase 3: rotation improvement pass
 	best = rotationImprovementPass(best, sheet, allowRotation, withinBudget);
+	trace.phase3_rotationImprovementPass = layoutLen(best).toFixed(2);
 
 	// Phase 4: pair rotation-combination pass (all 16 combos per pair)
 	if (pairs.length > 0 && withinBudget()) {
 		const pairOpt = pairRotationCombinationPass(best, sheet, pairs);
 		if (layoutLen(pairOpt) < layoutLen(best)) best = pairOpt;
 	}
+	trace.phase4_pairRotation = layoutLen(best).toFixed(2);
 
 	// Phase 5: swap improvement pass (O(n²) repacks — budget-guarded per row)
 	if (withinBudget()) {
 		const swapped = swapImprovementPass(best, sheet, allowRotation, withinBudget);
 		if (layoutLen(swapped) < layoutLen(best)) best = swapped;
 	}
+	trace.phase5_swap = layoutLen(best).toFixed(2);
 
 	// Phase 6: insertion improvement pass (O(n³) repacks — only for small sets)
 	// Threshold kept low: each while-loop round is O(n²) bestFitPack calls and
@@ -943,6 +1072,7 @@ export function smartNest(
 		const inserted = insertionImprovementPass(best, sheet, allowRotation, withinBudget);
 		if (layoutLen(inserted) < layoutLen(best)) best = inserted;
 	}
+	trace.phase6_insertion = layoutLen(best).toFixed(2);
 
 	// Phase 7: compaction + local rotation — squeeze items into real leftover
 	// gaps between neighbors (skyline rows leave pockets a rectangle-aware
@@ -956,6 +1086,15 @@ export function smartNest(
 		const rotated = localRotationRefine(best, sheet, allowRotation);
 		if (layoutLen(rotated) <= layoutLen(best)) best = rotated;
 	}
+	trace.phase7_compactionRotation = layoutLen(best).toFixed(2);
+
+	if (typeof window !== "undefined") {
+		console.log("NEST v15 smartNest trace " + JSON.stringify(trace, null, 2));
+		console.log("NEST v15 smartNest final " + JSON.stringify(
+			best.map((i) => `${i.id}:x=${i.x.toFixed(2)},y=${i.y.toFixed(2)},w=${i.width.toFixed(1)},h=${i.height.toFixed(1)},rot=${i.rotation}`),
+			null, 2,
+		));
+	}
 
 	const finalLen = layoutLen(best);
 
@@ -965,7 +1104,11 @@ export function smartNest(
 			? Math.max(0, ((baselineLen - finalLen) / baselineLen) * 100)
 			: 0;
 
-	const byId = new Map(best.map((r) => [r.id, r]));
+	// smartNest is bbox/skyline-based throughout (unlike nfpNest, it has no
+	// true-shape verification of its own) — run the same declash backstop
+	// used by bestNest so its output respects the buffer too.
+	const declashed = finalDeclash(best, sheet.widthInches, sheet.heightInches, bufferInches);
+	const byId = new Map(declashed.map((r) => [r.id, r]));
 	return {
 		items: items.map((item) => byId.get(item.id) ?? item),
 		improvementPct,
@@ -994,11 +1137,47 @@ export function smartNest(
 
 // Build the local polygon for a CanvasItem at a given rotation.
 // Rotates around the nominal centre, then normalises so bbox starts at (0,0).
-function itemPolygon(item: CanvasItem, rotDeg: number): Polygon {
+//
+// Two different fidelities are used for two different jobs:
+//   - NFP_POLY_SAMPLES (candidate search): NFP's convex decomposition is
+//     triangulation-based (O(n^2) ear-clipping) and nfpGeneral pairs every
+//     triangle in A against every triangle in B — at the default 120-point
+//     bbox-sampling resolution that's ~118 triangles per shape, ~14k
+//     pairwise Minkowski sums per (item, rotation) combo, which hangs the
+//     tab on anything but a handful of items. Kept coarse; convexDecompose's
+//     MAX_DECOMPOSE_VERTICES cap falls back to a (still-safe, if slightly
+//     conservative) convex-hull approximation past 30 vertices anyway.
+//   - VERIFY_POLY_SAMPLES (finalDeclash / collidesAt exact-overlap checks):
+//     these run plain segment-intersection tests, not decomposition, so
+//     there's no triangulation blow-up to worry about — but a coarse
+//     approximation here means "verified non-overlapping" can still differ
+//     from what's actually drawn (the real SVG path, effectively infinite
+//     resolution), especially at sharp corners. This is what actually
+//     caught pieces rendering with crossed outlines despite a positive
+//     buffer: the safety net was checking a rounded-off stand-in for the
+//     shape, not the shape itself. Higher resolution here directly fixes
+//     that; it does not touch NFP candidate-search cost at all.
+const NFP_POLY_SAMPLES = 10;
+const VERIFY_POLY_SAMPLES = 60;
+
+// Two polygons placed exactly PAD apart, each inflated by PAD/2, end up
+// perfectly tangent — and polygonsOverlap's segment-intersection test uses a
+// generous inclusive tolerance (so genuine near-misses aren't missed), which
+// flags exact tangency as an overlap too. Shaving a hair off each side's
+// inflate leaves a sub-thousandth-inch gap — invisible to a blade, but
+// enough that a layout placed with exactly the requested buffer reads as
+// clear instead of "still touching."
+const CLEARANCE_EPSILON = 0.001;
+function halfPad(PAD: number): number {
+	return Math.max(0, PAD / 2 - CLEARANCE_EPSILON / 2);
+}
+
+function itemPolygon(item: CanvasItem, rotDeg: number, samples = NFP_POLY_SAMPLES): Polygon {
 	const raw = samplePathInchPoints(
 		item.pattern.svgPath,
 		item.pattern.widthInches,
 		item.pattern.heightInches,
+		samples,
 	) as Point[];
 
 	if (rotDeg === 0) return normalizeToBBox(raw);
@@ -1024,12 +1203,275 @@ function inAnyNFP(ax: number, ay: number, nfpGroups: Polygon[][]): boolean {
 // Module-level so it survives between autoNest/smartNest calls in a session.
 const _nfpCache = new Map<string, Polygon[]>();
 
+// Find the tightest valid anchor for `item` at rotation `rot` against a set
+// of already-placed obstacle items (their current x/y/rotation). Shared by
+// the initial greedy placement pass and the compaction pass below — same
+// NFP/IFP candidate search, just parameterised over which obstacles count.
+function placeAgainst(
+	item: CanvasItem,
+	rot: number,
+	obstacles: CanvasItem[],
+	maxLength: number,
+	rollWidth: number,
+	PAD: number,
+): { x: number; y: number; w: number; h: number; score: number } | null {
+	// Low-fidelity polygon for NFP candidate generation (decomposition-based,
+	// must stay cheap — see NFP_POLY_SAMPLES).
+	const localRaw  = itemPolygon(item, rot);
+	const localPoly = normalizeToBBox(inflatePolygon(ensureCCW(localRaw), halfPad(PAD)));
+	const bounds    = polygonBounds(localPoly);
+	const bw = bounds.maxX - bounds.minX;
+	const bh = bounds.maxY - bounds.minY;
+
+	// High-fidelity polygon used ONLY for exact-overlap verification
+	// (collidesAt/repair below) — segment-intersection tests, no
+	// decomposition, so higher resolution here is cheap and it's what
+	// actually needs to match the real rendered shape.
+	const verifyPoly = normalizeToBBox(inflatePolygon(ensureCCW(itemPolygon(item, rot, VERIFY_POLY_SAMPLES)), halfPad(PAD)));
+
+	const ifp = innerFitBounds(maxLength, rollWidth, localPoly);
+	if (!ifp) return null;
+
+	const nfpGroups: Polygon[][] = [];
+	// Absolute (already-inflated, high-fidelity) obstacle polygons, kept
+	// alongside nfpGroups for the exact-overlap verification below.
+	const obstaclePolys: Polygon[] = [];
+	for (const placed of obstacles) {
+		if (placed.id === item.id) continue;
+		const key = `${placed.pattern.id}|${placed.rotation}|${item.pattern.id}|${rot}|${PAD}`;
+		let nfpLocal = _nfpCache.get(key);
+		if (!nfpLocal) {
+			const polyA = normalizeToBBox(inflatePolygon(ensureCCW(itemPolygon(placed, placed.rotation)), halfPad(PAD)));
+			nfpLocal    = nfpGeneral(polyA, localPoly);
+			_nfpCache.set(key, nfpLocal);
+		}
+		nfpGroups.push(nfpLocal.map(nfp => translatePolygon(nfp, placed.x, placed.y)));
+
+		obstaclePolys.push(translatePolygon(
+			normalizeToBBox(inflatePolygon(ensureCCW(itemPolygon(placed, placed.rotation, VERIFY_POLY_SAMPLES)), halfPad(PAD))),
+			placed.x, placed.y,
+		));
+	}
+
+	const candidates = nfpCandidates(nfpGroups, ifp);
+	const GRID = 6;
+	const stepX = (ifp.maxX - ifp.minX) / GRID;
+	const stepY = Math.max((ifp.maxY - ifp.minY) / GRID, 0.001);
+	for (let gx = 0; gx <= GRID; gx++) {
+		for (let gy = 0; gy <= GRID; gy++) {
+			candidates.push({ x: ifp.minX + gx * stepX, y: ifp.minY + gy * stepY });
+		}
+	}
+
+	const collidesAt = (x: number, y: number): boolean => {
+		const candPoly = translatePolygon(verifyPoly, x, y);
+		return obstaclePolys.some((poly) => polygonsOverlap(candPoly, poly));
+	};
+
+	// nfpGeneral's forbidden zone is a union of pairwise convex-part NFPs,
+	// which can have small false-free gaps at the seams between decomposed
+	// parts — the NFP vertex the candidate search trusts most can sit a
+	// couple hundredths of an inch inside the true silhouette. Rather than
+	// discarding that candidate outright (which forces a fallback to the
+	// sparse safety grid, tens of inches away), nudge it along +x/+y in
+	// small steps until it clears — recovering the near-optimal position
+	// instead of abandoning it. Only candidates that can't be repaired this
+	// way fall through to the next-best candidate in the ranked list.
+	const NUDGE_STEP = 0.01, NUDGE_MAX = 1.0;
+	const repair = (x: number, y: number): { x: number; y: number } | null => {
+		for (let d = NUDGE_STEP; d <= NUDGE_MAX; d += NUDGE_STEP) {
+			if (x + d <= ifp.maxX + 1e-6 && !collidesAt(x + d, y)) return { x: x + d, y };
+			if (y + d <= ifp.maxY + 1e-6 && !collidesAt(x, y + d)) return { x, y: y + d };
+		}
+		return null;
+	};
+
+	const scored: { x: number; y: number; score: number }[] = [];
+	for (const { x: ax, y: ay } of candidates) {
+		const cx = Math.max(ifp.minX, Math.min(ifp.maxX, ax));
+		const cy = Math.max(ifp.minY, Math.min(ifp.maxY, ay));
+		if (inAnyNFP(cx, cy, nfpGroups)) continue;
+		scored.push({ x: cx, y: cy, score: (cx + bw) * 1e6 + cy });
+	}
+	scored.sort((a, b) => a.score - b.score);
+
+	for (const cand of scored) {
+		if (!collidesAt(cand.x, cand.y)) {
+			return { x: cand.x, y: cand.y, w: bw, h: bh, score: cand.score };
+		}
+		const fixed = repair(cand.x, cand.y);
+		if (fixed) {
+			return { x: fixed.x, y: fixed.y, w: bw, h: bh, score: (fixed.x + bw) * 1e6 + fixed.y };
+		}
+	}
+	return null;
+}
+
+// Final, provably-correct safety net. The greedy placement + compaction
+// above optimize position using local snapshots (an item is checked against
+// "everyone placed so far" or "everyone else's position right now") — with
+// enough pieces moving in the same pass, a position that was valid when
+// computed can end up a hair stale by the time everything settles. Rather
+// than chase every such interaction, do one final incremental sweep in x
+// order: each piece is checked/nudged only against pieces ALREADY fixed by
+// this same sweep, and once fixed a piece is never moved again — so the
+// invariant "no two fixed pieces collide" holds by construction, regardless
+// of what upstream produced. This is a correctness backstop, not an
+// optimizer: it should rarely move anything more than a hundredth of an
+// inch in practice.
+export function finalDeclash(
+	items: CanvasItem[],
+	maxLength: number,
+	rollWidth: number,
+	PAD: number,
+): CanvasItem[] {
+	const order = [...items]
+		.filter((i) => !i.outOfBounds)
+		.sort((a, b) => a.x - b.x || a.y - b.y);
+
+	const fixed: CanvasItem[] = [];
+	const fixedPolys: Polygon[] = [];
+	const STEP = 0.01;
+
+	// Each item's own polygon is inflated by PAD/2 (not the full PAD) before
+	// the overlap check below, because both sides of a comparison get
+	// inflated — two shapes each grown by PAD/2 stop overlapping exactly
+	// when their true separation reaches PAD. Inflating both by the full
+	// PAD (as this used to) requires 2×PAD of real clearance before the
+	// check clears, so any layout placed with the intended single-PAD gap
+	// (every other packer in this file) would still show as "overlapping"
+	// here and get walked STEP-by-STEP further apart — capping out at
+	// guard*STEP = 5" of pure padding bloat for shapes that never resolve.
+	for (const it of order) {
+		const localPoly = normalizeToBBox(inflatePolygon(ensureCCW(itemPolygon(it, it.rotation, VERIFY_POLY_SAMPLES)), halfPad(PAD)));
+		let x = it.x;
+		let guard = 0;
+		let poly = translatePolygon(localPoly, x, it.y);
+		while (fixedPolys.some((fp) => polygonsOverlap(poly, fp)) && guard++ < 500) {
+			x += STEP;
+			poly = translatePolygon(localPoly, x, it.y);
+		}
+		if (typeof window !== "undefined" && guard > 0) {
+			console.log(`NEST v15 finalDeclash nudged ${it.id} by guard=${guard} steps (${(guard * STEP).toFixed(2)}")`);
+		}
+		const bounds = polygonBounds(poly);
+		if (bounds.maxX > maxLength + PAD + 1e-6) {
+			fixed.push({ ...it, x: maxLength + PAD, y: PAD, outOfBounds: true });
+		} else {
+			fixed.push({ ...it, x });
+			fixedPolys.push(poly);
+		}
+	}
+
+	const byId = new Map(fixed.map((f) => [f.id, f]));
+	return items.map((i) => byId.get(i.id) ?? i);
+}
+
+// Slide every piece as close to the origin as the others allow, without
+// touching. The initial greedy pass places pieces one at a time against
+// only what came before it, so a piece placed early can be left with more
+// breathing room than the minimum cut buffer once later pieces are added
+// around it. This re-seats each piece — in increasing-x order, so pieces
+// already near the origin settle first — against everyone else's CURRENT
+// position, repeating a couple of rounds so a piece freed up by its
+// neighbor sliding over gets a chance to slide further itself. Rotation is
+// held fixed (re-trying all 4 rotations here would be an O(n^2) blow-up on
+// top of the initial pass); this only tightens position, never rotation.
+function compactTowardOrigin(
+	placed: CanvasItem[],
+	maxLength: number,
+	rollWidth: number,
+	PAD: number,
+	deadline: number,
+): CanvasItem[] {
+	let current = [...placed];
+	for (let round = 0; round < 2; round++) {
+		const order = [...current]
+			.filter((i) => !i.outOfBounds)
+			.sort((a, b) => a.x - b.x || a.y - b.y)
+			.map((i) => i.id);
+
+		for (const id of order) {
+			if (Date.now() > deadline) return current;
+			const idx = current.findIndex((i) => i.id === id);
+			const item = current[idx];
+			const others = current.filter((i) => i.id !== id && !i.outOfBounds);
+			const best = placeAgainst(item, item.rotation, others, maxLength, rollWidth, PAD);
+			if (!best) continue;
+			const trial = [...current];
+			trial[idx] = { ...item, x: best.x, y: best.y };
+			if (layoutLen(trial) < layoutLen(current) - 0.005 ||
+				(Math.abs(layoutLen(trial) - layoutLen(current)) <= 0.005 && best.y < item.y - 0.005)) {
+				current = trial;
+			}
+		}
+	}
+	return current;
+}
+
+// Re-evaluate each piece's ROTATION against its final neighbors. The greedy
+// placement pass tries all 4 rotations, but only against whatever was
+// placed *before* it — a piece placed early (or into a tight gap) can end
+// up "stuck" in a rotation that was locally best at the time, even though
+// laying it the other way would now cut less roll length once everyone
+// else has settled. compactTowardOrigin only ever slides position, never
+// reconsiders rotation, so this is the only pass that can catch that.
+function rotationRefinePass(
+	placed: CanvasItem[],
+	maxLength: number,
+	rollWidth: number,
+	PAD: number,
+	deadline: number,
+): CanvasItem[] {
+	let current = [...placed];
+	const ROTS = [0, 90, 180, 270];
+
+	for (let round = 0; round < 2; round++) {
+		const order = [...current]
+			.filter((i) => !i.outOfBounds)
+			.sort((a, b) => a.x - b.x || a.y - b.y)
+			.map((i) => i.id);
+
+		for (const id of order) {
+			if (Date.now() > deadline) return current;
+			const idx = current.findIndex((i) => i.id === id);
+			const item = current[idx];
+			const others = current.filter((i) => i.id !== id && !i.outOfBounds);
+
+			let best: { x: number; y: number; w: number; h: number; score: number } | null = null;
+			let bestRot = item.rotation;
+			for (const rot of ROTS) {
+				const candidate = placeAgainst(item, rot, others, maxLength, rollWidth, PAD);
+				if (candidate && (!best || candidate.score < best.score)) {
+					best = candidate;
+					bestRot = rot;
+				}
+			}
+
+			if (best && bestRot !== item.rotation) {
+				// Gate on total roll length, not this item's own x: a trailing
+				// piece is already at the minimum x its current rotation allows,
+				// so "does my own x shrink" can never fire for exactly the piece
+				// that needs to rotate to shorten the *overall* roll.
+				const trial = [...current];
+				trial[idx] = { ...item, x: best.x, y: best.y, width: best.w, height: best.h, rotation: bestRot };
+				if (layoutLen(trial) < layoutLen(current) - 0.005) {
+					current = trial;
+				}
+			}
+		}
+	}
+	return current;
+}
+
 export function nfpNest(
 	items:         CanvasItem[],
 	sheet:         MaterialSheet,  // already transposed: widthInches=max-length, heightInches=roll-width
 	allowRotation  = true,
+	bufferInches   = PADDING_INCHES,
 ): CanvasItem[] {
 	if (!items.length) return items;
+	PADDING_INCHES = bufferInches;
 
 	const PAD        = PADDING_INCHES;
 	const maxLength  = sheet.widthInches;   // X: roll feed direction (unconstrained)
@@ -1043,94 +1485,39 @@ export function nfpNest(
 			a.pattern.widthInches * a.pattern.heightInches,
 	);
 
-	const placedItems:    CanvasItem[] = [];
-	const placedPolygons: Polygon[]    = []; // in absolute (roll) coordinates
+	const placedItems: CanvasItem[] = [];
+
+	// Hard wall-clock budget: NFP cost grows with placed-item count and shape
+	// complexity, so a pathological set of shapes could otherwise hang the
+	// tab. Once the deadline passes, drop remaining items to the bbox
+	// fallback below instead of running any more NFP math — bestNest() will
+	// then prefer the plain skyline result if it fits more/shorter anyway.
+	const deadline = Date.now() + 800;
 
 	for (const item of sorted) {
-		let bestX   = -1, bestY = -1, bestW = 0, bestH = 0, bestRot = 0;
-		let bestScore = Infinity;
+		if (Date.now() > deadline) {
+			placedItems.push({ ...item, x: maxLength + PAD, y: PAD, outOfBounds: true });
+			continue;
+		}
+
+		let best: { x: number; y: number; w: number; h: number; score: number } | null = null;
+		let bestRot = 0;
 
 		for (const rot of ROTS) {
-			// Local polygon (bbox starts at 0,0).  Inflate by PAD so placed pieces
-			// stay PAD inches apart — equivalent to Minkowski-summing B with a small disk.
-			const localRaw  = itemPolygon(item, rot);
-			const localPoly = inflatePolygon(ensureCCW(localRaw), PAD * 0.5);
-			const bounds    = polygonBounds(localPoly);
-			const bw = bounds.maxX - bounds.minX;
-			const bh = bounds.maxY - bounds.minY;
-
-			// Inner Fit Bounds: valid X,Y range for this piece's anchor.
-			const ifp = innerFitBounds(maxLength, rollWidth, localPoly);
-			if (!ifp) continue;
-
-			// Compute NFP for every already-placed piece, caching by shape pair.
-			const nfpGroups: Polygon[][] = [];
-
-			for (let pi = 0; pi < placedItems.length; pi++) {
-				const placed = placedItems[pi];
-				const key = `${placed.pattern.id}|${placed.rotation}|${item.pattern.id}|${rot}`;
-
-				let nfpLocal = _nfpCache.get(key);
-				if (!nfpLocal) {
-					const polyA = inflatePolygon(ensureCCW(itemPolygon(placed, placed.rotation)), PAD * 0.5);
-					nfpLocal    = nfpGeneral(polyA, localPoly);
-					_nfpCache.set(key, nfpLocal);
-				}
-
-				// Translate NFP from A-local to absolute coords (A is at placed.x, placed.y).
-				const absNFP = nfpLocal.map(nfp => translatePolygon(nfp, placed.x, placed.y));
-				nfpGroups.push(absNFP);
-			}
-
-			// Collect candidate anchor positions.
-			const candidates = nfpCandidates(nfpGroups, ifp);
-
-			// Add a lightweight grid as a safety net for cases where no NFP vertex
-			// is in the valid region (e.g. first piece, or fully enclosed free zone).
-			const GRID = 6;
-			const stepX = (ifp.maxX - ifp.minX) / GRID;
-			const stepY = Math.max((ifp.maxY - ifp.minY) / GRID, 0.001);
-			for (let gx = 0; gx <= GRID; gx++) {
-				for (let gy = 0; gy <= GRID; gy++) {
-					candidates.push({
-						x: ifp.minX + gx * stepX,
-						y: ifp.minY + gy * stepY,
-					});
-				}
-			}
-
-			// Evaluate candidates.
-			for (const { x: ax, y: ay } of candidates) {
-				// Clamp to IFP.
-				const cx = Math.max(ifp.minX, Math.min(ifp.maxX, ax));
-				const cy = Math.max(ifp.minY, Math.min(ifp.maxY, ay));
-
-				if (inAnyNFP(cx, cy, nfpGroups)) continue;
-
-				// Score: minimise roll consumption (rightmost edge of this piece),
-				// then minimise cross-roll position for a tidy layout.
-				const score = (cx + bw) * 1e6 + cy;
-				if (score < bestScore) {
-					bestScore = score;
-					bestX = cx; bestY = cy;
-					bestW = bw; bestH = bh;
-					bestRot = rot;
-				}
+			const candidate = placeAgainst(item, rot, placedItems, maxLength, rollWidth, PAD);
+			if (candidate && (!best || candidate.score < best.score)) {
+				best = candidate;
+				bestRot = rot;
 			}
 		}
 
-		if (bestX >= 0) {
-			// Store the UNPADDED absolute polygon for subsequent NFP computations
-			// (the padding is built into the NFP itself — we don't want the visual
-			// placement to show inflated bounds).
-			const rawLocal = itemPolygon(item, bestRot);
-			placedPolygons.push(translatePolygon(rawLocal, bestX, bestY));
+		if (best) {
 			placedItems.push({
 				...item,
-				x:          bestX,
-				y:          bestY,
-				width:      bestW,
-				height:     bestH,
+				x:          best.x,
+				y:          best.y,
+				width:      best.w,
+				height:     best.h,
 				rotation:   bestRot,
 				outOfBounds: false,
 			});
@@ -1140,9 +1527,72 @@ export function nfpNest(
 		}
 	}
 
+	// Squeeze every piece as far toward the origin as its neighbors' final
+	// positions allow — the greedy pass above only ever checks a piece
+	// against what was placed *before* it, so early pieces can end up with
+	// more than the minimum cut buffer once the full layout has settled.
+	// Alternate with rotation refinement so each can exploit the other's
+	// gains: compaction can free up room that unlocks a better rotation,
+	// and a rotation change can free up room compaction can then use.
+	let settled = placedItems;
+	for (let round = 0; round < 2 && Date.now() < deadline; round++) {
+		settled = compactTowardOrigin(settled, maxLength, rollWidth, PAD, deadline);
+		settled = rotationRefinePass(settled, maxLength, rollWidth, PAD, deadline);
+	}
+	const declashed = finalDeclash(settled, maxLength, rollWidth, PAD);
+
 	// Return in the original item order.
-	const byId = new Map(placedItems.map(r => [r.id, r]));
+	const byId = new Map(declashed.map(r => [r.id, r]));
 	return items.map(i => byId.get(i.id) ?? i);
+}
+
+// ─── bestNest ─────────────────────────────────
+// Default entry point for the studio: true-shape NFP nesting lets pieces
+// interlock along their real silhouettes (no bbox/skyline grid), which is
+// what the UI should show. autoNest's bbox skyline packer is kept only as a
+// safety-net comparison for pathological inputs where NFP's polygon
+// candidate search comes up short — but ONLY on fit (does it place strictly
+// more pieces?), never on roll length. autoNest positions by tight bounding
+// box, not true shape, and carries none of nfpNest's exact-overlap
+// verification (finalDeclash) — a shorter bbox layout is not necessarily a
+// safe one for non-rectangular pieces, so it must never win a tie-break
+// against the verified result just for being more compact.
+export function bestNest(
+	items: CanvasItem[],
+	sheet: MaterialSheet,
+	allowRotation = true,
+	bufferInches = PADDING_INCHES,
+): CanvasItem[] {
+	if (!items.length) return items;
+
+	const nfpResult = nfpNest(items, sheet, allowRotation, bufferInches);
+	const skylineResult = autoNest(items, sheet, allowRotation, bufferInches);
+
+	const nfpOob = nfpResult.filter((i) => i.outOfBounds).length;
+	const skylineOob = skylineResult.filter((i) => i.outOfBounds).length;
+	const chosen = nfpOob <= skylineOob ? nfpResult : skylineResult;
+	if (typeof window !== "undefined") {
+		const len = (arr: CanvasItem[]) => {
+			const ib = arr.filter((i) => !i.outOfBounds);
+			return ib.length ? Math.max(...ib.map((i) => i.x + i.width)) : 0;
+		};
+		const geo = (arr: CanvasItem[]) =>
+			arr.map((i) => `${i.id}:x=${i.x.toFixed(2)},y=${i.y.toFixed(2)},w=${i.width.toFixed(1)},h=${i.height.toFixed(1)},rot=${i.rotation}`).join(" | ");
+		console.log("NEST v15 bestNest " + JSON.stringify({
+			nfpOob, skylineOob, nfpLen: len(nfpResult).toFixed(2), skylineLen: len(skylineResult).toFixed(2),
+			chose: nfpOob <= skylineOob ? "nfp" : "skyline",
+			nfp: geo(nfpResult),
+			skyline: geo(skylineResult),
+		}, null, 2));
+	}
+
+	// Universal backstop: whichever path won, guarantee the buffer is
+	// actually respected in the result the UI renders. autoNest has no
+	// exact-overlap verification of its own, and even nfpNest's own
+	// declash pass only ran against the OTHER items present when IT was
+	// computed — re-run it here, once, against the final chosen set.
+	PADDING_INCHES = bufferInches;
+	return finalDeclash(chosen, sheet.widthInches, sheet.heightInches, bufferInches);
 }
 
 // ─── Placement result ─────────────────────────

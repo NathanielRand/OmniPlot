@@ -45,8 +45,8 @@ function makeState(items: CanvasItem[] = [makeItem()]): CanvasState {
 	return {
 		items, sheet,
 		selectedIds: [], zoom: 100, panX: 0, panY: 0,
-		tool: 'select', showGrid: true, showRulers: true,
-		snapToGrid: false, gridSizeInches: 0.5,
+		tool: 'select', showGrid: true, showRulers: true, rulerStepInches: 5,
+		snapToGrid: false, gridSizeInches: 0.5, bufferInches: 0.05,
 	};
 }
 

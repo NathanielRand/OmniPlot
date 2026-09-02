@@ -344,8 +344,10 @@ export interface CanvasState {
 	tool: CanvasTool;
 	showGrid: boolean;
 	showRulers: boolean;
+	rulerStepInches: number; // ruler tick spacing: 1, 5, or 10
 	snapToGrid: boolean;
 	gridSizeInches: number;
+	bufferInches: number; // minimum clearance nesting keeps between pieces; negative = intentional overlap
 }
 
 // ─── Cut Jobs ─────────────────────────────────

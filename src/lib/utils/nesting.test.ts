@@ -275,3 +275,29 @@ describe('findNextPosition', () => {
 		expect(pos.height).toBeGreaterThan(0);
 	});
 });
+
+// ─── Row-balance regression (6 identical windows, 60" roll) ──
+// Reproduces the exact live-app scenario: 6 copies of a 34.11×24.14 window
+// pattern on a 60"-wide roll. A symmetric 3-portrait/3-landscape split
+// (bestFitPack's greedy default) uses 102.43" of roll; the true optimum is
+// an unbalanced 4-portrait/2-landscape split at 96.71" — about 6" shorter.
+// This is the case that motivated rowBalanceGroupPass: single-item rotation
+// swaps (rotationImprovementPass) can't discover it because repacking after
+// one flip just re-converges on the same greedy symmetric split.
+describe('smartNest row-balance (same-footprint group rebalance)', () => {
+	it('finds the unbalanced split that beats the greedy symmetric one', () => {
+		// Nesting internally treats widthInches as the (loosely-bounded) length
+		// axis and heightInches as the tightly-bounded 60" cross-width — this is
+		// the "transposed" sheet the studio passes in for real. See
+		// transposedSheet() in +page.svelte.
+		const transposedSheet: MaterialSheet = { ...sheet, widthInches: 1200, heightInches: 60 };
+		const pat = makePattern('window', 34.11, 24.14);
+		const items = Array.from({ length: 6 }, (_, i) => makeItem(`w${i}`, pat));
+		const result = smartNest(items, transposedSheet, true, 0.05);
+
+		expect(result.items.every((i) => !i.outOfBounds)).toBe(true);
+		const len = Math.max(...result.items.map((i) => i.x + i.width));
+		expect(len).toBeLessThan(97); // was 102.43 before rowBalanceGroupPass
+		expect(len).toBeGreaterThan(96); // sanity: shouldn't overshoot the theoretical 96.71 optimum
+	});
+});

@@ -10,7 +10,7 @@
 		agentStore,
 		confirmStore,
 	} from "$lib/stores";
-	import { autoNest, smartNest, findNextPosition, samplePolygonArea, getSvgPathBBox, type PlacementResult } from "$lib/utils/nesting";
+	import { bestNest, smartNest, findNextPosition, samplePolygonArea, getSvgPathBBox, type PlacementResult } from "$lib/utils/nesting";
 	import {
 		downloadHpgl,
 		downloadSvg,
@@ -143,6 +143,30 @@
 		return rollWidth + oobStrip;
 	});
 
+	// ─── Ruler ticks across the roll's width ──────
+	// Major ticks are labeled; minor ticks are small unlabeled notches at the
+	// "next stage down" spacing, so the ruler still shows finer resolution
+	// after zooming out to a coarser major step.
+	const RULER_STEPS = [5, 10, 20, 30] as const;
+	const RULER_MINOR_STEP: Record<number, number> = { 5: 1, 10: 5, 20: 10, 30: 10 };
+	const rulerMajorTicks = $derived.by(() => {
+		const step = canvasStore.state.rulerStepInches || 5;
+		const ticks: number[] = [];
+		for (let t = 0; t <= displaySheetWidth + 0.001; t += step) ticks.push(Math.round(t * 100) / 100);
+		return ticks;
+	});
+	const rulerMinorTicks = $derived.by(() => {
+		const step = canvasStore.state.rulerStepInches || 5;
+		const minorStep = RULER_MINOR_STEP[step] ?? 1;
+		const majorSet = new Set(rulerMajorTicks);
+		const ticks: number[] = [];
+		for (let t = 0; t <= displaySheetWidth + 0.001; t += minorStep) {
+			const r = Math.round(t * 100) / 100;
+			if (!majorSet.has(r)) ticks.push(r);
+		}
+		return ticks;
+	});
+
 	// ─── Merged roll label (name, length, width, used) ────
 	// Material names in config bake the width/length into the string itself
 	// (e.g. "Tint Roll 20\" × 100ft"), which duplicated the width/used figures
@@ -209,7 +233,7 @@
 	function renestOnSheet(sheet: typeof canvasStore.sheet) {
 		canvasStore.setSheet(sheet);
 		if (canvasStore.items.length > 0) {
-			const nested = autoNest(canvasStore.items, transposedSheet(sheet));
+			const nested = bestNest(canvasStore.items, transposedSheet(sheet), true, canvasStore.state.bufferInches);
 			canvasStore.setItems(nested);
 			const oob = nested.filter((i) => i.outOfBounds).length;
 			if (oob > 0) {
@@ -351,7 +375,8 @@
 
 	// ─── Actions ──────────────────────────────────
 	function handleAutoNest() {
-		const nested = autoNest(canvasStore.items, transposedSheet());
+		const nested = bestNest(canvasStore.items, transposedSheet(), true, canvasStore.state.bufferInches);
+		console.log("NEST v13", nested.map((i) => [i.id, i.x.toFixed(2), i.y.toFixed(2), i.width.toFixed(1), i.height.toFixed(1), i.rotation]));
 		canvasStore.setItems(nested);
 		smartNestGain = null;
 		const oob = nested.filter((i) => i.outOfBounds).length;
@@ -972,14 +997,34 @@
 				}));
 				const sheet = { ...canvasStore.sheet };
 
-				const result = smartNest(plainItems, transposedSheet(sheet));
+				const result = smartNest(plainItems, transposedSheet(sheet), true, canvasStore.state.bufferInches);
 
-				canvasStore.setItems(result.items);
+				// smartNest's random-restart search is still bbox/skyline based.
+				// Compare against the true-shape NFP layout too — the deep
+				// search shouldn't be allowed to regress to a worse grid packing.
+				const nfpAlt = bestNest(plainItems, transposedSheet(sheet), true, canvasStore.state.bufferInches);
+				const oobLen = (arr: typeof result.items) => {
+					const oob = arr.filter((i) => i.outOfBounds).length;
+					const fit = arr.filter((i) => !i.outOfBounds);
+					const len = fit.length ? Math.max(...fit.map((i) => i.x + i.width)) : 0;
+					return { oob, len };
+				};
+				const a = oobLen(result.items);
+				const b = oobLen(nfpAlt);
+				const finalItems = (b.oob < a.oob || (b.oob === a.oob && b.len <= a.len)) ? nfpAlt : result.items;
+				console.log("NEST v15 handleSmartNest " + JSON.stringify({
+					smartNestLen: a.len.toFixed(2), smartNestOob: a.oob,
+					nfpAltLen: b.len.toFixed(2), nfpAltOob: b.oob,
+					chose: finalItems === nfpAlt ? "nfpAlt" : "smartNest.result",
+					patterns: plainItems.map((i) => `${i.id}:pattern=${i.pattern.name}:nomW=${i.pattern.widthInches},nomH=${i.pattern.heightInches}`),
+				}, null, 2));
+
+				canvasStore.setItems(finalItems);
 				smartNestGain = result.improvementPct;
 
-				const oob = result.items.filter((i) => i.outOfBounds).length;
-				const fit = result.items.length - oob;
-				const eff = formatEfficiency(calcEfficiency(result.items, canvasStore.sheet));
+				const oob = finalItems.filter((i) => i.outOfBounds).length;
+				const fit = finalItems.length - oob;
+				const eff = formatEfficiency(calcEfficiency(finalItems, canvasStore.sheet));
 				const gainStr = result.improvementPct >= 0.5
 					? ` · ↑${result.improvementPct.toFixed(0)}% vs baseline`
 					: "";
@@ -1381,7 +1426,7 @@
 			],
 		};
 		if (aiNestEnabled) {
-			const nested = autoNest([...canvasStore.items, item], transposedSheet());
+			const nested = bestNest([...canvasStore.items, item], transposedSheet(), true, canvasStore.state.bufferInches);
 			canvasStore.setItems(nested);
 			canvasStore.select(item.id);
 		} else {
@@ -1407,6 +1452,11 @@
 		return [...map.values()];
 	});
 	const hasMultipleVehicles = $derived(vehicleGroups.length > 1);
+	const itemIndexMap = $derived.by(() => {
+		const m = new Map<string, number>();
+		canvasStore.items.forEach((it, i) => m.set(it.id, i + 1));
+		return m;
+	});
 
 
 	// ─── Zoom shortcuts ───────────────────────────
@@ -1547,9 +1597,19 @@
 			});
 		}
 
-		// Poll every 8s — silent so the UI doesn't flash "Scanning…" each cycle
-		const pollInterval = setInterval(() => runDiscovery(true), 8_000);
-		cleanup.push(() => clearInterval(pollInterval));
+		// Poll every 8s while an agent is connected (catch disconnects quickly);
+		// back off to 60s while offline — most users never run the local Cut
+		// Agent app, so there's no reason to hammer it (and log a CORS-blocked
+		// request to the console) every 8s indefinitely.
+		let pollTimer: ReturnType<typeof setTimeout>;
+		const schedulePoll = () => {
+			pollTimer = setTimeout(async () => {
+				await runDiscovery(true);
+				schedulePoll();
+			}, agentProbeStatus === "online" ? 8_000 : 60_000);
+		};
+		schedulePoll();
+		cleanup.push(() => clearTimeout(pollTimer));
 
 		return () => cleanup.forEach(fn => fn());
 	});
@@ -1610,7 +1670,7 @@
 				</svg>
 			</div>
 			<div class="pattern-card__info">
-				<div class="pattern-card__name">{item.label ?? item.pattern.name}</div>
+				<div class="pattern-card__name">{item.label ?? item.pattern.name} ({itemIndexMap.get(item.id)})</div>
 				<div class="pattern-card__meta">{item.width.toFixed(1)}" × {item.height.toFixed(1)}"</div>
 			</div>
 			<svg
@@ -2307,6 +2367,44 @@
 			<div
 				class="canvas-content"
 			>
+				<!-- Roll header: material label + ruler, spans the roll's full width.
+				     The ruler marks the roll's WIDTH axis (screen-horizontal — same
+				     axis item.y positions travel along), not how much length has
+				     been used. -->
+				<div
+					class="roll-header"
+					style="width: {displaySheetWidth * 48 * canvasStore.zoom / 100}px;"
+				>
+					<div class="roll-header__top">
+						<div class="sheet-label">
+							{materialBaseName} ({rollLengthFt}ft) {canvasStore.sheet.widthInches}" Wide - {usedLengthFt.toFixed(1)}/{rollLengthFt} USED
+						</div>
+						<div class="ruler__unit-toggle" role="group" aria-label="Ruler spacing">
+							{#each RULER_STEPS as step}
+								<button
+									type="button"
+									class="ruler__unit-btn"
+									class:active={canvasStore.state.rulerStepInches === step}
+									onclick={() => canvasStore.setRulerStep(step)}
+								>{step}"</button>
+							{/each}
+						</div>
+					</div>
+					<div class="ruler">
+						{#each rulerMinorTicks as t (t)}
+							<div class="ruler__tick ruler__tick--minor" style="left: {t * 48 * canvasStore.zoom / 100}px">
+								<span class="ruler__mark ruler__mark--minor"></span>
+							</div>
+						{/each}
+						{#each rulerMajorTicks as t (t)}
+							<div class="ruler__tick" style="left: {t * 48 * canvasStore.zoom / 100}px">
+								<span class="ruler__mark"></span>
+								<span class="ruler__num">{t}"</span>
+							</div>
+						{/each}
+					</div>
+				</div>
+
 				<!-- Roll frame: the visual footprint after the 90° rotation below —
 				     width = roll width (screen-horizontal), height = length used (screen-vertical) -->
 				<div
@@ -2316,13 +2414,6 @@
             height: {displaySheetLength * 48 * canvasStore.zoom / 100}px;
           "
 				>
-					<!-- Single merged label (name, length, width, live used-length) — was
-					     previously split into a name line above the canvas and a
-					     separate width/used line below it, which read as duplicated info. -->
-					<span class="sheet-label">
-						{materialBaseName} ({rollLengthFt}ft) {canvasStore.sheet.widthInches}" Wide - {usedLengthFt.toFixed(1)}/{rollLengthFt} USED
-					</span>
-
 					<!-- Ghost roll-direction guide: length runs top-to-bottom on screen
 					     (see the rotation note above the .material-sheet block below), so
 					     this is just context for which way the physical roll feeds/unrolls
@@ -2347,7 +2438,7 @@
 					{#if canvasStore.sheet.widthInches < displaySheetWidth}
 						<div
 							class="roll-boundary"
-							style="top: {canvasStore.sheet.widthInches * 48 * canvasStore.zoom / 100}px"
+							style="top: {(displaySheetWidth - canvasStore.sheet.widthInches) * 48 * canvasStore.zoom / 100}px"
 							aria-hidden="true"
 						></div>
 					{/if}
@@ -2358,7 +2449,7 @@
 							class="plotter-limit-line"
 							class:plotter-limit-line--overflow={compat === "overflow"}
 							class:plotter-limit-line--tight={compat === "tight"}
-							style="top: {plotterMaxWidthIn * 48 * canvasStore.zoom / 100}px"
+							style="top: {(displaySheetWidth - plotterMaxWidthIn) * 48 * canvasStore.zoom / 100}px"
 							aria-label="Plotter cutting limit: {plotterStore.config.name} max {plotterMaxWidthIn.toFixed(1)}&quot;"
 						>
 							<span class="plotter-limit-label">
@@ -2370,13 +2461,9 @@
 					<!-- Cut items -->
 					{#each canvasStore.items as item (item.id)}
 						{@const _bb = getSvgPathBBox(item.pattern.svgPath)}
-						{@const _textStr = item.label ?? item.pattern.zone ?? ''}
-						{@const _baseFS  = Math.max(3, Math.min(16, Math.min(_bb.w, _bb.h) * 0.08))}
-						{@const _fontSize = _textStr.length * _baseFS * 0.6 > _bb.w * 0.82
-							? Math.max(2, (_bb.w * 0.82) / (_textStr.length * 0.6))
-							: _baseFS}
+						{@const _textBase = item.label ?? item.pattern.zone ?? ''}
+						{@const _textStr = _textBase ? `${_textBase} (${itemIndexMap.get(item.id) ?? ''})` : `(${itemIndexMap.get(item.id) ?? ''})`}
 						{@const _vname = hasMultipleVehicles ? getVehicleName(item.pattern.vehicleId).split(' ').slice(1).join(' ') : ''}
-						{@const _vnameFS = Math.max(2, _fontSize * 0.7)}
 						<!-- svelte-ignore a11y_click_events_have_key_events -->
 						<div
 							class="cut-item"
@@ -2384,7 +2471,7 @@
 							class:cut-item--oob={item.outOfBounds}
 							style="
                 left: {item.x * 48 * canvasStore.zoom / 100}px;
-                top: {item.y * 48 * canvasStore.zoom / 100}px;
+                top: {(displaySheetWidth - item.y - item.height) * 48 * canvasStore.zoom / 100}px;
                 width: {item.width * 48 * canvasStore.zoom / 100}px;
                 height: {item.height * 48 * canvasStore.zoom / 100}px;
               "
@@ -2424,31 +2511,20 @@
 											)}
 										/>
 									</g>
-									<text
-										x={_bb.x + _bb.w / 2}
-										y={_bb.y + _bb.h / 2}
-										text-anchor="middle"
-										dominant-baseline="middle"
-										fill={item.color}
-										opacity="0.6"
-										font-size={_fontSize}
-										font-family="monospace"
-										>{_textStr}</text
-									>
-									{#if hasMultipleVehicles}
-										<text
-											x={_bb.x + _bb.w / 2}
-											y={_bb.y + _bb.h / 2 + _fontSize * 1.35}
-											text-anchor="middle"
-											dominant-baseline="middle"
-											fill={item.color}
-											opacity="0.38"
-											font-size={_vnameFS}
-											font-family="monospace"
-										>{_vname}</text>
-									{/if}
 								</g>
 							</svg>
+							<!-- Label rendered as plain HTML, outside the rotated/skewed SVG
+							     (the SVG uses preserveAspectRatio="none" to fill the item's
+							     true-shape bbox, which non-uniformly stretches anything drawn
+							     inside it — a counter-rotation there would shear, not just
+							     un-rotate). Overlaying the label in ordinary page coordinates
+							     keeps it upright and readable at any rotation/flip. -->
+							<div class="cut-item__label" aria-hidden="true" style="color: {item.color}">
+								<span>{_textStr}</span>
+								{#if hasMultipleVehicles}
+									<span class="cut-item__label-sub">{_vname}</span>
+								{/if}
+							</div>
 							{#if canvasStore.selected.includes(item.id)}
 								<div
 									class="cut-item__ring"
@@ -2673,6 +2749,36 @@
 
 					<!-- Patterns tab -->
 				{:else if panelTab === "patterns"}
+					<div class="buffer-control">
+						<label for="buffer-input" class="buffer-control__label">
+							Cut buffer
+							<span
+								class="info-tip"
+								data-tip="Minimum gap kept between pieces (and from the roll edge) when nesting. Negative values intentionally allow pieces to overlap -- only set this below zero on purpose."
+							>?</span>
+						</label>
+						<div class="buffer-control__row">
+							<input
+								id="buffer-input"
+								type="number"
+								step="0.01"
+								min="-5"
+								max="12"
+								value={canvasStore.state.bufferInches}
+								onchange={(e) => {
+									const v = parseFloat((e.target as HTMLInputElement).value);
+									if (!Number.isNaN(v)) {
+										canvasStore.setBufferInches(v);
+										if (canvasStore.items.length) handleAutoNest();
+									}
+								}}
+							/>
+							<span class="buffer-control__unit">in</span>
+							{#if canvasStore.state.bufferInches < 0}
+								<span class="buffer-control__warn" title="Pieces are allowed to intentionally overlap">Overlap allowed</span>
+							{/if}
+						</div>
+					</div>
 					<div class="prop-label" style="padding: 0 0 10px;">
 						Placed patterns
 						{#if canvasStore.items.length}
@@ -4175,15 +4281,80 @@
 
 	/* Single merged label above the canvas — name, roll length, width, and the
 	   live used-length, all in one place instead of split above/below the roll. */
+	.roll-header {
+		display: flex;
+		flex-direction: column;
+		margin-bottom: 6px;
+	}
+
+	.roll-header__top {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 12px;
+		margin-bottom: 4px;
+	}
+
 	.sheet-label {
-		position: absolute;
-		top: -24px;
-		left: 0;
 		font-family: var(--font-mono);
 		font-size: 0.75rem;
 		font-weight: 600;
 		color: var(--text-primary);
 		white-space: nowrap;
+	}
+
+	.ruler {
+		position: relative;
+		height: 20px;
+		border-bottom: 1px solid var(--border-default);
+	}
+	.ruler__tick {
+		position: absolute;
+		bottom: 0;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		transform: translateX(-50%);
+	}
+	.ruler__mark {
+		width: 1px;
+		height: 6px;
+		background: var(--border-default);
+		margin-bottom: 2px;
+	}
+	.ruler__tick--minor {
+		z-index: 0;
+	}
+	.ruler__mark--minor {
+		height: 3px;
+		margin-bottom: 0;
+		background: var(--border-subtle);
+	}
+	.ruler__num {
+		font-family: var(--font-mono);
+		font-size: 0.62rem;
+		color: var(--text-tertiary, var(--text-secondary));
+		white-space: nowrap;
+	}
+	.ruler__unit-toggle {
+		display: flex;
+		gap: 2px;
+		flex-shrink: 0;
+	}
+	.ruler__unit-btn {
+		padding: 1px 6px;
+		font-size: 0.62rem;
+		font-family: var(--font-mono);
+		background: var(--bg-surface-2, var(--bg-elevated));
+		border: 1px solid var(--border-subtle);
+		border-radius: 4px;
+		color: var(--text-secondary);
+		cursor: pointer;
+	}
+	.ruler__unit-btn.active {
+		background: var(--color-accent, var(--text-primary));
+		color: var(--bg-base, #fff);
+		border-color: transparent;
 	}
 
 	/* Ghost roll-direction guide — vertical "Prints this way" + arrow sitting
@@ -4274,6 +4445,42 @@
 		text-transform: uppercase;
 	}
 
+	.cut-item__label {
+		position: absolute;
+		inset: 0;
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: center;
+		gap: 2px;
+		pointer-events: none;
+		font-family: monospace;
+		text-align: center;
+		line-height: 1.2;
+		padding: 4px;
+		overflow: hidden;
+	}
+	.cut-item__label span {
+		opacity: 0.6;
+		font-size: 10px;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		max-height: 100%;
+		/* Rotated 90° from plain horizontal — items on this canvas are
+		   typically taller than wide, so text running along the long axis
+		   reads better than text squeezed across the short one. Uses
+		   writing-mode (not a transform for the rotation itself, so
+		   ellipsis/overflow still work) — vertical-rl alone renders bottom-
+		   to-top, so the extra 180° flip makes it read top-to-bottom. */
+		writing-mode: vertical-rl;
+		transform: rotate(180deg);
+	}
+	.cut-item__label-sub {
+		opacity: 0.38 !important;
+		font-size: 8px !important;
+	}
+
 	.cut-item__ring {
 		position: absolute;
 		inset: -2px;
@@ -4332,17 +4539,6 @@
 	}
 	.cut-item__del:hover {
 		transform: scale(1.15);
-	}
-
-	.cut-item__label {
-		position: absolute;
-		bottom: -16px;
-		left: 0;
-		font-family: var(--font-mono);
-		font-size: 0.5rem;
-		white-space: nowrap;
-		pointer-events: none;
-		letter-spacing: 0.04em;
 	}
 
 	/* Canvas empty state */
@@ -5064,6 +5260,48 @@
 		border-radius: 999px;
 		padding: 0 5px;
 		line-height: 1.6;
+	}
+
+	.buffer-control {
+		margin-bottom: 14px;
+		padding-bottom: 12px;
+		border-bottom: 1px solid var(--border-subtle);
+	}
+	.buffer-control__label {
+		display: flex;
+		align-items: center;
+		gap: 5px;
+		font-size: 0.78rem;
+		font-weight: 600;
+		color: var(--text-secondary);
+		text-transform: uppercase;
+		letter-spacing: 0.02em;
+		margin-bottom: 6px;
+	}
+	.buffer-control__row {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+	.buffer-control__row input {
+		width: 80px;
+		padding: 5px 8px;
+		font-size: 0.86rem;
+		font-family: var(--font-mono, monospace);
+		background: var(--bg-surface-2, var(--bg-elevated));
+		border: 1px solid var(--border-subtle);
+		border-radius: 6px;
+		color: var(--text-primary);
+	}
+	.buffer-control__unit {
+		font-size: 0.8rem;
+		color: var(--text-tertiary, var(--text-secondary));
+	}
+	.buffer-control__warn {
+		font-size: 0.72rem;
+		font-weight: 600;
+		color: var(--color-warning);
+		margin-left: 4px;
 	}
 
 	.patterns-count {
