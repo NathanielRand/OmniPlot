@@ -2010,6 +2010,7 @@
 
 {#if confirmCancelOpen}
 	<div class="cancel-confirm-overlay" role="button" tabindex="-1" aria-label="Close dialog" onclick={() => (confirmCancelOpen = false)} onkeydown={(e) => e.key === 'Escape' && (confirmCancelOpen = false)}>
+		<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 		<div class="cancel-confirm" onclick={(e) => e.stopPropagation()}>
 			<div class="cancel-confirm__body">
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
@@ -2036,6 +2037,7 @@
 
 {#if confirmCancelNowOpen}
 	<div class="cancel-confirm-overlay" role="button" tabindex="-1" aria-label="Close dialog" onclick={() => (confirmCancelNowOpen = false)} onkeydown={(e) => e.key === 'Escape' && (confirmCancelNowOpen = false)}>
+		<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 		<div class="cancel-confirm" onclick={(e) => e.stopPropagation()}>
 			<div class="cancel-confirm__body">
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
@@ -2054,6 +2056,7 @@
 
 {#if confirmPauseOpen}
 	<div class="cancel-confirm-overlay" role="button" tabindex="-1" aria-label="Close dialog" onclick={() => (confirmPauseOpen = false)} onkeydown={(e) => e.key === 'Escape' && (confirmPauseOpen = false)}>
+		<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 		<div class="cancel-confirm" onclick={(e) => e.stopPropagation()}>
 			<div class="cancel-confirm__body">
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
@@ -2072,6 +2075,7 @@
 
 {#if confirmClearOpen}
 	<div class="cancel-confirm-overlay" role="button" tabindex="-1" aria-label="Close dialog" onclick={() => (confirmClearOpen = false)} onkeydown={(e) => e.key === 'Escape' && (confirmClearOpen = false)}>
+		<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 		<div class="cancel-confirm" onclick={(e) => e.stopPropagation()}>
 			<div class="cancel-confirm__body">
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
@@ -2090,6 +2094,7 @@
 
 {#if confirmDeleteOpen}
 	<div class="cancel-confirm-overlay" role="button" tabindex="-1" aria-label="Close dialog" onclick={() => { confirmDeleteOpen = false; deleteConfirmText = ""; }} onkeydown={(e) => e.key === 'Escape' && (confirmDeleteOpen = false)}>
+		<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 		<div class="cancel-confirm" onclick={(e) => e.stopPropagation()}>
 			<div class="cancel-confirm__body">
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
@@ -2278,6 +2283,7 @@
 	.form-slider {
 		flex: 1;
 		-webkit-appearance: none;
+		appearance: none;
 		height: 4px;
 		background: var(--bg-surface-3);
 		border-radius: 2px;

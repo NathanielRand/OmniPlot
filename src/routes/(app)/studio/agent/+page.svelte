@@ -1449,14 +1449,6 @@
 		max-width: 620px;
 	}
 	.step__desc strong { color: var(--text-primary); font-weight: 600; }
-	.step__desc code {
-		font-family: var(--font-mono);
-		font-size: 0.875em;
-		background: var(--bg-surface-3);
-		padding: 1px 5px;
-		border-radius: 4px;
-		color: var(--text-primary);
-	}
 
 	/* Download row */
 	.download-row {
@@ -1514,20 +1506,6 @@
 		display: flex;
 		flex-direction: column;
 		gap: 6px;
-	}
-	.run-simple__steps li {
-		font-size: 0.875rem;
-		color: var(--text-secondary);
-		line-height: 1.55;
-	}
-	.run-simple__steps strong { color: var(--text-primary); font-weight: 600; }
-	.run-simple__steps code {
-		font-family: var(--font-mono);
-		font-size: 0.8125em;
-		background: var(--bg-surface-3);
-		padding: 1px 5px;
-		border-radius: 4px;
-		color: var(--text-primary);
 	}
 
 	/* Advanced run block */
@@ -1962,8 +1940,5 @@
 	}
 	.run-advanced-details__summary svg {
 		transition: transform 0.18s;
-	}
-	.run-advanced {
-		/* padding handled by code-tabs children */
 	}
 </style>

@@ -582,27 +582,6 @@
 		font-size: 0.9rem;
 	}
 
-	/* Rules note */
-	.rules-note {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		font-size: 0.8rem;
-		color: var(--text-tertiary);
-		padding: 10px 14px;
-		background: var(--bg-surface-2);
-		border: 1px solid var(--border-subtle);
-		border-radius: var(--radius-md);
-		flex-wrap: wrap;
-	}
-
-	.rules-note code {
-		font-family: var(--font-mono);
-		font-size: 0.75rem;
-		background: var(--bg-surface-3);
-		padding: 1px 5px;
-		border-radius: 3px;
-	}
 
 	@media (max-width: 900px) {
 		.stats-row { grid-template-columns: repeat(2, 1fr); }

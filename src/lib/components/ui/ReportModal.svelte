@@ -70,8 +70,8 @@
 </script>
 
 {#if uiStore.reportModalOpen}
-	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-	<div class="backdrop animate-fade-in" onclick={closeOnBackdrop} role="dialog" aria-modal="true" aria-label="Report an issue">
+	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+	<div class="backdrop animate-fade-in" onclick={closeOnBackdrop} role="dialog" tabindex="-1" aria-modal="true" aria-label="Report an issue">
 		<div class="modal animate-scale-in">
 			<button class="modal__close" onclick={uiStore.closeReport} aria-label="Close">
 				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>
@@ -114,7 +114,7 @@
 					<!-- Severity (bugs only) -->
 					{#if type === 'bug'}
 						<div class="field">
-							<label class="field__label">Severity</label>
+							<span class="field__label">Severity</span>
 							<div class="severity-pills" role="group" aria-label="Bug severity">
 								{#each SEVERITIES as s}
 									<button

@@ -747,7 +747,6 @@
 		flex-shrink: 0;
 		margin-top: 2px;
 	}
-	.step__body {}
 	.step__title {
 		font-size: 0.9375rem;
 		font-weight: 600;
@@ -1021,8 +1020,6 @@
 	.mvstep-coming-soon svg { flex-shrink: 0; margin-top: 2px; color: var(--text-tertiary); }
 	.mvstep-coming-soon p { margin: 4px 0 0; color: var(--text-tertiary); font-size: 0.8125rem; }
 
-	/* Wide step variant for step 2 — inherits grid layout from .step */
-	.step--wide {}
 
 	/* Mini visual steps for marketing page */
 	.mkt-vsteps {

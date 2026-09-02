@@ -21,7 +21,7 @@
 </script>
 
 {#if uiStore.earlyAccessModalOpen}
-	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 	<div class="backdrop animate-fade-in" role="dialog" aria-modal="true" aria-label="Early access disclosure">
 		<div class="modal animate-scale-in">
 			<div class="modal__header">

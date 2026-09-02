@@ -3,6 +3,7 @@
 	import Button from "$lib/components/ui/Button.svelte";
 	import { formatDate, formatRelativeTime } from "$lib/utils";
 	import { cutJobStore } from "$lib/stores";
+	import { getVehicleName } from "$lib/stores/patternStore.svelte";
 	import type { JobStatus } from "$lib/types";
 
 	let search = $state("");
@@ -16,7 +17,7 @@
 	const filtered = $derived(
 		jobs.filter((j) => {
 			const q = search.toLowerCase();
-			const mq = !q || j.name.toLowerCase().includes(q) || j.vehicleId.toLowerCase().includes(q);
+			const mq = !q || j.name.toLowerCase().includes(q) || getVehicleName(j.vehicleId).toLowerCase().includes(q);
 			const ms = filterStatus === "all" || j.status === filterStatus;
 			return mq && ms;
 		}),
@@ -247,7 +248,7 @@
 							</td>
 							<td class="td-name">
 								<div class="job-name">{job.name}</div>
-								<div class="job-zones">{job.vehicleId}</div>
+								<div class="job-zones">{getVehicleName(job.vehicleId)}</div>
 							</td>
 							<td class="td-material">
 								{job.materialSheet?.name ?? job.canvasState?.sheet?.name ?? "—"}

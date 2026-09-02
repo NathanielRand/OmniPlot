@@ -265,7 +265,7 @@
 
 					<div class="field-row field-row--2">
 						<div class="field" class:field--error={!!errors.years}>
-							<label class="field__label">Year(s)</label>
+							<label class="field__label" for="year-input">Year(s)</label>
 							<div class="multitag" class:multitag--error={!!errors.years}>
 								{#each vehicle.years as y (y)}
 									<span class="chip">
@@ -274,6 +274,7 @@
 									</span>
 								{/each}
 								<input
+									id="year-input"
 									class="year-input"
 									type="text"
 									placeholder={vehicle.years.length ? "Add year or range…" : "2024 or 2020-2024"}
@@ -349,7 +350,7 @@
 					</div>
 
 					<div class="field" class:field--error={!!errors.zones}>
-						<label class="field__label">Zones</label>
+						<span class="field__label">Zones</span>
 						<div class="multitag" class:multitag--error={!!errors.zones}>
 							{#each pattern.zones as z (z)}
 								{@const mirror = mirrorOf(z)}
@@ -447,9 +448,9 @@
 
 <!-- Delete confirmation overlay -->
 {#if showDeleteConfirm}
-	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 	<div class="overlay" onclick={() => (showDeleteConfirm = false)}>
-		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+		<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 		<div class="confirm-card" onclick={(e) => e.stopPropagation()}>
 			<h3 class="confirm-card__title">Delete this pattern?</h3>
 			<p class="confirm-card__body">
@@ -669,7 +670,6 @@
 	/* ─── Fields ─── */
 	.field-row { display: grid; gap: 14px; }
 	.field-row--2 { grid-template-columns: 1fr 1fr; }
-	.field-row--3 { grid-template-columns: 100px 1fr 1fr; }
 
 	.field { display: flex; flex-direction: column; gap: 6px; }
 	.field--half { max-width: 280px; }
@@ -702,8 +702,7 @@
 		box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-brand) 20%, transparent);
 	}
 	.field__textarea { resize: vertical; }
-	.field--error .field__input,
-	.field--error .field__textarea { border-color: var(--color-danger, #f44); }
+	.field--error .field__input { border-color: var(--color-danger, #f44); }
 	.field__error { font-size: 0.8125rem; color: var(--color-danger, #f44); }
 
 	/* ─── Radio cards ─── */
@@ -812,8 +811,6 @@
 	@media (max-width: 640px) {
 		.edit-header { padding: 16px 16px 0; }
 		.form-section { padding: 16px; }
-		.field-row--3 { grid-template-columns: 1fr 1fr; }
-		.field-row--3 .field:first-child { grid-column: 1 / -1; }
 		.field-row--2 { grid-template-columns: 1fr; }
 		.field--half { max-width: 100%; }
 		.radio-group { flex-direction: column; }

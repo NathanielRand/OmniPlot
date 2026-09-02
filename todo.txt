@@ -50,12 +50,14 @@ todo.txt is currently modified on dev — flagging since it's uncommitted local 
 ////////////////////////////////////
 // VERIFY
 ////////////////////////////////
+- Support as a core feature reworking our vehicle focus to include the following products/users: "custom", "vehicle", "residential", "commerical" with PPF, Window Tint, and ANYTHING else we have add that can be used in a commerical plotting/cutting device. think creative. think about other professions who use those types of machines and who could benefit from our platform. we need to craft project types and features and marketing for them from the start. we are really sticking with the mission of our delivering on our name "OmniPlot" not just a vehicle platform. requires major upgrade but with production paying users so we must preserve their data and not break any patterns they've uploaded, we can migrate what we can.
 
 
 //////////////////////////////////////
 // BACKLOG
-///////////////////////////////////
-- Support as a core feature reworking our vehicle focus to include the following products/users: "custom", "vehicle", "residential", "commerical" with PPF, Window Tint, and ANYTHING else we have add that can be used in a commerical plotting/cutting device. think creative. think about other professions who use those types of machines and who could benefit from our platform. we need to craft project types and features and marketing for them from the start. we are really sticking with the mission of our delivering on our name "OmniPlot" not just a vehicle platform. requires major upgrade but with production paying users so we must preserve their data and not break any patterns they've uploaded, we can migrate what we can.
+////////////////////////////////
+- Add pattern # as "(n)" next to the pattern name of each pattern on the canvas and also the pattern list values on the settings panel for easier pattern indentification.
+- Nesting needs another pass. Add 6 l/r windows to see why it doesnt rotate the last pattern added to be horizontial instead of vertical.
 - MAJOR mobile responsiveness overhaul end-to-end
 - MAJOR light/dark mode visibility and contrast pass on anything that might have slipped through. make the light mode white less bright / more soft whilte making the light mode text contrast better globally, especially colored text on light mode its too bright to make out.
 - ADMIN PANEL: admin should be able to edit plan allowances from the admin panel. bump up the lite cuts per day to 5; bump up free to 10 free per month. limit features on plan such as custom upload. only platform or community patterns cna be used by free.

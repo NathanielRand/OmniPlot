@@ -54,11 +54,12 @@
 </script>
 
 {#if uiStore.pricingModalOpen}
-	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 	<div
 		class="modal-backdrop animate-fade-in"
 		onclick={closeOnBackdrop}
 		role="dialog"
+		tabindex="-1"
 		aria-modal="true"
 		aria-label="Upgrade plan"
 	>

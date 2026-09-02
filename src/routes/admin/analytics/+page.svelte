@@ -296,10 +296,10 @@
 
 	<!-- Bottom row: top vehicles + recent jobs -->
 	<div class="bottom-row">
-		<!-- Top vehicles (needs aggregate query — shows empty state until data exists) -->
+		<!-- Top subjects (needs aggregate query — shows empty state until data exists) -->
 		<div class="admin-panel">
 			<div class="admin-panel__header">
-				<h2 class="admin-panel__title">Top vehicles</h2>
+				<h2 class="admin-panel__title">Top subjects</h2>
 				<span class="chart-note">by cut count</span>
 			</div>
 			{#if loading}
@@ -316,7 +316,7 @@
 				<div class="panel-empty">
 					<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
 					<p>No jobs recorded yet</p>
-					<span>Top vehicles appear once users start cutting.</span>
+					<span>Top subjects appear once users start cutting.</span>
 				</div>
 			{:else}
 				<div class="panel-empty">
@@ -349,7 +349,7 @@
 			{:else}
 				<table class="mini-table" aria-label="Recent cut jobs">
 					<thead>
-						<tr><th>User</th><th>Vehicle</th><th>Pcs</th><th>Status</th></tr>
+						<tr><th>User</th><th>Subject</th><th>Pcs</th><th>Status</th></tr>
 					</thead>
 					<tbody>
 						{#each (stats?.jobs.recent ?? []) as j}

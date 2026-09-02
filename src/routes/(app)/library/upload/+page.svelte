@@ -573,7 +573,7 @@
 					{#if projectType === "vehicle"}
 						<div class="field-row field-row--2">
 							<div class="field" class:field--error={!!errors.years}>
-								<label class="field__label">Year(s)</label>
+								<label class="field__label" for="upload-year-input">Year(s)</label>
 								<div class="multitag" class:multitag--error={!!errors.years}>
 									{#each vehicle.years as y (y)}
 										<span class="chip">
@@ -582,6 +582,7 @@
 										</span>
 									{/each}
 									<input
+										id="upload-year-input"
 										class="year-input"
 										type="text"
 										placeholder={vehicle.years.length ? "Add year or range…" : "2024 or 2020-2024"}
@@ -753,8 +754,8 @@
 										{/if}
 									</div>
 									<div class="field" class:field--error={!!slotErrs.zone}>
-										<label class="field__label">Zone</label>
-										<select class="field__select" bind:value={slot.zone} aria-label="Zone for slot {i + 1}">
+										<label class="field__label" for="indiv-zone-{i}">Zone</label>
+										<select id="indiv-zone-{i}" class="field__select" bind:value={slot.zone} aria-label="Zone for slot {i + 1}">
 											<option value="">Select zone…</option>
 											{#each zoneList as z}
 												<option value={z.value}>{z.label}</option>
@@ -764,20 +765,20 @@
 									</div>
 									<div class="field-row field-row--2">
 										<div class="field" class:field--error={!!slotErrs.width}>
-											<label class="field__label">Width (inches)</label>
-											<input class="field__input" type="number" min="0.1" step="0.1" bind:value={slot.widthInches} placeholder="60.5" aria-label="Width for zone {i + 1}"/>
+											<label class="field__label" for="indiv-width-{i}">Width (inches)</label>
+											<input id="indiv-width-{i}" class="field__input" type="number" min="0.1" step="0.1" bind:value={slot.widthInches} placeholder="60.5" aria-label="Width for zone {i + 1}"/>
 											{#if slotErrs.width}<span class="field__error">{slotErrs.width}</span>{/if}
 										</div>
 										<div class="field" class:field--error={!!slotErrs.height}>
-											<label class="field__label">Height (inches)</label>
-											<input class="field__input" type="number" min="0.1" step="0.1" bind:value={slot.heightInches} placeholder="48.0" aria-label="Height for zone {i + 1}"/>
+											<label class="field__label" for="indiv-height-{i}">Height (inches)</label>
+											<input id="indiv-height-{i}" class="field__input" type="number" min="0.1" step="0.1" bind:value={slot.heightInches} placeholder="48.0" aria-label="Height for zone {i + 1}"/>
 											{#if slotErrs.height}<span class="field__error">{slotErrs.height}</span>{/if}
 										</div>
 									</div>
 									<div class="stage-divider" role="separator" aria-hidden="true"></div>
 
 									<div class="field" class:field--error={!!slotErrs.svgPath}>
-										<label class="field__label">Pattern Importer</label>
+										<span class="field__label">Pattern Importer</span>
 										<SvgPathInput bind:value={slot.svgPath}/>
 										{#if slotErrs.svgPath}<span class="field__error">{slotErrs.svgPath}</span>{/if}
 									</div>
@@ -812,8 +813,9 @@
 										<div class="multi-slot__num">Pattern {i + 1}</div>
 										{#if !slot.skip}
 											<div class="multi-slot__row" class:field--error={!!slotErrs.zone}>
-												<label class="multi-slot__label">Zone</label>
+												<label class="multi-slot__label" for="multi-zone-{i}">Zone</label>
 												<select
+													id="multi-zone-{i}"
 													class="multi-slot__select"
 													class:multi-slot__select--err={!!slotErrs.zone}
 													bind:value={slot.zone}
@@ -828,13 +830,13 @@
 											</div>
 											<div class="multi-slot__dims">
 												<div class:field--error={!!slotErrs.width}>
-													<label class="multi-slot__label">Width (in)</label>
-													<input type="number" class="multi-slot__input" class:multi-slot__input--err={!!slotErrs.width} min="0.1" step="0.1" bind:value={slot.widthInches} placeholder="0.0" aria-label="Width for pattern {i + 1}"/>
+													<label class="multi-slot__label" for="multi-width-{i}">Width (in)</label>
+													<input id="multi-width-{i}" type="number" class="multi-slot__input" class:multi-slot__input--err={!!slotErrs.width} min="0.1" step="0.1" bind:value={slot.widthInches} placeholder="0.0" aria-label="Width for pattern {i + 1}"/>
 													{#if slotErrs.width}<span class="multi-slot__err">{slotErrs.width}</span>{/if}
 												</div>
 												<div class:field--error={!!slotErrs.height}>
-													<label class="multi-slot__label">Height (in)</label>
-													<input type="number" class="multi-slot__input" class:multi-slot__input--err={!!slotErrs.height} min="0.1" step="0.1" bind:value={slot.heightInches} placeholder="0.0" aria-label="Height for pattern {i + 1}"/>
+													<label class="multi-slot__label" for="multi-height-{i}">Height (in)</label>
+													<input id="multi-height-{i}" type="number" class="multi-slot__input" class:multi-slot__input--err={!!slotErrs.height} min="0.1" step="0.1" bind:value={slot.heightInches} placeholder="0.0" aria-label="Height for pattern {i + 1}"/>
 													{#if slotErrs.height}<span class="multi-slot__err">{slotErrs.height}</span>{/if}
 												</div>
 											</div>
@@ -859,10 +861,10 @@
 					{:else if uploadMode === "multi" && multiMethod === "single-file"}
 						<!-- ─── Combined file importer (pre-extraction) ─── -->
 						<div class="field">
-							<label class="field__label">
+							<span class="field__label">
 								Pattern Importer
 								<span class="field__hint">Upload a combined image — individual patterns are detected automatically</span>
-							</label>
+							</span>
 							<SvgPathInput
 								bind:value={multiFileSvgPath}
 								onMultiExtract={handleMultiExtract}
@@ -874,7 +876,7 @@
 					{:else}
 						<!-- ─── Single pattern form ─── -->
 						<div class="field" class:field--error={!!errors.zones}>
-							<label class="field__label">Zones</label>
+							<span class="field__label">Zones</span>
 							<div class="multitag" class:multitag--error={!!errors.zones}>
 								{#each pattern.zones as z (z)}
 									{@const mirror = mirrorOf(z)}
@@ -1200,7 +1202,6 @@
 
 	.field-row { display: grid; gap: 14px; }
 	.field-row--2 { grid-template-columns: 1fr 1fr; }
-	.field-row--3 { grid-template-columns: 100px 1fr 1fr; }
 
 	.field { display: flex; flex-direction: column; gap: 6px; }
 	.field--half { max-width: 280px; }
@@ -1233,21 +1234,9 @@
 		box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-brand) 20%, transparent);
 	}
 	.field__textarea { resize: vertical; }
-	.field__textarea--mono { font-family: var(--font-mono, monospace); font-size: 0.8125rem; }
 
-	.field--error .field__input, .field--error .field__textarea { border-color: var(--color-danger, #f44); }
+	.field--error .field__input { border-color: var(--color-danger, #f44); }
 	.field__error { font-size: 0.8125rem; color: var(--color-danger, #f44); }
-
-	.field__note {
-		font-size: 0.75rem;
-		color: var(--text-tertiary);
-		line-height: 1.5;
-		margin: 2px 0 0;
-		padding: 8px 10px;
-		background: color-mix(in srgb, #f59e0b 8%, var(--bg-surface-2));
-		border: 1px solid color-mix(in srgb, #f59e0b 25%, transparent);
-		border-radius: var(--radius-md);
-	}
 
 	/* ─── Category radio ─── */
 	.radio-group { display: flex; gap: 8px; }
@@ -1308,41 +1297,6 @@
 	.type-card__title { font-size: 0.9375rem; font-weight: 600; color: var(--text-primary); }
 	.type-card__sub { font-size: 0.8125rem; color: var(--text-tertiary); line-height: 1.3; }
 
-	/* ─── Vehicle match ─── */
-	.vehicle-match {
-		display: flex;
-		align-items: center;
-		gap: 7px;
-		padding: 8px 12px;
-		border-radius: var(--radius-md);
-		font-size: 0.8125rem;
-	}
-	.vehicle-match--found {
-		background: color-mix(in srgb, #22c55e 10%, var(--bg-surface-2));
-		border: 1px solid color-mix(in srgb, #22c55e 30%, transparent);
-		color: #4ade80;
-	}
-	.vehicle-match--new {
-		background: color-mix(in srgb, var(--color-brand) 8%, var(--bg-surface-2));
-		border: 1px solid color-mix(in srgb, var(--color-brand) 25%, transparent);
-		color: var(--text-secondary);
-	}
-
-	/* ─── SVG preview ─── */
-	.svg-field { display: grid; grid-template-columns: 1fr 120px; gap: 10px; }
-	.svg-preview {
-		aspect-ratio: 1;
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
-		background: var(--bg-surface-3);
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		overflow: hidden;
-		padding: 8px;
-	}
-	.svg-preview svg { width: 100%; height: 100%; }
-	.svg-preview__empty { font-size: 0.6875rem; color: var(--text-muted); }
 
 	/* ─── Actions ─── */
 	.form-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 4px; }
@@ -1636,14 +1590,10 @@
 		.mode-bar { grid-template-columns: 1fr; }
 		.mode-card { border-right: none; border-bottom: 1px solid var(--border-subtle); }
 		.mode-card--active { border-bottom: 3px solid var(--color-brand); }
-		.field-row--3 { grid-template-columns: 1fr 1fr; }
-		.field-row--3 .field:first-child { grid-column: 1 / -1; }
 		.field-row--2 { grid-template-columns: 1fr; }
 		.field--half { max-width: 100%; }
 		.radio-group { flex-direction: column; }
 		.type-grid { grid-template-columns: 1fr 1fr; }
-		.svg-field { grid-template-columns: 1fr; }
-		.svg-preview { height: 120px; aspect-ratio: auto; }
 		.form-section { padding: 16px; }
 		.success-card { padding: 32px 20px; }
 	}

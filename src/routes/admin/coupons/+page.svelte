@@ -389,7 +389,7 @@
 
 				<!-- Discount type + value -->
 				<div class="field">
-					<label class="field__label">Discount type</label>
+					<span class="field__label">Discount type</span>
 					<div class="radio-row">
 						<label class="radio">
 							<input type="radio" bind:group={f.discountType} value="percent" />

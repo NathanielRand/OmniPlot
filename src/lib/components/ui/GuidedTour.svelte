@@ -114,7 +114,7 @@
 
 {#if open && step}
 	<!-- Click blocker: prevents interaction with the page while touring -->
-	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 	<div class="tour-blocker" onclick={skip}></div>
 
 	<!-- Spotlight cutout (box-shadow creates the darkened overlay) -->
@@ -135,10 +135,11 @@
 	{/if}
 
 	<!-- Tooltip card -->
-	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 	<div
 		class="tour-card"
 		role="dialog"
+		tabindex="-1"
 		aria-modal="true"
 		aria-label="Guided tour step {stepIdx + 1}: {step.title}"
 		style={tooltipStyle}

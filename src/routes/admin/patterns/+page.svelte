@@ -24,11 +24,20 @@
 	let filterStatus   = $state<"all" | PatternStatus>("all");
 	let filterCategory = $state<"both" | PatternCategory>("both");
 
+	function subjectName(v: VehicleEntry): string {
+		if ((v.projectType ?? "vehicle") !== "vehicle") {
+			return v.propertyLabel || v.model || v.address || "Untitled";
+		}
+		return `${v.year} ${v.make} ${v.model}`;
+	}
+
 	const filteredVehicles = $derived(
 		patternStore.vehicles
 			.filter((v) => {
 				const q = search.toLowerCase();
-				const mq = !q || `${v.make} ${v.model} ${v.year}`.toLowerCase().includes(q);
+				const mq = !q ||
+					`${v.make ?? ""} ${v.model ?? ""} ${v.year ?? ""} ${v.propertyLabel ?? ""} ${v.address ?? ""}`
+						.toLowerCase().includes(q);
 				const ms = filterStatus === "all" || v.status === filterStatus;
 				return mq && ms;
 			})
@@ -71,6 +80,13 @@
 		finally { submissionsLoading = false; }
 	}
 
+	function submissionSubjectLabel(sub: UserPattern): string {
+		if ((sub.projectType ?? "vehicle") !== "vehicle") {
+			return sub.propertyLabel || sub.patternName || sub.name;
+		}
+		return `${sub.years.join("/")} ${sub.make} ${sub.models.join(", ")}`;
+	}
+
 	function openReview(sub: UserPattern) {
 		reviewTarget = sub;
 		reviewEdits = { name: sub.name, widthInches: sub.widthInches, heightInches: sub.heightInches, notes: sub.notes ?? "" };
@@ -82,25 +98,45 @@
 		try {
 			const sub = { ...reviewTarget, ...reviewEdits };
 
-			// Find or create vehicle
+			// Find or create the subject (vehicle or property/custom project)
 			let vehicleId = sub.vehicleId;
 			if (!vehicleId) {
-				// A submission can carry multiple models/years; the vehicle
-				// catalog wants one of each, so use the first as representative.
-				const subModel = sub.models[0] ?? "";
-				const subYear  = Number(sub.years[0]) || new Date().getFullYear();
-				const existing = patternStore.vehicles.find(
-					(v) => (v.make ?? "").toLowerCase() === sub.make.toLowerCase() &&
-					       (v.model ?? "").toLowerCase() === subModel.toLowerCase() &&
-					       v.year === subYear,
-				);
-				vehicleId = existing
-					? existing.id
-					: patternStore.addVehicle({
-							make: sub.make, model: subModel, year: subYear,
-							bodyStyle: sub.bodyStyle, status: "published",
-							tags: [], updatedAt: new Date().toISOString().split("T")[0],
-					  }).id;
+				const projectType = sub.projectType ?? "vehicle";
+				if (projectType === "vehicle") {
+					// A submission can carry multiple models/years; the vehicle
+					// catalog wants one of each, so use the first as representative.
+					const subModel = sub.models[0] ?? "";
+					const subYear  = Number(sub.years[0]) || new Date().getFullYear();
+					const existing = patternStore.vehicles.find(
+						(v) => (v.projectType ?? "vehicle") === "vehicle" &&
+						       (v.make ?? "").toLowerCase() === sub.make.toLowerCase() &&
+						       (v.model ?? "").toLowerCase() === subModel.toLowerCase() &&
+						       v.year === subYear,
+					);
+					vehicleId = existing
+						? existing.id
+						: patternStore.addVehicle({
+								projectType: "vehicle",
+								make: sub.make, model: subModel, year: subYear,
+								bodyStyle: sub.bodyStyle, status: "published",
+								tags: [], updatedAt: new Date().toISOString().split("T")[0],
+						  }).id;
+				} else {
+					const label = sub.propertyLabel || sub.patternName || sub.name;
+					const existing = patternStore.vehicles.find(
+						(v) => (v.projectType ?? "vehicle") === projectType &&
+						       (v.propertyLabel ?? "").toLowerCase() === label.toLowerCase(),
+					);
+					vehicleId = existing
+						? existing.id
+						: patternStore.addVehicle({
+								projectType,
+								propertyLabel: label,
+								address: sub.address,
+								status: "published",
+								tags: [], updatedAt: new Date().toISOString().split("T")[0],
+						  }).id;
+				}
 			}
 
 			// Publish to public patterns collection
@@ -278,33 +314,44 @@
 	// ─── Edit Vehicle modal ───────────────────────
 	let editVehicleTarget = $state<VehicleEntry | null>(null);
 	let editVehicleForm = $state({
+		projectType: "vehicle" as VehicleEntry["projectType"],
 		year: new Date().getFullYear(), make: "", model: "",
 		bodyStyle: "sedan" as VehicleEntry["bodyStyle"],
+		address: "", propertyLabel: "",
 		status: "draft" as PatternStatus,
 	});
 
 	function openEditVehicle(v: VehicleEntry) {
 		editVehicleTarget = v;
 		editVehicleForm = {
+			projectType: v.projectType ?? "vehicle",
 			year: v.year ?? new Date().getFullYear(),
 			make: v.make ?? "",
 			model: v.model ?? "",
 			bodyStyle: v.bodyStyle ?? "sedan",
+			address: v.address ?? "",
+			propertyLabel: v.propertyLabel ?? "",
 			status: v.status,
 		};
 	}
 
 	function saveEditVehicle() {
-		if (!editVehicleTarget || !editVehicleForm.make.trim() || !editVehicleForm.model.trim()) return;
+		if (!editVehicleTarget) return;
+		const isVehicle = editVehicleForm.projectType === "vehicle";
+		if (isVehicle && (!editVehicleForm.make.trim() || !editVehicleForm.model.trim())) return;
+		if (!isVehicle && !editVehicleForm.propertyLabel.trim() && !editVehicleForm.model.trim()) return;
 		patternStore.updateVehicle(editVehicleTarget.id, {
-			year: editVehicleForm.year,
-			make: editVehicleForm.make.trim(),
-			model: editVehicleForm.model.trim(),
-			bodyStyle: editVehicleForm.bodyStyle,
+			projectType: editVehicleForm.projectType,
+			year: isVehicle ? editVehicleForm.year : undefined,
+			make: isVehicle ? editVehicleForm.make.trim() : undefined,
+			model: isVehicle ? editVehicleForm.model.trim() : (editVehicleForm.model.trim() || undefined),
+			bodyStyle: isVehicle ? editVehicleForm.bodyStyle : undefined,
+			address: isVehicle ? undefined : editVehicleForm.address.trim() || undefined,
+			propertyLabel: isVehicle ? undefined : editVehicleForm.propertyLabel.trim() || undefined,
 			status: editVehicleForm.status,
 			updatedAt: new Date().toISOString().split("T")[0],
 		});
-		toastStore.success("Updated", `${editVehicleForm.make} ${editVehicleForm.model} saved.`);
+		toastStore.success("Updated", `${subjectName(editVehicleTarget)} saved.`);
 		editVehicleTarget = null;
 	}
 
@@ -381,7 +428,7 @@ onMount(() => {
 	<div class="page-header">
 		<div>
 			<h1 class="page-title">Patterns</h1>
-			<p class="page-sub">Manage vehicle templates, community submissions, and adjustment requests.</p>
+			<p class="page-sub">Manage subject templates, community submissions, and adjustment requests.</p>
 		</div>
 		<div class="page-header__actions">
 			<Button variant="ghost" size="sm" onclick={async () => { await patternStore.seedFirestore(); }} title="Write seed data to Firestore">
@@ -390,7 +437,7 @@ onMount(() => {
 			</Button>
 			<Button variant="primary" size="sm" onclick={() => (showAddModal = true)}>
 				<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-				Add vehicle
+				Add subject
 			</Button>
 		</div>
 	</div>
@@ -398,7 +445,7 @@ onMount(() => {
 	<!-- Summary cards -->
 	<div class="summary-row">
 		{#each [
-			{ label: "Total vehicles",    value: totals.vehicles },
+			{ label: "Total subjects",    value: totals.vehicles },
 			{ label: "PPF patterns",      value: totals.ppfPatterns,     sub: `${totals.ppfPublished} published` },
 			{ label: "Window tint zones", value: totals.tintZones,       sub: `${totals.tintPublished} published` },
 			{ label: "Community queue",   value: pendingSubmissions.length, sub: pendingSubmissions.length ? "needs review" : "all clear", accent: pendingSubmissions.length > 0 },
@@ -463,7 +510,7 @@ onMount(() => {
 										</div>
 									</div>
 								</td>
-								<td class="td-vehicle">{sub.years.join("/")} {sub.make} {sub.models.join(", ")}</td>
+								<td class="td-vehicle">{submissionSubjectLabel(sub)}</td>
 								<td>
 									<Badge variant={sub.category === "ppf" ? "brand" : "default"} size="sm">
 										{sub.category === "ppf" ? "PPF" : "Tint"}
@@ -581,7 +628,7 @@ onMount(() => {
 	<!-- ─── Vehicles Table ─── -->
 	<div class="section">
 		<div class="section-header">
-			<h2 class="section-title">Vehicles</h2>
+			<h2 class="section-title">Subjects</h2>
 			<div class="toolbar">
 				<div class="category-tabs" role="group" aria-label="Category">
 					{#each ([["both","All"], ["ppf","PPF"], ["window-tint","Tint"]] as ["both" | PatternCategory, string][]) as [val, label]}
@@ -595,7 +642,7 @@ onMount(() => {
 				</div>
 				<div class="search-wrap">
 					<svg class="search-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-					<input type="search" class="search-input" placeholder="Search vehicles…" bind:value={search} aria-label="Search vehicles"/>
+					<input type="search" class="search-input" placeholder="Search subjects…" bind:value={search} aria-label="Search subjects"/>
 				</div>
 			</div>
 		</div>
@@ -604,7 +651,7 @@ onMount(() => {
 			<table class="data-table" aria-label="Vehicles">
 				<thead>
 					<tr>
-						<th>Vehicle</th>
+						<th>Subject</th>
 						{#if filterCategory !== "window-tint"}<th>PPF patterns</th><th>PPF coverage</th>{/if}
 						{#if filterCategory !== "ppf"}<th>Tint zones</th><th>Tint coverage</th>{/if}
 						<th>Status</th>
@@ -620,7 +667,7 @@ onMount(() => {
 									<div class="vehicle-icon" aria-hidden="true">
 										<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M5 17H3a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v5"/><path d="M14 17a3 3 0 100 6 3 3 0 000-6z"/><path d="M8 17a3 3 0 100 6 3 3 0 000-6z"/></svg>
 									</div>
-									<div class="vehicle-name">{v.year} {v.make} {v.model}</div>
+									<div class="vehicle-name">{subjectName(v)}</div>
 								</div>
 							</td>
 							{#if filterCategory !== "window-tint"}
@@ -672,7 +719,7 @@ onMount(() => {
 											class="row-btn row-btn--danger"
 											onclick={() => (pendingDeleteVehicleId = v.id)}
 											title="Delete vehicle"
-											aria-label="Delete {v.make} {v.model}"
+											aria-label="Delete {subjectName(v)}"
 										><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></button>
 									{/if}
 								</div>
@@ -717,9 +764,9 @@ onMount(() => {
 
 <!-- ─── Add Vehicle Modal ─── -->
 {#if showAddModal}
-	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 	<div class="modal-overlay" onclick={() => (showAddModal = false)}>
-		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+		<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 		<div class="modal" onclick={(e) => e.stopPropagation()}>
 			<div class="modal__header">
 				<h2 class="modal__title">Add Subject</h2>
@@ -764,15 +811,25 @@ onMount(() => {
 
 <!-- ─── Edit Vehicle Modal ─── -->
 {#if editVehicleTarget}
-	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 	<div class="modal-overlay" onclick={() => (editVehicleTarget = null)}>
-		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+		<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 		<div class="modal" onclick={(e) => e.stopPropagation()}>
 			<div class="modal__header">
-				<h2 class="modal__title">Edit Vehicle</h2>
+				<h2 class="modal__title">Edit Subject</h2>
 				<button class="modal__close" onclick={() => (editVehicleTarget = null)} aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
 			</div>
 			<form class="modal__body" onsubmit={(e) => { e.preventDefault(); saveEditVehicle(); }}>
+				<div class="form-group">
+					<label class="form-label" for="ev-project-type">Project Type</label>
+					<select id="ev-project-type" class="form-input" bind:value={editVehicleForm.projectType}>
+						<option value="vehicle">Vehicle</option>
+						<option value="residential">Residential</option>
+						<option value="commercial">Commercial</option>
+						<option value="custom">Custom</option>
+					</select>
+				</div>
+				{#if editVehicleForm.projectType === "vehicle"}
 				<div class="form-row">
 					<div class="form-group"><label class="form-label" for="ev-year">Year</label><input id="ev-year" type="number" class="form-input" bind:value={editVehicleForm.year} min="1990" max="2030" required /></div>
 					<div class="form-group" style="flex:2"><label class="form-label" for="ev-make">Make</label><input id="ev-make" type="text" class="form-input" bind:value={editVehicleForm.make} placeholder="e.g. Toyota" required /></div>
@@ -782,6 +839,14 @@ onMount(() => {
 					<div class="form-group"><label class="form-label" for="ev-body">Body Style</label><select id="ev-body" class="form-input" bind:value={editVehicleForm.bodyStyle}>{#each ["sedan","coupe","suv","truck","hatchback","wagon","convertible"] as s}<option value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>{/each}</select></div>
 					<div class="form-group"><label class="form-label" for="ev-status">Status</label><select id="ev-status" class="form-input" bind:value={editVehicleForm.status}><option value="draft">Draft</option><option value="review">Review</option><option value="published">Published</option></select></div>
 				</div>
+				{:else}
+				<div class="form-group"><label class="form-label" for="ev-label">{editVehicleForm.projectType === "custom" ? "Project Name" : "Property Label"}</label><input id="ev-label" type="text" class="form-input" bind:value={editVehicleForm.propertyLabel} placeholder={editVehicleForm.projectType === "custom" ? "e.g. Apparel HTV Kit" : "e.g. Smith Residence"} required /></div>
+				{#if editVehicleForm.projectType !== "custom"}
+				<div class="form-group"><label class="form-label" for="ev-address">Address</label><input id="ev-address" type="text" class="form-input" bind:value={editVehicleForm.address} placeholder="e.g. 123 Main St" /></div>
+				{/if}
+				<div class="form-group"><label class="form-label" for="ev-model2">Notes / Model</label><input id="ev-model2" type="text" class="form-input" bind:value={editVehicleForm.model} placeholder="Optional detail" /></div>
+				<div class="form-group"><label class="form-label" for="ev-status2">Status</label><select id="ev-status2" class="form-input" bind:value={editVehicleForm.status}><option value="draft">Draft</option><option value="review">Review</option><option value="published">Published</option></select></div>
+				{/if}
 				<div class="modal__actions">
 					<button type="button" class="btn-ghost" onclick={() => (editVehicleTarget = null)}>Cancel</button>
 					<button type="submit" class="btn-primary">Save Changes</button>
@@ -793,13 +858,13 @@ onMount(() => {
 
 <!-- ─── Community Submission Review Panel ─── -->
 {#if reviewTarget}
-	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 	<div class="panel-backdrop" onclick={() => (reviewTarget = null)}></div>
-	<aside class="review-panel" role="dialog" aria-label="Review submission">
+	<div class="review-panel" role="dialog" tabindex="-1" aria-label="Review submission">
 		<div class="review-panel__header">
 			<div>
 				<div class="review-panel__sub">Community submission · {reviewTarget.status}</div>
-				<h2 class="review-panel__title">{reviewTarget.years.join("/")} {reviewTarget.make} {reviewTarget.models.join(", ")}</h2>
+				<h2 class="review-panel__title">{submissionSubjectLabel(reviewTarget)}</h2>
 			</div>
 			<button class="modal__close" onclick={() => (reviewTarget = null)} aria-label="Close">
 				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>
@@ -871,18 +936,18 @@ onMount(() => {
 				{reviewWorking ? "Working…" : "Approve & Publish"}
 			</button>
 		</div>
-	</aside>
+	</div>
 {/if}
 
 <!-- ─── Edit Submission Panel ─── -->
 {#if editSubTarget}
-	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 	<div class="panel-backdrop" onclick={() => (editSubTarget = null)}></div>
-	<aside class="review-panel" role="dialog" aria-label="Edit submission">
+	<div class="review-panel" role="dialog" tabindex="-1" aria-label="Edit submission">
 		<div class="review-panel__header">
 			<div>
 				<div class="review-panel__sub">Edit community submission · {editSubTarget.status}</div>
-				<h2 class="review-panel__title">{editSubTarget.make} {editSubTarget.models.join(", ")} · {editSubTarget.years.join(", ")}</h2>
+				<h2 class="review-panel__title">{submissionSubjectLabel(editSubTarget)}</h2>
 			</div>
 			<button class="modal__close" onclick={() => (editSubTarget = null)} aria-label="Close">
 				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>
@@ -978,14 +1043,14 @@ onMount(() => {
 				{editSubWorking ? "Saving…" : "Save Changes"}
 			</button>
 		</div>
-	</aside>
+	</div>
 {/if}
 
 <!-- ─── Resolve Adjustment Request Modal ─── -->
 {#if resolveTarget}
-	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 	<div class="modal-overlay" onclick={() => (resolveTarget = null)}>
-		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+		<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 		<div class="modal" onclick={(e) => e.stopPropagation()}>
 			<div class="modal__header">
 				<div>
@@ -1015,9 +1080,9 @@ onMount(() => {
 
 <!-- ─── Edit Patterns Panel ─── -->
 {#if editingVehicle}
-	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 	<div class="panel-backdrop" onclick={closeEditPanel}></div>
-	<aside class="edit-panel" role="dialog" aria-label="Edit patterns">
+	<div class="edit-panel" role="dialog" tabindex="-1" aria-label="Edit patterns">
 		<div class="edit-panel__header">
 			<div>
 				<div class="edit-panel__sub">Editing patterns</div>
@@ -1043,11 +1108,11 @@ onMount(() => {
 					<div class="pattern-row pattern-row--editing">
 						<div class="pattern-edit-form">
 							<div class="form-row">
-								<div class="form-group" style="flex:2"><label class="form-label">Name</label><input type="text" class="form-input form-input--sm" bind:value={editPatch.name}/></div>
-								<div class="form-group"><label class="form-label">W (in)</label><input type="number" class="form-input form-input--sm" bind:value={editPatch.widthInches} min="0.5" step="0.5"/></div>
-								<div class="form-group"><label class="form-label">H (in)</label><input type="number" class="form-input form-input--sm" bind:value={editPatch.heightInches} min="0.5" step="0.5"/></div>
+								<div class="form-group" style="flex:2"><label class="form-label" for="ep-name-{pat.id}">Name</label><input id="ep-name-{pat.id}" type="text" class="form-input form-input--sm" bind:value={editPatch.name}/></div>
+								<div class="form-group"><label class="form-label" for="ep-w-{pat.id}">W (in)</label><input id="ep-w-{pat.id}" type="number" class="form-input form-input--sm" bind:value={editPatch.widthInches} min="0.5" step="0.5"/></div>
+								<div class="form-group"><label class="form-label" for="ep-h-{pat.id}">H (in)</label><input id="ep-h-{pat.id}" type="number" class="form-input form-input--sm" bind:value={editPatch.heightInches} min="0.5" step="0.5"/></div>
 							</div>
-							<div class="form-group"><label class="form-label">Notes</label><input type="text" class="form-input form-input--sm" bind:value={editPatch.notes}/></div>
+							<div class="form-group"><label class="form-label" for="ep-notes-{pat.id}">Notes</label><input id="ep-notes-{pat.id}" type="text" class="form-input form-input--sm" bind:value={editPatch.notes}/></div>
 							<div class="pattern-edit-form__footer">
 								<label class="toggle-label"><input type="checkbox" bind:checked={editPatch.isPublished}/>Published</label>
 								<div class="ep-row-actions">
@@ -1072,7 +1137,7 @@ onMount(() => {
 							<button class="ep-toggle" class:ep-toggle--on={pat.isPublished} onclick={() => patternStore.updatePattern(pat.id, { isPublished: !pat.isPublished })} title={pat.isPublished ? "Unpublish" : "Publish"}>
 								<span class="ep-toggle__dot"></span>
 							</button>
-							<button class="row-btn" onclick={() => startEditPattern(pat.id)}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+							<button class="row-btn" onclick={() => startEditPattern(pat.id)} title="Edit pattern" aria-label="Edit {pat.name}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
 							{#if pendingDeleteId === pat.id}
 								<div class="delete-confirm">
 									<span class="delete-confirm__label">Delete?</span>
@@ -1111,16 +1176,16 @@ onMount(() => {
 				<div class="ep-add-form">
 					<div class="ep-add-form__title">New {editPanelTab === "ppf" ? "PPF" : "Tint"} Pattern</div>
 					<div class="form-row">
-						<div class="form-group" style="flex:2"><label class="form-label">Zone</label><select class="form-input form-input--sm" bind:value={newPattern.zone}>{#each zoneOptions as z}<option value={z.value}>{z.label}</option>{/each}</select></div>
-						<div class="form-group"><label class="form-label">Coverage</label><select class="form-input form-input--sm" bind:value={newPattern.coverage}><option value="full">Full</option><option value="partial">Partial</option><option value="edge-only">Edge only</option></select></div>
+						<div class="form-group" style="flex:2"><label class="form-label" for="np-zone">Zone</label><select id="np-zone" class="form-input form-input--sm" bind:value={newPattern.zone}>{#each zoneOptions as z}<option value={z.value}>{z.label}</option>{/each}</select></div>
+						<div class="form-group"><label class="form-label" for="np-coverage">Coverage</label><select id="np-coverage" class="form-input form-input--sm" bind:value={newPattern.coverage}><option value="full">Full</option><option value="partial">Partial</option><option value="edge-only">Edge only</option></select></div>
 					</div>
-					<div class="form-group"><label class="form-label">Pattern Name</label><input type="text" class="form-input form-input--sm" bind:value={newPattern.name} placeholder="e.g. Front Driver Window" required/></div>
+					<div class="form-group"><label class="form-label" for="np-name">Pattern Name</label><input id="np-name" type="text" class="form-input form-input--sm" bind:value={newPattern.name} placeholder="e.g. Front Driver Window" required/></div>
 					<div class="form-row">
-						<div class="form-group"><label class="form-label">Width (in)</label><input type="number" class="form-input form-input--sm" bind:value={newPattern.widthInches} min="0.5" step="0.5"/></div>
-						<div class="form-group"><label class="form-label">Height (in)</label><input type="number" class="form-input form-input--sm" bind:value={newPattern.heightInches} min="0.5" step="0.5"/></div>
+						<div class="form-group"><label class="form-label" for="np-width">Width (in)</label><input id="np-width" type="number" class="form-input form-input--sm" bind:value={newPattern.widthInches} min="0.5" step="0.5"/></div>
+						<div class="form-group"><label class="form-label" for="np-height">Height (in)</label><input id="np-height" type="number" class="form-input form-input--sm" bind:value={newPattern.heightInches} min="0.5" step="0.5"/></div>
 					</div>
-					<div class="form-group"><label class="form-label">SVG Path <span class="form-label__opt">(optional)</span></label><input type="text" class="form-input form-input--sm" bind:value={newPattern.svgPath} placeholder="M10,90 Q50,5 90,90 Z"/></div>
-					<div class="form-group"><label class="form-label">Notes <span class="form-label__opt">(optional)</span></label><input type="text" class="form-input form-input--sm" bind:value={newPattern.notes}/></div>
+					<div class="form-group"><label class="form-label" for="np-svg">SVG Path <span class="form-label__opt">(optional)</span></label><input id="np-svg" type="text" class="form-input form-input--sm" bind:value={newPattern.svgPath} placeholder="M10,90 Q50,5 90,90 Z"/></div>
+					<div class="form-group"><label class="form-label" for="np-notes">Notes <span class="form-label__opt">(optional)</span></label><input id="np-notes" type="text" class="form-input form-input--sm" bind:value={newPattern.notes}/></div>
 					<div class="ep-add-form__footer">
 						<label class="toggle-label"><input type="checkbox" bind:checked={newPattern.isPublished}/>Publish immediately</label>
 						<div class="ep-row-actions">
@@ -1131,7 +1196,7 @@ onMount(() => {
 				</div>
 			{/if}
 		</div>
-	</aside>
+	</div>
 {/if}
 
 <style>

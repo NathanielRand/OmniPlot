@@ -383,9 +383,9 @@
 			<input
 				type="search"
 				class="lib-search"
-				placeholder="Search make, model, year…"
+				placeholder={projectType === "vehicle" ? "Search make, model, year…" : "Search by name or address…"}
 				bind:value={search}
-				aria-label="Search vehicles"
+				aria-label={projectType === "vehicle" ? "Search vehicles" : "Search subjects"}
 			/>
 		</div>
 
@@ -654,11 +654,14 @@
 					{#if useStorePatterns}
 						{#each visibleStorePatterns as pattern (pattern.id)}
 							{@const selected = selectedPatternIds.has(pattern.id)}
-							<button
+							<div
 								class="zone-card"
 								class:selected
 								class:zone-card--tint={mode === "tint"}
+								role="button"
+								tabindex="0"
 								onclick={() => togglePattern(pattern.id)}
+								onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); togglePattern(pattern.id); } }}
 								aria-pressed={selected}
 								aria-label="Select {pattern.name}"
 							>
@@ -725,7 +728,7 @@
 								>
 									<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
 								</div>
-							</button>
+							</div>
 						{/each}
 
 					<!-- ─ No verified patterns yet ─ -->
@@ -879,9 +882,9 @@
 
 <!-- ─── Request Vehicle Modal ─────────────────── -->
 {#if showRequestModal}
-	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 	<div class="modal-overlay" onclick={() => (showRequestModal = false)}>
-		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+		<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 		<div class="modal" onclick={(e) => e.stopPropagation()}>
 			<div class="modal__header">
 				<div>
@@ -926,9 +929,9 @@
 
 <!-- ─── Mirror Pair Add Dialog ───────────── -->
 {#if mirrorTarget}
-	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 	<div class="modal-overlay" onclick={() => (mirrorTarget = null)}>
-		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+		<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 		<div class="modal" onclick={(e) => e.stopPropagation()}>
 			<div class="modal__header">
 				<div>
@@ -994,9 +997,9 @@
 
 <!-- ─── Pattern Adjustment Request Modal ──── -->
 {#if adjustTarget}
-	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 	<div class="modal-overlay" onclick={() => (adjustTarget = null)}>
-		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+		<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 		<div class="modal" onclick={(e) => e.stopPropagation()}>
 			<div class="modal__header">
 				<div>
@@ -1785,6 +1788,7 @@
 		color: var(--text-primary);
 		display: -webkit-box;
 		-webkit-line-clamp: 2;
+		line-clamp: 2;
 		-webkit-box-orient: vertical;
 		overflow: hidden;
 		line-height: 1.35;

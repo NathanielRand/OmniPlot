@@ -114,8 +114,8 @@
 	}
 </script>
 
-<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-<div class="backdrop animate-fade-in" onclick={handleBackdrop} role="dialog" aria-modal="true" aria-label="Add payment method">
+<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+<div class="backdrop animate-fade-in" onclick={handleBackdrop} role="dialog" tabindex="-1" aria-modal="true" aria-label="Add payment method">
 	<div class="modal animate-scale-in">
 		<button class="modal__close" onclick={onclose} aria-label="Close">
 			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true">

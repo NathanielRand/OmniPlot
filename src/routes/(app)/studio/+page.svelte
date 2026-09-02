@@ -2178,7 +2178,7 @@
 
 	<!-- Export dropdown -->
 	{#if showExport}
-		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+		<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 		<div
 			class="export-dropdown-backdrop"
 			onclick={() => (showExport = false)}
@@ -2216,7 +2216,7 @@
 
 	<!-- ─── Export confirmation dialog ─── -->
 	{#if pendingExportFormat}
-		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+		<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 		<div class="export-confirm-backdrop" onclick={() => (pendingExportFormat = null)}></div>
 		<div class="export-confirm animate-slide-down" role="alertdialog" aria-modal="true" aria-labelledby="export-confirm-title">
 			<p id="export-confirm-title" class="export-confirm__title">
@@ -2236,7 +2236,7 @@
 
 	<!-- ─── Vehicle legend ─── -->
 	{#if hasMultipleVehicles}
-		<div class="vehicle-legend" role="region" aria-label="Vehicle breakdown">
+		<div class="vehicle-legend" role="region" aria-label="Subject breakdown">
 			{#each vehicleGroups as group (group.vehicleId)}
 				<div class="vl-group">
 					<span class="vl-car">{group.vehicleName}</span>
@@ -2288,7 +2288,7 @@
 	<!-- ─── Main area ─── -->
 	<div class="studio__body" class:studio__body--collapsed={panelCollapsed}>
 		<!-- Canvas -->
-		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+		<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions, a11y_no_noninteractive_element_interactions -->
 		<div
 			class="canvas-area"
 			class:show-grid={canvasStore.state.showGrid}
@@ -2799,6 +2799,7 @@
 							{/if}
 							<div class="device-list">
 								{#each discoveredDevices as device (device.id)}
+									<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 									<div
 										class="device-card"
 										class:device-card--connected={device.status === "connected"}
@@ -4647,10 +4648,6 @@
 		border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 		color: var(--text-secondary);
 	}
-	.prop-note--disclaimer strong {
-		color: var(--text-primary);
-		font-weight: 600;
-	}
 
 	/* Live / cut-time indicator badges on slider labels */
 	.live-badge {
@@ -4713,6 +4710,7 @@
 	.prop-slider {
 		flex: 1;
 		-webkit-appearance: none;
+		appearance: none;
 		height: 4px;
 		background: var(--bg-surface-3);
 		border-radius: 2px;
@@ -4901,6 +4899,7 @@
 		font-size: 0.9375rem;
 		color: var(--text-primary);
 		-moz-appearance: textfield;
+		appearance: textfield;
 	}
 	.pattern-card__field-input::-webkit-outer-spin-button,
 	.pattern-card__field-input::-webkit-inner-spin-button {
@@ -5412,7 +5411,6 @@
 		font-size: 0.6905rem;
 		color: var(--text-tertiary);
 	}
-	.plotter-spec strong { color: var(--text-secondary); }
 
 	/* Compatibility warnings */
 	.compat-warn {

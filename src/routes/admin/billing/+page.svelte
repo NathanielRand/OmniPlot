@@ -116,12 +116,12 @@
 	};
 
 	// Known fixed platform costs
-	const OTHER_COSTS = [
+	const OTHER_COSTS = $derived([
 		{ service: 'Vercel',          category: 'Hosting',      estimate: 'Pro $20/mo',   link: 'https://vercel.com/dashboard' },
 		{ service: 'Google Domains',  category: 'Domain',       estimate: '~$12/yr',      link: null },
 		{ service: 'Firebase Blaze',  category: 'Backend',      estimate: 'Pay-as-you-go', link: 'https://console.firebase.google.com' },
 		{ service: 'Stripe Connect',  category: 'Payments',     estimate: '2.9% + 30¢',   link: `https://dashboard.stripe.com/${data.stripeConnectedAccountId}` },
-	];
+	]);
 </script>
 
 <svelte:head><title>Billing — Admin — OmniPlot</title></svelte:head>

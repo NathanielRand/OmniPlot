@@ -770,7 +770,6 @@
 	.td-nickname { font-weight: 500; color: var(--text-primary); }
 	.td-interval { color: var(--text-secondary); }
 	.td-amount   { font-family: var(--font-mono); font-weight: 600; color: var(--text-primary); white-space: nowrap; }
-	.td-id       { }
 	.td-actions  { text-align: right; }
 
 	.id-cell { display: flex; align-items: center; gap: 4px; }
