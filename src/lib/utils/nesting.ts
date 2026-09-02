@@ -313,10 +313,16 @@ function bestFitPack(
 
 				// 'left': minimize roll length consumed (startX primary)
 				// 'compact': fill from bottom-left of sheet (placeY primary)
+				// Tie-break: prefer orientations that lay the long side sideways
+				// (small length-wise extent iW, large width-wise extent iH) — this
+				// only breaks exact ties in the primary/secondary terms above (e.g.
+				// the very first item placed, where startX and placeY are identical
+				// across all rotations) and never overrides a genuine improvement.
+				const sidewaysBias = (iW - iH) * 1e-6;
 				const score =
 					scoring === "compact"
-						? placeY * sheetW + startX
-						: startX * 1e6 + placeY;
+						? placeY * sheetW + startX + sidewaysBias
+						: startX * 1e6 + placeY + sidewaysBias;
 
 				if (best === null || score < best.score) {
 					best = { x: startX, y: placeY, w: iW, h: iH, rot, score };
@@ -371,6 +377,11 @@ function rotationImprovementPass(
 	let current = [...placed].sort((a, b) => a.x - b.x || a.y - b.y);
 	let curLen  = layoutLen(current);
 	const n = current.length;
+	// Compaction-aware evaluation is an extra O(n^2) pass per rotation trial
+	// (O(n^3) total for this loop) — worth it for the item counts where this
+	// module actually runs on every canvas change, too costly to also do it
+	// unconditionally at 30+ items and still hit the "<50ms" autoNest budget.
+	const evaluateWithCompaction = n <= 20;
 
 	for (let i = 0; i < n; i++) {
 		if (withinBudget && !withinBudget()) break;
@@ -381,12 +392,161 @@ function rotationImprovementPass(
 			const trial = current.map((it, idx) =>
 				idx === i ? { ...it, rotation: rot } : it,
 			);
+			// Evaluate through compaction: a rotation can look like a wash (or
+			// even a regression) against the raw skyline repack, but only pay
+			// off once neighbors slide into the gap it opened up. Judging the
+			// trial on the uncompacted repack alone misses exactly that case.
 			const repacked = bestFitPack(trial, sheet, true, "left");
-			const len = layoutLen(repacked);
+			const settled  = evaluateWithCompaction ? compactionPass(repacked, sheet) : repacked;
+			const len = layoutLen(settled);
 			if (len < curLen - 0.01) {
-				current = repacked.sort((a, b) => a.x - b.x || a.y - b.y);
+				current = settled.sort((a, b) => a.x - b.x || a.y - b.y);
 				curLen  = len;
 			}
+		}
+	}
+
+	return current;
+}
+
+// ─── Compaction pass (bottom-left gap fill) ──
+// The skyline packer places items against a height *profile*, so a short item
+// sitting next to a tall one still consumes the tall one's full row — it can't
+// slide into a leftover pocket underneath a shorter neighbor further along.
+// This pass re-settles each already-placed item against the true rectangles
+// of its neighbors (not the skyline profile), sliding it left then up,
+// alternating a few times to converge. Net effect: items reflow to squeeze
+// into any real gap, like flex-wrap reflow, tightening both axes.
+function computeMinX(
+	item: CanvasItem,
+	settled: CanvasItem[],
+	pad: number,
+): number {
+	let maxRight = 0;
+	for (const s of settled) {
+		if (s.id === item.id) continue;
+		const sTop = s.y - pad, sBot = s.y + s.height + pad;
+		if (sBot <= item.y || sTop >= item.y + item.height) continue;
+		const right = s.x + s.width + pad;
+		if (right > maxRight) maxRight = right;
+	}
+	return Math.max(0, maxRight);
+}
+
+function computeMinY(
+	item: CanvasItem,
+	settled: CanvasItem[],
+	pad: number,
+): number {
+	let maxBottom = 0;
+	for (const s of settled) {
+		if (s.id === item.id) continue;
+		const sLeft = s.x - pad, sRight = s.x + s.width + pad;
+		if (sRight <= item.x || sLeft >= item.x + item.width) continue;
+		const bottom = s.y + s.height + pad;
+		if (bottom > maxBottom) maxBottom = bottom;
+	}
+	return Math.max(0, maxBottom);
+}
+
+function compactionPass(
+	placed: CanvasItem[],
+	sheet: MaterialSheet,
+): CanvasItem[] {
+	const pad = PADDING_INCHES;
+	const inBounds = placed.filter((i) => !i.outOfBounds);
+
+	// Process in reading order (x then y) so earlier-settled items form the
+	// walls later items slide up against — keeps the result deterministic.
+	const ordered = [...inBounds].sort((a, b) => a.x - b.x || a.y - b.y);
+	const settled: CanvasItem[] = [];
+
+	for (const original of ordered) {
+		const item = { ...original };
+		for (let iter = 0; iter < 3; iter++) {
+			// Clamp to the origin side: an item whose y-range merely touches a
+			// neighbor's within `pad` can get misread by computeMinX as an
+			// x-blocker (it's actually stacked above/below, not beside) and
+			// return a value past the item's current x. Compaction must only
+			// ever slide an item toward (0, 0), never push it further out.
+			const newX = Math.min(item.x, computeMinX(item, settled, pad));
+			if (Math.abs(newX - item.x) > 0.001) item.x = newX;
+			const newY = Math.min(item.y, computeMinY(item, settled, pad));
+			if (Math.abs(newY - item.y) > 0.001) item.y = newY;
+		}
+		if (item.y + item.height > sheet.heightInches + 0.001) {
+			settled.push(original); // safety: keep original placement if it no longer fits
+		} else {
+			settled.push(item);
+		}
+	}
+
+	const byId = new Map(settled.map((r) => [r.id, r]));
+	const result = placed.map((r) => byId.get(r.id) ?? r);
+
+	// Safety net: never return an overlapping layout.
+	return findOverlaps(result).length > 0 ? placed : result;
+}
+
+function rectsOverlap(
+	ax: number, ay: number, aw: number, ah: number,
+	bx: number, by: number, bw: number, bh: number,
+	pad: number,
+): boolean {
+	return (
+		ax < bx + bw + pad && ax + aw + pad > bx &&
+		ay < by + bh + pad && ay + ah + pad > by
+	);
+}
+
+// ─── Local rotation refinement ────────────────
+// compactionPass squeezes items together, which can open up room for a
+// neighbor to flip into a sideways orientation that wouldn't have fit before
+// (e.g. a full skyline repack would have kept it in its old row). Rotating
+// in place — keeping the item's anchor (x, y) fixed and only swapping its
+// w/h footprint — lets that opportunity get exploited without discarding the
+// compacted layout via a full bestFitPack repack.
+function localRotationRefine(
+	placed: CanvasItem[],
+	sheet: MaterialSheet,
+	allowRotation: boolean,
+): CanvasItem[] {
+	if (!allowRotation) return placed;
+
+	const pad = PADDING_INCHES;
+	const current = [...placed];
+	// Rightmost items first — they're the ones actually driving roll length.
+	const order = current
+		.map((_, idx) => idx)
+		.filter((idx) => !current[idx].outOfBounds)
+		.sort((a, b) => (current[b].x + current[b].width) - (current[a].x + current[a].width));
+
+	for (const idx of order) {
+		const item = current[idx];
+		const orientations = buildOrientations(item, sheet.widthInches, true);
+		let bestRight = item.x + item.width;
+		let bestOrientation: { w: number; h: number; rot: number } | null = null;
+
+		for (const { w, h, rot } of orientations) {
+			if (rot === item.rotation) continue;
+			if (item.x + w > sheet.widthInches + 0.001) continue;
+			if (item.y + h > sheet.heightInches + 0.001) continue;
+
+			const collides = current.some((other, oi) => {
+				if (oi === idx || other.outOfBounds) return false;
+				return rectsOverlap(item.x, item.y, w, h, other.x, other.y, other.width, other.height, pad);
+			});
+			if (collides) continue;
+
+			const right = item.x + w;
+			if (right < bestRight - 0.01) {
+				bestRight = right;
+				bestOrientation = { w, h, rot };
+			}
+		}
+
+		if (bestOrientation) {
+			current[idx] = { ...item, width: bestOrientation.w, height: bestOrientation.h, rotation: bestOrientation.rot };
 		}
 	}
 
@@ -602,9 +762,10 @@ function pairRotationCombinationPass(
 					return item;
 				});
 				const repacked = bestFitPack(trial, sheet, true, "left");
-				const len = layoutLen(repacked);
+				const settled  = compactionPass(repacked, sheet);
+				const len = layoutLen(settled);
 				if (len < curLen - 0.01) {
-					current = repacked;
+					current = settled;
 					curLen  = len;
 				}
 			}
@@ -687,6 +848,23 @@ export function autoNest(
 		if (layoutLen(swapped) < layoutLen(best)) best = swapped;
 	}
 
+	// Compaction + local rotation: squeeze items into real leftover gaps (not
+	// just skyline rows), then let freed-up gaps unlock sideways rotations
+	// that a full skyline repack wouldn't have found — alternate twice so
+	// each pass can exploit the other's gains. Two rounds of both is only
+	// worth the extra O(n^2) work at small item counts; larger layouts get
+	// one compaction pass so autoNest stays inside its "<50ms" budget.
+	const rounds = items.length <= 20 ? 2 : 1;
+	for (let round = 0; round < rounds; round++) {
+		const compacted = compactionPass(best, sheet);
+		if (layoutLen(compacted) <= layoutLen(best)) best = compacted;
+
+		if (items.length <= 20) {
+			const rotated = localRotationRefine(best, sheet, allowRotation);
+			if (layoutLen(rotated) <= layoutLen(best)) best = rotated;
+		}
+	}
+
 	const byId = new Map(best.map((r) => [r.id, r]));
 	return items.map((item) => byId.get(item.id) ?? item);
 }
@@ -764,6 +942,19 @@ export function smartNest(
 	if (items.length <= 15 && withinBudget()) {
 		const inserted = insertionImprovementPass(best, sheet, allowRotation, withinBudget);
 		if (layoutLen(inserted) < layoutLen(best)) best = inserted;
+	}
+
+	// Phase 7: compaction + local rotation — squeeze items into real leftover
+	// gaps between neighbors (skyline rows leave pockets a rectangle-aware
+	// slide can fill), then let freed-up gaps unlock sideways rotations that
+	// a full skyline repack wouldn't have found. Alternate a few rounds so
+	// each pass can exploit the other's gains.
+	for (let round = 0; round < 3 && withinBudget(); round++) {
+		const compacted = compactionPass(best, sheet);
+		if (layoutLen(compacted) <= layoutLen(best)) best = compacted;
+
+		const rotated = localRotationRefine(best, sheet, allowRotation);
+		if (layoutLen(rotated) <= layoutLen(best)) best = rotated;
 	}
 
 	const finalLen = layoutLen(best);
@@ -999,6 +1190,11 @@ export function findNextPosition(
 	if (orientations.length === 0) {
 		return { x: sheetW + pad, y: pad, width: itemW, height: itemH, rotation: 0, outOfBounds: true };
 	}
+
+	// Prefer laying the long side sideways: smallest length-wise extent (w)
+	// first, so the roll consumes as little length as possible while using
+	// as much of the available width (h) as it can.
+	orientations.sort((a, b) => a.w - b.w || b.h - a.h);
 
 	if (!existingItems.length) {
 		const { w, h, rot } = orientations[0];
