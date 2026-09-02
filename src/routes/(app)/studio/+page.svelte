@@ -413,6 +413,36 @@
 			localStorage.setItem("op-ai-nest", aiNestEnabled ? "true" : "false");
 		}
 	});
+
+	// ─── Auto Re-optimize (default ON) ────────────
+	// When enabled: the deep AI nest (handleSmartNest — same one the
+	// "Re-optimize" button runs) reruns automatically whenever a pattern is
+	// added to or removed from the sheet. Toggle off to only re-optimize on
+	// demand via the button, e.g. while iterating on a specific layout where
+	// the deep search repeatedly repositioning everything gets in the way.
+	let autoReoptimize = $state(
+		typeof localStorage !== "undefined"
+			? localStorage.getItem("op-auto-reoptimize") !== "false"
+			: true,
+	);
+	$effect(() => {
+		if (typeof localStorage !== "undefined") {
+			localStorage.setItem("op-auto-reoptimize", autoReoptimize ? "true" : "false");
+		}
+	});
+	// -1 = not yet baselined (page load / restore) — don't fire on that first read.
+	let autoReoptimizeLastCount = -1;
+	$effect(() => {
+		const count = canvasStore.items.length;
+		if (autoReoptimizeLastCount === -1) {
+			autoReoptimizeLastCount = count;
+			return;
+		}
+		if (count === autoReoptimizeLastCount) return;
+		autoReoptimizeLastCount = count;
+		if (autoReoptimize && !smartNesting) handleSmartNest({ silent: true });
+	});
+
 	let cutting          = $state(false);
 	let serialPortInfo   = $state<SerialPortInfo | null>(null);
 
@@ -974,14 +1004,20 @@
 		}
 	}
 
-	function handleSmartNest() {
+	// `silent`: used by the auto re-optimize effect below — skips the
+	// upgrade nag and "no patterns" toast, which would otherwise fire on
+	// every single add/remove for a free-tier user or an empty canvas.
+	function handleSmartNest(opts: { silent?: boolean } = {}) {
+		const { silent = false } = opts;
 		if (isFree) {
-			toastStore.info("Lite plan required", "AI deep optimization is available on Lite and above.");
-			uiStore.openPricing();
+			if (!silent) {
+				toastStore.info("Lite plan required", "AI deep optimization is available on Lite and above.");
+				uiStore.openPricing();
+			}
 			return;
 		}
 		if (!canvasStore.items.length) {
-			toastStore.warning("No patterns", "Add patterns to the sheet first.");
+			if (!silent) toastStore.warning("No patterns", "Add patterns to the sheet first.");
 			return;
 		}
 		smartNesting = true;
@@ -1903,7 +1939,7 @@
 				class="tool-btn tool-btn--ai-optimize"
 				class:loading={smartNesting}
 				title={isFree ? "AI deep optimization — Lite plan required" : "Re-optimize — run deep AI nesting across all patterns now"}
-				onclick={handleSmartNest}
+				onclick={() => handleSmartNest()}
 				disabled={smartNesting}
 				aria-label="Run deep AI nest optimization"
 			>
@@ -1927,6 +1963,33 @@
 						<path d="M16 16h5v5" />
 					</svg>
 				{/if}
+			</button>
+			<!-- Auto re-optimize toggle — ON by default; runs the same deep AI
+			     nest as the button above automatically on add/remove -->
+			<button
+				class="tool-btn tool-btn--auto-reoptimize"
+				class:active={autoReoptimize}
+				title={autoReoptimize
+					? "Auto Re-optimize ON — deep AI nest reruns automatically when a pattern is added or removed (click to switch to manual)"
+					: "Auto Re-optimize OFF — click Re-optimize to run it manually (click to re-enable auto)"}
+				onclick={() => { autoReoptimize = !autoReoptimize; }}
+				aria-pressed={autoReoptimize}
+				aria-label="Toggle automatic re-optimize on add/remove"
+			>
+				<svg
+					width="12"
+					height="12"
+					viewBox="0 0 24 24"
+					fill={autoReoptimize ? "currentColor" : "none"}
+					stroke="currentColor"
+					stroke-width="2"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					aria-hidden="true"
+				>
+					<path d="M13 2 3 14h7l-1 8 11-14h-7l1-6z" />
+				</svg>
+				<span class="ai-mode-label">{autoReoptimize ? "Auto" : "Manual"}</span>
 			</button>
 			<button
 				class="tool-btn"
@@ -3561,6 +3624,28 @@
 	.tool-btn--ai-optimize.loading {
 		opacity: 1;
 		cursor: wait;
+	}
+	/* Auto re-optimize toggle — same visual language as AI Nest mode above */
+	.tool-btn--auto-reoptimize {
+		width: auto;
+		padding: 0 10px;
+		gap: 5px;
+		color: var(--text-muted);
+		border: 1px solid transparent;
+		transition: color 0.15s, background 0.15s, border-color 0.15s;
+	}
+	.tool-btn--auto-reoptimize.active {
+		color: var(--color-brand-dim);
+		background: rgba(0, 112, 255, 0.08);
+		border-color: rgba(0, 112, 255, 0.2);
+	}
+	.tool-btn--auto-reoptimize.active svg {
+		fill: var(--color-brand-dim);
+		stroke: var(--color-brand-dim);
+	}
+	.tool-btn--auto-reoptimize:hover:not(:disabled) {
+		background: rgba(0, 112, 255, 0.1);
+		color: var(--color-brand-dim);
 	}
 	/* Legacy class kept for other spinner uses */
 	.tool-btn--ai {
