@@ -3,7 +3,7 @@
 	import Button from '$lib/components/ui/Button.svelte';
 	import { auth } from '$lib/firebase/client';
 	import { onMount } from 'svelte';
-	import { toastStore } from '$lib/stores';
+	import { toastStore, confirmStore } from '$lib/stores';
 
 	// ─── Banner state ───────────────────────────────
 	interface BannerConfig {
@@ -183,7 +183,12 @@
 	}
 
 	async function deactivateBanner() {
-		if (!confirm('Remove the sitewide promo banner?')) return;
+		const ok = await confirmStore.ask({
+			title: 'Remove the sitewide promo banner?',
+			confirmLabel: 'Remove banner',
+			variant: 'danger',
+		});
+		if (!ok) return;
 		deactivatingBanner = true;
 		try {
 			const res = await fetch('/api/admin/promo-banner', {
@@ -257,7 +262,15 @@
 
 	// ─── Deactivate ────────────────────────────────
 	async function deactivate(id: string, code: string) {
-		if (!confirm(`Deactivate "${code}"? Users with this code can no longer redeem it.`)) return;
+		const times = codes.find((c) => c.id === id)?.times_redeemed;
+		const ok = await confirmStore.ask({
+			title: `Deactivate "${code}"?`,
+			message: 'Users with this code can no longer redeem it.',
+			details: times !== undefined ? [{ label: 'Times redeemed so far', value: String(times) }] : undefined,
+			confirmLabel: 'Deactivate',
+			variant: 'danger',
+		});
+		if (!ok) return;
 		deactivating = id;
 		try {
 			const res = await fetch('/api/admin/coupons', {

@@ -3,7 +3,7 @@
 	import { formatDate, formatRelativeTime } from "$lib/utils";
 	import { auth } from "$lib/firebase/client";
 	import { onMount } from "svelte";
-	import { toastStore } from "$lib/stores";
+	import { toastStore, confirmStore } from "$lib/stores";
 
 	type Tier       = "free" | "lite" | "pro" | "admin";
 	type Status     = "active" | "suspended";
@@ -198,7 +198,15 @@
 
 	async function drawerSaveTier() {
 		if (!detail || drawerTier === detail.tier) return;
-		if (!confirm(`Change ${detail.displayName || detail.email}'s tier from "${detail.tier}" to "${drawerTier}"?`)) return;
+		const ok = await confirmStore.ask({
+			title: `Change ${detail.displayName || detail.email}'s plan tier?`,
+			details: [
+				{ label: "From", value: detail.tier },
+				{ label: "To", value: drawerTier },
+			],
+			confirmLabel: "Change tier",
+		});
+		if (!ok) return;
 		drawerAction = "tier";
 		try {
 			await patchUser(detail.uid, { tier: drawerTier });
@@ -216,7 +224,12 @@
 		if (!detail) return;
 		const next: Status = detail.status === "suspended" ? "active" : "suspended";
 		const verb = next === "suspended" ? "Suspend" : "Reactivate";
-		if (!confirm(`${verb} ${detail.displayName || detail.email}'s account?`)) return;
+		const ok = await confirmStore.ask({
+			title: `${verb} ${detail.displayName || detail.email}'s account?`,
+			variant: next === "suspended" ? "danger" : "primary",
+			confirmLabel: verb,
+		});
+		if (!ok) return;
 		drawerAction = "suspend";
 		try {
 			await patchUser(detail.uid, { status: next });
@@ -232,7 +245,12 @@
 
 	async function drawerClearSession() {
 		if (!detail) return;
-		if (!confirm(`Clear ${detail.displayName || detail.email}'s active session? They'll be signed out on their next request.`)) return;
+		const ok = await confirmStore.ask({
+			title: `Clear ${detail.displayName || detail.email}'s active session?`,
+			message: "They'll be signed out on their next request.",
+			confirmLabel: "Clear session",
+		});
+		if (!ok) return;
 		drawerAction = "session";
 		try {
 			await patchUser(detail.uid, { clearSession: true });
@@ -247,7 +265,12 @@
 
 	async function drawerRemoveShop() {
 		if (!detail) return;
-		if (!confirm(`Remove ${detail.displayName || detail.email} from "${detail.shopName ?? "this shop"}"?`)) return;
+		const ok = await confirmStore.ask({
+			title: `Remove ${detail.displayName || detail.email} from "${detail.shopName ?? "this shop"}"?`,
+			variant: "danger",
+			confirmLabel: "Remove from shop",
+		});
+		if (!ok) return;
 		drawerAction = "shop";
 		try {
 			await patchUser(detail.uid, { removeShop: true });
@@ -270,16 +293,17 @@
 	async function drawerSubscriptionAction(action: "cancel_at_period_end" | "cancel_now" | "resume" | "pause" | "unpause") {
 		if (!detail) return;
 		const who = detail.displayName || detail.email;
-		const confirmMsg = action === "cancel_at_period_end"
-			? `Cancel ${who}'s subscription at the end of the current billing period? They'll keep access until then.`
+		const { title, message, variant, confirmLabel } = action === "cancel_at_period_end"
+			? { title: `Cancel ${who}'s subscription?`, message: "At the end of the current billing period — they'll keep access until then.", variant: "primary" as const, confirmLabel: "Schedule cancellation" }
 			: action === "cancel_now"
-			? `Cancel ${who}'s subscription immediately? They'll lose paid access right away — this cannot be undone.`
+			? { title: `Cancel ${who}'s subscription immediately?`, message: "They'll lose paid access right away — this cannot be undone.", variant: "danger" as const, confirmLabel: "Cancel now" }
 			: action === "resume"
-			? `Resume ${who}'s subscription? The scheduled cancellation will be removed.`
+			? { title: `Resume ${who}'s subscription?`, message: "The scheduled cancellation will be removed.", variant: "primary" as const, confirmLabel: "Resume" }
 			: action === "pause"
-			? `Pause billing for ${who}? They'll drop to the Free plan immediately and won't be charged until resumed.`
-			: `Resume billing for ${who}? Their paid tier will be restored.`;
-		if (!confirm(confirmMsg)) return;
+			? { title: `Pause billing for ${who}?`, message: "They'll drop to the Free plan immediately and won't be charged until resumed.", variant: "danger" as const, confirmLabel: "Pause billing" }
+			: { title: `Resume billing for ${who}?`, message: "Their paid tier will be restored.", variant: "primary" as const, confirmLabel: "Resume billing" };
+		const ok = await confirmStore.ask({ title, message, variant, confirmLabel });
+		if (!ok) return;
 		drawerAction = `sub_${action}`;
 		try {
 			const res = await fetch("/api/admin/billing/subscription", {
@@ -317,7 +341,14 @@
 	}
 
 	async function refundTransaction(chargeId: string, amount: number, currency: string) {
-		if (!confirm(`Refund ${fmtCurrency(amount, currency)}? This cannot be undone.`)) return;
+		const ok = await confirmStore.ask({
+			title: "Issue this refund?",
+			message: "This cannot be undone.",
+			details: [{ label: "Amount", value: fmtCurrency(amount, currency) }],
+			variant: "danger",
+			confirmLabel: "Issue refund",
+		});
+		if (!ok) return;
 		drawerAction = `refund_${chargeId}`;
 		try {
 			const res = await fetch("/api/admin/billing/refund", {
@@ -348,7 +379,12 @@
 	async function toggleSuspend(user: AdminUser) {
 		const next: Status = user.status === "suspended" ? "active" : "suspended";
 		const verb = next === "suspended" ? "Suspend" : "Reactivate";
-		if (!confirm(`${verb} ${user.displayName || user.email}'s account?`)) return;
+		const ok = await confirmStore.ask({
+			title: `${verb} ${user.displayName || user.email}'s account?`,
+			variant: next === "suspended" ? "danger" : "primary",
+			confirmLabel: verb,
+		});
+		if (!ok) return;
 		try {
 			await patchUser(user.uid, { status: next });
 			users = users.map((u) => u.uid === user.uid ? { ...u, status: next } : u);

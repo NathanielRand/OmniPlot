@@ -2,7 +2,7 @@
 	import Badge from '$lib/components/ui/Badge.svelte';
 	import { formatDate } from '$lib/utils';
 	import { onMount } from 'svelte';
-	import { toastStore } from '$lib/stores';
+	import { toastStore, confirmStore } from '$lib/stores';
 	import { auth } from '$lib/firebase/client';
 	import type { InsightPost, InsightCategory } from '$lib/types';
 
@@ -94,7 +94,13 @@
 
 	async function confirmDelete(post: InsightPost) {
 		deletingId = post.id;
-		if (!confirm(`Delete "${post.title}"? This cannot be undone.`)) {
+		const ok = await confirmStore.ask({
+			title: `Delete "${post.title}"?`,
+			message: 'This cannot be undone.',
+			confirmLabel: 'Delete post',
+			variant: 'danger',
+		});
+		if (!ok) {
 			deletingId = null;
 			return;
 		}

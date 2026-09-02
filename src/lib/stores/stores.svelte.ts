@@ -104,6 +104,58 @@ function createToastStore() {
 
 export const toastStore = createToastStore();
 
+// ─── Confirm modal ─────────────────────────────
+// Native-UI replacement for window.confirm(). Any caller does:
+//   const ok = await confirmStore.ask({ title, message, details });
+//   if (!ok) return;
+// <ConfirmModal /> (mounted once in the root layout) renders whatever
+// request is currently pending and resolves it via confirmStore.resolve().
+export interface ConfirmDetail {
+	label: string;
+	value: string;
+}
+export interface ConfirmOptions {
+	title: string;
+	message?: string;
+	confirmLabel?: string;
+	cancelLabel?: string;
+	variant?: "danger" | "primary";
+	/** Optional key/value rows (e.g. counters) shown under the message. */
+	details?: ConfirmDetail[];
+}
+interface PendingConfirm {
+	options: ConfirmOptions;
+	resolve: (value: boolean) => void;
+}
+
+function createConfirmStore() {
+	let pending = $state<PendingConfirm | null>(null);
+
+	function ask(options: ConfirmOptions): Promise<boolean> {
+		return new Promise((resolve) => {
+			// Only one confirmation can be pending at a time — if something
+			// is already showing, cancel it rather than stacking modals.
+			pending?.resolve(false);
+			pending = { options, resolve };
+		});
+	}
+
+	function resolve(value: boolean) {
+		pending?.resolve(value);
+		pending = null;
+	}
+
+	return {
+		get pending() {
+			return pending;
+		},
+		ask,
+		resolve,
+	};
+}
+
+export const confirmStore = createConfirmStore();
+
 // ─── Auth / User ──────────────────────────────
 function createUserStore() {
 	let user = $state<UserProfile | null>(null);
@@ -153,7 +205,7 @@ export const shopStore = createShopStore();
 
 // ─── Sidebar / Nav ────────────────────────────
 function createUiStore() {
-	let sidebarOpen = $state(true);
+	let sidebarOpen = $state(false);
 	let mobileMenuOpen = $state(false);
 	let pricingModalOpen = $state(false);
 	let exportModalOpen = $state(false);
