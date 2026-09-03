@@ -385,7 +385,7 @@
 	// ─── Actions ──────────────────────────────────
 	function handleAutoNest() {
 		const nested = bestNest(canvasStore.items, transposedSheet(), true, canvasStore.state.bufferInches);
-		console.log("NEST v16", nested.map((i) => [i.id, i.x.toFixed(2), i.y.toFixed(2), i.width.toFixed(1), i.height.toFixed(1), i.rotation]));
+		console.log("NEST v17", nested.map((i) => [i.id, i.x.toFixed(2), i.y.toFixed(2), i.width.toFixed(1), i.height.toFixed(1), i.rotation]));
 		canvasStore.setItems(nested);
 		smartNestGain = null;
 		const oob = nested.filter((i) => i.outOfBounds).length;
@@ -1057,7 +1057,7 @@
 				const a = oobLen(result.items);
 				const b = oobLen(nfpAlt);
 				const finalItems = (b.oob < a.oob || (b.oob === a.oob && b.len <= a.len)) ? nfpAlt : result.items;
-				console.log("NEST v16 handleSmartNest " + JSON.stringify({
+				console.log("NEST v17 handleSmartNest " + JSON.stringify({
 					smartNestLen: a.len.toFixed(2), smartNestOob: a.oob,
 					nfpAltLen: b.len.toFixed(2), nfpAltOob: b.oob,
 					chose: finalItems === nfpAlt ? "nfpAlt" : "smartNest.result",

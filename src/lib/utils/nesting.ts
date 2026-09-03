@@ -877,6 +877,67 @@ export function gapFillPass(
 				);
 			}
 		}
+
+		// Rescue pass: try to place any currently-outOfBounds item into a
+		// real gap. This must use a DIFFERENT acceptance rule than the
+		// relocation loop above — an oob item contributes nothing to
+		// layoutLen (it's filtered out), so "must strictly shrink the
+		// layout" can never fire for it: any legal placement is either
+		// length-neutral (fits inside the existing envelope) or a length
+		// increase (extends past the current tail), never a decrease. The
+		// correct rule here is "accept any valid non-overlapping in-bounds
+		// placement, preferring whichever minimizes the resulting length" —
+		// this is exactly the mechanism that failed silently for the custom
+		// pattern that was flagged excluded rather than dropped into the
+		// open pocket next to it.
+		if (withinBudget && !withinBudget()) break;
+		const oobOrder = current.filter((i) => i.outOfBounds).map((i) => i.id);
+		for (const id of oobOrder) {
+			if (withinBudget && !withinBudget()) break;
+			const idx = current.findIndex((i) => i.id === id);
+			const item = current[idx];
+			const others = current.filter((i) => i.id !== id && !i.outOfBounds);
+			const rest = current.filter((i) => i.id !== id);
+
+			const anchors: { x: number; y: number }[] = [{ x: 0, y: 0 }];
+			for (const o of others) {
+				anchors.push({ x: o.x + o.width + pad, y: o.y });
+				anchors.push({ x: o.x, y: o.y + o.height + pad });
+			}
+			for (const o1 of others) {
+				for (const o2 of others) {
+					if (o1.id === o2.id) continue;
+					anchors.push({ x: o1.x + o1.width + pad, y: o2.y + o2.height + pad });
+				}
+			}
+
+			const orientations = allowRotation
+				? buildOrientations(item, sheet.widthInches, true)
+				: [{ w: item.width, h: item.height, rot: item.rotation }];
+
+			let best: { x: number; y: number; w: number; h: number; rot: number } | null = null;
+			let bestLen = Infinity;
+
+			for (const { x, y } of anchors) {
+				if (x < 0 || y < 0) continue;
+				for (const { w, h, rot } of orientations) {
+					if (y + h > rollWidth + 0.001) continue;
+					if (overlapsAny(x, y, w, h, id, others)) continue;
+					const trial = others.concat([{ ...item, x, y, width: w, height: h, rotation: rot, outOfBounds: false }]);
+					const trialLen = layoutLen(trial);
+					if (trialLen >= bestLen) continue;
+					bestLen = trialLen;
+					best = { x, y, w, h, rot };
+				}
+			}
+
+			if (best) {
+				current = rest.concat([{
+					...item, x: best.x, y: best.y, width: best.w, height: best.h,
+					rotation: best.rot, outOfBounds: false,
+				}]);
+			}
+		}
 	}
 
 	return current;
@@ -1236,8 +1297,8 @@ export function smartNest(
 	trace.phase8_gapFill = layoutLen(best).toFixed(2);
 
 	if (typeof window !== "undefined") {
-		console.log("NEST v16 smartNest trace " + JSON.stringify(trace, null, 2));
-		console.log("NEST v16 smartNest final " + JSON.stringify(
+		console.log("NEST v17 smartNest trace " + JSON.stringify(trace, null, 2));
+		console.log("NEST v17 smartNest final " + JSON.stringify(
 			best.map((i) => `${i.id}:x=${i.x.toFixed(2)},y=${i.y.toFixed(2)},w=${i.width.toFixed(1)},h=${i.height.toFixed(1)},rot=${i.rotation}`),
 			null, 2,
 		));
@@ -1500,7 +1561,7 @@ export function finalDeclash(
 			poly = translatePolygon(localPoly, x, it.y);
 		}
 		if (typeof window !== "undefined" && guard > 0) {
-			console.log(`NEST v16 finalDeclash nudged ${it.id} by guard=${guard} steps (${(guard * STEP).toFixed(2)}")`);
+			console.log(`NEST v17 finalDeclash nudged ${it.id} by guard=${guard} steps (${(guard * STEP).toFixed(2)}")`);
 		}
 		const bounds = polygonBounds(poly);
 		// This is meant to be the final, unconditional guarantee that nothing
@@ -1748,7 +1809,7 @@ export function bestNest(
 		};
 		const geo = (arr: CanvasItem[]) =>
 			arr.map((i) => `${i.id}:x=${i.x.toFixed(2)},y=${i.y.toFixed(2)},w=${i.width.toFixed(1)},h=${i.height.toFixed(1)},rot=${i.rotation}`).join(" | ");
-		console.log("NEST v16 bestNest " + JSON.stringify({
+		console.log("NEST v17 bestNest " + JSON.stringify({
 			nfpOob, skylineOob, nfpLen: len(nfpResult).toFixed(2), skylineLen: len(skylineResult).toFixed(2),
 			chose: nfpOob <= skylineOob ? "nfp" : "skyline",
 			nfp: geo(nfpResult),

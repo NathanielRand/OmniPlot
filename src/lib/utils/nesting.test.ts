@@ -358,6 +358,49 @@ describe('gapFillPass', () => {
 		expect(small.x + small.width).toBeLessThanOrEqual(90 + 0.01);
 		expect(findOverlaps(result)).toHaveLength(0);
 	});
+
+	// Regression for a live bug: an item already flagged outOfBounds (by an
+	// upstream fallback packer that couldn't find it a spot) was NEVER
+	// reconsidered here — both `order` and `others` filtered out
+	// outOfBounds items entirely, so a flagged item could sit excluded
+	// forever even with a wide-open pocket sitting right next to it.
+	it('rescues an outOfBounds item into an open pocket, clearing the flag', () => {
+		const rollWidth = 60;
+		const sheet: MaterialSheet = { id: 's', name: 'roll', widthInches: 1200, heightInches: rollWidth, manufacturer: 'T', sku: 'T' };
+		const win = (w: number, h: number) => makePattern('window', w, h);
+
+		// Two bands, mirroring the live scenario: rot-90 band (y 0..34.1) runs
+		// to x=120.86; rot-0 band (y 34.16..58.3) runs to x=136.58. That
+		// leaves an open pocket at roughly x=120.91..136.59, y=0..34.16 —
+		// about 15.7" wide, 34" tall. A 10x10 custom item, flagged
+		// outOfBounds by whatever upstream fallback couldn't find it a spot,
+		// should be rescued into that pocket at ZERO added roll length.
+		const items: CanvasItem[] = [
+			makeItem('r0', win(24.1, 34.1), { x: 0,     y: 0,     width: 24.1, height: 34.1 }),
+			makeItem('r1', win(24.1, 34.1), { x: 24.19, y: 0,     width: 24.1, height: 34.1 }),
+			makeItem('r2', win(24.1, 34.1), { x: 48.38, y: 0,     width: 24.1, height: 34.1 }),
+			makeItem('r3', win(24.1, 34.1), { x: 72.57, y: 0,     width: 24.1, height: 34.1 }),
+			makeItem('r4', win(24.1, 34.1), { x: 96.76, y: 0,     width: 24.1, height: 34.1 }),
+			makeItem('l0', win(34.1, 24.1), { x: 0,     y: 34.16, width: 34.1, height: 24.1 }),
+			makeItem('l1', win(34.1, 24.1), { x: 34.16, y: 34.16, width: 34.1, height: 24.1 }),
+			makeItem('l2', win(34.1, 24.1), { x: 68.32, y: 34.16, width: 34.1, height: 24.1 }),
+			makeItem('l3', win(34.1, 24.1), { x: 102.48, y: 34.16, width: 34.1, height: 24.1 }),
+			makeItem('custom', win(10, 10), {
+				x: 0.05, y: rollWidth + 0.05, width: 10, height: 10, outOfBounds: true,
+			}),
+		];
+		const lenBefore = Math.max(...items.filter((i) => !i.outOfBounds).map((i) => i.x + i.width));
+
+		const result = gapFillPass(items, sheet, true);
+		const custom = result.find((i) => i.id === 'custom')!;
+
+		expect(custom.outOfBounds).toBe(false);
+		expect(findOverlaps(result.filter((i) => !i.outOfBounds))).toHaveLength(0);
+		// Rescued at zero (or negligible) added roll length — it fit inside
+		// the existing envelope, it didn't get appended past the tail.
+		const lenAfter = Math.max(...result.filter((i) => !i.outOfBounds).map((i) => i.x + i.width));
+		expect(lenAfter).toBeLessThanOrEqual(lenBefore + 0.5);
+	});
 });
 
 // ─── rowBalanceGroupPass: true width bound, not the length axis ──
