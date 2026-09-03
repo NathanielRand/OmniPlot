@@ -1,3 +1,80 @@
+///////////////////////////////
+// USER VERIFICATION
+///////////////////////////////
+- VERIFY: duplicate plotter on usb connect shows up on new session but could also exists otherwise.
+- VERIFY: Cut agent fails start probe (see ref images in /test folder)
+- VERIFY: the plotter connection types (usb direct, cut agent, etc) need large specialized ui medallions/badges with icons on the connected plotter cards so it is clear to the user which connection is which quickly.
+
+////////////////////////////////////
+// DEV VERIFICATION
+////////////////////////////////
+- Add pattern # as "(n)" next to the pattern name of each pattern on the canvas and also the pattern list values on the settings panel for easier pattern indentification.
+- Nesting needs another pass. Add 6 l/r windows to see why it doesnt rotate the last pattern's ;long end needs to be horizontial instead of vertical. The number one goal for our nesting is to reduce length of roll used.
+- Support as a core feature reworking our vehicle focus to include the following products/users: "custom", "vehicle", "residential", "commerical" with PPF, Window Tint, and ANYTHING else we have add that can be used in a commerical plotting/cutting device. think creative. think about other professions who use those types of machines and who could benefit from our platform. we need to craft project types and features and marketing for them from the start. we are really sticking with the mission of our delivering on our name "OmniPlot" not just a vehicle platform. requires major upgrade but with production paying users so we must preserve their data and not break any patterns they've uploaded, we can migrate what we can.
+
+///////////////////////////////
+// NEXT
+///////////////////////////////
+- add custom zone on pattern uploader form bug preventing from adding name to custom zone or adding a second custom zone if one already exist.
+- option to automatically remove bg on pattern uploaded image if supportable.
+
+//////////////////////////////////////
+// BACKLOG
+////////////////////////////////
+- update pattern needs updating to respect new types and updates
+- MOve admin sidebar badge next to logo on the samake the cand text.
+- MAJOR mobile responsiveness overhaul end-to-end
+- MAJOR light/dark mode visibility and contrast pass on anything that might have slipped through. make the light mode white less bright / more soft whilte making the light mode text contrast better globally, especially colored text on light mode its too bright to make out.
+- ADMIN PANEL: admin should be able to edit plan allowances from the admin panel. bump up the lite cuts per day to 5; bump up free to 10 free per month. limit features on plan such as custom upload. only platform or community patterns cna be used by free.
+- pattern builder where the uses inputs the exact dimensions to manually craft the pattern directly from the studio. this give true sandbox and potentially unlimited types of patterns.
+- the platform is very vehicle focused which has been good but i want to expand our offerings to include other cut/print needs like residential/commercial windows, art designs that have nothing to do with vehicles or building, idk. How can we keep the vehicles flow and branding but ADD (not take away) features to support anm encourage more than vehicles use. Everything from our pattern library layout/sort/filters/search, pattern uploader.
+- audit core saas infrastructure to verying all systems are fully wired up (not commented out or mocked out or faked in any way). we need to add anything we are missing that would be expected and/or common for saas infrastructure of this type to handle large scale.
+- audit all advertised features, services, pages (marketing & user dashboard) to make sure we support, enforce, and have the right systems in place for the whole process. update any marketing pages with features we've added since updating those last or process changes. find where we have inaccurate or mock data to prevent misadvertising. build a list of whats incomplete and also what is missing entirely or something we should have considering our product line. we need proper disclousure and badges next to everything we dont support or is in dev and disable to prevent misuse or abuse.
+- triggered email notifications/receipts for our various user actions (welcome, subscription, any transaction receipt, usage alerts, feature drops, account specific emails, etc..) that admin can view, test, update, create, and pause from the admin dashboard. notification activity needs to be viewable from admin. admin options to manual send.
+- reports/support systems needs conversational ability for user and admin (user must be logged in to start this kindof support chat) to address "report an issue" reports directly from the ui from both user and admin. like a persistant message conversation formed from that report an issue message that the user started that admin can change the state on as it progresses.
+- select material should dynamically change the gray box "cut zone/print zone" on the studio canvas size to match. that way they nest patterns into that zone, it is accruate to the size of the material they have placed those patterns in.
+- any img type -> rm background -> convert to svg -  inherit svg upload functionality
+- the agent connection is throwing serial port errors.
+- multiple usdb connections seemd to have popped up. idk of the same or if it just detected multiple but there was a lot of connections. we should find a way to compress the unactive connections box size to clerarly differiate the the active connected vs inactive methods.
+- need optional end cut that cut with enough force to cleanly cut both layers of the roll to separate the job from the master roll completely.
+https://www.rvinyl.com/collections/chevrolet-precut-window-tint/products/chevrolet-silverado-2007-2013-2-door-avery-dennison-nr-nano-ceramic-ir-precut-window-tint?metaobject_handle=chevrolet-silverado-precut-window-tint
+- Create a local plotter emulator/simulator to verify the communication between plotter and agent (or other method) is bidirectional and valid throughout each expected communication event with proper processing and response. we need to test without having the quipment in person.
+- investors page
+- verify only after disconnecting usb connection method, agent option card/status show on plotter tab in studio as should with the usb connection method card/status as if to choose a new method now. Since the user disconnects one method, they'll likely want to see the others like in whatever state (if any) they are in.
+- Patterns: https://www.thetinteffect.com/precut-window-tint-kits/2014-2018-2019-limited-chevrolet-silverado-1500-truck-visor-eye-brow-precut-tint-kit-automotive-window-film/?srsltid=AfmBOooS3aialyaNfEgmkpu9aVOmeudAYHUx4fMVRufxybaruT3WlFOB
+- offer cutting services with simple user flow to select from db of patterns or submit own then submit order. we cut at our shop and send to customer in hardened tube. priced material cost +
+- offline mode
+- vertical preference for pattern placement to reduce width consumption when the longest size of the pattern fits within the width of the roll.
+- custom material selection for unique dimensions (i.e user has some crazy jagged material to use idk)
+- Community pattern uploaded need to 1:1 match our admin added patterns. community patterns needs to show unverified until approved by admin or community method. request need to be approved/rejected by admin in under a few hours.
+- fully custom pattern upload for custom shapes/logos/icons/etc.. with option to submit to community under a more fitting category than vehicles.
+- User should be able to upload and use any vehicles pattern they want with the option to submit to community. if they want to submit to the community they must provide any missing information before submission to gurantee it matches our other pattern datap points.
+- Verify/refactor User request of a pattern to be sourced by admin or community, not themselves. Maybe other community members will respond. Upvote system seems like a nice touch in case its a bade design.
+- User uploaded 2d scanning tool data output as a pattern.
+- turn users phone camera into web-based 2d scanning tool.
+- Add flagging for review/report for all patterns (platform or community provided) in case of inaccuracies that warn the users when a pattern is flagged for review when selected to add to the canvas.
+- The patterns are wrong. None of the windows are accurate. Our system didnt seem to take the curvature of the windows into consideration.
+- HEAT SHRINKAGE: add option/setting for user to add internal buffer to each design to intentional give excess inside the cut zone line a 1cm-ish default (can be changed by user) for user's placements and make up from HEAT SHRINKAGE
+
+/////////////////////////////
+// LONG TERM VERIFICATION / NEEDS TESTING
+//////////////////////////////
+- the user "selected" connection does persist as being selected between page navigation.
+- usb direct connection doesnt persist between page navigation or show probe prompt
+- the roll measurements displayed and used on the grid ui doesn't is confusingly presented. it says for example 40" in multiple places. the roll size once on the grid is ideal and the amount used. Increase the text size of both to be more prominent.
+- Disclaim to user the cutter has to be in manual/offline mode in order to receive jobs.
+- TEST - Update the "Send a test job...Use the Manual Test panel above to...." step in setup/confirm that we are not in fact using a 500 unit cut as suggsested as that is against our reworked "1-inch by 1-inch box with a circle in the middle" test cut that we just implemented. it might just be text update here n there but lets double check that we only using ournew small test cut pattern and our other agent related docs/guide to make sure we are up-to-date on that last part (and consistent "/agent", "/studio/agent", etc..). Also the guide on the "/agent" page should be multi-row bc its too clustered on all devices.
+- TEST - Plotter origin wizard/settings should inherit the user selected roll size from the properties tab so that the roll alignment wizard shows the correct roll size. right now, it doesnt match. Any cross-setting/data like this and others need to be sync properly to prevent conflicts.
+- TEST: The update agent prompt logic for update detection & agent running sync is bugged. A user reported that the versions (v1.1.0) they have match exactly the latest release candidate yet ther version mismatch prompt to upgrade still exists. Another user reported that they are using an old version (v1.0.1) and are not receicing a prompt to udpate. The state from previous running agents is not flushed properly. The new state was not persisted (we recently changed how persisted connections after these reports so this part may have been addressed already so you will need to verify will breaking those updates) Also, Verify the we are not making the user download each missing version in order and repeated the download/delete process entirely until reaching the latest version. We need to make sure the user only has to download the latest. Also we need to verify that the user successfully closed the agent and removed their previous local install of the old version to prevent conflicts. We need to make these agent connection state reactive, persistant, & dynamically cleanable when needed.
+- TEST: The selected plotter connect method connection doesnt persist when the user navigates to another tab or page. That user selected connection has to persist the entire session and ideally remember for next time and attempt to auto connect first through the last used method if available then remains if anything is even available at all.
+- TEST: Send test cut from plotter is way too BIG. The test cut should be very small 1-inch by 1-inch box with a smaller circle inside of the box.
+- TEST: the first pattern for any job completes succesfully but the any additional patterns after the first never even start. Instead of moving on the next pattern in the job's pattern order/queue, it jumps to the end where it makes its final end cut off of the film to seperate it from the rest of the roll. The last step is expected and good but not before the rest of the added patterns to job are finished cutting. we need to make sure that each pattern is properly accounted for and not a single one is forgotten about. We need to verify our job handles recoveries correctly and acknowledges when a job is not complete fully. These are the types of logs admin/user could benefit from seeing the admin dashboard.
+- TEST: Also there is likely an origin settings issues. perhaps the 53 inch plotter and the 40 inch roll are not aligned in the correct origin and maybe the 13 inch difference is in the wrong origin. We need a smart way to verify all origins match, even if it requires the user to manually adjustment or relay info from the equipment back to the site if needed. We need a efficient, creative, yet working solution to resolve this. What do you have?
+
+/////////////////////////////////////////////
+// TEAM/ORG OVERHAUL
+////////////////////////////////////////////
+
 Still outstanding from before: none of the billing flows (pause, cancel-now, delete-account, clear-history, admin pause/unpause) have run against real Stripe test-mode webhooks. That test-mode pass is now more important given the API version change touches the same webhook path. Want me to run it?
 
 // ONGOING
@@ -33,81 +110,3 @@ Phasing (each phase ships independently)
 5. UI: org switcher, shop switcher, team management screens; settings page's "team" tab splits into shop and team management.
 
 todo.txt is currently modified on dev — flagging since it's uncommitted local state, not touched by this plan.
-
-///////////////////////////////
-// MANUAL JUDE VERIFY
-///////////////////////////////
-- VERIFY: duplicate plotter on usb connect shows up on new session but could also exists otherwise.
-- VERIFY: Cut agent fails start probe (see ref images in /test folder)
-- VERIFY: the plotter connection types (usb direct, cut agent, etc) need large specialized ui medallions/badges with icons on the connected plotter cards so it is clear to the user which connection is which quickly.
-
-///////////////////////////////
-// NEXT
-///////////////////////////////
-- add custom zone on pattern uploader form bug preventing from adding name to custom zone or adding a second custom zone if one already exist.
-- option to automatically remove bg on pattern uploaded image if supportable.
-
-////////////////////////////////////
-// VERIFY
-////////////////////////////////
-- Support as a core feature reworking our vehicle focus to include the following products/users: "custom", "vehicle", "residential", "commerical" with PPF, Window Tint, and ANYTHING else we have add that can be used in a commerical plotting/cutting device. think creative. think about other professions who use those types of machines and who could benefit from our platform. we need to craft project types and features and marketing for them from the start. we are really sticking with the mission of our delivering on our name "OmniPlot" not just a vehicle platform. requires major upgrade but with production paying users so we must preserve their data and not break any patterns they've uploaded, we can migrate what we can.
-
-
-//////////////////////////////////////
-// BACKLOG
-////////////////////////////////
-- Add pattern # as "(n)" next to the pattern name of each pattern on the canvas and also the pattern list values on the settings panel for easier pattern indentification.
-- Nesting needs another pass. Add 6 l/r windows to see why it doesnt rotate the last pattern added to be horizontial instead of vertical.
-- MAJOR mobile responsiveness overhaul end-to-end
-- MAJOR light/dark mode visibility and contrast pass on anything that might have slipped through. make the light mode white less bright / more soft whilte making the light mode text contrast better globally, especially colored text on light mode its too bright to make out.
-- ADMIN PANEL: admin should be able to edit plan allowances from the admin panel. bump up the lite cuts per day to 5; bump up free to 10 free per month. limit features on plan such as custom upload. only platform or community patterns cna be used by free.
-- pattern builder where the uses inputs the exact dimensions to manually craft the pattern directly from the studio. this give true sandbox and potentially unlimited types of patterns.
-- the platform is very vehicle focused which has been good but i want to expand our offerings to include other cut/print needs like residential/commercial windows, art designs that have nothing to do with vehicles or building, idk. How can we keep the vehicles flow and branding but ADD (not take away) features to support anm encourage more than vehicles use. Everything from our pattern library layout/sort/filters/search, pattern uploader.
-- audit core saas infrastructure to verying all systems are fully wired up (not commented out or mocked out or faked in any way). we need to add anything we are missing that would be expected and/or common for saas infrastructure of this type to handle large scale.
-- audit all advertised features, services, pages (marketing & user dashboard) to make sure we support, enforce, and have the right systems in place for the whole process. update any marketing pages with features we've added since updating those last or process changes. find where we have inaccurate or mock data to prevent misadvertising. build a list of whats incomplete and also what is missing entirely or something we should have considering our product line. we need proper disclousure and badges next to everything we dont support or is in dev and disable to prevent misuse or abuse.
-- triggered email notifications/receipts for our various user actions (welcome, subscription, any transaction receipt, usage alerts, feature drops, account specific emails, etc..) that admin can view, test, update, create, and pause from the admin dashboard. notification activity needs to be viewable from admin. admin options to manual send.
-- reports/support systems needs conversational ability for user and admin (user must be logged in to start this kindof support chat) to address "report an issue" reports directly from the ui from both user and admin. like a persistant message conversation formed from that report an issue message that the user started that admin can change the state on as it progresses.
-
-
-// BACKLOG
-- select material should dynamically change the gray box "cut zone/print zone" on the studio canvas size to match. that way they nest patterns into that zone, it is accruate to the size of the material they have placed those patterns in.
-- any img type -> rm background -> convert to svg -  inherit svg upload functionality
-- the agent connection is throwing serial port errors.
-- multiple usdb connections seemd to have popped up. idk of the same or if it just detected multiple but there was a lot of connections. we should find a way to compress the unactive connections box size to clerarly differiate the the active connected vs inactive methods.
-- need optional end cut that cut with enough force to cleanly cut both layers of the roll to separate the job from the master roll completely.
-https://www.rvinyl.com/collections/chevrolet-precut-window-tint/products/chevrolet-silverado-2007-2013-2-door-avery-dennison-nr-nano-ceramic-ir-precut-window-tint?metaobject_handle=chevrolet-silverado-precut-window-tint
-- Create a local plotter emulator/simulator to verify the communication between plotter and agent (or other method) is bidirectional and valid throughout each expected communication event with proper processing and response. we need to test without having the quipment in person.
-- investors page
-- verify only after disconnecting usb connection method, agent option card/status show on plotter tab in studio as should with the usb connection method card/status as if to choose a new method now. Since the user disconnects one method, they'll likely want to see the others like in whatever state (if any) they are in.
-- Patterns: https://www.thetinteffect.com/precut-window-tint-kits/2014-2018-2019-limited-chevrolet-silverado-1500-truck-visor-eye-brow-precut-tint-kit-automotive-window-film/?srsltid=AfmBOooS3aialyaNfEgmkpu9aVOmeudAYHUx4fMVRufxybaruT3WlFOB
-- offer cutting services with simple user flow to select from db of patterns or submit own then submit order. we cut at our shop and send to customer in hardened tube. priced material cost +
-- offline mode
-- vertical preference for pattern placement to reduce width consumption when the longest size of the pattern fits within the width of the roll.
-- custom material selection for unique dimensions (i.e user has some crazy jagged material to use idk)
-- Community pattern uploaded need to 1:1 match our admin added patterns. community patterns needs to show unverified until approved by admin or community method. request need to be approved/rejected by admin in under a few hours.
-- fully custom pattern upload for custom shapes/logos/icons/etc.. with option to submit to community under a more fitting category than vehicles.
-- User should be able to upload and use any vehicles pattern they want with the option to submit to community. if they want to submit to the community they must provide any missing information before submission to gurantee it matches our other pattern datap points.
-- Verify/refactor User request of a pattern to be sourced by admin or community, not themselves. Maybe other community members will respond. Upvote system seems like a nice touch in case its a bade design.
-- User uploaded 2d scanning tool data output as a pattern.
-- turn users phone camera into web-based 2d scanning tool.
-- Add flagging for review/report for all patterns (platform or community provided) in case of inaccuracies that warn the users when a pattern is flagged for review when selected to add to the canvas.
-- The patterns are wrong. None of the windows are accurate. Our system didnt seem to take the curvature of the windows into consideration.
-- HEAT SHRINKAGE: add option/setting for user to add internal buffer to each design to intentional give excess inside the cut zone line a 1cm-ish default (can be changed by user) for user's placements and make up from HEAT SHRINKAGE
-
-
-// IN PROGRESS
-
-
-// NEEDS TESTING
-- the user "selected" connection does persist as being selected between page navigation.
-- usb direct connection doesnt persist between page navigation or show probe prompt
-- the roll measurements displayed and used on the grid ui doesn't is confusingly presented. it says for example 40" in multiple places. the roll size once on the grid is ideal and the amount used. Increase the text size of both to be more prominent.
-- Disclaim to user the cutter has to be in manual/offline mode in order to receive jobs.
-- DOWNLOAD NEW AGENT FIRST
-- TEST - Update the "Send a test job...Use the Manual Test panel above to...." step in setup/confirm that we are not in fact using a 500 unit cut as suggsested as that is against our reworked "1-inch by 1-inch box with a circle in the middle" test cut that we just implemented. it might just be text update here n there but lets double check that we only using ournew small test cut pattern and our other agent related docs/guide to make sure we are up-to-date on that last part (and consistent "/agent", "/studio/agent", etc..). Also the guide on the "/agent" page should be multi-row bc its too clustered on all devices.
-- TEST - Plotter origin wizard/settings should inherit the user selected roll size from the properties tab so that the roll alignment wizard shows the correct roll size. right now, it doesnt match. Any cross-setting/data like this and others need to be sync properly to prevent conflicts.
-- TEST: The update agent prompt logic for update detection & agent running sync is bugged. A user reported that the versions (v1.1.0) they have match exactly the latest release candidate yet ther version mismatch prompt to upgrade still exists. Another user reported that they are using an old version (v1.0.1) and are not receicing a prompt to udpate. The state from previous running agents is not flushed properly. The new state was not persisted (we recently changed how persisted connections after these reports so this part may have been addressed already so you will need to verify will breaking those updates) Also, Verify the we are not making the user download each missing version in order and repeated the download/delete process entirely until reaching the latest version. We need to make sure the user only has to download the latest. Also we need to verify that the user successfully closed the agent and removed their previous local install of the old version to prevent conflicts. We need to make these agent connection state reactive, persistant, & dynamically cleanable when needed.
-- TEST: The selected plotter connect method connection doesnt persist when the user navigates to another tab or page. That user selected connection has to persist the entire session and ideally remember for next time and attempt to auto connect first through the last used method if available then remains if anything is even available at all.
-- TEST: Send test cut from plotter is way too BIG. The test cut should be very small 1-inch by 1-inch box with a smaller circle inside of the box.
-- TEST: the first pattern for any job completes succesfully but the any additional patterns after the first never even start. Instead of moving on the next pattern in the job's pattern order/queue, it jumps to the end where it makes its final end cut off of the film to seperate it from the rest of the roll. The last step is expected and good but not before the rest of the added patterns to job are finished cutting. we need to make sure that each pattern is properly accounted for and not a single one is forgotten about. We need to verify our job handles recoveries correctly and acknowledges when a job is not complete fully. These are the types of logs admin/user could benefit from seeing the admin dashboard.
-- TEST: Also there is likely an origin settings issues. perhaps the 53 inch plotter and the 40 inch roll are not aligned in the correct origin and maybe the 13 inch difference is in the wrong origin. We need a smart way to verify all origins match, even if it requires the user to manually adjustment or relay info from the equipment back to the site if needed. We need a efficient, creative, yet working solution to resolve this. What do you have?
