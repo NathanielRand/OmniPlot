@@ -4367,7 +4367,7 @@
 		top: 0;
 		left: 0;
 		background: rgba(255, 255, 255, 0.03);
-		border: 1px dashed var(--canvas-zone-border);
+		border: 2px dashed var(--canvas-zone-border);
 		border-radius: 2px;
 		transform-origin: top left;
 		transform: rotate(90deg) translateY(-100%);

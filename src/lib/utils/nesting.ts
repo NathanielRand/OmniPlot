@@ -1332,6 +1332,7 @@ export function finalDeclash(
 	const fixed: CanvasItem[] = [];
 	const fixedPolys: Polygon[] = [];
 	const STEP = 0.01;
+	let overflowRow = 0;
 
 	// Each item's own polygon is inflated by PAD/2 (not the full PAD) before
 	// the overlap check below, because both sides of a comparison get
@@ -1355,8 +1356,30 @@ export function finalDeclash(
 			console.log(`NEST v15 finalDeclash nudged ${it.id} by guard=${guard} steps (${(guard * STEP).toFixed(2)}")`);
 		}
 		const bounds = polygonBounds(poly);
-		if (bounds.maxX > maxLength + PAD + 1e-6) {
-			fixed.push({ ...it, x: maxLength + PAD, y: PAD, outOfBounds: true });
+		// This is meant to be the final, unconditional guarantee that nothing
+		// renders outside the cut zone — but until now it only ever checked
+		// the length axis (maxX). An item an upstream pass placed past the
+		// roll-WIDTH edge (bounds.maxY/minY) sailed through unflagged, fully
+		// opaque, with none of the "won't be cut" styling — exactly what let
+		// a mis-sized/mis-rotated shape (e.g. a near-circular custom pattern,
+		// whose true bbox can differ from any single upstream approximation
+		// of it) end up rendered outside the dashed boundary. Checking both
+		// axes here means the guarantee holds regardless of which shape or
+		// which upstream stage produced the bad placement.
+		const widthOverflow = bounds.maxY > rollWidth + PAD + 1e-6 || bounds.minY < -PAD - 1e-6;
+		if (bounds.maxX > maxLength + PAD + 1e-6 || widthOverflow) {
+			// Match the same "excluded strip past the width edge" convention
+			// bestFitPack's own overflow branch uses, so these items land in
+			// the widened oob strip the studio UI already renders for them —
+			// not off the far end of a possibly 1200"-long roll where they'd
+			// never scroll into view.
+			fixed.push({
+				...it,
+				x: PAD + overflowRow * (it.width + PAD),
+				y: rollWidth + PAD,
+				outOfBounds: true,
+			});
+			overflowRow++;
 		} else {
 			fixed.push({ ...it, x });
 			fixedPolys.push(poly);

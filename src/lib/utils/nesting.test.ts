@@ -5,6 +5,7 @@ import {
 	getBoundingBox, findOverlaps,
 	samplePolygonArea, getSvgPathBBox,
 	autoNest, smartNest, findNextPosition,
+	finalDeclash,
 } from './nesting';
 
 // ─── Fixtures ─────────────────────────────────
@@ -284,6 +285,46 @@ describe('findNextPosition', () => {
 // This is the case that motivated rowBalanceGroupPass: single-item rotation
 // swaps (rotationImprovementPass) can't discover it because repacking after
 // one flip just re-converges on the same greedy symmetric split.
+// ─── finalDeclash: width-axis (roll-width) overflow ──
+// Regression for a live bug: a mis-sized/mis-rotated shape from an upstream
+// packer stage could end up with y + height past the 60"-wide roll without
+// ever being marked outOfBounds — finalDeclash, the supposed final
+// correctness backstop, only ever checked the length axis (x), so it let
+// that item through untouched and it rendered fully opaque outside the
+// dashed cut-zone boundary. This reproduces that shape directly (no need
+// to go through a real packer / real SVG sampling) and asserts the backstop
+// now catches it.
+describe('finalDeclash catches width-axis (roll-width) overflow', () => {
+	it('flags an item whose y + height exceeds rollWidth, even if outOfBounds was never set upstream', () => {
+		const rollWidth = 60;
+		const maxLength = 1200;
+		const pad = 0.05;
+		const pat = makePattern('circle', 10, 10);
+		// Placed near the top-right — y + height (55 + 10 = 65) overflows the
+		// 60"-wide roll, but outOfBounds is (incorrectly, as an upstream bug
+		// would leave it) still false.
+		const badItem = makeItem('circle-1', pat, { x: 50, y: 55, width: 10, height: 10, outOfBounds: false });
+		const goodItem = makeItem('window-1', makePattern('window', 34.11, 24.14), { x: 0, y: 0, width: 34.11, height: 24.14 });
+
+		const result = finalDeclash([goodItem, badItem], maxLength, rollWidth, pad);
+		const fixedBad = result.find((i) => i.id === 'circle-1')!;
+
+		expect(fixedBad.outOfBounds).toBe(true);
+		// Relocated into the excluded strip past the roll-width edge, not
+		// left sitting at its original out-of-bounds position.
+		expect(fixedBad.y).toBeGreaterThanOrEqual(rollWidth);
+	});
+
+	it('leaves an in-bounds item untouched (no false positives)', () => {
+		const rollWidth = 60;
+		const maxLength = 1200;
+		const pad = 0.05;
+		const item = makeItem('a', makePattern('window', 34.11, 24.14), { x: 0, y: 0, width: 34.11, height: 24.14 });
+		const result = finalDeclash([item], maxLength, rollWidth, pad);
+		expect(result[0].outOfBounds).toBe(false);
+	});
+});
+
 describe('smartNest row-balance (same-footprint group rebalance)', () => {
 	it('finds the unbalanced split that beats the greedy symmetric one', () => {
 		// Nesting internally treats widthInches as the (loosely-bounded) length
