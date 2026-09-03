@@ -229,6 +229,29 @@
 		canvasEl.scrollTop = 0;
 	}
 
+	// Re-fit the roll to the canvas viewport whenever its available space
+	// changes — sidebar/settings-panel collapse or expand, browser resize,
+	// switching between a wide and a vertical monitor, etc. — so the roll
+	// stays framed without the user having to manually hit "Fit to view"
+	// after every layout change. Only runs while the auto-fit toggle is on;
+	// a plain resize observer on canvasEl covers all of the above since each
+	// of those layout changes resizes canvasEl itself.
+	let _fitResizeRaf = 0;
+	$effect(() => {
+		if (!canvasEl) return;
+		const el = canvasEl;
+		const ro = new ResizeObserver(() => {
+			if (!autoFitZoomOnRollChange) return;
+			cancelAnimationFrame(_fitResizeRaf);
+			_fitResizeRaf = requestAnimationFrame(fitWidthToView);
+		});
+		ro.observe(el);
+		return () => {
+			cancelAnimationFrame(_fitResizeRaf);
+			ro.disconnect();
+		};
+	});
+
 	// ─── Re-nest items on new sheet ───────────────
 	function renestOnSheet(sheet: typeof canvasStore.sheet) {
 		canvasStore.setSheet(sheet);
@@ -318,6 +341,57 @@
 		const max = axis === "x" ? Infinity : Math.max(0, canvasStore.sheet.widthInches - item.height);
 		const next = Math.min(Math.max(0, raw), max);
 		canvasStore.updateItem(item.id, axis === "x" ? { x: next } : { y: next, outOfBounds: false });
+	}
+
+	// ─── Drag a pattern directly on the canvas ────
+	// Mirrors scrubPosition's drag mechanics but on the item itself: pointerdown
+	// selects it (if not already) and, once the pointer moves past a small
+	// threshold, repositions it live under the cursor. A drag-free pointerdown
+	// falls through to the item's own onclick for normal/shift-select — set
+	// itemJustDragged so that trailing click doesn't also toggle selection off.
+	let itemJustDragged = false;
+	function startItemDrag(e: PointerEvent, item: CanvasItem) {
+		if (e.button !== 0) return;
+		const el = e.currentTarget as HTMLElement;
+		const startClientX = e.clientX;
+		const startClientY = e.clientY;
+		const startX = item.x;
+		const startY = item.y;
+		let dragged = false;
+		el.setPointerCapture(e.pointerId);
+
+		function onMove(ev: PointerEvent) {
+			const dx = ev.clientX - startClientX;
+			const dy = ev.clientY - startClientY;
+			if (!dragged) {
+				if (Math.hypot(dx, dy) < 3) return;
+				dragged = true;
+				itemJustDragged = true;
+				if (!canvasStore.selected.includes(item.id)) canvasStore.select(item.id);
+			}
+			// Screen px → inches: 48px/inch at 100% zoom. .material-sheet (the
+			// item's positioned ancestor) is rotated 90° on screen (see its
+			// `transform: rotate(90deg) translateY(-100%)`), so the item's own
+			// x/y axes are swapped relative to the screen: dragging DOWN moves
+			// along the roll's length (item.x), dragging RIGHT moves across the
+			// roll's width (item.y) — both direct, no sign flip needed once the
+			// axes are swapped to match the rotation.
+			const px = 48 * (canvasStore.zoom / 100);
+			const rawX = startX + dy / px;
+			const rawY = startY + dx / px;
+			const maxY = Math.max(0, canvasStore.sheet.widthInches - item.height);
+			const nextX = Math.max(0, +rawX.toFixed(2));
+			const nextY = Math.min(Math.max(0, +rawY.toFixed(2)), maxY);
+			canvasStore.updateItem(item.id, { x: nextX, y: nextY, outOfBounds: false });
+		}
+		function onUp() {
+			el.releasePointerCapture(e.pointerId);
+			window.removeEventListener("pointermove", onMove);
+			window.removeEventListener("pointerup", onUp);
+			if (dragged) requestAnimationFrame(() => { itemJustDragged = false; });
+		}
+		window.addEventListener("pointermove", onMove);
+		window.addEventListener("pointerup", onUp);
 	}
 
 	// ─── Settings panel collapse (expanded = 1/3 screen width) ──
@@ -2555,7 +2629,12 @@
 							)}
 							onclick={(e) => {
 								e.stopPropagation();
+								if (itemJustDragged) return;
 								canvasStore.select(item.id, e.shiftKey);
+							}}
+							onpointerdown={(e) => {
+								e.stopPropagation();
+								startItemDrag(e, item);
 							}}
 							onkeydown={(e) =>
 								e.key === "Enter" &&
@@ -4313,8 +4392,10 @@
 		background: var(--canvas-bg);
 		cursor: crosshair;
 		/* Reserve space for the viewport-fixed status bar so it never covers
-		   the bottom of the canvas content. */
-		padding-bottom: var(--statusbar-h);
+		   the bottom of the canvas content, plus a generous fixed margin so
+		   scrolling always clears the full cut zone with room to spare —
+		   independent of screen height, zoom level, or roll length. */
+		padding-bottom: calc(var(--statusbar-h) + 160px);
 	}
 
 	/* Minor grid lines live directly on canvas-area so they scroll naturally */
@@ -4490,10 +4571,18 @@
 		position: absolute;
 		cursor: pointer;
 		transition: filter 0.12s;
+		touch-action: none; /* let pointer drag own the gesture instead of scrolling */
 	}
 
 	.cut-item:hover {
 		filter: brightness(1.15);
+	}
+
+	.cut-item.selected {
+		cursor: grab;
+	}
+	.cut-item.selected:active {
+		cursor: grabbing;
 	}
 	.cut-item.selected {
 		z-index: 5;
@@ -4689,6 +4778,7 @@
 		display: flex;
 		flex-direction: column;
 		min-width: 0;
+		min-height: 0;
 	}
 	.studio__panel--collapsed {
 		border-left: none;
@@ -4831,6 +4921,9 @@
 
 	.panel-body {
 		flex: 1;
+		min-height: 0; /* let this scroll instead of stretching .panel-content to fit
+		                  content height — needed for the patterns tab once it holds
+		                  dozens of cards, and for every tab on short/mobile viewports */
 		overflow-y: auto;
 		padding: 22px 20px calc(22px + var(--statusbar-h)) 20px;
 		display: flex;
