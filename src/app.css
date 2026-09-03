@@ -77,6 +77,10 @@
 	--cut-path-primary: #0070ff;
 	--cut-path-secondary: #7b5ea7;
 	--cut-path-accent: #00d68f;
+	/* Studio cut-zone dashed boundary — deliberately brighter than the
+	   generic --border-default (10%) so the printable-area edge reads
+	   clearly against the canvas background: +27% alpha on light. */
+	--canvas-zone-border: rgba(0, 0, 0, 0.37);
 }
 
 [data-theme="dark"] {
@@ -110,6 +114,8 @@
 	--cut-path-primary: #00e5ff;
 	--cut-path-secondary: #a78bfa;
 	--cut-path-accent: #00d68f;
+	/* +17% alpha over --border-default (8%) on dark. */
+	--canvas-zone-border: rgba(255, 255, 255, 0.25);
 }
 
 /* ─── Base Reset & Defaults ─────────────────── */

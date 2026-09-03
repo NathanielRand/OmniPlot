@@ -281,8 +281,15 @@
 			const dx = ev.clientX - startClientX;
 			if (Math.abs(dx) > 2) dragged = true;
 			const sensitivity = ev.shiftKey ? 0.02 : 0.15; // shift = fine adjustment
-			const next = Math.max(0, +(startVal + dx * sensitivity).toFixed(2));
-			canvasStore.updateItem(item.id, axis === "x" ? { x: next } : { y: next });
+			const raw = +(startVal + dx * sensitivity).toFixed(2);
+			// x = length axis (effectively unbounded); y = roll-width axis, must
+			// stay inside [0, rollWidth - item.height] — otherwise the item can
+			// be scrubbed straight through the cut-zone edge and renders fully
+			// opaque outside it, with no out-of-bounds indicator, since this
+			// path never re-derives item.outOfBounds.
+			const max = axis === "x" ? Infinity : Math.max(0, canvasStore.sheet.widthInches - item.height);
+			const next = Math.min(Math.max(0, raw), max);
+			canvasStore.updateItem(item.id, axis === "x" ? { x: next } : { y: next, outOfBounds: false });
 		}
 		function onUp(ev: PointerEvent) {
 			handle.releasePointerCapture(e.pointerId);
@@ -307,8 +314,10 @@
 		const step = e.shiftKey ? 1 : 0.1;
 		const dir = e.key === "ArrowUp" ? 1 : -1;
 		const current = axis === "x" ? item.x : item.y;
-		const next = Math.max(0, +(current + dir * step).toFixed(2));
-		canvasStore.updateItem(item.id, axis === "x" ? { x: next } : { y: next });
+		const raw = +(current + dir * step).toFixed(2);
+		const max = axis === "x" ? Infinity : Math.max(0, canvasStore.sheet.widthInches - item.height);
+		const next = Math.min(Math.max(0, raw), max);
+		canvasStore.updateItem(item.id, axis === "x" ? { x: next } : { y: next, outOfBounds: false });
 	}
 
 	// ─── Settings panel collapse (expanded = 1/3 screen width) ──
@@ -4358,7 +4367,7 @@
 		top: 0;
 		left: 0;
 		background: rgba(255, 255, 255, 0.03);
-		border: 1px dashed var(--border-default);
+		border: 1px dashed var(--canvas-zone-border);
 		border-radius: 2px;
 		transform-origin: top left;
 		transform: rotate(90deg) translateY(-100%);
@@ -4564,6 +4573,14 @@
 	.cut-item__label-sub {
 		opacity: 0.38 !important;
 		font-size: 8px !important;
+	}
+	/* Pattern labels use item.color inline (the same bright per-pattern
+	   accent as the shape's outline) — reads fine on the near-black dark
+	   canvas, but those same light/saturated hues have too little contrast
+	   against the light-mode canvas fill. Force a dark, legible color in
+	   light mode; !important is needed to win over the inline style. */
+	:global([data-theme="light"]) .cut-item__label {
+		color: var(--text-primary) !important;
 	}
 
 	.cut-item__ring {
