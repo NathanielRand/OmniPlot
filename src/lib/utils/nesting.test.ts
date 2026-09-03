@@ -5,7 +5,7 @@ import {
 	getBoundingBox, findOverlaps,
 	samplePolygonArea, getSvgPathBBox,
 	autoNest, smartNest, findNextPosition,
-	finalDeclash, gapFillPass,
+	finalDeclash, gapFillPass, rowBalanceGroupPass,
 } from './nesting';
 
 // ─── Fixtures ─────────────────────────────────
@@ -357,6 +357,44 @@ describe('gapFillPass', () => {
 		// It must have moved into the void, not stayed past the tail.
 		expect(small.x + small.width).toBeLessThanOrEqual(90 + 0.01);
 		expect(findOverlaps(result)).toHaveLength(0);
+	});
+});
+
+// ─── rowBalanceGroupPass: true width bound, not the length axis ──
+// Regression for a latent bug: the row-height budget check read
+// sheet.widthInches (the ~1200"-long, effectively unbounded length axis)
+// instead of sheet.heightInches (the real, tightly-bounded ~60" width) —
+// so it never actually rejected a split whose row heights summed past the
+// true roll width. For same-footprint groups where every "mixed" split has
+// an IDENTICAL row-height sum (long+pad+short+pad, regardless of the n1/n2
+// counts), the raw "minimize length" search would happily pick a mixed
+// split with a shorter apparent length even when that row-height sum
+// exceeds the roll — an unfittable result that only got caught later, by
+// accident, when finalDeclash's own (separately fixed) width check
+// discarded it outright.
+describe('rowBalanceGroupPass rejects splits that exceed the true roll width', () => {
+	it('picks the pure single-orientation split over a shorter-looking but unfittable mixed split', () => {
+		// long=50, short=25: every mixed split (n1>0 AND n2>0) sums to a row
+		// height of 50+25+2*pad = 75.1", which exceeds a 60"-wide roll no
+		// matter how the 4 items are divided between orientations. Only the
+		// two "pure" splits (all-crosswise or all-along) actually fit.
+		const rollWidth = 60;
+		const sheet: MaterialSheet = { id: 's', name: 'roll', widthInches: 1200, heightInches: rollWidth, manufacturer: 'T', sku: 'T' };
+		const pat = makePattern('panel', 50, 25);
+		const items = Array.from({ length: 4 }, (_, i) => makeItem(`p${i}`, pat));
+
+		const result = rowBalanceGroupPass(items, sheet, true);
+		expect(result).not.toBeNull();
+
+		for (const item of result!) {
+			expect(item.y + item.height).toBeLessThanOrEqual(rollWidth + 0.01);
+		}
+		// The best VALID split is n1=4 (all crosswise): length ≈ 100.15".
+		// The buggy version would have picked n1=3 (length ≈ 75.10") — a
+		// shorter number, but only reachable by violating the width bound.
+		const len = Math.max(...result!.map((i) => i.x + i.width));
+		expect(len).toBeGreaterThan(99);
+		expect(len).toBeLessThan(101);
 	});
 });
 

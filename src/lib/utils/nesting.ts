@@ -386,13 +386,27 @@ function layoutLen(placed: CanvasItem[]): number {
 // shared footprint and solve the small "how many rows of each orientation"
 // sub-problem directly, then bin-pack any leftover (ungroupable) items into
 // the remaining width with the existing greedy packer.
-function rowBalanceGroupPass(
+export function rowBalanceGroupPass(
 	items: CanvasItem[],
 	sheet: MaterialSheet,
 	allowRotation: boolean,
 ): CanvasItem[] | null {
 	if (!allowRotation) return null;
-	const rollWidth = sheet.widthInches;
+	// `sheet` here is always the already-transposed sheet (widthInches =
+	// length axis, effectively unbounded; heightInches = the true, tightly-
+	// bounded 60"-ish roll width) — same convention as bestFitPack and every
+	// other function in this file. This previously read sheet.widthInches,
+	// which meant the row-height budget check below basically never
+	// triggered (the length axis is enormous) — it produced the right split
+	// for same-footprint groups anyway simply because the winning split
+	// happened to fit under the true width too, but nothing was actually
+	// enforcing that. A group whose only length-minimizing split needed
+	// more real width than the roll has would have been accepted invalidly
+	// upstream, then silently discarded by finalDeclash downstream (which
+	// DOES check the true width bound) — correct outcome, but by accident,
+	// at the cost of excluding a shape that a right-sized row split could
+	// have fit.
+	const rollWidth = sheet.heightInches;
 	const pad = PADDING_INCHES;
 
 	type Group = { long: number; short: number; items: CanvasItem[] };
@@ -400,7 +414,13 @@ function rowBalanceGroupPass(
 	const ungrouped: CanvasItem[] = [];
 
 	for (const item of items) {
-		const orientations = buildOrientations(item, rollWidth, true);
+		// buildOrientations' sheetW filter is meant to reject only footprints
+		// that can't possibly fit the LENGTH axis — pass sheet.widthInches
+		// (the length bound, same as every other buildOrientations call in
+		// this file), not rollWidth (the much smaller true-width bound) —
+		// otherwise a perfectly valid orientation whose length-axis footprint
+		// merely exceeds 60" would get wrongly discarded here.
+		const orientations = buildOrientations(item, sheet.widthInches, true);
 		// Only groupable if it reduces to exactly one distinct rectangle
 		// (i.e. every offered rotation is either that rectangle or its
 		// 90° transpose) — asymmetric shapes whose 4 rotations give 3-4
@@ -774,18 +794,21 @@ export function gapFillPass(
 	allowRotation: boolean,
 	withinBudget?: () => boolean,
 ): CanvasItem[] {
-	const current = [...placed];
+	let current = [...placed];
 	const pad = PADDING_INCHES;
 	const rollWidth = sheet.heightInches;
 
-	const overlapsAny = (x: number, y: number, w: number, h: number, skipId: string): boolean =>
-		current.some((o) => {
+	const overlapsAny = (x: number, y: number, w: number, h: number, skipId: string, layout: CanvasItem[]): boolean =>
+		layout.some((o) => {
 			if (o.id === skipId || o.outOfBounds) return false;
 			return rectsOverlap(x, y, w, h, o.x, o.y, o.width, o.height, pad);
 		});
 
 	for (let round = 0; round < 2; round++) {
 		if (withinBudget && !withinBudget()) break;
+		// Trailing items first — they're the ones actually setting the
+		// current roll length, so they benefit most from being tried before
+		// items that already sit well inside it.
 		const order = current
 			.filter((i) => !i.outOfBounds)
 			.sort((a, b) => (b.x + b.width) - (a.x + a.width))
@@ -795,13 +818,29 @@ export function gapFillPass(
 			if (withinBudget && !withinBudget()) break;
 			const idx = current.findIndex((i) => i.id === id);
 			const item = current[idx];
+			// In-bounds neighbors only — used both for collision checks and as
+			// the trial-layout base below, but oobItems are carried through
+			// separately so they're never dropped from the returned array.
 			const others = current.filter((i) => i.id !== id && !i.outOfBounds);
-			const curRight = item.x + item.width;
+			const oobItems = current.filter((i) => i.outOfBounds);
+			const curLen = layoutLen(current);
 
+			// Standard corner-point anchor set: every OTHER item's right/top
+			// edge, plus the cross of any two items' edges (the corner of an
+			// interior void is frequently formed by one item's right edge and
+			// a DIFFERENT item's top edge — e.g. the gap between two ragged
+			// columns of unequal length — so a single-item edge set alone
+			// misses it).
 			const anchors: { x: number; y: number }[] = [{ x: 0, y: 0 }];
 			for (const o of others) {
 				anchors.push({ x: o.x + o.width + pad, y: o.y });
 				anchors.push({ x: o.x, y: o.y + o.height + pad });
+			}
+			for (const o1 of others) {
+				for (const o2 of others) {
+					if (o1.id === o2.id) continue;
+					anchors.push({ x: o1.x + o1.width + pad, y: o2.y + o2.height + pad });
+				}
 			}
 
 			const orientations = allowRotation
@@ -809,22 +848,33 @@ export function gapFillPass(
 				: [{ w: item.width, h: item.height, rot: item.rotation }];
 
 			let best: { x: number; y: number; w: number; h: number; rot: number } | null = null;
-			let bestRight = curRight;
+			let bestLen = curLen;
 
 			for (const { x, y } of anchors) {
 				if (x < 0 || y < 0) continue;
 				for (const { w, h, rot } of orientations) {
 					if (y + h > rollWidth + 0.001) continue;
-					const right = x + w;
-					if (right >= bestRight - 0.01) continue; // must actually improve
-					if (overlapsAny(x, y, w, h, id)) continue;
-					bestRight = right;
+					if (overlapsAny(x, y, w, h, id, others)) continue;
+					// Gate on the LAYOUT's total length, not this item's own
+					// right edge — an item that's already as far left as its
+					// own column allows can still be worth moving if doing so
+					// frees the item currently driving total length (the same
+					// class of bug fixed twice already this session in
+					// rotationRefinePass/compactTowardOrigin: local-only
+					// gates silently reject exactly the move that matters).
+					const trial = others.concat([{ ...item, x, y, width: w, height: h, rotation: rot }]);
+					const trialLen = layoutLen(trial);
+					if (trialLen >= bestLen - 0.01) continue;
+					bestLen = trialLen;
 					best = { x, y, w, h, rot };
 				}
 			}
 
 			if (best) {
-				current[idx] = { ...item, x: best.x, y: best.y, width: best.w, height: best.h, rotation: best.rot };
+				current = others.concat(
+					[{ ...item, x: best.x, y: best.y, width: best.w, height: best.h, rotation: best.rot }],
+					oobItems,
+				);
 			}
 		}
 	}
@@ -1174,16 +1224,20 @@ export function smartNest(
 	trace.phase7_compactionRotation = layoutLen(best).toFixed(2);
 
 	// Phase 8: gap fill — see gapFillPass for why phases 1-7 (all shelf/band
-	// packers underneath) can't discover an interior void on their own.
-	if (withinBudget()) {
-		const gapFilled = gapFillPass(best, sheet, allowRotation, withinBudget);
-		if (layoutLen(gapFilled) <= layoutLen(best)) best = gapFilled;
-	}
+	// packers underneath) can't discover an interior void on their own. Runs
+	// against its OWN fresh deadline rather than the shared one above: by
+	// this point phases 1-7 (30+ orderings, an O(n²) swap pass, an O(n³)
+	// insertion pass at small item counts) can have already spent most or
+	// all of the 3s budget, silently reducing this — the pass most likely
+	// to matter for an odd/irregular shape — to a no-op.
+	const gapFillDeadline = Date.now() + 800;
+	const gapFilled = gapFillPass(best, sheet, allowRotation, () => Date.now() < gapFillDeadline);
+	if (layoutLen(gapFilled) <= layoutLen(best)) best = gapFilled;
 	trace.phase8_gapFill = layoutLen(best).toFixed(2);
 
 	if (typeof window !== "undefined") {
-		console.log("NEST v15 smartNest trace " + JSON.stringify(trace, null, 2));
-		console.log("NEST v15 smartNest final " + JSON.stringify(
+		console.log("NEST v16 smartNest trace " + JSON.stringify(trace, null, 2));
+		console.log("NEST v16 smartNest final " + JSON.stringify(
 			best.map((i) => `${i.id}:x=${i.x.toFixed(2)},y=${i.y.toFixed(2)},w=${i.width.toFixed(1)},h=${i.height.toFixed(1)},rot=${i.rotation}`),
 			null, 2,
 		));
@@ -1446,7 +1500,7 @@ export function finalDeclash(
 			poly = translatePolygon(localPoly, x, it.y);
 		}
 		if (typeof window !== "undefined" && guard > 0) {
-			console.log(`NEST v15 finalDeclash nudged ${it.id} by guard=${guard} steps (${(guard * STEP).toFixed(2)}")`);
+			console.log(`NEST v16 finalDeclash nudged ${it.id} by guard=${guard} steps (${(guard * STEP).toFixed(2)}")`);
 		}
 		const bounds = polygonBounds(poly);
 		// This is meant to be the final, unconditional guarantee that nothing
@@ -1694,7 +1748,7 @@ export function bestNest(
 		};
 		const geo = (arr: CanvasItem[]) =>
 			arr.map((i) => `${i.id}:x=${i.x.toFixed(2)},y=${i.y.toFixed(2)},w=${i.width.toFixed(1)},h=${i.height.toFixed(1)},rot=${i.rotation}`).join(" | ");
-		console.log("NEST v15 bestNest " + JSON.stringify({
+		console.log("NEST v16 bestNest " + JSON.stringify({
 			nfpOob, skylineOob, nfpLen: len(nfpResult).toFixed(2), skylineLen: len(skylineResult).toFixed(2),
 			chose: nfpOob <= skylineOob ? "nfp" : "skyline",
 			nfp: geo(nfpResult),
@@ -1702,13 +1756,24 @@ export function bestNest(
 		}, null, 2));
 	}
 
+	// Row-balance and gap-fill are pure position/rotation refinements over a
+	// bbox layout, so they apply just as well to whichever candidate won
+	// above — bestNest is the path handleSmartNest's "nfpAlt" comparison
+	// uses, and without this, ties/near-ties would silently fall back to a
+	// layout with neither improvement even after smartNest computed them.
+	const rowBalanced = rowBalanceGroupPass(chosen, sheet, allowRotation);
+	let refined = (rowBalanced && layoutLen(rowBalanced) < layoutLen(chosen) - 0.001) ? rowBalanced : chosen;
+	const gapFillDeadline = Date.now() + 800;
+	const gapFilled = gapFillPass(refined, sheet, allowRotation, () => Date.now() < gapFillDeadline);
+	if (layoutLen(gapFilled) <= layoutLen(refined)) refined = gapFilled;
+
 	// Universal backstop: whichever path won, guarantee the buffer is
 	// actually respected in the result the UI renders. autoNest has no
 	// exact-overlap verification of its own, and even nfpNest's own
 	// declash pass only ran against the OTHER items present when IT was
 	// computed — re-run it here, once, against the final chosen set.
 	PADDING_INCHES = bufferInches;
-	return finalDeclash(chosen, sheet.widthInches, sheet.heightInches, bufferInches);
+	return finalDeclash(refined, sheet.widthInches, sheet.heightInches, bufferInches);
 }
 
 // ─── Placement result ─────────────────────────
