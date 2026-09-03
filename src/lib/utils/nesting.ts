@@ -747,6 +747,91 @@ function insertionImprovementPass(
 	return current;
 }
 
+// ─── Gap-fill pass (MaxRects-style corner search) ──
+// Every pass above — bestFitPack's skyline, rowBalanceGroupPass's dedicated
+// bands, even compactionPass's neighbor-slide — is a "shelf" packer at
+// heart: each only ever tracks a profile along one axis (a monotonic
+// height-per-x-slice, or a fixed-height band), so none of them can
+// represent an arbitrary rectangular VOID that opens up in the middle of
+// the layout once two neighboring columns/bands of different lengths meet.
+// A trailing item then gets appended past everything else instead of
+// dropped into that void — even when the void is clearly big enough for
+// it. This is the actual mechanism behind "an odd shape should have gone
+// in the empty gap between two columns, not past the end of the roll."
+//
+// Fix: a classic MaxRects-BL-style corner-point search. Candidate anchors
+// are the bottom-left corners implied by every OTHER item's right/top edge
+// (plus the origin) — the standard, cheap way to enumerate "places a new
+// rectangle's corner could legally start" without computing exact free
+// regions. Try every allowed rotation at every anchor, keep whichever
+// placement shrinks the item's own contribution to total roll length the
+// most. Trailing items (the ones actually driving roll length) are tried
+// first each round, since pulling one into an interior gap is exactly what
+// should happen before anything else.
+export function gapFillPass(
+	placed: CanvasItem[],
+	sheet: MaterialSheet,
+	allowRotation: boolean,
+	withinBudget?: () => boolean,
+): CanvasItem[] {
+	const current = [...placed];
+	const pad = PADDING_INCHES;
+	const rollWidth = sheet.heightInches;
+
+	const overlapsAny = (x: number, y: number, w: number, h: number, skipId: string): boolean =>
+		current.some((o) => {
+			if (o.id === skipId || o.outOfBounds) return false;
+			return rectsOverlap(x, y, w, h, o.x, o.y, o.width, o.height, pad);
+		});
+
+	for (let round = 0; round < 2; round++) {
+		if (withinBudget && !withinBudget()) break;
+		const order = current
+			.filter((i) => !i.outOfBounds)
+			.sort((a, b) => (b.x + b.width) - (a.x + a.width))
+			.map((i) => i.id);
+
+		for (const id of order) {
+			if (withinBudget && !withinBudget()) break;
+			const idx = current.findIndex((i) => i.id === id);
+			const item = current[idx];
+			const others = current.filter((i) => i.id !== id && !i.outOfBounds);
+			const curRight = item.x + item.width;
+
+			const anchors: { x: number; y: number }[] = [{ x: 0, y: 0 }];
+			for (const o of others) {
+				anchors.push({ x: o.x + o.width + pad, y: o.y });
+				anchors.push({ x: o.x, y: o.y + o.height + pad });
+			}
+
+			const orientations = allowRotation
+				? buildOrientations(item, sheet.widthInches, true)
+				: [{ w: item.width, h: item.height, rot: item.rotation }];
+
+			let best: { x: number; y: number; w: number; h: number; rot: number } | null = null;
+			let bestRight = curRight;
+
+			for (const { x, y } of anchors) {
+				if (x < 0 || y < 0) continue;
+				for (const { w, h, rot } of orientations) {
+					if (y + h > rollWidth + 0.001) continue;
+					const right = x + w;
+					if (right >= bestRight - 0.01) continue; // must actually improve
+					if (overlapsAny(x, y, w, h, id)) continue;
+					bestRight = right;
+					best = { x, y, w, h, rot };
+				}
+			}
+
+			if (best) {
+				current[idx] = { ...item, x: best.x, y: best.y, width: best.w, height: best.h, rotation: best.rot };
+			}
+		}
+	}
+
+	return current;
+}
+
 // ─── Sort heuristics ──────────────────────────
 // 10 heuristics covering different shape characteristics.
 type SortFn = (a: CanvasItem, b: CanvasItem) => number;
@@ -1087,6 +1172,14 @@ export function smartNest(
 		if (layoutLen(rotated) <= layoutLen(best)) best = rotated;
 	}
 	trace.phase7_compactionRotation = layoutLen(best).toFixed(2);
+
+	// Phase 8: gap fill — see gapFillPass for why phases 1-7 (all shelf/band
+	// packers underneath) can't discover an interior void on their own.
+	if (withinBudget()) {
+		const gapFilled = gapFillPass(best, sheet, allowRotation, withinBudget);
+		if (layoutLen(gapFilled) <= layoutLen(best)) best = gapFilled;
+	}
+	trace.phase8_gapFill = layoutLen(best).toFixed(2);
 
 	if (typeof window !== "undefined") {
 		console.log("NEST v15 smartNest trace " + JSON.stringify(trace, null, 2));

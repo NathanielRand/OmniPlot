@@ -5,7 +5,7 @@ import {
 	getBoundingBox, findOverlaps,
 	samplePolygonArea, getSvgPathBBox,
 	autoNest, smartNest, findNextPosition,
-	finalDeclash,
+	finalDeclash, gapFillPass,
 } from './nesting';
 
 // ─── Fixtures ─────────────────────────────────
@@ -322,6 +322,41 @@ describe('finalDeclash catches width-axis (roll-width) overflow', () => {
 		const item = makeItem('a', makePattern('window', 34.11, 24.14), { x: 0, y: 0, width: 34.11, height: 24.14 });
 		const result = finalDeclash([item], maxLength, rollWidth, pad);
 		expect(result[0].outOfBounds).toBe(false);
+	});
+});
+
+// ─── gapFillPass: interior-void rescue ────────
+// Reproduces the exact live scenario: two columns of different length leave
+// a rectangular void where the shorter column ends early, and a small
+// trailing item sits appended past BOTH columns instead of dropped into
+// that void. Every packer upstream of gapFillPass is a shelf/band packer
+// that can't represent an interior void at all — this is the one pass that
+// explicitly searches for it.
+describe('gapFillPass', () => {
+	it('pulls a trailing item into an interior void instead of leaving it past the tail', () => {
+		const sheet: MaterialSheet = { id: 's', name: 'roll', widthInches: 1200, heightInches: 60, manufacturer: 'T', sku: 'T' };
+		const col = (w: number, h: number) => makePattern('col', w, h);
+
+		// Left column (y 0..30): 2 items stacked along length, ends at x=60.
+		// Right column (y 30..60): 3 items stacked along length, ends at x=90.
+		// This leaves a 30(length) x 30(width) void at x=60..90, y=0..30.
+		const items: CanvasItem[] = [
+			makeItem('a1', col(30, 30), { x: 0,  y: 0,  width: 30, height: 30 }),
+			makeItem('a2', col(30, 30), { x: 30, y: 0,  width: 30, height: 30 }),
+			makeItem('b1', col(30, 30), { x: 0,  y: 30, width: 30, height: 30 }),
+			makeItem('b2', col(30, 30), { x: 30, y: 30, width: 30, height: 30 }),
+			makeItem('b3', col(30, 30), { x: 60, y: 30, width: 30, height: 30 }),
+			// Small item, currently appended past everything (x=100) — the
+			// "circle placed past the end instead of in the gap" bug.
+			makeItem('small', col(20, 20), { x: 100, y: 0, width: 20, height: 20 }),
+		];
+
+		const result = gapFillPass(items, sheet, true);
+		const small = result.find((i) => i.id === 'small')!;
+
+		// It must have moved into the void, not stayed past the tail.
+		expect(small.x + small.width).toBeLessThanOrEqual(90 + 0.01);
+		expect(findOverlaps(result)).toHaveLength(0);
 	});
 });
 
