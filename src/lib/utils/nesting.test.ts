@@ -5,7 +5,7 @@ import {
 	getBoundingBox, findOverlaps,
 	samplePolygonArea, getSvgPathBBox,
 	autoNest, smartNest, findNextPosition,
-	finalDeclash, gapFillPass, rowBalanceGroupPass,
+	finalDeclash, gapFillPass, rowBalanceGroupPass, bestNest,
 } from './nesting';
 
 // ─── Fixtures ─────────────────────────────────
@@ -456,5 +456,41 @@ describe('smartNest row-balance (same-footprint group rebalance)', () => {
 		const len = Math.max(...result.items.map((i) => i.x + i.width));
 		expect(len).toBeLessThan(97); // was 102.43 before rowBalanceGroupPass
 		expect(len).toBeGreaterThan(96); // sanity: shouldn't overshoot the theoretical 96.71 optimum
+	});
+});
+
+describe('bestNest: rowBalanceGroupPass must not strand items out of bounds', () => {
+	it('does not let a shorter row-balanced repack push another item into overflow', () => {
+		// rowBalanceGroupPass repacks same-footprint items into rectangle rows
+		// purely by bounding box (ignoring true polygon shape/interlock) and
+		// can spend width axis it doesn't own. This regresses layoutLen (the
+		// length axis) while leaving no width for other items — which
+		// bestNest's length-only comparison used to accept anyway. Two
+		// same-size tapered window shapes plus a small circle reproduces it:
+		// nfpNest alone places all 3 in-bounds, but rowBalanceGroupPass used
+		// to shorten the layout by consuming the roll width, bumping the
+		// circle into the overflow bin.
+		const sheet: MaterialSheet = {
+			id: 's', name: '60in Roll', widthInches: 1200, heightInches: 60,
+			manufacturer: 'T', sku: 'T',
+		};
+		const pat = (id: string, w: number, h: number, svgPath: string): Pattern => ({
+			id, vehicleId: 'v1', category: 'ppf', zone: 'hood' as Pattern['zone'],
+			name: id, coverage: 'full', svgPath, widthInches: w, heightInches: h,
+			revision: '1', isPublished: true, createdAt: new Date(), updatedAt: new Date(),
+		});
+		const taperBR = 'M 0 0 L 26 0 L 26 20 L 13 30 L 0 25 Z';
+		const taperTL = 'M 13 0 L 26 5 L 26 30 L 0 30 L 0 10 Z';
+		const pTop = pat('top', 26, 30, taperBR);
+		const pBot = pat('bot', 26, 30, taperTL);
+		const pCircle = pat('circ', 5, 5, 'M 2.5 0 A 2.5 2.5 0 1 1 2.5 5 A 2.5 2.5 0 1 1 2.5 0 Z');
+		const items: CanvasItem[] = [
+			makeItem('top', pTop, { x: 0, y: 0 }),
+			makeItem('bot', pBot, { x: 0, y: 30.2 }),
+			makeItem('circle', pCircle, { x: 200, y: 0 }),
+		];
+
+		const result = bestNest(items, sheet, true, 0.5);
+		expect(result.every((i) => !i.outOfBounds)).toBe(true);
 	});
 });

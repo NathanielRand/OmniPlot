@@ -899,44 +899,70 @@ export function gapFillPass(
 			const others = current.filter((i) => i.id !== id && !i.outOfBounds);
 			const rest = current.filter((i) => i.id !== id);
 
-			const anchors: { x: number; y: number }[] = [{ x: 0, y: 0 }];
-			for (const o of others) {
-				anchors.push({ x: o.x + o.width + pad, y: o.y });
-				anchors.push({ x: o.x, y: o.y + o.height + pad });
-			}
-			for (const o1 of others) {
-				for (const o2 of others) {
-					if (o1.id === o2.id) continue;
-					anchors.push({ x: o1.x + o1.width + pad, y: o2.y + o2.height + pad });
+			// Bbox-only anchor search silently rejects real pockets bounded by
+			// non-rectangular neighbors (a circle/diamond piece can fit in a
+			// gap two tapered window shapes leave between them even though
+			// their bounding boxes touch) — that's exactly the failure this
+			// rescue pass exists to catch, so it needs to reason in true
+			// shape, not bounding box. Reuse the same NFP candidate search
+			// nfpNest uses for its primary placement.
+			const ROTS = allowRotation ? ([0, 90, 180, 270] as const) : ([0] as const);
+			let best: { x: number; y: number; w: number; h: number; score: number } | null = null;
+			let bestRot = 0;
+			for (const rot of ROTS) {
+				const candidate = placeAgainst(item, rot, others, sheet.widthInches, rollWidth, pad);
+				if (candidate && (!best || candidate.score < best.score)) {
+					best = candidate;
+					bestRot = rot;
 				}
 			}
 
-			const orientations = allowRotation
-				? buildOrientations(item, sheet.widthInches, true)
-				: [{ w: item.width, h: item.height, rot: item.rotation }];
-
-			let best: { x: number; y: number; w: number; h: number; rot: number } | null = null;
-			let bestLen = Infinity;
-
-			for (const { x, y } of anchors) {
-				if (x < 0 || y < 0) continue;
-				for (const { w, h, rot } of orientations) {
-					if (y + h > rollWidth + 0.001) continue;
-					if (overlapsAny(x, y, w, h, id, others)) continue;
-					const trial = others.concat([{ ...item, x, y, width: w, height: h, rotation: rot, outOfBounds: false }]);
-					const trialLen = layoutLen(trial);
-					if (trialLen >= bestLen) continue;
-					bestLen = trialLen;
-					best = { x, y, w, h, rot };
+			// Bbox-anchor fallback for items whose polygon data can't be
+			// sampled cheaply — keeps prior behavior as a safety net.
+			if (!best) {
+				const anchors: { x: number; y: number }[] = [{ x: 0, y: 0 }];
+				for (const o of others) {
+					anchors.push({ x: o.x + o.width + pad, y: o.y });
+					anchors.push({ x: o.x, y: o.y + o.height + pad });
 				}
+				for (const o1 of others) {
+					for (const o2 of others) {
+						if (o1.id === o2.id) continue;
+						anchors.push({ x: o1.x + o1.width + pad, y: o2.y + o2.height + pad });
+					}
+				}
+
+				const orientations = allowRotation
+					? buildOrientations(item, sheet.widthInches, true)
+					: [{ w: item.width, h: item.height, rot: item.rotation }];
+
+				let bestLen = Infinity;
+				let bboxBest: { x: number; y: number; w: number; h: number; rot: number } | null = null;
+				for (const { x, y } of anchors) {
+					if (x < 0 || y < 0) continue;
+					for (const { w, h, rot } of orientations) {
+						if (y + h > rollWidth + 0.001) continue;
+						if (overlapsAny(x, y, w, h, id, others)) continue;
+						const trial = others.concat([{ ...item, x, y, width: w, height: h, rotation: rot, outOfBounds: false }]);
+						const trialLen = layoutLen(trial);
+						if (trialLen >= bestLen) continue;
+						bestLen = trialLen;
+						bboxBest = { x, y, w, h, rot };
+					}
+				}
+				if (bboxBest) {
+					current = rest.concat([{
+						...item, x: bboxBest.x, y: bboxBest.y, width: bboxBest.w, height: bboxBest.h,
+						rotation: bboxBest.rot, outOfBounds: false,
+					}]);
+				}
+				continue;
 			}
 
-			if (best) {
-				current = rest.concat([{
-					...item, x: best.x, y: best.y, width: best.w, height: best.h,
-					rotation: best.rot, outOfBounds: false,
-				}]);
-			}
+			current = rest.concat([{
+				...item, x: best.x, y: best.y, width: best.w, height: best.h,
+				rotation: bestRot, outOfBounds: false,
+			}]);
 		}
 	}
 
@@ -1822,11 +1848,29 @@ export function bestNest(
 	// above — bestNest is the path handleSmartNest's "nfpAlt" comparison
 	// uses, and without this, ties/near-ties would silently fall back to a
 	// layout with neither improvement even after smartNest computed them.
+	//
+	// rowBalanceGroupPass repacks same-footprint items into rectangle rows
+	// purely by bounding box, spending width axis it doesn't own — that can
+	// shorten the length axis while leaving no room for other items on the
+	// width axis, bumping them into the overflow bin. layoutLen only measures
+	// the length axis, so it's blind to that regression: always require the
+	// OOB count not to increase before accepting a "shorter" candidate, same
+	// rule bestNest already applies when choosing between nfp/skyline above.
+	const oobCount = (arr: CanvasItem[]) => arr.filter((i) => i.outOfBounds).length;
+	const chosenOob = oobCount(chosen);
+
 	const rowBalanced = rowBalanceGroupPass(chosen, sheet, allowRotation);
-	let refined = (rowBalanced && layoutLen(rowBalanced) < layoutLen(chosen) - 0.001) ? rowBalanced : chosen;
+	let refined = (rowBalanced && oobCount(rowBalanced) <= chosenOob && layoutLen(rowBalanced) < layoutLen(chosen) - 0.001)
+		? rowBalanced
+		: chosen;
+	const refinedOob = oobCount(refined);
+
 	const gapFillDeadline = Date.now() + 800;
 	const gapFilled = gapFillPass(refined, sheet, allowRotation, () => Date.now() < gapFillDeadline);
-	if (layoutLen(gapFilled) <= layoutLen(refined)) refined = gapFilled;
+	const gapFilledOob = oobCount(gapFilled);
+	if (gapFilledOob < refinedOob || (gapFilledOob <= refinedOob && layoutLen(gapFilled) <= layoutLen(refined))) {
+		refined = gapFilled;
+	}
 
 	// Universal backstop: whichever path won, guarantee the buffer is
 	// actually respected in the result the UI renders. autoNest has no

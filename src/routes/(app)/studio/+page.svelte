@@ -4551,11 +4551,20 @@
 	.canvas-viewport {
 		position: relative;
 		min-width: 0;
+		/* Grid items default to min-height:auto, which sizes them to fit their
+		   content instead of the grid track — with a roll that grows arbitrarily
+		   long as patterns/length are added, that silently expands this element
+		   past the viewport instead of letting .canvas-area below scroll within
+		   it. min-height:0 lets it actually shrink to the track/viewport height
+		   so .canvas-area's own overflow:auto can do its job. */
+		min-height: 0;
+		height: 100%;
 		overflow: hidden;
 	}
 
 	.canvas-area {
 		position: relative;
+		height: 100%;
 		overflow: auto;
 		background: var(--canvas-bg);
 		cursor: crosshair;

@@ -15,12 +15,12 @@
 ///////////////////////////////
 // NEXT
 ///////////////////////////////
-- add custom zone on pattern uploader form bug preventing from adding name to custom zone or adding a second custom zone if one already exist.
-- ADMIN PANEL: admin should be able to edit plan allowances from the admin panel. bump up the lite cuts per day to 5; bump up free to 10 free per month. limit features on free plan such as custom upload. only platform or community patterns can be used by free.
+- BG remove option (on by default) on pattern uploader input images to help clean up the input image before before for a cleaner vectorization.
 
 //////////////////////////////////////
 // BACKLOG
 ////////////////////////////////
+- Fixing OmniPlot's autonesting so it uses all patterns without stranding pieces outside the cut zone, plus adding canvas scroll for long rolls — both fixes are done. Next: verify the scroll and nesting fixes in the studio UI with real pattern data.
 - Next: enable the Firestore TTL policy on errorLogs.expiresAt in the Firebase console....One follow-up you'll need to do outside code: enable a Firestore TTL policy on rateLimits.expiresAt (Firebase console → Firestore → TTL) so old window docs get purged automatically — TTL policies can't be set from rules or app code./.
 - Create a local plotter emulator/simulator to verify the communication between plotter and agent (or other method) is bidirectional and valid throughout each expected communication event with proper processing and response. we need to test without having the quipment in person.
 - 'pattern builder' where the uses inputs the exact dimensions and sides/intersection points with drag option on connecting points to manually craft the pattern directly from the studio. this give true sandbox and potentially unlimited types of patterns.
