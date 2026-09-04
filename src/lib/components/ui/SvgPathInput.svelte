@@ -206,7 +206,44 @@
 		const file = (e.target as HTMLInputElement).files?.[0];
 		(e.target as HTMLInputElement).value = "";
 		if (!file) return;
+		const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+		if (isPdf) {
+			convertPdfAndUse(file);
+			return;
+		}
 		setUploadedFile(file);
+	}
+
+	// ─── PDF support ───────────────────────────────
+	// PDFs aren't a raster or an in-DOM SVG, so they can't go through either
+	// existing path directly. Render the first page to a PNG server-side
+	// (pdfjs-dist + a Canvas2D surface) and hand that PNG to setUploadedFile —
+	// from that point on it's an ordinary raster image and every existing
+	// pipeline (Vectorize, Cutout, Enhance, Trace) works unmodified.
+	let pdfConverting = $state(false);
+	let pdfConvertErr = $state("");
+	async function convertPdfAndUse(file: File) {
+		pdfConvertErr = "";
+		pdfConverting = true;
+		try {
+			const fd = new FormData();
+			fd.append("file", file);
+			const res = await fetch("/api/pdf-convert", { method: "POST", body: fd });
+			if (!res.ok) {
+				const body = await res.text().catch(() => "");
+				let msg = "";
+				try { msg = (JSON.parse(body) as { message?: string }).message ?? ""; } catch { msg = body; }
+				throw new Error(msg || `Server error ${res.status}`);
+			}
+			const { image } = await res.json() as { image: string };
+			const blob = await (await fetch(image)).blob();
+			const pngFile = new File([blob], file.name.replace(/\.pdf$/i, "") + ".png", { type: "image/png" });
+			setUploadedFile(pngFile);
+		} catch (err) {
+			pdfConvertErr = err instanceof Error ? err.message : "Could not convert PDF.";
+		} finally {
+			pdfConverting = false;
+		}
 	}
 
 	// Switching import type re-uses the already-uploaded input. If this method
@@ -1065,13 +1102,21 @@
 </script>
 
 <div class="spi">
-	{#if !hasStarted}
+	{#if pdfConverting}
+		<div class="spi__pdf-status">
+			<span class="spi__spinner" aria-hidden="true"></span>
+			<span>Converting PDF…</span>
+		</div>
+	{:else if pdfConvertErr}
+		<p class="spi__err">{pdfConvertErr}</p>
+	{/if}
+	{#if !hasStarted && !pdfConverting}
 		<!-- ─── Stage 1: single generic upload — method choice is revealed after input is given ─── -->
 		<label class="spi__drop spi__drop--initial">
-			<input type="file" accept=".svg,image/svg+xml,image/*" onchange={handleFileSelected} class="spi__file-input"/>
+			<input type="file" accept=".svg,image/svg+xml,image/*,.pdf,application/pdf" onchange={handleFileSelected} class="spi__file-input"/>
 			<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
 			<span class="spi__drop-label">Click to upload a pattern image</span>
-			<span class="spi__drop-sub">SVG, PNG, JPG, WebP, BMP — we'll pick the best import method automatically</span>
+			<span class="spi__drop-sub">SVG, PDF, PNG, JPG, WebP, BMP — we'll pick the best import method automatically</span>
 		</label>
 		<div class="spi__or-divider"><span>or paste manually</span></div>
 		<div class="spi__paste-toggle" role="radiogroup" aria-label="Paste input type">
@@ -1267,7 +1312,7 @@
 				</div>
 			{/if}
 			<label class="spi__io-replace">
-				<input type="file" accept=".svg,image/svg+xml,image/*" onchange={handleFileSelected} class="spi__file-input"/>
+				<input type="file" accept=".svg,image/svg+xml,image/*,.pdf,application/pdf" onchange={handleFileSelected} class="spi__file-input"/>
 				Replace image
 			</label>
 		{:else}
@@ -1335,10 +1380,10 @@
 				{:else}
 					{#if !uploadedFile}
 						<label class="spi__drop">
-							<input type="file" accept=".svg,image/svg+xml,image/*" onchange={handleFileSelected} class="spi__file-input"/>
+							<input type="file" accept=".svg,image/svg+xml,image/*,.pdf,application/pdf" onchange={handleFileSelected} class="spi__file-input"/>
 							<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
 							<span class="spi__drop-label">Click to upload a file</span>
-							<span class="spi__drop-sub">SVG — extracted losslessly &nbsp;·&nbsp; PNG, JPG, WebP, BMP — converted to precise bezier curves</span>
+							<span class="spi__drop-sub">SVG — extracted losslessly &nbsp;·&nbsp; PNG, JPG, WebP, BMP, PDF — converted to precise bezier curves</span>
 						</label>
 					{/if}
 					{#if vectorizeErr}
@@ -1362,7 +1407,7 @@
 				{:else}
 					{#if !uploadedFile}
 						<label class="spi__drop">
-							<input type="file" accept="image/*" onchange={handleFileSelected} class="spi__file-input"/>
+							<input type="file" accept="image/*,.pdf,application/pdf" onchange={handleFileSelected} class="spi__file-input"/>
 							<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M6 9a3 3 0 100-6 3 3 0 000 6z"/><path d="M6 21a3 3 0 100-6 3 3 0 000 6z"/><path d="M20 4L8.12 15.88"/><path d="M14.47 14.48L20 20"/><path d="M8.12 8.12L12 12"/></svg>
 							<span class="spi__drop-label">Click to upload a photo</span>
 							<span class="spi__drop-sub">Best with a fairly uniform backdrop — background is auto-removed, then the silhouette is traced</span>
@@ -2159,6 +2204,17 @@
 		color: var(--color-danger, #f44);
 		margin: 4px 0 0;
 		line-height: 1.4;
+	}
+	.spi__pdf-status {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 10px 12px;
+		background: var(--bg-surface-2);
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-md);
+		font-size: 0.875rem;
+		color: var(--text-secondary);
 	}
 	.spi__success {
 		display: flex;

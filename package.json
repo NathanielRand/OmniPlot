@@ -31,9 +31,11 @@
 		"node": ">=20.9.0"
 	},
 	"dependencies": {
+		"@napi-rs/canvas": "^1.0.8",
 		"@stripe/stripe-js": "^9.6.0",
 		"firebase": "^12.13.0",
 		"firebase-admin": "^13.10.0",
+		"pdfjs-dist": "^6.3.289",
 		"potrace": "^2.1.8",
 		"sharp": "^0.35.2",
 		"stripe": "^22.1.1"
