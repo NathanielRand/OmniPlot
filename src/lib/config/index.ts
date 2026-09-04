@@ -297,6 +297,125 @@ export const DEFAULT_MATERIALS: MaterialSheet[] = [
 		manufacturer: "Generic",
 		sku: "TINT-60",
 	},
+	// ── Sign / craft vinyl rolls ──────────────────
+	{
+		id: "oracal-651-24",
+		name: "Oracal 651 Vinyl 24\"",
+		widthInches: 24,
+		heightInches: 1200,
+		manufacturer: "Oracal",
+		sku: "651-24",
+	},
+	{
+		id: "oracal-651-48",
+		name: "Oracal 651 Vinyl 48\"",
+		widthInches: 48,
+		heightInches: 1200,
+		manufacturer: "Oracal",
+		sku: "651-48",
+	},
+	{
+		id: "avery-mpi-1105-48",
+		name: "Avery MPI 1105 Cast Vinyl 48\"",
+		widthInches: 48,
+		heightInches: 1200,
+		manufacturer: "Avery Dennison",
+		sku: "MPI1105-48",
+	},
+	// ── Heat transfer vinyl (HTV) rolls ───────────
+	{
+		id: "siser-easyweed-15",
+		name: "Siser EasyWeed HTV 15\"",
+		widthInches: 15,
+		heightInches: 1200,
+		manufacturer: "Siser",
+		sku: "EW-15",
+	},
+	{
+		id: "siser-easyweed-20",
+		name: "Siser EasyWeed HTV 20\"",
+		widthInches: 20,
+		heightInches: 1200,
+		manufacturer: "Siser",
+		sku: "EW-20",
+	},
+	// ── Gasket / rubber / foam rolls ──────────────
+	{
+		id: "epdm-gasket-36",
+		name: "EPDM Rubber Gasket 36\"",
+		widthInches: 36,
+		heightInches: 600,
+		manufacturer: "Generic",
+		sku: "EPDM-36",
+	},
+	{
+		id: "neoprene-gasket-48",
+		name: "Neoprene Gasket Sheet 48\"",
+		widthInches: 48,
+		heightInches: 600,
+		manufacturer: "Generic",
+		sku: "NEO-48",
+	},
+	// ── Stencil film rolls ─────────────────────────
+	{
+		id: "mylar-stencil-24",
+		name: "Mylar Stencil Film 24\"",
+		widthInches: 24,
+		heightInches: 300,
+		manufacturer: "Generic",
+		sku: "MYL-24",
+	},
+	{
+		id: "oracal-813-stencil-24",
+		name: "Oracal 813 Stencil Film 24\"",
+		widthInches: 24,
+		heightInches: 300,
+		manufacturer: "Oracal",
+		sku: "813-24",
+	},
+	// ── Signage substrate rolls ────────────────────
+	{
+		id: "3m-egp-reflective-48",
+		name: "3M Engineer Grade Reflective 48\"",
+		widthInches: 48,
+		heightInches: 300,
+		manufacturer: "3M",
+		sku: "EGP-48",
+	},
+	{
+		id: "avery-supercast-wrap-60",
+		name: "Avery Supercast Wrap Film 60\"",
+		widthInches: 60,
+		heightInches: 1200,
+		manufacturer: "Avery Dennison",
+		sku: "SC-60",
+	},
+	// ── Architectural window film rolls (residential / commercial) ──
+	// Wider than automotive tint rolls to match storefront and picture-window spans.
+	{
+		id: "3m-safety-security-72",
+		name: "3M Safety & Security Film 72\"",
+		widthInches: 72,
+		heightInches: 300,
+		manufacturer: "3M",
+		sku: "SS-72",
+	},
+	{
+		id: "llumar-architectural-60",
+		name: "LLumar Architectural Film 60\"",
+		widthInches: 60,
+		heightInches: 300,
+		manufacturer: "LLumar",
+		sku: "ARCH-60",
+	},
+	{
+		id: "solar-gard-decorative-48",
+		name: "Solar Gard Decorative Film 48\"",
+		widthInches: 48,
+		heightInches: 300,
+		manufacturer: "Solar Gard",
+		sku: "DEC-48",
+	},
 	{
 		id: "custom",
 		name: "Custom / Other",
@@ -470,6 +589,60 @@ export const PLOTTER_PRESETS: PlotterPreset[] = [
 		maxMediaWidthMm: 609,
 		usbVids: [0x0B4D], // Silhouette America USB VID
 		compatNote: "Uses proprietary USB protocol — HPGL requires a bridge app or network mode.",
+	},
+	{
+		// USCutter Titan 3 SC 48": wide-format sign/HTV cutter common in sign shops.
+		// Max cutting width 1200mm (47.2"). Max force ~500g. Speed up to 700 mm/s.
+		name: "USCutter Titan 3 48\"",
+		manufacturer: "USCutter",
+		model: "Titan 3 48",
+		protocol: "hpgl",
+		bladeForce: 80,
+		cuttingSpeed: 500,
+		passes: 1,
+		baudRate: 9600,
+		maxMediaWidthMm: 1200,
+	},
+	{
+		// Graphtec FC8000-100: industrial-duty cutter, higher force than the CE7000
+		// series — commonly used for gasket, foam, and stencil stock. 38" cut width.
+		name: "Graphtec FC8000-100",
+		manufacturer: "Graphtec",
+		model: "FC8000-100",
+		protocol: "hpgl2",
+		bladeForce: 95,
+		cuttingSpeed: 700,
+		passes: 1,
+		baudRate: 9600,
+		maxMediaWidthMm: 965,
+		usbVids: [0x0B4B],
+	},
+	{
+		// Summa SummaCut D75: 30" mid-format cutter popular for stencil and
+		// gasket work alongside sign vinyl. Max cutting width 750mm (29.5").
+		name: "Summa SummaCut D75",
+		manufacturer: "Summa",
+		model: "SummaCut D75",
+		protocol: "hpgl2",
+		bladeForce: 80,
+		cuttingSpeed: 600,
+		passes: 1,
+		baudRate: 9600,
+		maxMediaWidthMm: 750,
+	},
+	{
+		// Cricut Maker 3: consumer HTV/craft cutter, 12" carriage (mat-based).
+		// WARNING: Uses the proprietary Cricut Design Space USB protocol, NOT HPGL.
+		name: "Cricut Maker 3",
+		manufacturer: "Cricut",
+		model: "Maker 3",
+		protocol: "gpgl",
+		bladeForce: 20,
+		cuttingSpeed: 150,
+		passes: 1,
+		baudRate: 9600,
+		maxMediaWidthMm: 305,
+		compatNote: "Uses the proprietary Cricut Design Space protocol — HPGL requires a bridge/export workaround.",
 	},
 ];
 

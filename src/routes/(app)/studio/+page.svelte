@@ -35,6 +35,13 @@
 		DEFAULT_CUT_LIMITS,
 	} from "$lib/utils";
 	import { DEFAULT_MATERIALS, PLOTTER_PRESETS, CURRENT_AGENT_VERSION, type PlotterPreset } from "$lib/config";
+
+	// Every distinct roll width offered across DEFAULT_MATERIALS, so the Roll
+	// Width quick-pills always cover whatever materials are actually stocked
+	// (PPF, tint, vinyl, HTV, gasket, stencil, signage, architectural film).
+	const ROLL_WIDTH_PRESETS = [...new Set(
+		DEFAULT_MATERIALS.filter((m) => m.id !== "custom").map((m) => m.widthInches),
+	)].sort((a, b) => a - b);
 	import {
 		detectUsbPlotters,
 		detectAgentPorts,
@@ -212,6 +219,9 @@
 			? localStorage.getItem("op-auto-fit-zoom") !== "false"
 			: true,
 	);
+
+	// ─── Custom roll width input reveal ───────────────────────────
+	let showCustomWidth = $state(false);
 	$effect(() => {
 		if (typeof localStorage !== "undefined") {
 			localStorage.setItem("op-auto-fit-zoom", String(autoFitZoomOnRollChange));
@@ -255,29 +265,36 @@
 
 	// ─── Re-nest items on new sheet ───────────────
 	function renestOnSheet(sheet: typeof canvasStore.sheet) {
+		if (canvasBusy) return;
+		// Commit the sheet change synchronously first — the clicked pill/select
+		// reflects its new active/selected state immediately. Only the
+		// (potentially heavy) re-nest pass runs behind the busy guard, so the
+		// button doesn't look like it's lagging behind the loader.
 		canvasStore.setSheet(sheet);
-		if (canvasStore.items.length > 0) {
-			const nested = bestNest(canvasStore.items, transposedSheet(sheet), true, canvasStore.state.bufferInches);
-			canvasStore.setItems(nested);
-			const oob = nested.filter((i) => i.outOfBounds).length;
-			if (oob > 0) {
-				toastStore.warning(
-					`${sheet.widthInches}" roll`,
-					`${oob} pieces exceed roll width — won't cut`,
-				);
-			} else if (canvasStore.items.length > 0) {
-				toastStore.success(
-					`${sheet.widthInches}" roll`,
-					"All pieces re-nested",
-				);
+		runBusy(`Switching to ${sheet.widthInches}" roll…`, () => {
+			if (canvasStore.items.length > 0) {
+				const nested = bestNest(canvasStore.items, transposedSheet(sheet), true, canvasStore.state.bufferInches);
+				canvasStore.setItems(nested);
+				const oob = nested.filter((i) => i.outOfBounds).length;
+				if (oob > 0) {
+					toastStore.warning(
+						`${sheet.widthInches}" roll`,
+						`${oob} pieces exceed roll width — won't cut`,
+					);
+				} else if (canvasStore.items.length > 0) {
+					toastStore.success(
+						`${sheet.widthInches}" roll`,
+						"All pieces re-nested",
+					);
+				}
 			}
-		}
-		if (autoFitZoomOnRollChange) {
-			fitWidthToView();
-		} else if (canvasEl) {
-			canvasEl.scrollLeft = 0;
-			canvasEl.scrollTop = 0;
-		}
+			if (autoFitZoomOnRollChange) {
+				fitWidthToView();
+			} else if (canvasEl) {
+				canvasEl.scrollLeft = 0;
+				canvasEl.scrollTop = 0;
+			}
+		});
 	}
 
 	// ─── Active panel tab ─────────────────────────
@@ -459,6 +476,8 @@
 
 	// ─── Actions ──────────────────────────────────
 	function handleAutoNest() {
+		if (canvasBusy) return;
+		runBusy("Auto-nesting…", () => {
 		const nested = bestNest(canvasStore.items, transposedSheet(), true, canvasStore.state.bufferInches);
 		console.log("NEST v17", nested.map((i) => [i.id, i.x.toFixed(2), i.y.toFixed(2), i.width.toFixed(1), i.height.toFixed(1), i.rotation]));
 		canvasStore.setItems(nested);
@@ -478,10 +497,36 @@
 			);
 		}
 		fitToView();
+		});
 	}
 
 	let smartNesting = $state(false);
 	let smartNestGain = $state<number | null>(null);
+
+	// ─── Canvas busy state (settings + nest events) ───────────────
+	// Shared "in flight" guard for any action that mutates the sheet/layout
+	// (material change, roll width/length change, Auto Nest, AI Nest). Blocks
+	// the canvas with a loading overlay and ignores re-entrant triggers, so a
+	// rapid double-click can't fire two overlapping nest passes against the
+	// same item array.
+	let canvasBusy = $state(false);
+	let canvasBusyLabel = $state("Optimizing layout…");
+
+	// Runs `work` behind the busy guard, yielding one frame first so the
+	// loader overlay actually paints before the (synchronous, potentially
+	// heavy) nesting work blocks the main thread.
+	function runBusy(label: string, work: () => void) {
+		if (canvasBusy) return;
+		canvasBusy = true;
+		canvasBusyLabel = label;
+		setTimeout(() => {
+			try {
+				work();
+			} finally {
+				canvasBusy = false;
+			}
+		}, 16);
+	}
 
 	// ─── AI Nest mode (default ON) ────────────────
 	// When enabled: patterns auto-nest using the fast skyline algorithm whenever
@@ -524,7 +569,7 @@
 		}
 		if (count === autoReoptimizeLastCount) return;
 		autoReoptimizeLastCount = count;
-		if (autoReoptimize && !smartNesting) handleSmartNest({ silent: true });
+		if (autoReoptimize && !smartNesting && !canvasBusy) handleSmartNest({ silent: true });
 	});
 
 	let cutting          = $state(false);
@@ -1108,7 +1153,10 @@
 			if (!silent) toastStore.warning("No patterns", "Add patterns to the sheet first.");
 			return;
 		}
+		if (canvasBusy) return;
 		smartNesting = true;
+		canvasBusy = true;
+		canvasBusyLabel = "AI optimizing layout…";
 		// Yield once so Svelte can paint the loading state before we block the thread.
 		setTimeout(() => {
 			try {
@@ -1172,6 +1220,7 @@
 				);
 			} finally {
 				smartNesting = false;
+				canvasBusy = false;
 			}
 		}, 16);
 	}
@@ -2036,7 +2085,7 @@
 				class:loading={smartNesting}
 				title={isFree ? "AI deep optimization — Lite plan required" : "Re-optimize — run deep AI nesting across all patterns now"}
 				onclick={() => handleSmartNest()}
-				disabled={smartNesting}
+				disabled={canvasBusy}
 				aria-label="Run deep AI nest optimization"
 			>
 				{#if smartNesting}
@@ -2525,10 +2574,12 @@
 		{/if}
 
 		<!-- Canvas -->
+		<div class="canvas-viewport">
 		<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions, a11y_no_noninteractive_element_interactions -->
 		<div
 			class="canvas-area"
 			class:show-grid={canvasStore.state.showGrid}
+			class:canvas-area--busy={canvasBusy}
 			bind:this={canvasEl}
 			onmousemove={onCanvasMouseMove}
 			onclick={onCanvasClick}
@@ -2775,6 +2826,26 @@
 			</div>
 		</div>
 
+		{#if canvasBusy}
+			<!-- Canvas loader: blocks interaction and visually confirms a
+			     settings/re-nest change is in flight, so rapid re-clicks
+			     can't queue up overlapping nest passes. -->
+			<div class="canvas-loader" aria-live="polite" aria-busy="true">
+				<div class="canvas-loader__scan" aria-hidden="true"></div>
+				<div class="canvas-loader__core" aria-hidden="true">
+					<svg class="canvas-loader__ring" width="52" height="52" viewBox="0 0 52 52" fill="none">
+						<circle cx="26" cy="26" r="21" stroke="currentColor" stroke-width="2" stroke-opacity="0.18" />
+						<circle class="canvas-loader__ring-arc" cx="26" cy="26" r="21" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+					</svg>
+					<svg class="canvas-loader__blade" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+						<path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+					</svg>
+				</div>
+				<div class="canvas-loader__label">{canvasBusyLabel}</div>
+			</div>
+		{/if}
+		</div>
+
 		<!-- Right panel -->
 		<aside class="studio__panel" class:studio__panel--collapsed={panelCollapsed}>
 			<button
@@ -2787,9 +2858,6 @@
 				<svg class="panel-collapse-btn__gear" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
 					<circle cx="12" cy="12" r="3" />
 					<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-				</svg>
-				<svg class="panel-collapse-btn__chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="transform: rotate({panelCollapsed ? 180 : 0}deg); transition: transform 0.18s;">
-					<polyline points="9 18 15 12 9 6" />
 				</svg>
 			</button>
 
@@ -2831,13 +2899,17 @@
 						<select
 							class="prop-select"
 							aria-label="Material sheet"
+							disabled={canvasBusy}
 							onchange={(e) => {
 								const mat = DEFAULT_MATERIALS.find(
 									(m) =>
 										m.id ===
 										(e.target as HTMLSelectElement).value,
 								);
-								if (mat) renestOnSheet(mat);
+								if (mat) {
+									showCustomWidth = false;
+									renestOnSheet(mat);
+								}
 							}}
 						>
 							{#each DEFAULT_MATERIALS as mat}
@@ -2853,11 +2925,13 @@
 					<div class="prop-section">
 						<div class="prop-label">Roll Width</div>
 						<div class="roll-width-pills">
-							{#each [20, 24, 36, 40, 48, 60] as w}
+							{#each ROLL_WIDTH_PRESETS as w}
 								<button
 									class="roll-pill"
-									class:active={canvasStore.sheet.widthInches === w}
+									class:active={canvasStore.sheet.widthInches === w && canvasStore.sheet.id !== "custom"}
+									disabled={canvasBusy}
 									onclick={() => {
+										showCustomWidth = false;
 										const mat =
 											DEFAULT_MATERIALS.find(
 												(m) => m.widthInches === w,
@@ -2873,11 +2947,63 @@
 								>{w}"</button
 								>
 							{/each}
+							<button
+								class="roll-pill roll-pill--custom"
+								class:active={canvasStore.sheet.id === "custom"}
+								disabled={canvasBusy}
+								onclick={() => {
+									// A single click both reveals the input and commits to
+									// custom mode (inheriting the current roll width), so the
+									// preset pill above loses its active state immediately —
+									// never two pills lit at once.
+									const opening = !showCustomWidth;
+									showCustomWidth = opening;
+									if (opening && canvasStore.sheet.id !== "custom") {
+										renestOnSheet({
+											...canvasStore.sheet,
+											id: "custom",
+											name: `Custom ${canvasStore.sheet.widthInches}" Roll`,
+											manufacturer: "Custom",
+											sku: "",
+										});
+									}
+								}}
+							>+ Custom</button>
+						</div>
+
+						{#if showCustomWidth || canvasStore.sheet.id === "custom"}
+							<div class="roll-length-row roll-custom-width-row">
+								<input
+									type="number"
+									class="prop-input prop-input--sm"
+									min="1"
+									step="0.5"
+									disabled={canvasBusy}
+									value={canvasStore.sheet.widthInches}
+									aria-label="Custom roll width in inches"
+									onchange={(e) => {
+										const w = parseFloat((e.target as HTMLInputElement).value);
+										if (!Number.isFinite(w) || w <= 0) return;
+										renestOnSheet({
+											...canvasStore.sheet,
+											id: "custom",
+											name: `Custom ${w}" Roll`,
+											manufacturer: "Custom",
+											sku: "",
+											widthInches: w,
+										});
+									}}
+								/>
+								<span class="roll-length-unit">in</span>
+							</div>
+						{/if}
+					</div>
+
+					<div class="prop-section">
 						<label class="auto-fit-toggle">
 							<input type="checkbox" bind:checked={autoFitZoomOnRollChange} />
 							Auto-fit zoom on roll change
 						</label>
-						</div>
 					</div>
 
 					<div class="prop-section">
@@ -2890,6 +3016,7 @@
 								step="1"
 								value={rollLengthFt}
 								aria-label="Roll length in feet"
+								disabled={canvasBusy}
 								onchange={(e) => {
 									const ft = parseFloat((e.target as HTMLInputElement).value);
 									if (!Number.isFinite(ft) || ft <= 0) return;
@@ -2947,6 +3074,7 @@
 								min="-5"
 								max="12"
 								value={canvasStore.state.bufferInches}
+								disabled={canvasBusy}
 								onchange={(e) => {
 									const v = parseFloat((e.target as HTMLInputElement).value);
 									if (!Number.isNaN(v)) {
@@ -4417,6 +4545,15 @@
 	}
 
 	/* ─── Canvas ────── */
+	/* Non-scrolling wrapper around .canvas-area so .canvas-loader can pin to
+	   the visible viewport (position: absolute against this, not against the
+	   scrollable content inside .canvas-area). */
+	.canvas-viewport {
+		position: relative;
+		min-width: 0;
+		overflow: hidden;
+	}
+
 	.canvas-area {
 		position: relative;
 		overflow: auto;
@@ -4427,6 +4564,106 @@
 		   scrolling always clears the full cut zone with room to spare —
 		   independent of screen height, zoom level, or roll length. */
 		padding-bottom: calc(var(--statusbar-h) + 160px);
+	}
+
+	.canvas-area--busy {
+		pointer-events: none;
+	}
+
+	/* ─── Canvas loader ─── */
+	/* Blocks the canvas viewport while a settings change or (re-)nest pass is
+	   in flight — a scanning "cut line" sweeps top-to-bottom behind a spinning
+	   ring + blade mark, echoing the plotter actually doing work. */
+	.canvas-loader {
+		position: absolute;
+		inset: 0;
+		z-index: 40;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 14px;
+		background: color-mix(in srgb, var(--canvas-bg) 72%, transparent);
+		backdrop-filter: blur(2px);
+		-webkit-backdrop-filter: blur(2px);
+		overflow: hidden;
+		animation: canvas-loader-in 0.15s ease-out;
+	}
+
+	.canvas-loader__scan {
+		position: absolute;
+		left: 0;
+		right: 0;
+		height: 120px;
+		top: -120px;
+		background: linear-gradient(
+			to bottom,
+			transparent 0%,
+			color-mix(in srgb, var(--color-brand) 22%, transparent) 45%,
+			color-mix(in srgb, var(--color-brand) 55%, transparent) 50%,
+			color-mix(in srgb, var(--color-brand) 22%, transparent) 55%,
+			transparent 100%
+		);
+		animation: canvas-loader-scan 1.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+		pointer-events: none;
+	}
+
+	@keyframes canvas-loader-scan {
+		0% { transform: translateY(0); }
+		100% { transform: translateY(calc(100vh + 120px)); }
+	}
+
+	.canvas-loader__core {
+		position: relative;
+		width: 52px;
+		height: 52px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		color: var(--color-brand);
+	}
+
+	.canvas-loader__ring {
+		position: absolute;
+		inset: 0;
+		animation: canvas-loader-spin 1.1s linear infinite;
+	}
+
+	.canvas-loader__ring-arc {
+		stroke-dasharray: 34 98;
+	}
+
+	.canvas-loader__blade {
+		animation: canvas-loader-pulse 1.1s ease-in-out infinite;
+	}
+
+	@keyframes canvas-loader-spin {
+		to { transform: rotate(360deg); }
+	}
+
+	@keyframes canvas-loader-pulse {
+		0%, 100% { transform: scale(0.9); opacity: 0.75; }
+		50% { transform: scale(1.05); opacity: 1; }
+	}
+
+	.canvas-loader__label {
+		font-family: var(--font-mono);
+		font-size: 0.85rem;
+		color: var(--text-secondary);
+		letter-spacing: 0.02em;
+	}
+
+	@keyframes canvas-loader-in {
+		from { opacity: 0; }
+		to { opacity: 1; }
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.canvas-loader__scan,
+		.canvas-loader__ring,
+		.canvas-loader__blade {
+			animation: none;
+		}
 	}
 
 	/* Minor grid lines live directly on canvas-area so they scroll naturally */
@@ -4829,16 +5066,15 @@
 	.panel-collapse-btn {
 		position: absolute;
 		top: 50%;
-		left: -24px;
+		left: -32px;
 		transform: translateY(-50%);
 		z-index: 20;
 		width: 44px;
-		height: 80px;
+		height: 56px;
 		display: flex;
 		flex-direction: column;
 		align-items: center;
 		justify-content: center;
-		gap: 8px;
 		padding: 10px 6px;
 		box-sizing: border-box;
 		background: var(--bg-surface-2);
@@ -4863,9 +5099,6 @@
 	}
 	.panel-collapse-btn:hover .panel-collapse-btn__gear {
 		opacity: 1;
-	}
-	.panel-collapse-btn__chevron {
-		flex-shrink: 0;
 	}
 
 	.panel-tabs {
@@ -5732,8 +5965,16 @@
 		align-items: center;
 		gap: 8px;
 	}
+	.roll-custom-width-row {
+		margin-top: 6px;
+	}
 	.roll-length-row .prop-input {
 		flex: 0 0 80px;
+	}
+	.roll-length-row .prop-input--sm {
+		flex: 0 0 64px;
+		padding: 6px 8px;
+		font-size: 0.9207rem;
 	}
 	.roll-length-unit {
 		font-size: 0.9207rem;
@@ -5759,6 +6000,13 @@
 	.roll-pill:hover {
 		background: var(--bg-surface-3);
 		color: var(--text-primary);
+	}
+
+	.roll-pill--custom {
+		text-transform: uppercase;
+		letter-spacing: 0.02em;
+		color: var(--text-primary);
+		font-weight: 600;
 	}
 
 	.roll-pill.active {

@@ -41,6 +41,13 @@ const INITIAL_VEHICLES: VehicleEntry[] = [
 	{ id: "chevy-silverado1500-2017", make: "Chevrolet", model: "Silverado 1500", year: 2017, bodyStyle: "truck", tags: ["truck", "k2xx"], popular: false, status: "published", updatedAt: "2026-06-01" },
 	{ id: "chevy-silverado1500-2018", make: "Chevrolet", model: "Silverado 1500", year: 2018, bodyStyle: "truck", tags: ["truck", "k2xx"], popular: false, status: "published", updatedAt: "2026-06-01" },
 	{ id: "chevy-silverado1500-2019-limited", make: "Chevrolet", model: "Silverado 1500 Limited", year: 2019, bodyStyle: "truck", tags: ["truck", "k2xx", "limited"], popular: false, status: "published", updatedAt: "2026-06-01" },
+	// ── Community reference templates (admin-curated, non-vehicle) ──
+	// Not a physical property — a standing library of common building-glazing
+	// sizes so shops without exact field measurements have a documented
+	// starting point. See COMMUNITY_RESIDENTIAL / COMMUNITY_COMMERCIAL below
+	// for per-pattern citations.
+	{ id: "community-residential-standard", projectType: "residential", propertyLabel: "Standard Residential Window & Door Sizes", tags: ["community", "reference", "residential"], popular: true, status: "published", updatedAt: "2026-09-04" },
+	{ id: "community-commercial-standard", projectType: "commercial", propertyLabel: "Standard Commercial Storefront & Glazing Sizes", tags: ["community", "reference", "commercial"], popular: true, status: "published", updatedAt: "2026-09-04" },
 ];
 
 // ─── Seed: Pattern Requests ───────────────────
@@ -227,6 +234,198 @@ const CHEVY_SILVERADO1500_2019_LIMITED_VISOR: Pattern[] = [
 	{ id: "cs19l-wsvr", vehicleId: "chevy-silverado1500-2019-limited", category: "window-tint", zone: "windshield-strip", name: "Windshield Visor Strip Passenger", coverage: "partial", svgPath: SVG_VISOR_R, widthInches: 23.37, heightInches: 9.30, revision: REV_K2XX, notes: NOTE_ASYM, isPublished: true, createdAt: D_K2XX_VISOR, updatedAt: D_K2XX_VISOR },
 ];
 
+// ─── Seed: Community reference patterns (residential / commercial) ───────────
+// Admin-curated, non-vehicle-specific templates for the most common window,
+// door, and glazing sizes a residential or commercial film install job will
+// encounter. These are NOT measurements of a specific property — they are
+// documented industry-standard/nominal sizes meant as a cutting-list starting
+// point when a shop hasn't (or can't) field-measure yet.
+//
+// Sourcing notes:
+// - Residential nominal window sizing (the WWHH callout, e.g. "3050" = 3'0"x5'0")
+//   is a shared industry convention published across manufacturer catalogs
+//   (Andersen 400 Series, Pella Impervia/250 Series, Milgard Tuscany/Style Line).
+//   Actual glass/sash opening runs ~0.5" smaller than the nominal rough-opening
+//   size on each dimension — reflected below as the cut dimension.
+// - Egress minimums (bedroom + basement) cite IRC (International Residential
+//   Code) Section R310: net clear opening ≥ 5.7 sq ft (5.0 sq ft at grade
+//   level), min. clear height 24", min. clear width 20", max. sill height 44"
+//   above finished floor.
+// - Patio/sliding door widths (5', 6', 8') are the standard nominal widths
+//   published by Andersen, Pella, and Milgard patio door lines.
+// - ADA commercial door clearance (32" min. clear width) cites ADA Standards
+//   §404.2.3 / ICC A117.1.
+// - Skylight curb sizes (2222, 3030, 4646, etc.) cite VELUX's standard
+//   curb-mount nomenclature (FCM/FS series), the de facto sizing convention
+//   most other skylight manufacturers also build to.
+// - Storefront/curtain-wall module widths (4'–5' bays) and transom heights
+//   cite common Kawneer/EFCO/Tubelite aluminum storefront framing systems.
+//
+// ALL sizes below are reference-only. Always verify against the manufacturer
+// spec sheet or a field measurement before cutting — flag if unverified.
+
+const D_COMMUNITY = new Date("2026-09-04");
+const REV_COMMUNITY = "2026-09";
+const NOTE_COMMUNITY_SUFFIX =
+	" COMMUNITY REFERENCE TEMPLATE — standard/nominal industry size, not a field measurement. Verify against manufacturer spec sheet or on-site measurement before cutting.";
+
+// Simple rounded-rectangle path shared by every reference template — these are
+// dimension placeholders, not traced shapes, so an exact-shape SVG isn't needed.
+const SVG_RECT = "M4,4 L96,4 Q98,4 98,6 L98,94 Q98,96 96,96 L4,96 Q2,96 2,94 L2,6 Q2,4 4,4 Z";
+
+const COMMUNITY_RESIDENTIAL: Pattern[] = [
+	{
+		id: "comm-res-picture", vehicleId: "community-residential-standard", projectType: "residential",
+		category: "window-tint", zone: "res-picture-window", name: "Picture Window — Nominal 4050",
+		coverage: "full", svgPath: SVG_RECT, widthInches: 47.5, heightInches: 59.5, revision: REV_COMMUNITY,
+		notes: "Nominal 4'0\"x5'0\" fixed picture window (WWHH convention shared across Andersen 400/Pella Impervia/Milgard Tuscany catalogs). Cut size shown ~0.5\" under nominal per side to match sash glass opening." + NOTE_COMMUNITY_SUFFIX,
+		isPublished: true, createdAt: D_COMMUNITY, updatedAt: D_COMMUNITY,
+	},
+	{
+		id: "comm-res-living-room", vehicleId: "community-residential-standard", projectType: "residential",
+		category: "window-tint", zone: "res-living-room-window", name: "Living Room Window — Nominal 3050",
+		coverage: "full", svgPath: SVG_RECT, widthInches: 35.5, heightInches: 59.5, revision: REV_COMMUNITY,
+		notes: "Nominal 3'0\"x5'0\" double-hung window, the most common living-room callout across major manufacturer catalogs." + NOTE_COMMUNITY_SUFFIX,
+		isPublished: true, createdAt: D_COMMUNITY, updatedAt: D_COMMUNITY,
+	},
+	{
+		id: "comm-res-bedroom", vehicleId: "community-residential-standard", projectType: "residential",
+		category: "window-tint", zone: "res-bedroom-window", name: "Bedroom Window (Egress) — Nominal 2846",
+		coverage: "full", svgPath: SVG_RECT, widthInches: 31.5, heightInches: 53.5, revision: REV_COMMUNITY,
+		notes: "Nominal 2'8\"x4'6\" double-hung — common bedroom egress size. Meets IRC R310 egress minimums (net clear opening ≥5.7 sq ft, min. clear height 24\", min. clear width 20\", max. sill height 44\" AFF). Confirm actual egress compliance on-site; film should never obstruct the operable sash." + NOTE_COMMUNITY_SUFFIX,
+		isPublished: true, createdAt: D_COMMUNITY, updatedAt: D_COMMUNITY,
+	},
+	{
+		id: "comm-res-bathroom", vehicleId: "community-residential-standard", projectType: "residential",
+		category: "window-tint", zone: "res-bathroom-window", name: "Bathroom Window — Nominal 2020",
+		coverage: "full", svgPath: SVG_RECT, widthInches: 23.5, heightInches: 23.5, revision: REV_COMMUNITY,
+		notes: "Nominal 2'0\"x2'0\" awning/single-hung — common small bathroom size, frequently paired with frosted/privacy glass. If job calls for privacy film over frosted glass, confirm which side is film-friendly with the customer first." + NOTE_COMMUNITY_SUFFIX,
+		isPublished: true, createdAt: D_COMMUNITY, updatedAt: D_COMMUNITY,
+	},
+	{
+		id: "comm-res-kitchen", vehicleId: "community-residential-standard", projectType: "residential",
+		category: "window-tint", zone: "res-kitchen-window", name: "Kitchen Window — Nominal 3646",
+		coverage: "full", svgPath: SVG_RECT, widthInches: 35.5, heightInches: 53.5, revision: REV_COMMUNITY,
+		notes: "Nominal 3'6\"x4'6\" double-hung — common over-sink kitchen window callout." + NOTE_COMMUNITY_SUFFIX,
+		isPublished: true, createdAt: D_COMMUNITY, updatedAt: D_COMMUNITY,
+	},
+	{
+		id: "comm-res-basement", vehicleId: "community-residential-standard", projectType: "residential",
+		category: "window-tint", zone: "res-basement-window", name: "Basement Window (Egress) — Nominal 3220 Hopper",
+		coverage: "full", svgPath: SVG_RECT, widthInches: 31.5, heightInches: 19.5, revision: REV_COMMUNITY,
+		notes: "Nominal 3'2\"x2'0\" hopper/slider — minimum practical basement egress size under IRC R310 (net clear opening ≥5.0 sq ft at grade level, min. clear height 24\", min. clear width 20\", max. sill height 44\" AFF). Many basement windows exceed this minimum — always field-verify." + NOTE_COMMUNITY_SUFFIX,
+		isPublished: true, createdAt: D_COMMUNITY, updatedAt: D_COMMUNITY,
+	},
+	{
+		id: "comm-res-sliding-door", vehicleId: "community-residential-standard", projectType: "residential",
+		category: "window-tint", zone: "res-sliding-glass-door", name: "Sliding Glass Door — Standard 6ft (per panel)",
+		coverage: "full", svgPath: SVG_RECT, widthInches: 34.5, heightInches: 76.0, revision: REV_COMMUNITY,
+		notes: "6' (72\"x80\") two-panel slider is the most common patio door width (Andersen/Pella/Milgard lines also publish 5' and 8'). Dimensions shown are per glass panel on a 2-panel unit — verify panel count and per-panel glass size on-site; 3- and 4-panel configurations divide differently." + NOTE_COMMUNITY_SUFFIX,
+		isPublished: true, createdAt: D_COMMUNITY, updatedAt: D_COMMUNITY,
+	},
+	{
+		id: "comm-res-front-door", vehicleId: "community-residential-standard", projectType: "residential",
+		category: "window-tint", zone: "res-front-door-glass", name: "Front Door Glass Insert — Standard 3068 Door",
+		coverage: "partial", svgPath: SVG_RECT, widthInches: 22.0, heightInches: 64.0, revision: REV_COMMUNITY,
+		notes: "Glass-insert opening within a standard 3'0\"x6'8\" prehung entry door (Therma-Tru/Masonite catalogs). Decorative glass insert sizes vary widely by door line — this is a common full-lite dimension, not a universal one." + NOTE_COMMUNITY_SUFFIX,
+		isPublished: true, createdAt: D_COMMUNITY, updatedAt: D_COMMUNITY,
+	},
+	{
+		id: "comm-res-sidelight", vehicleId: "community-residential-standard", projectType: "residential",
+		category: "window-tint", zone: "res-front-door-sidelight", name: "Entry Door Sidelight — Standard 14\"",
+		coverage: "full", svgPath: SVG_RECT, widthInches: 13.0, heightInches: 76.0, revision: REV_COMMUNITY,
+		notes: "14\"-wide sidelight, the most common of Therma-Tru's published 10\"/12\"/14\" sidelight width options, at standard 80\" door height less frame." + NOTE_COMMUNITY_SUFFIX,
+		isPublished: true, createdAt: D_COMMUNITY, updatedAt: D_COMMUNITY,
+	},
+	{
+		id: "comm-res-garage", vehicleId: "community-residential-standard", projectType: "residential",
+		category: "window-tint", zone: "res-garage-window", name: "Garage Door Window Insert (per section)",
+		coverage: "full", svgPath: SVG_RECT, widthInches: 37.0, heightInches: 6.0, revision: REV_COMMUNITY,
+		notes: "Per-lite dimension for a common decorative garage-door window insert row (Clopay/Amarr catalogs) — most residential garage doors carry 3–4 lites per row across the top section. Insert sizes vary significantly by door model; treat as a starting estimate only." + NOTE_COMMUNITY_SUFFIX,
+		isPublished: true, createdAt: D_COMMUNITY, updatedAt: D_COMMUNITY,
+	},
+	{
+		id: "comm-res-sunroom", vehicleId: "community-residential-standard", projectType: "residential",
+		category: "window-tint", zone: "res-sunroom-window", name: "Sunroom Window — Nominal 3060",
+		coverage: "full", svgPath: SVG_RECT, widthInches: 35.5, heightInches: 71.5, revision: REV_COMMUNITY,
+		notes: "Nominal 3'0\"x6'0\" — common sunroom/patio-enclosure sash size. Sunroom systems vary more by manufacturer than standard house windows; treat as a rough starting point." + NOTE_COMMUNITY_SUFFIX,
+		isPublished: true, createdAt: D_COMMUNITY, updatedAt: D_COMMUNITY,
+	},
+	{
+		id: "comm-res-skylight", vehicleId: "community-residential-standard", projectType: "residential",
+		category: "window-tint", zone: "res-skylight", name: "Skylight — VELUX Curb-Mount 2222",
+		coverage: "full", svgPath: SVG_RECT, widthInches: 22.5, heightInches: 22.5, revision: REV_COMMUNITY,
+		notes: "22.5\"x22.5\" fixed curb-mount skylight (VELUX FCM/FS series nomenclature — the sizing convention most other skylight brands also build to). Other common VELUX curb sizes: 3030 (30\"x30\"), 4646 (46\"x46\"). Confirm model number before cutting; skylight glazing sizes are not standardized as tightly as house windows." + NOTE_COMMUNITY_SUFFIX,
+		isPublished: true, createdAt: D_COMMUNITY, updatedAt: D_COMMUNITY,
+	},
+];
+
+const COMMUNITY_COMMERCIAL: Pattern[] = [
+	{
+		id: "comm-com-storefront", vehicleId: "community-commercial-standard", projectType: "commercial",
+		category: "window-tint", zone: "com-storefront-window", name: "Storefront Glazing Lite — Standard 4ft Bay",
+		coverage: "full", svgPath: SVG_RECT, widthInches: 47.0, heightInches: 83.0, revision: REV_COMMUNITY,
+		notes: "4'0\" module width is the most common storefront framing bay spacing (Kawneer 451T/EFCO/Tubelite aluminum storefront systems); infill height reflects a typical ~7' glazed lite below an 8'–10' floor-to-floor. Actual module width and lite height vary by building — always confirm against the storefront shop drawings or field measurement." + NOTE_COMMUNITY_SUFFIX,
+		isPublished: true, createdAt: D_COMMUNITY, updatedAt: D_COMMUNITY,
+	},
+	{
+		id: "comm-com-entry-door", vehicleId: "community-commercial-standard", projectType: "commercial",
+		category: "window-tint", zone: "com-entry-door-glass", name: "Commercial Entry Door Glass — Standard 3ft ADA Door",
+		coverage: "full", svgPath: SVG_RECT, widthInches: 33.0, heightInches: 82.0, revision: REV_COMMUNITY,
+		notes: "Full-glass leaf on a standard 3'0\"x7'0\" commercial aluminum entry door. Minimum clear width of 32\" is required by ADA Standards §404.2.3 / ICC A117.1 — do not narrow the operable clearance with frame-mounted film." + NOTE_COMMUNITY_SUFFIX,
+		isPublished: true, createdAt: D_COMMUNITY, updatedAt: D_COMMUNITY,
+	},
+	{
+		id: "comm-com-display", vehicleId: "community-commercial-standard", projectType: "commercial",
+		category: "window-tint", zone: "com-display-window", name: "Retail Display Window — Standard 5x8ft Bay",
+		coverage: "full", svgPath: SVG_RECT, widthInches: 59.0, heightInches: 95.0, revision: REV_COMMUNITY,
+		notes: "5'x8' is a common large-format retail display bay size seen in strip-mall and main-street storefront construction. Display windows are one of the least standardized commercial glazing types — this is a rough starting estimate, always field-measure." + NOTE_COMMUNITY_SUFFIX,
+		isPublished: true, createdAt: D_COMMUNITY, updatedAt: D_COMMUNITY,
+	},
+	{
+		id: "comm-com-lobby", vehicleId: "community-commercial-standard", projectType: "commercial",
+		category: "window-tint", zone: "com-lobby-window", name: "Lobby Sidelight Glazing — Standard 24in",
+		coverage: "full", svgPath: SVG_RECT, widthInches: 23.0, heightInches: 83.0, revision: REV_COMMUNITY,
+		notes: "24\"-wide sidelight is a common lobby entry glazing width alongside a standard 3' commercial door, matching typical storefront mullion spacing." + NOTE_COMMUNITY_SUFFIX,
+		isPublished: true, createdAt: D_COMMUNITY, updatedAt: D_COMMUNITY,
+	},
+	{
+		id: "comm-com-office", vehicleId: "community-commercial-standard", projectType: "commercial",
+		category: "window-tint", zone: "com-office-window", name: "Interior Office Borrowed-Light — Standard 3x4ft",
+		coverage: "full", svgPath: SVG_RECT, widthInches: 35.0, heightInches: 47.0, revision: REV_COMMUNITY,
+		notes: "3'x4' interior glazed \"borrowed light\" panel — a common single-lite size for interior office partition glazing. If the panel is wired or tempered safety glass (common per NFPA 80/UL requirements near rated openings), confirm film compatibility with the glass manufacturer first." + NOTE_COMMUNITY_SUFFIX,
+		isPublished: true, createdAt: D_COMMUNITY, updatedAt: D_COMMUNITY,
+	},
+	{
+		id: "comm-com-conference", vehicleId: "community-commercial-standard", projectType: "commercial",
+		category: "window-tint", zone: "com-conference-room-window", name: "Conference Room Glazing — Standard 5x4ft",
+		coverage: "full", svgPath: SVG_RECT, widthInches: 59.0, heightInches: 47.0, revision: REV_COMMUNITY,
+		notes: "5'x4' interior glazing wall — common conference-room sightline panel size, often specified with switchable privacy or frosted film." + NOTE_COMMUNITY_SUFFIX,
+		isPublished: true, createdAt: D_COMMUNITY, updatedAt: D_COMMUNITY,
+	},
+	{
+		id: "comm-com-curtain-wall", vehicleId: "community-commercial-standard", projectType: "commercial",
+		category: "window-tint", zone: "com-curtain-wall", name: "Curtain Wall Module — Standard 5x8ft",
+		coverage: "full", svgPath: SVG_RECT, widthInches: 59.0, heightInches: 95.0, revision: REV_COMMUNITY,
+		notes: "5'x8' unitized curtain wall module is a common mullion spacing on mid-rise commercial systems (e.g. Kawneer 1600 System class framing). Curtain wall grids are highly project-specific — confirm exact module dimensions from the building's glazing shop drawings before cutting." + NOTE_COMMUNITY_SUFFIX,
+		isPublished: true, createdAt: D_COMMUNITY, updatedAt: D_COMMUNITY,
+	},
+	{
+		id: "comm-com-transom", vehicleId: "community-commercial-standard", projectType: "commercial",
+		category: "window-tint", zone: "com-transom-window", name: "Transom Window — Standard 3ft Door Width",
+		coverage: "full", svgPath: SVG_RECT, widthInches: 35.0, heightInches: 17.0, revision: REV_COMMUNITY,
+		notes: "18\" transom height over a standard 3'0\" commercial door is a common storefront proportion, but transom height varies by building elevation design far more than door width does." + NOTE_COMMUNITY_SUFFIX,
+		isPublished: true, createdAt: D_COMMUNITY, updatedAt: D_COMMUNITY,
+	},
+	{
+		id: "comm-com-skylight", vehicleId: "community-commercial-standard", projectType: "commercial",
+		category: "window-tint", zone: "com-skylight", name: "Commercial Skylight — Standard 4x4ft Curb Module",
+		coverage: "full", svgPath: SVG_RECT, widthInches: 47.0, heightInches: 47.0, revision: REV_COMMUNITY,
+		notes: "4'x4' is a standard commercial curb-mount skylight module (VELUX Commercial / Wasco lines build to this convention). Larger ganged/ridge skylight systems divide into multiple such modules — count panels on-site before cutting a full job set." + NOTE_COMMUNITY_SUFFIX,
+		isPublished: true, createdAt: D_COMMUNITY, updatedAt: D_COMMUNITY,
+	},
+];
+
 // ─── Seed map (used as fallback and for seeding Firestore) ───
 const SEED_PATTERNS: Record<string, Pattern[]> = {
 	"chevy-silverado1500-2014":         CHEVY_SILVERADO1500_2014_VISOR,
@@ -235,6 +434,8 @@ const SEED_PATTERNS: Record<string, Pattern[]> = {
 	"chevy-silverado1500-2017":         CHEVY_SILVERADO1500_2017_VISOR,
 	"chevy-silverado1500-2018":         CHEVY_SILVERADO1500_2018_VISOR,
 	"chevy-silverado1500-2019-limited": CHEVY_SILVERADO1500_2019_LIMITED_VISOR,
+	"community-residential-standard":   COMMUNITY_RESIDENTIAL,
+	"community-commercial-standard":    COMMUNITY_COMMERCIAL,
 };
 
 // ─── Store Factory ────────────────────────────
