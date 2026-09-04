@@ -7,9 +7,22 @@
 //
 // pdfjs-dist does the parsing/rendering (Mozilla's PDF engine, pure JS/WASM —
 // no native PDF library needed); @napi-rs/canvas supplies the Canvas2D
-// surface pdfjs draws into (prebuilt native binbinary, same deployment
-// story as sharp — works on Vercel's Linux/x64 Node runtime).
+// surface pdfjs draws into (prebuilt native binary, same deployment story
+// as sharp — works on Vercel's Linux/x64 Node runtime).
 import { createCanvas } from '@napi-rs/canvas';
+
+// pdfjs-dist (as of v6) uses Promise.withResolvers, which landed in V8/Node 22 —
+// the api routes here run on the nodejs20.x runtime, so it's missing there.
+// Polyfilling once at module load keeps every route on the pinned Node 20
+// runtime instead of needing a version bump just for this one dependency.
+if (typeof Promise.withResolvers !== 'function') {
+	(Promise as unknown as { withResolvers: <T>() => { promise: Promise<T>; resolve: (v: T) => void; reject: (e?: unknown) => void } }).withResolvers = function withResolvers<T>() {
+		let resolve!: (v: T) => void;
+		let reject!: (e?: unknown) => void;
+		const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
+		return { promise, resolve, reject };
+	};
+}
 
 export const MAX_PDF_PAGES_NOTE = 'Only the first page of a multi-page PDF is used.';
 
