@@ -16,7 +16,8 @@
 	--color-brand-dim: #0070ff;
 	--color-brand-muted: rgba(0, 229, 255, 0.15);
 
-	/* Semantic */
+	/* Semantic — theme-aware, set per-theme below. These @theme defaults
+	   are the dark-mode-bright values, used as a fallback only. */
 	--color-success: #00d68f;
 	--color-warning: #ffb547;
 	--color-danger: #ff4d6d;
@@ -45,20 +46,34 @@
 	color-scheme: light;
 
 	/* Backgrounds */
-	--bg-base: #f5f5f0;
-	--bg-surface: #ffffff;
-	--bg-surface-2: #f8f8f4;
-	--bg-surface-3: #efefea;
+	--bg-base: #eeeee7;
+	--bg-surface: #faf9f5;
+	--bg-surface-2: #f2f1ea;
+	--bg-surface-3: #e8e7de;
 	--bg-overlay: rgba(0, 0, 0, 0.04);
 	--bg-inverse: #0e1118;
 
 	/* Text */
-	--text-primary: #0a0a0a;
-	--text-secondary: #4a4a4a;
-	--text-tertiary: #8a8a8a;
-	--text-disabled: #c0c0c0;
+	--text-primary: #14161a;
+	--text-secondary: #45484e;
+	--text-tertiary: #6b6e74;
+	--text-disabled: #a8aaad;
 	--text-inverse: #f0f2f7;
-	--text-brand: #0070ff;
+	--text-brand: #0058cc;
+
+	/* Status text (AA-safe on light surfaces) — separate from the raw
+	   --color-success/warning/danger fills, which stay bright for
+	   white-on-fill badges/buttons. */
+	--text-success: #067a52;
+	--text-warning: #9a5b00;
+	--text-danger: #c81e3d;
+
+	/* Darkened for light-mode legibility — most call sites use these as
+	   text color directly, so the semantic tokens themselves must shift
+	   per-theme rather than only the --text-* aliases above. */
+	--color-success: #067a52;
+	--color-warning: #9a5b00;
+	--color-danger: #c81e3d;
 
 	/* Borders */
 	--border-subtle: rgba(0, 0, 0, 0.06);
@@ -99,6 +114,14 @@
 	--text-disabled: rgba(240, 242, 247, 0.2);
 	--text-inverse: #0a0a0a;
 	--text-brand: #00e5ff;
+
+	--text-success: #00d68f;
+	--text-warning: #ffb547;
+	--text-danger: #ff4d6d;
+
+	--color-success: #00d68f;
+	--color-warning: #ffb547;
+	--color-danger: #ff4d6d;
 
 	--border-subtle: rgba(255, 255, 255, 0.05);
 	--border-default: rgba(255, 255, 255, 0.08);
@@ -319,13 +342,13 @@ pre {
 	color: var(--text-brand);
 }
 .text-success {
-	color: var(--color-success);
+	color: var(--text-success);
 }
 .text-warning {
-	color: var(--color-warning);
+	color: var(--text-warning);
 }
 .text-danger {
-	color: var(--color-danger);
+	color: var(--text-danger);
 }
 
 .bg-surface {

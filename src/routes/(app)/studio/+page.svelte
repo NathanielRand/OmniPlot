@@ -2493,6 +2493,24 @@
 
 	<!-- ─── Main area ─── -->
 	<div class="studio__body" class:studio__body--collapsed={panelCollapsed}>
+		<!-- Mobile-only: open the settings panel as a bottom sheet -->
+		<button
+			class="mobile-panel-fab"
+			onclick={() => (panelCollapsed = false)}
+			aria-label="Open settings panel"
+			title="Settings"
+		>
+			<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+				<circle cx="12" cy="12" r="3" />
+				<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+			</svg>
+		</button>
+
+		{#if !panelCollapsed}
+			<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+			<div class="mobile-panel-backdrop" onclick={() => (panelCollapsed = true)}></div>
+		{/if}
+
 		<!-- Canvas -->
 		<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions, a11y_no_noninteractive_element_interactions -->
 		<div
@@ -5591,13 +5609,71 @@
 		}
 	}
 
+	.mobile-panel-fab,
+	.mobile-panel-backdrop {
+		display: none;
+	}
+
 	@media (max-width: 768px) {
 		.studio__body {
 			grid-template-columns: 1fr;
 		}
+
+		/* Settings panel becomes a bottom sheet, opened via the FAB */
 		.studio__panel {
-			display: none;
+			position: fixed;
+			left: 0;
+			right: 0;
+			bottom: 0;
+			height: 70vh;
+			max-height: 70vh;
+			z-index: 410;
+			border-left: none;
+			border-top: 1px solid var(--border-default);
+			border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+			box-shadow: var(--shadow-lg);
+			transform: translateY(100%);
+			transition: transform 0.22s var(--ease-smooth);
 		}
+		.studio__panel--collapsed {
+			transform: translateY(100%);
+			border-top: none;
+		}
+		.studio__panel:not(.studio__panel--collapsed) {
+			transform: translateY(0);
+		}
+		.panel-collapse-btn {
+			top: 8px;
+			left: 50%;
+			transform: translateX(-50%);
+		}
+
+		.mobile-panel-fab {
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			position: fixed;
+			right: 16px;
+			bottom: 16px;
+			width: 48px;
+			height: 48px;
+			border-radius: 50%;
+			background: var(--color-brand-dim);
+			color: #fff;
+			border: none;
+			box-shadow: var(--shadow-lg);
+			z-index: 405;
+			cursor: pointer;
+		}
+
+		.mobile-panel-backdrop {
+			display: block;
+			position: fixed;
+			inset: 0;
+			background: rgba(0, 0, 0, 0.45);
+			z-index: 400;
+		}
+
 		.cut-btn span {
 			display: none;
 		}

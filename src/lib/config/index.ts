@@ -820,7 +820,62 @@ export const FAQ_ITEMS = [
 ] as const;
 
 // ─── Changelog ────────────────────────────────
+// Newest first. `LATEST_VERSION` drives the sidebar "what's new" badge —
+// bump it whenever a release entry is added below.
+export const LATEST_VERSION = "1.10.0";
+
 export const CHANGELOG = [
+	{
+		version: "1.10.0",
+		date: "2026-09-04",
+		label: "Multi-shop & Studio nesting",
+		changes: [
+			{
+				type: "feature",
+				text: "Organizations, shops, and groups — manage multiple shop locations and teams under one account, with an org switcher and per-org billing.",
+			},
+			{
+				type: "feature",
+				text: "Project types beyond vehicles — residential, commercial, and custom projects are now supported alongside vehicle PPF/tint, with matching library filters and admin fields.",
+			},
+			{
+				type: "improvement",
+				text: "Studio nesting rework — true polygon shapes, an adjustable buffer, a ruler UI, and a gap-fill pass that rescues odd shapes into interior voids instead of leaving them flagged out-of-bounds. Roll-length efficiency is significantly improved.",
+			},
+			{
+				type: "improvement",
+				text: "Auto re-optimize toggle re-nests automatically when patterns are added or removed, and patterns can now be dragged directly to reposition them.",
+			},
+			{
+				type: "improvement",
+				text: "Studio settings panel redesign — reordered tabs, accordion controls, larger touch targets, and scrolling for long panels.",
+			},
+			{
+				type: "improvement",
+				text: "USB plotter connection now persists across navigation and reconnects automatically in the background using a saved plotter identity.",
+			},
+			{
+				type: "improvement",
+				text: "Pattern importer overhaul — improved vectorize/trace quality, multi-color pattern import, and smoother SVG path smoothing.",
+			},
+			{
+				type: "improvement",
+				text: "Destructive confirmations now use a native in-app modal instead of the browser's confirm() dialog.",
+			},
+			{
+				type: "improvement",
+				text: "Light mode contrast pass — softened bright-white surfaces and darkened status colors (success/warning/danger) so colored text is legible against light backgrounds.",
+			},
+			{
+				type: "improvement",
+				text: "Mobile responsiveness pass across the app shell, studio, and library.",
+			},
+			{
+				type: "fix",
+				text: "Pattern CRUD in admin now supports all pattern categories, with category-specific card styling.",
+			},
+		],
+	},
 	{
 		version: "1.9.0",
 		date: "2026-05-28",

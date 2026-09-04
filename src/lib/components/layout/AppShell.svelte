@@ -5,8 +5,8 @@
 	import Badge from "$lib/components/ui/Badge.svelte";
 	import EarlyAccessBadge from "$lib/components/ui/EarlyAccessBadge.svelte";
 	import ThemeToggle from "$lib/components/ui/ThemeToggle.svelte";
-	import { uiStore, userStore, shopStore, agentStore } from "$lib/stores";
-	import { APP_NAV } from "$lib/config";
+	import { uiStore, userStore, shopStore, agentStore, changelogStore } from "$lib/stores";
+	import { APP_NAV, LATEST_VERSION } from "$lib/config";
 	import { signOutUser } from "$lib/firebase/auth";
 	import { goto } from "$app/navigation";
 
@@ -57,6 +57,20 @@
 	}
 
 	function closeMenu() { menuOpen = false; }
+
+	// ─── Mobile drawer ────────────────────────
+	$effect(() => {
+		currentPath;
+		uiStore.closeMobileMenu();
+	});
+
+	function handleMenuBtnClick() {
+		if (typeof window !== "undefined" && window.matchMedia("(max-width: 768px)").matches) {
+			uiStore.toggleMobileMenu();
+		} else {
+			uiStore.toggleSidebar();
+		}
+	}
 </script>
 
 <div class="app-shell" class:sidebar-collapsed={!uiStore.sidebarOpen}>
@@ -65,8 +79,9 @@
 		<div class="topbar__left">
 			<button
 				class="topbar__menu-btn"
-				onclick={uiStore.toggleSidebar}
-				aria-label="Toggle sidebar"
+				onclick={handleMenuBtnClick}
+				aria-label="Toggle navigation"
+				aria-expanded={uiStore.mobileMenuOpen}
 			>
 				<svg
 					width="16"
@@ -242,8 +257,14 @@
 
 	<!-- ─── Main area ─────────────────────────── -->
 	<div class="app-body">
+		<!-- Mobile drawer backdrop -->
+		{#if uiStore.mobileMenuOpen}
+			<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+			<div class="sidebar-backdrop animate-fade-in" onclick={uiStore.closeMobileMenu}></div>
+		{/if}
+
 		<!-- Sidebar -->
-		<aside class="sidebar" aria-label="Sidebar">
+		<aside class="sidebar" class:sidebar--mobile-open={uiStore.mobileMenuOpen} aria-label="Sidebar">
 			<button
 				class="sidebar__collapse-btn"
 				onclick={uiStore.toggleSidebar}
@@ -276,6 +297,7 @@
 						aria-current={currentPath === item.href ? "page" : undefined}
 						data-tour={item.href === "/library" ? "sidebar-library" : undefined}
 						title={!uiStore.sidebarOpen ? item.label : undefined}
+						onclick={uiStore.closeMobileMenu}
 					>
 						<span class="sidebar__icon" aria-hidden="true">
 							{#if item.icon === "scissors"}
@@ -383,6 +405,22 @@
 			</nav>
 
 			<div class="sidebar__footer">
+				<a
+					href="/changelog"
+					class="sidebar__item sidebar__item--changelog"
+					class:active={currentPath === "/changelog"}
+					title={!uiStore.sidebarOpen ? "Changelog" : undefined}
+					onclick={() => { changelogStore.markSeen(); uiStore.closeMobileMenu(); }}
+				>
+					<span class="sidebar__icon" aria-hidden="true">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/><path d="M4 4v16h16"/></svg>
+					</span>
+					<span class="sidebar__label">Changelog</span>
+					{#if changelogStore.hasUnseen}
+						<span class="sidebar__version-badge" title="New version: v{LATEST_VERSION}">v{LATEST_VERSION}</span>
+					{/if}
+				</a>
+
 				{#if user && user.tier === "free"}
 					<div class="sidebar__upsell" class:sidebar__upsell--hidden={!uiStore.sidebarOpen}>
 						<p class="sidebar__upsell-text">
@@ -834,6 +872,30 @@
 		pointer-events: none;
 	}
 
+	/* Changelog "new version" pill — brand-colored, distinct from the
+	   warning-colored agent update badge above. */
+	.sidebar__version-badge {
+		flex-shrink: 0;
+		padding: 1px 6px;
+		border-radius: 999px;
+		font-size: 0.6rem;
+		font-weight: 700;
+		font-family: var(--font-mono);
+		background: var(--color-brand-muted);
+		color: var(--text-brand);
+		border: 1px solid var(--border-brand);
+		transition: opacity 0.15s;
+	}
+
+	.sidebar-collapsed .sidebar__version-badge {
+		opacity: 0;
+		pointer-events: none;
+	}
+
+	.sidebar__item--changelog {
+		margin-bottom: 4px;
+	}
+
 	.sidebar__footer {
 		padding: 8px 8px 10px;
 		border-top: 1px solid var(--border-subtle);
@@ -925,13 +987,86 @@
 	}
 
 	/* ─── Mobile ────── */
+	.sidebar-backdrop {
+		display: none;
+	}
+
 	@media (max-width: 768px) {
 		.topbar__nav { display: none; }
 
-		.app-body { grid-template-columns: 1fr; }
-
-		.sidebar { display: none; }
+		.app-body {
+			grid-template-columns: 1fr;
+			position: relative;
+		}
 
 		.sidebar-collapsed .app-body { grid-template-columns: 1fr; }
+
+		/* Sidebar becomes a slide-in drawer instead of a persistent column */
+		.sidebar {
+			position: fixed;
+			top: 52px;
+			bottom: 0;
+			left: 0;
+			width: 240px;
+			max-width: 82vw;
+			z-index: 400;
+			transform: translateX(-100%);
+			transition: transform 0.22s var(--ease-smooth);
+			box-shadow: var(--shadow-lg);
+		}
+
+		.sidebar-collapsed .sidebar {
+			width: 240px;
+		}
+
+		.sidebar--mobile-open {
+			transform: translateX(0);
+		}
+
+		.sidebar__collapse-btn {
+			display: none;
+		}
+
+		.sidebar-collapsed .sidebar__label,
+		.sidebar-collapsed .sidebar__version-badge,
+		.sidebar-collapsed .sidebar__update-badge {
+			opacity: 1;
+			max-width: 140px;
+			pointer-events: auto;
+		}
+
+		.sidebar-backdrop {
+			display: block;
+			position: fixed;
+			inset: 52px 0 0 0;
+			background: rgba(0, 0, 0, 0.45);
+			z-index: 390;
+		}
+
+		/* Touch targets need more room on mobile */
+		.sidebar__item {
+			padding: 12px 10px;
+			font-size: 0.875rem;
+		}
+
+		.topbar {
+			padding: 0 12px;
+		}
+
+		.topbar__brand :global(.early-access-badge) {
+			display: none;
+		}
+
+		.user-menu {
+			width: calc(100vw - 24px);
+			max-width: 320px;
+		}
+	}
+
+	@media (max-width: 480px) {
+		.upgrade-btn {
+			padding: 5px 9px;
+			font-size: 0.6875rem;
+		}
 	}
 </style>

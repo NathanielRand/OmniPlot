@@ -13,6 +13,8 @@ import {
 	PLOTTER_PRESETS,
 	DEFAULT_CANVAS_STATE,
 	CURRENT_AGENT_VERSION,
+	CHANGELOG,
+	LATEST_VERSION,
 } from "$lib/config";
 
 // ─── Theme ────────────────────────────────────
@@ -54,6 +56,66 @@ function createThemeStore() {
 }
 
 export const themeStore = createThemeStore();
+
+// ─── Changelog ────────────────────────────────
+const CHANGELOG_SEEN_KEY = "cc-changelog-seen";
+
+function createChangelogStore() {
+	let lastSeenVersion = $state<string | null>(null);
+	let ready = $state(false);
+
+	const versionIndex = (v: string) =>
+		CHANGELOG.findIndex((r) => r.version === v);
+
+	// Entries strictly newer than lastSeenVersion, newest first.
+	const unseenReleases = $derived.by(() => {
+		if (!ready) return [];
+		if (lastSeenVersion === null) return [];
+		const seenIdx = versionIndex(lastSeenVersion);
+		// Unknown/legacy version -> treat everything as seen rather than
+		// badge the user with the entire history.
+		if (seenIdx === -1) return [];
+		return CHANGELOG.slice(0, seenIdx);
+	});
+
+	const hasUnseen = $derived(ready && unseenReleases.length > 0);
+
+	function init() {
+		if (typeof localStorage === "undefined") return;
+		const saved = localStorage.getItem(CHANGELOG_SEEN_KEY);
+		if (saved === null) {
+			// First-time visitor: don't badge the full history.
+			localStorage.setItem(CHANGELOG_SEEN_KEY, LATEST_VERSION);
+			lastSeenVersion = LATEST_VERSION;
+		} else {
+			lastSeenVersion = saved;
+		}
+		ready = true;
+	}
+
+	function markSeen() {
+		lastSeenVersion = LATEST_VERSION;
+		if (typeof localStorage !== "undefined") {
+			localStorage.setItem(CHANGELOG_SEEN_KEY, LATEST_VERSION);
+		}
+	}
+
+	return {
+		get lastSeenVersion() {
+			return lastSeenVersion;
+		},
+		get unseenReleases() {
+			return unseenReleases;
+		},
+		get hasUnseen() {
+			return hasUnseen;
+		},
+		init,
+		markSeen,
+	};
+}
+
+export const changelogStore = createChangelogStore();
 
 // ─── Toast notifications ──────────────────────
 function createToastStore() {
@@ -213,6 +275,7 @@ function createUiStore() {
 	let reportModalOpen = $state(false);
 	let tourOpen = $state(false);
 	let earlyAccessModalOpen = $state(false);
+	let changelogModalOpen = $state(false);
 
 	return {
 		get sidebarOpen() {
@@ -238,6 +301,9 @@ function createUiStore() {
 		},
 		get earlyAccessModalOpen() {
 			return earlyAccessModalOpen;
+		},
+		get changelogModalOpen() {
+			return changelogModalOpen;
 		},
 
 		toggleSidebar() {
@@ -284,6 +350,12 @@ function createUiStore() {
 		},
 		closeEarlyAccessModal() {
 			earlyAccessModalOpen = false;
+		},
+		openChangelogModal() {
+			changelogModalOpen = true;
+		},
+		closeChangelogModal() {
+			changelogModalOpen = false;
 		},
 	};
 }
