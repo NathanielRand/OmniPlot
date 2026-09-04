@@ -20,6 +20,7 @@
 //////////////////////////////////////
 // BACKLOG
 ////////////////////////////////
+- Plotters page "add plotter" modal isnt wired correctly with as it doesnt detect usb or cut agent or anything.
 - upload pattern btn dyancmially changes to incorrect values for the pattern library category filter views
 - btn for user to scan for installed cut agent already on local device.
 - check community patterns are only visible by all other users only once admin approves.
