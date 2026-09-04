@@ -4,8 +4,11 @@
 	import Button from "$lib/components/ui/Button.svelte";
 	import {
 		patternStore,
-		PPF_ZONES_LIST,
-		TINT_ZONES_LIST,
+		PATTERN_CATEGORIES,
+		zonesForCategory,
+		categoryShortLabel,
+		categoryLabel,
+		categoryMeta,
 		type VehicleEntry,
 		type PatternStatus,
 	} from "$lib/stores/patternStore.svelte";
@@ -42,24 +45,20 @@
 				return mq && ms;
 			})
 			.map((v) => {
-				const ppfPats  = patternStore.getPatterns(v.id, "ppf");
-				const tintPats = patternStore.getPatterns(v.id, "window-tint");
+				const allPats = patternStore.getPatterns(v.id);
+				const shown = filterCategory === "both" ? allPats : allPats.filter((p) => p.category === filterCategory);
 				return {
 					...v,
-					patterns:      ppfPats.length,
-					published:     ppfPats.filter((p) => p.isPublished).length,
-					tintZones:     tintPats.length,
-					tintPublished: tintPats.filter((p) => p.isPublished).length,
+					patterns:  shown.length,
+					published: shown.filter((p) => p.isPublished).length,
 				};
 			}),
 	);
 
 	const totals = $derived({
-		vehicles:     patternStore.vehicles.length,
-		ppfPatterns:  patternStore.vehicles.reduce((s, v) => s + patternStore.getPatterns(v.id, "ppf").length, 0),
-		ppfPublished: patternStore.vehicles.reduce((s, v) => s + patternStore.getPatterns(v.id, "ppf").filter((p) => p.isPublished).length, 0),
-		tintZones:    patternStore.vehicles.reduce((s, v) => s + patternStore.getPatterns(v.id, "window-tint").length, 0),
-		tintPublished:patternStore.vehicles.reduce((s, v) => s + patternStore.getPatterns(v.id, "window-tint").filter((p) => p.isPublished).length, 0),
+		vehicles: patternStore.vehicles.length,
+		patterns: patternStore.vehicles.reduce((s, v) => s + patternStore.getPatterns(v.id).length, 0),
+		published:patternStore.vehicles.reduce((s, v) => s + patternStore.getPatterns(v.id).filter((p) => p.isPublished).length, 0),
 		drafts:       patternStore.vehicles.filter((v) => v.status === "draft" || v.status === "review").length,
 	});
 
@@ -366,10 +365,10 @@
 	let pendingDeleteId   = $state<string | null>(null);
 
 	let newPattern = $state({
-		zone: "windshield" as PatternZone, name: "", coverage: "full" as PatternCoverage,
-		widthInches: 24, heightInches: 16, svgPath: "", notes: "", isPublished: false,
+		zone: "custom" as PatternZone, name: "", coverage: "full" as PatternCoverage,
+		widthInches: 24, heightInches: 16, svgPath: "", svgUrl: "", notes: "", isPublished: false,
 	});
-	let editPatch = $state({ name: "", widthInches: 0, heightInches: 0, isPublished: false, notes: "" });
+	let editPatch = $state({ name: "", widthInches: 0, heightInches: 0, svgUrl: "", isPublished: false, notes: "" });
 
 	function openEditPanel(v: VehicleEntry) {
 		editingVehicle = v; editPanelTab = "window-tint";
@@ -380,7 +379,7 @@
 	const panelPatterns = $derived(
 		editingVehicle ? patternStore.getPatterns(editingVehicle.id, editPanelTab) : [],
 	);
-	const zoneOptions = $derived(editPanelTab === "ppf" ? PPF_ZONES_LIST : TINT_ZONES_LIST);
+	const zoneOptions = $derived(zonesForCategory(editPanelTab));
 
 	function handleAddPattern() {
 		if (!editingVehicle || !newPattern.name.trim()) return;
@@ -389,12 +388,13 @@
 			zone: newPattern.zone, name: newPattern.name.trim(),
 			coverage: newPattern.coverage,
 			svgPath: newPattern.svgPath.trim() || "M10,90 Q15,20 50,5 Q85,20 90,90",
+			svgUrl: newPattern.svgUrl.trim() || undefined,
 			widthInches: newPattern.widthInches, heightInches: newPattern.heightInches,
 			revision: new Date().toISOString().split("T")[0].slice(0, 7),
 			notes: newPattern.notes.trim() || undefined,
 			isPublished: newPattern.isPublished,
 		});
-		newPattern = { zone: "windshield", name: "", coverage: "full", widthInches: 24, heightInches: 16, svgPath: "", notes: "", isPublished: false };
+		newPattern = { zone: zoneOptions[0]?.value ?? "custom", name: "", coverage: "full", widthInches: 24, heightInches: 16, svgPath: "", svgUrl: "", notes: "", isPublished: false };
 		showAddPattern = false;
 	}
 
@@ -402,7 +402,7 @@
 		const p = panelPatterns.find((x) => x.id === id);
 		if (!p) return;
 		editPatternId = id;
-		editPatch = { name: p.name, widthInches: p.widthInches, heightInches: p.heightInches, isPublished: p.isPublished, notes: p.notes ?? "" };
+		editPatch = { name: p.name, widthInches: p.widthInches, heightInches: p.heightInches, svgUrl: p.svgUrl ?? "", isPublished: p.isPublished, notes: p.notes ?? "" };
 		showAddPattern = false;
 	}
 
@@ -410,7 +410,8 @@
 		if (!editPatternId) return;
 		patternStore.updatePattern(editPatternId, {
 			name: editPatch.name, widthInches: editPatch.widthInches,
-			heightInches: editPatch.heightInches, isPublished: editPatch.isPublished,
+			heightInches: editPatch.heightInches, svgUrl: editPatch.svgUrl.trim() || undefined,
+			isPublished: editPatch.isPublished,
 			notes: editPatch.notes || undefined,
 		});
 		editPatternId = null;
@@ -445,9 +446,8 @@ onMount(() => {
 	<!-- Summary cards -->
 	<div class="summary-row">
 		{#each [
-			{ label: "Total subjects",    value: totals.vehicles },
-			{ label: "PPF patterns",      value: totals.ppfPatterns,     sub: `${totals.ppfPublished} published` },
-			{ label: "Window tint zones", value: totals.tintZones,       sub: `${totals.tintPublished} published` },
+			{ label: "Total subjects",  value: totals.vehicles },
+			{ label: "Total patterns",  value: totals.patterns, sub: `${totals.published} published` },
 			{ label: "Community queue",   value: pendingSubmissions.length, sub: pendingSubmissions.length ? "needs review" : "all clear", accent: pendingSubmissions.length > 0 },
 			{ label: "Adj. requests",     value: pendingAdjustments.length, sub: pendingAdjustments.length ? "needs review" : "all clear", accent: pendingAdjustments.length > 0 },
 		] as s}
@@ -512,9 +512,10 @@ onMount(() => {
 								</td>
 								<td class="td-vehicle">{submissionSubjectLabel(sub)}</td>
 								<td>
-									<Badge variant={sub.category === "ppf" ? "brand" : "default"} size="sm">
-										{sub.category === "ppf" ? "PPF" : "Tint"}
-									</Badge>
+									<span class="cat-badge" style="--cat-accent: {categoryMeta(sub.category).accent}">
+										<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d={categoryMeta(sub.category).icon}/></svg>
+										{categoryShortLabel(sub.category)}
+									</span>
 								</td>
 								<td class="td-mono">{sub.widthInches}" × {sub.heightInches}"</td>
 								<td class="td-date">{sub.createdAt.toLocaleDateString()}</td>
@@ -631,8 +632,19 @@ onMount(() => {
 			<h2 class="section-title">Subjects</h2>
 			<div class="toolbar">
 				<div class="category-tabs" role="group" aria-label="Category">
-					{#each ([["both","All"], ["ppf","PPF"], ["window-tint","Tint"]] as ["both" | PatternCategory, string][]) as [val, label]}
-						<button class="status-tab" class:active={filterCategory === val} onclick={() => (filterCategory = val)} aria-pressed={filterCategory === val}>{label}</button>
+					<button class="status-tab" class:active={filterCategory === "both"} onclick={() => (filterCategory = "both")} aria-pressed={filterCategory === "both"}>All</button>
+					{#each PATTERN_CATEGORIES as c}
+						<button
+							class="status-tab status-tab--cat"
+							class:active={filterCategory === c.value}
+							style="--cat-accent: {c.accent}"
+							onclick={() => (filterCategory = c.value)}
+							aria-pressed={filterCategory === c.value}
+							title={c.label}
+						>
+							<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d={c.icon}/></svg>
+							{c.shortLabel}
+						</button>
 					{/each}
 				</div>
 				<div class="status-tabs" role="tablist">
@@ -652,8 +664,8 @@ onMount(() => {
 				<thead>
 					<tr>
 						<th>Subject</th>
-						{#if filterCategory !== "window-tint"}<th>PPF patterns</th><th>PPF coverage</th>{/if}
-						{#if filterCategory !== "ppf"}<th>Tint zones</th><th>Tint coverage</th>{/if}
+						<th>{filterCategory === "both" ? "Patterns" : `${categoryShortLabel(filterCategory)} patterns`}</th>
+						<th>Coverage</th>
 						<th>Status</th>
 						<th>Updated</th>
 						<th class="th-actions"></th>
@@ -670,24 +682,13 @@ onMount(() => {
 									<div class="vehicle-name">{subjectName(v)}</div>
 								</div>
 							</td>
-							{#if filterCategory !== "window-tint"}
-								<td class="td-mono">{v.published} / {v.patterns}</td>
-								<td>
-									<div class="coverage-bar" role="meter" aria-valuenow={v.published} aria-valuemax={v.patterns}>
-										<div class="coverage-bar__fill" style="width: {v.patterns > 0 ? Math.round((v.published / v.patterns) * 100) : 0}%"></div>
-									</div>
-									<span class="coverage-pct">{v.patterns > 0 ? Math.round((v.published / v.patterns) * 100) : 0}%</span>
-								</td>
-							{/if}
-							{#if filterCategory !== "ppf"}
-								<td class="td-mono">{v.tintPublished} / {v.tintZones}</td>
-								<td>
-									<div class="coverage-bar coverage-bar--tint" role="meter" aria-valuenow={v.tintPublished} aria-valuemax={v.tintZones}>
-										<div class="coverage-bar__fill" style="width: {v.tintZones > 0 ? Math.round((v.tintPublished / v.tintZones) * 100) : 0}%"></div>
-									</div>
-									<span class="coverage-pct">{v.tintZones > 0 ? Math.round((v.tintPublished / v.tintZones) * 100) : 0}%</span>
-								</td>
-							{/if}
+							<td class="td-mono">{v.published} / {v.patterns}</td>
+							<td>
+								<div class="coverage-bar" role="meter" aria-valuenow={v.published} aria-valuemax={v.patterns}>
+									<div class="coverage-bar__fill" style="width: {v.patterns > 0 ? Math.round((v.published / v.patterns) * 100) : 0}%"></div>
+								</div>
+								<span class="coverage-pct">{v.patterns > 0 ? Math.round((v.published / v.patterns) * 100) : 0}%</span>
+							</td>
 							<td>
 								<Badge variant={v.status === "published" ? "success" : v.status === "review" ? "warning" : "default"} size="sm" dot={v.status === "published"}>{v.status}</Badge>
 							</td>
@@ -727,7 +728,7 @@ onMount(() => {
 						</tr>
 					{/each}
 					{#if filteredVehicles.length === 0}
-						<tr><td colspan="9" class="td-empty">No vehicles match your search.</td></tr>
+						<tr><td colspan="6" class="td-empty">No vehicles match your search.</td></tr>
 					{/if}
 				</tbody>
 			</table>
@@ -883,7 +884,7 @@ onMount(() => {
 			<div class="review-meta">
 				<div class="review-meta__row">
 					<span class="review-meta__label">Category</span>
-					<span class="review-meta__val">{reviewTarget.category === "ppf" ? "PPF" : "Window Tint"}</span>
+					<span class="review-meta__val">{categoryLabel(reviewTarget.category)}</span>
 				</div>
 				<div class="review-meta__row">
 					<span class="review-meta__label">Zone</span>
@@ -995,7 +996,7 @@ onMount(() => {
 							value={editSubForm.zones[0] ?? ""}
 							onchange={(e) => { editSubForm.zones = [e.currentTarget.value as PatternZone]; }}
 						>
-							{#each (editSubTarget.category === "ppf" ? PPF_ZONES_LIST : TINT_ZONES_LIST) as z}
+							{#each zonesForCategory(editSubTarget.category) as z}
 								<option value={z.value}>{z.label}</option>
 							{/each}
 						</select>
@@ -1092,16 +1093,22 @@ onMount(() => {
 		</div>
 
 		<div class="edit-panel__tabs">
-			{#each ([["window-tint","Window Tint"],["ppf","PPF"]] as [PatternCategory, string][]) as [cat, label]}
-				<button class="ep-tab" class:active={editPanelTab === cat} onclick={() => { editPanelTab = cat; showAddPattern = false; editPatternId = null; }}>
-					{label}<span class="ep-tab__count">{patternStore.getPatterns(editingVehicle.id, cat).length}</span>
+			{#each PATTERN_CATEGORIES as c}
+				<button
+					class="ep-tab"
+					class:active={editPanelTab === c.value}
+					style="--cat-accent: {c.accent}"
+					onclick={() => { editPanelTab = c.value; showAddPattern = false; editPatternId = null; }}
+				>
+					<span class="ep-tab__icon" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d={c.icon}/></svg></span>
+					{c.shortLabel}<span class="ep-tab__count">{patternStore.getPatterns(editingVehicle.id, c.value).length}</span>
 				</button>
 			{/each}
 		</div>
 
 		<div class="edit-panel__list">
 			{#if panelPatterns.length === 0}
-				<div class="ep-empty">No {editPanelTab === "ppf" ? "PPF" : "window tint"} patterns yet.</div>
+				<div class="ep-empty">No {categoryLabel(editPanelTab)} patterns yet.</div>
 			{/if}
 			{#each panelPatterns as pat (pat.id)}
 				{#if editPatternId === pat.id}
@@ -1112,6 +1119,7 @@ onMount(() => {
 								<div class="form-group"><label class="form-label" for="ep-w-{pat.id}">W (in)</label><input id="ep-w-{pat.id}" type="number" class="form-input form-input--sm" bind:value={editPatch.widthInches} min="0.5" step="0.5"/></div>
 								<div class="form-group"><label class="form-label" for="ep-h-{pat.id}">H (in)</label><input id="ep-h-{pat.id}" type="number" class="form-input form-input--sm" bind:value={editPatch.heightInches} min="0.5" step="0.5"/></div>
 							</div>
+							<div class="form-group"><label class="form-label" for="ep-svgurl-{pat.id}">SVG URL <span class="form-label__opt">(optional)</span></label><input id="ep-svgurl-{pat.id}" type="text" class="form-input form-input--sm" bind:value={editPatch.svgUrl} placeholder="https://.../pattern.svg"/></div>
 							<div class="form-group"><label class="form-label" for="ep-notes-{pat.id}">Notes</label><input id="ep-notes-{pat.id}" type="text" class="form-input form-input--sm" bind:value={editPatch.notes}/></div>
 							<div class="pattern-edit-form__footer">
 								<label class="toggle-label"><input type="checkbox" bind:checked={editPatch.isPublished}/>Published</label>
@@ -1126,8 +1134,9 @@ onMount(() => {
 					<div class="pattern-row">
 						<div class="pattern-row__preview">
 							<svg width="32" height="28" viewBox="0 0 100 100" fill="none" aria-hidden="true">
-								<path d={pat.svgPath} fill={editPanelTab === "window-tint" ? "rgba(0,112,255,0.08)" : "rgba(0,229,255,0.06)"} stroke={editPanelTab === "window-tint" ? "var(--color-brand-dim)" : "var(--color-brand)"} stroke-width="3" stroke-linecap="round"/>
+								<path d={pat.svgPath} fill="{categoryMeta(editPanelTab).accent}22" stroke={categoryMeta(editPanelTab).accent} stroke-width="3" stroke-linecap="round"/>
 							</svg>
+							{#if pat.svgUrl}<span class="pattern-row__svg-link" title="Full SVG in Cloud Storage">SVG↗</span>{/if}
 						</div>
 						<div class="pattern-row__info">
 							<div class="pattern-row__name">{pat.name}</div>
@@ -1174,7 +1183,7 @@ onMount(() => {
 				</button>
 			{:else}
 				<div class="ep-add-form">
-					<div class="ep-add-form__title">New {editPanelTab === "ppf" ? "PPF" : "Tint"} Pattern</div>
+					<div class="ep-add-form__title">New {categoryLabel(editPanelTab)} Pattern</div>
 					<div class="form-row">
 						<div class="form-group" style="flex:2"><label class="form-label" for="np-zone">Zone</label><select id="np-zone" class="form-input form-input--sm" bind:value={newPattern.zone}>{#each zoneOptions as z}<option value={z.value}>{z.label}</option>{/each}</select></div>
 						<div class="form-group"><label class="form-label" for="np-coverage">Coverage</label><select id="np-coverage" class="form-input form-input--sm" bind:value={newPattern.coverage}><option value="full">Full</option><option value="partial">Partial</option><option value="edge-only">Edge only</option></select></div>
@@ -1185,6 +1194,7 @@ onMount(() => {
 						<div class="form-group"><label class="form-label" for="np-height">Height (in)</label><input id="np-height" type="number" class="form-input form-input--sm" bind:value={newPattern.heightInches} min="0.5" step="0.5"/></div>
 					</div>
 					<div class="form-group"><label class="form-label" for="np-svg">SVG Path <span class="form-label__opt">(optional)</span></label><input id="np-svg" type="text" class="form-input form-input--sm" bind:value={newPattern.svgPath} placeholder="M10,90 Q50,5 90,90 Z"/></div>
+					<div class="form-group"><label class="form-label" for="np-svgurl">SVG URL <span class="form-label__opt">(optional, Cloud Storage)</span></label><input id="np-svgurl" type="text" class="form-input form-input--sm" bind:value={newPattern.svgUrl} placeholder="https://.../pattern.svg"/></div>
 					<div class="form-group"><label class="form-label" for="np-notes">Notes <span class="form-label__opt">(optional)</span></label><input id="np-notes" type="text" class="form-input form-input--sm" bind:value={newPattern.notes}/></div>
 					<div class="ep-add-form__footer">
 						<label class="toggle-label"><input type="checkbox" bind:checked={newPattern.isPublished}/>Publish immediately</label>
@@ -1271,6 +1281,27 @@ onMount(() => {
 	.status-tab { padding: 5px 10px; font-size: 0.75rem; font-weight: 500; font-family: var(--font-body); background: transparent; border: 1px solid transparent; border-radius: var(--radius-md); color: var(--text-tertiary); cursor: pointer; transition: all 0.12s; }
 	.status-tab:hover  { color: var(--text-primary); background: var(--interactive-hover); }
 	.status-tab.active { color: var(--text-primary); background: var(--bg-surface-3); border-color: var(--border-default); }
+	.status-tab--cat { display: inline-flex; align-items: center; gap: 4px; }
+	.status-tab--cat svg { color: color-mix(in srgb, var(--cat-accent) 70%, var(--text-tertiary)); }
+	.status-tab--cat.active { background: color-mix(in srgb, var(--cat-accent) 16%, var(--bg-surface-3)); border-color: var(--cat-accent); }
+	.status-tab--cat.active svg { color: var(--cat-accent); }
+
+	.cat-badge {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		padding: 2px 7px;
+		font-size: 0.6875rem;
+		font-weight: 600;
+		font-family: var(--font-mono);
+		letter-spacing: 0.03em;
+		text-transform: uppercase;
+		border-radius: 4px;
+		border: 1px solid color-mix(in srgb, var(--cat-accent) 35%, transparent);
+		background: color-mix(in srgb, var(--cat-accent) 12%, transparent);
+		color: var(--cat-accent);
+		white-space: nowrap;
+	}
 	.search-wrap { position: relative; }
 	.search-icon { position: absolute; left: 8px; top: 50%; transform: translateY(-50%); color: var(--text-tertiary); pointer-events: none; }
 	.search-input { width: 220px; padding: 6px 10px 6px 28px; background: var(--bg-base); border: 1px solid var(--border-default); border-radius: var(--radius-md); font-size: 0.8125rem; font-family: var(--font-body); color: var(--text-primary); outline: none; transition: border-color 0.12s; }
@@ -1459,21 +1490,22 @@ onMount(() => {
 	.edit-panel__header { display: flex; align-items: flex-start; justify-content: space-between; padding: 18px 20px; border-bottom: 1px solid var(--border-subtle); flex-shrink: 0; }
 	.edit-panel__sub   { font-size: 0.6875rem; color: var(--text-tertiary); font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 3px; }
 	.edit-panel__title { font-size: 1rem; font-weight: 600; }
-	.edit-panel__tabs  { display: flex; padding: 12px 20px; border-bottom: 1px solid var(--border-subtle); flex-shrink: 0; }
-	.ep-tab { display: flex; align-items: center; gap: 6px; padding: 6px 14px; font-size: 0.8125rem; font-weight: 500; font-family: var(--font-body); background: transparent; border: 1px solid var(--border-subtle); color: var(--text-tertiary); cursor: pointer; transition: all 0.12s; }
-	.ep-tab:first-child { border-radius: var(--radius-md) 0 0 var(--radius-md); }
-	.ep-tab:last-child  { border-radius: 0 var(--radius-md) var(--radius-md) 0; border-left: none; }
-	.ep-tab:hover  { color: var(--text-primary); background: var(--bg-surface-2); }
-	.ep-tab.active { background: var(--bg-surface-3); color: var(--text-primary); border-color: var(--border-default); }
+	.edit-panel__tabs  { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 20px; border-bottom: 1px solid var(--border-subtle); flex-shrink: 0; }
+	.ep-tab { display: flex; align-items: center; gap: 6px; padding: 6px 12px; font-size: 0.8125rem; font-weight: 500; font-family: var(--font-body); background: var(--bg-surface-2); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); color: var(--text-tertiary); cursor: pointer; transition: all 0.12s; }
+	.ep-tab__icon { display: flex; color: color-mix(in srgb, var(--cat-accent) 70%, var(--text-tertiary)); }
+	.ep-tab:hover  { color: var(--text-primary); border-color: color-mix(in srgb, var(--cat-accent) 40%, var(--border-subtle)); }
+	.ep-tab.active { background: color-mix(in srgb, var(--cat-accent) 14%, var(--bg-surface-3)); color: var(--text-primary); border-color: var(--cat-accent); }
+	.ep-tab.active .ep-tab__icon { color: var(--cat-accent); }
 	.ep-tab__count { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 4px; background: var(--bg-surface-2); border-radius: var(--radius-sm); font-size: 0.625rem; font-family: var(--font-mono); color: var(--text-tertiary); }
-	.ep-tab.active .ep-tab__count { background: var(--color-brand-dim); color: #fff; }
+	.ep-tab.active .ep-tab__count { background: var(--cat-accent); color: #fff; }
 	.edit-panel__list   { flex: 1; overflow-y: auto; padding: 12px 0; }
 	.ep-empty { text-align: center; padding: 32px 24px; font-size: 0.8125rem; color: var(--text-tertiary); line-height: 1.6; }
 	.pattern-row { display: flex; align-items: center; gap: 10px; padding: 10px 20px; border-bottom: 1px solid var(--border-subtle); transition: background 0.1s; }
 	.pattern-row:last-child { border-bottom: none; }
 	.pattern-row:hover { background: var(--interactive-hover); }
 	.pattern-row--editing { align-items: flex-start; background: var(--bg-surface-2); }
-	.pattern-row__preview { width: 44px; height: 38px; display: flex; align-items: center; justify-content: center; background: var(--bg-surface-2); border-radius: var(--radius-md); border: 1px solid var(--border-subtle); flex-shrink: 0; }
+	.pattern-row__preview { width: 44px; height: 38px; display: flex; align-items: center; justify-content: center; position: relative; background: var(--bg-surface-2); border-radius: var(--radius-md); border: 1px solid var(--border-subtle); flex-shrink: 0; }
+	.pattern-row__svg-link { position: absolute; bottom: -4px; right: -4px; font-size: 0.5625rem; font-family: var(--font-mono); color: var(--color-brand); background: var(--bg-surface-1); border: 1px solid var(--border-subtle); border-radius: 4px; padding: 0 3px; line-height: 1.4; }
 	.pattern-row__info { flex: 1; min-width: 0; }
 	.pattern-row__name { font-size: 0.8125rem; font-weight: 500; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 	.pattern-row__meta { font-size: 0.6875rem; font-family: var(--font-mono); color: var(--text-tertiary); margin-top: 2px; }

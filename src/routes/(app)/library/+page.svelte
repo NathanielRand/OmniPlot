@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from "svelte";
 	import { toastStore, canvasStore, userStore } from "$lib/stores";
-	import { patternStore, TINT_ZONE_GROUP, PPF_ZONE_GROUP, PPF_ZONES_LIST, TINT_ZONES_LIST, MIRROR_PAIRS } from "$lib/stores/patternStore.svelte";
+	import { patternStore, TINT_ZONE_GROUP, PPF_ZONE_GROUP, MIRROR_PAIRS, zonesForCategory, categoryShortLabel, categoryMeta } from "$lib/stores/patternStore.svelte";
 	import Badge from "$lib/components/ui/Badge.svelte";
 	import Button from "$lib/components/ui/Button.svelte";
 	import { uid, getItemColor } from "$lib/utils";
@@ -93,7 +93,7 @@
 	// Collapses mirror pairs into compact labels, e.g. "Front Door (L/R)" instead of
 	// "Door Front Left + Door Front Right". Unpaired zones get their full label.
 	function compactZones(zones: PatternZone[], category: UserPattern["category"]): string {
-		const list = category === "ppf" ? PPF_ZONES_LIST : TINT_ZONES_LIST;
+		const list = zonesForCategory(category);
 		const getLabel = (z: PatternZone) => list.find(l => l.value === z)?.label ?? z;
 		const remaining = new Set(zones);
 		const parts: string[] = [];
@@ -141,7 +141,7 @@
 	const mirrorPat = $derived(mirrorTarget ? userPatternToPattern(mirrorTarget) : null);
 	const mirrorSidePair = $derived.by(() => {
 		if (!mirrorTarget) return null;
-		const list = mirrorTarget.category === "ppf" ? PPF_ZONES_LIST : TINT_ZONES_LIST;
+		const list = zonesForCategory(mirrorTarget.category);
 		const getLabel = (z: PatternZone) => list.find(l => l.value === z)?.label ?? String(z);
 		for (const z of mirrorTarget.zones) {
 			const m = MIRROR_PAIRS[z];
@@ -775,7 +775,7 @@
 								<div class="my-pattern-card__name">{compactZones(p.zones, p.category)}</div>
 								<div class="my-pattern-card__meta">{p.years.join(", ")} {p.make} {p.models.join(" / ")} · {p.widthInches}" × {p.heightInches}"</div>
 								<div class="my-pattern-card__badges">
-									<span class="mpbadge mpbadge--{p.category === 'ppf' ? 'ppf' : 'tint'}">{p.category === 'ppf' ? 'PPF' : 'Tint'}</span>
+									<span class="mpbadge" style="--cat-accent: {categoryMeta(p.category).accent}">{categoryShortLabel(p.category)}</span>
 									{#if p.isPublished}
 										<span class="mpbadge mpbadge--published">Published</span>
 									{:else if p.status === 'pending'}
@@ -1807,9 +1807,9 @@
 		font-weight: 600;
 		padding: 1px 6px;
 		border-radius: 4px;
+		background: color-mix(in srgb, var(--cat-accent, var(--text-tertiary)) 14%, transparent);
+		color: var(--cat-accent, var(--text-tertiary));
 	}
-	.mpbadge--ppf  { background: color-mix(in srgb, #00e5ff 12%, transparent); color: #00e5ff; }
-	.mpbadge--tint { background: color-mix(in srgb, #a78bfa 12%, transparent); color: #a78bfa; }
 	.mpbadge--published { background: color-mix(in srgb, #22c55e 12%, transparent); color: #4ade80; }
 	.mpbadge--pending   { background: color-mix(in srgb, #f59e0b 12%, transparent); color: #fbbf24; }
 	.mpbadge--private   { background: var(--bg-surface-3); color: var(--text-tertiary); }

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from "$app/navigation";
 	import { userStore, toastStore } from "$lib/stores";
-	import { patternStore, PPF_ZONES_LIST, TINT_ZONES_LIST, RESIDENTIAL_ZONES_LIST, COMMERCIAL_ZONES_LIST, MIRROR_PAIRS } from "$lib/stores/patternStore.svelte";
+	import { patternStore, RESIDENTIAL_ZONES_LIST, COMMERCIAL_ZONES_LIST, MIRROR_PAIRS, PATTERN_CATEGORIES, zonesForCategory } from "$lib/stores/patternStore.svelte";
 	import { addUserPattern } from "$lib/firebase/firestore";
 	import SvgPathInput from "$lib/components/ui/SvgPathInput.svelte";
 	import VehicleCombobox from "$lib/components/ui/VehicleCombobox.svelte";
@@ -106,7 +106,7 @@
 		projectType === "residential" ? RESIDENTIAL_ZONES_LIST :
 		projectType === "commercial"  ? COMMERCIAL_ZONES_LIST :
 		projectType === "custom"      ? [{ value: "custom" as PatternZone, label: "Custom" }] :
-		pattern.category === "ppf"    ? PPF_ZONES_LIST : TINT_ZONES_LIST,
+		zonesForCategory(pattern.category),
 	);
 
 	// Reset zones when category or pattern type changes (zone lists are disjoint)
@@ -667,21 +667,27 @@
 
 					<div class="field">
 						<span class="field__label">Category</span>
-						<div class="radio-group" role="radiogroup" aria-label="Pattern category">
-							<label class="radio-option" class:radio-option--active={pattern.category === "window-tint"}>
-								<input type="radio" name="category" value="window-tint" bind:group={pattern.category}/>
-								<span class="radio-option__label">Window Tint</span>
-								<span class="radio-option__sub">Glass precut patterns</span>
-							</label>
-							<label class="radio-option" class:radio-option--active={pattern.category === "ppf"}>
-								<input type="radio" name="category" value="ppf" bind:group={pattern.category}/>
-								<span class="radio-option__label">PPF</span>
-								<span class="radio-option__sub">Paint Protection Film</span>
-							</label>
+						<div class="category-cards" role="radiogroup" aria-label="Pattern category">
+							{#each PATTERN_CATEGORIES as c}
+								<label
+									class="category-card"
+									class:category-card--active={pattern.category === c.value}
+									style="--cat-accent: {c.accent}"
+								>
+									<input type="radio" name="category" value={c.value} bind:group={pattern.category}/>
+									<span class="category-card__icon" aria-hidden="true">
+										<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d={c.icon}/></svg>
+									</span>
+									<span class="category-card__text">
+										<span class="category-card__label">{c.label}</span>
+										<span class="category-card__sub">{c.description}</span>
+									</span>
+								</label>
+							{/each}
 						</div>
 					</div>
 
-					{#if pattern.category === "ppf"}
+					{#if pattern.category !== "window-tint"}
 						<div class="field field--half">
 							<label class="field__label" for="coverage">Coverage</label>
 							<select id="coverage" class="field__select" bind:value={pattern.coverage}>
@@ -1259,6 +1265,46 @@
 	.radio-option__label { font-size: 0.9375rem; font-weight: 600; color: var(--text-primary); }
 	.radio-option__sub { font-size: 0.8125rem; color: var(--text-tertiary); }
 
+	/* ─── Category cards ─── */
+	.category-cards {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+		gap: 8px;
+	}
+	.category-card {
+		display: flex;
+		align-items: flex-start;
+		gap: 9px;
+		padding: 10px 12px;
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-md);
+		background: var(--bg-surface-2);
+		cursor: pointer;
+		transition: border-color 0.12s, background 0.12s, transform 0.1s;
+	}
+	.category-card:hover { border-color: color-mix(in srgb, var(--cat-accent) 45%, var(--border-default)); transform: translateY(-1px); }
+	.category-card input[type="radio"] { display: none; }
+	.category-card--active {
+		border-color: var(--cat-accent);
+		background: color-mix(in srgb, var(--cat-accent) 12%, var(--bg-surface-2));
+		box-shadow: 0 0 0 1px color-mix(in srgb, var(--cat-accent) 40%, transparent);
+	}
+	.category-card__icon {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 30px;
+		height: 30px;
+		flex-shrink: 0;
+		border-radius: var(--radius-sm);
+		background: color-mix(in srgb, var(--cat-accent) 16%, transparent);
+		color: var(--cat-accent);
+	}
+	.category-card__text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+	.category-card__label { font-size: 0.8125rem; font-weight: 600; color: var(--text-primary); line-height: 1.2; }
+	.category-card__sub { font-size: 0.6875rem; color: var(--text-tertiary); line-height: 1.25; }
+	.category-card--active .category-card__label { color: var(--cat-accent); }
+
 	/* ─── Project type grid ─── */
 	.type-grid {
 		display: grid;
@@ -1593,6 +1639,7 @@
 		.field-row--2 { grid-template-columns: 1fr; }
 		.field--half { max-width: 100%; }
 		.radio-group { flex-direction: column; }
+		.category-cards { grid-template-columns: 1fr 1fr; }
 		.type-grid { grid-template-columns: 1fr 1fr; }
 		.form-section { padding: 16px; }
 		.success-card { padding: 32px 20px; }

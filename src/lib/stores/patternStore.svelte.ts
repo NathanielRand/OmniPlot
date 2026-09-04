@@ -577,3 +577,86 @@ export const COMMERCIAL_ZONES_LIST: Array<{ value: PatternZone; label: string }>
 	{ value: "com-skylight",                label: "Skylight" },
 	{ value: "custom",                      label: "Custom" },
 ];
+
+// Categories with no dedicated zone taxonomy yet (vinyl, HTV, gasket, stencil,
+// signage) — every piece is "custom" until zone-specific values are added.
+export const CUSTOM_ZONES_LIST: Array<{ value: PatternZone; label: string }> = [
+	{ value: "custom", label: "Custom" },
+];
+
+// ─── Category metadata (labels + icon + zone list) for CRUD UI ───
+// Icons are single-path 0-24 viewBox glyphs, drawn with stroke=currentColor at
+// call sites so they inherit each card's accent color.
+export interface PatternCategoryMeta {
+	value: PatternCategory;
+	label: string;
+	shortLabel: string;
+	description: string;
+	icon: string; // svg path `d`
+	accent: string; // CSS color used for icon/active-state tint
+}
+
+export const PATTERN_CATEGORIES: PatternCategoryMeta[] = [
+	{
+		value: "ppf", label: "Paint Protection Film", shortLabel: "PPF",
+		description: "Clear film panels for paint",
+		icon: "M12 2l8 4v6c0 5-3.5 9-8 10-4.5-1-8-5-8-10V6z",
+		accent: "#00e5ff",
+	},
+	{
+		value: "window-tint", label: "Window Tint", shortLabel: "Tint",
+		description: "Precut glass films",
+		icon: "M3 4h18v16H3z M3 12h18 M9 4v16 M15 4v16",
+		accent: "#0070ff",
+	},
+	{
+		value: "vinyl", label: "Vinyl Wrap", shortLabel: "Vinyl",
+		description: "Full/partial body wraps",
+		icon: "M12 2a10 10 0 100 20 10 10 0 000-20z M12 9a3 3 0 100 6 3 3 0 000-6z",
+		accent: "#a855f7",
+	},
+	{
+		value: "htv", label: "Heat Transfer Vinyl", shortLabel: "HTV",
+		description: "Apparel & garment cuts",
+		icon: "M12 2c-1.2 3.6-5 5-5 9a5 5 0 0010 0c0-1.8-.8-2.8-1.7-3.7.1 1.8-.8 2.7-1.8 1.9.9-1.8-.1-4.7-1.5-7.2z",
+		accent: "#f97316",
+	},
+	{
+		value: "gasket", label: "Gasket", shortLabel: "Gasket",
+		description: "Seals & rings",
+		icon: "M12 2a10 10 0 100 20 10 10 0 000-20z M12 8a4 4 0 100 8 4 4 0 000-8z",
+		accent: "#94a3b8",
+	},
+	{
+		value: "stencil", label: "Stencil", shortLabel: "Stencil",
+		description: "Paint & spray masks",
+		icon: "M9 3h6v4H9z M7 7h10l1 14H6z M9 12h6 M9 16h6",
+		accent: "#22c55e",
+	},
+	{
+		value: "signage", label: "Signage", shortLabel: "Signage",
+		description: "Storefront & display signs",
+		icon: "M4 4h16v12H4z M9 20h6 M12 16v4 M8 9h4 M8 12h8",
+		accent: "#eab308",
+	},
+];
+
+export function categoryMeta(category: PatternCategory): PatternCategoryMeta {
+	return PATTERN_CATEGORIES.find((c) => c.value === category) ?? PATTERN_CATEGORIES[0];
+}
+
+export function categoryLabel(category: PatternCategory): string {
+	return categoryMeta(category).label;
+}
+
+export function categoryShortLabel(category: PatternCategory): string {
+	return categoryMeta(category).shortLabel;
+}
+
+export function zonesForCategory(category: PatternCategory): Array<{ value: PatternZone; label: string }> {
+	switch (category) {
+		case "ppf": return PPF_ZONES_LIST;
+		case "window-tint": return TINT_ZONES_LIST;
+		default: return CUSTOM_ZONES_LIST;
+	}
+}
