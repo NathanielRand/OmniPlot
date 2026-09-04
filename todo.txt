@@ -20,6 +20,11 @@
 //////////////////////////////////////
 // BACKLOG
 ////////////////////////////////
+- upload pattern btn dyancmially changes to incorrect values for the pattern library category filter views
+- btn for user to scan for installed cut agent already on local device.
+- check community patterns are only visible by all other users only once admin approves.
+- reminting pricing/allowances didnt reflect on the /pricing page.
+- remove in email footer "PPF" as we are more than PPF now.
 - Fixing OmniPlot's autonesting so it uses all patterns without stranding pieces outside the cut zone, plus adding canvas scroll for long rolls — both fixes are done. Next: verify the scroll and nesting fixes in the studio UI with real pattern data.
 - Next: enable the Firestore TTL policy on errorLogs.expiresAt in the Firebase console....One follow-up you'll need to do outside code: enable a Firestore TTL policy on rateLimits.expiresAt (Firebase console → Firestore → TTL) so old window docs get purged automatically — TTL policies can't be set from rules or app code./.
 - Create a local plotter emulator/simulator to verify the communication between plotter and agent (or other method) is bidirectional and valid throughout each expected communication event with proper processing and response. we need to test without having the quipment in person.
