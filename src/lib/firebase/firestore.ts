@@ -176,6 +176,7 @@ export function toPattern(id: string, data: DocumentData): Pattern {
 		projectType: data.projectType ?? "vehicle",
 		category: data.category ?? "ppf",
 		zone: data.zone,
+		customZoneLabel: data.customZoneLabel ?? undefined,
 		name: data.name ?? "",
 		coverage: data.coverage ?? "full",
 		svgPath: data.svgPath ?? "",
@@ -549,6 +550,7 @@ export async function setPatternDoc(p: Pattern): Promise<void> {
 			projectType: p.projectType ?? "vehicle",
 			category: p.category,
 			zone: p.zone,
+			customZoneLabel: p.customZoneLabel ?? null,
 			name: p.name,
 			coverage: p.coverage,
 			svgPath: p.svgPath,
@@ -601,6 +603,7 @@ function toUserPattern(id: string, data: DocumentData): UserPattern {
 		category:          data.category          ?? "ppf",
 		zones:             Array.isArray(data.zones) ? data.zones
 		                   : data.zone ? [data.zone as string] : [],
+		customZoneLabels:  Array.isArray(data.customZoneLabels) ? data.customZoneLabels : undefined,
 		name:              data.name              ?? "",
 		coverage:          data.coverage          ?? "full",
 		widthInches:       data.widthInches       ?? 0,

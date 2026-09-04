@@ -278,6 +278,9 @@ export interface Pattern {
 	projectType?: ProjectType;
 	category: PatternCategory;
 	zone: PatternZone;
+	// User-provided label for zone === "custom" — lets shops name their own
+	// zones instead of every custom piece being lumped under "Custom / Other".
+	customZoneLabel?: string;
 	name: string;
 	coverage: PatternCoverage;
 	svgPath: string; // The actual SVG path data
@@ -567,6 +570,11 @@ export interface UserPattern {
 	// Pattern geometry
 	category: PatternCategory;
 	zones: PatternZone[];
+	// Parallel to `zones` — entry i is the user-given label for zones[i] when
+	// zones[i] === "custom" (empty/absent otherwise). Lets a submission carry
+	// several distinctly-named custom zones instead of collapsing them all
+	// under one generic "Custom" tag.
+	customZoneLabels?: string[];
 	name: string;
 	coverage: PatternCoverage;
 	widthInches: number;

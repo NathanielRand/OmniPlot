@@ -201,6 +201,17 @@
 	const avgPPFZones  = $derived(vehiclesWithPPF  > 0 ? Math.round(totalPPF  / vehiclesWithPPF)  : 0);
 	const avgTintZones = $derived(vehiclesWithTint > 0 ? Math.round(totalTint / vehiclesWithTint) : 0);
 
+	// Pattern counts per project type — drives the badge counters on the type switcher
+	function countForProjectType(p: typeof projectType): number {
+		return patternStore.vehicles
+			.filter((v) => v.status === "published" && (v.projectType ?? "vehicle") === p)
+			.reduce((n, v) => n + patternStore.getPatterns(v.id, undefined, true).length, 0);
+	}
+	const totalVehicleTypePatterns     = $derived(totalPPF + totalTint);
+	const totalResidentialTypePatterns = $derived(countForProjectType("residential"));
+	const totalCommercialTypePatterns  = $derived(countForProjectType("commercial"));
+	const totalCustomTypePatterns      = $derived(countForProjectType("custom"));
+
 	// Makes list — all published vehicles with patterns for current mode
 	const MAKES = $derived(
 		["All", ...new Set(
@@ -411,7 +422,6 @@
 					aria-pressed={activeYear === year}>{year}</button>
 			{/each}
 		</div>
-		{/if}
 
 		<div class="lib-section-label">Zone</div>
 		<div class="lib-filter-pills">
@@ -423,6 +433,7 @@
 					aria-pressed={activeZone === zone}>{zone}</button>
 			{/each}
 		</div>
+		{/if}
 
 		<div class="lib-section-label">Stats</div>
 		<div class="lib-stats">
@@ -464,7 +475,7 @@
 	<!-- ─── Main ─── -->
 	<div class="library__main">
 
-		<!-- Library / My Patterns tab bar -->
+		<!-- Community / Private tab bar -->
 		<div class="lib-tabs" role="tablist">
 			<button
 				class="lib-tab"
@@ -472,7 +483,10 @@
 				role="tab"
 				aria-selected={tab === "library"}
 				onclick={() => (tab = "library")}
-			>Library</button>
+			>
+				<svg class="lib-tab__icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+				Community
+			</button>
 			<button
 				class="lib-tab"
 				class:lib-tab--active={tab === "mine"}
@@ -480,7 +494,8 @@
 				aria-selected={tab === "mine"}
 				onclick={() => (tab = "mine")}
 			>
-				My Patterns
+				<svg class="lib-tab__icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+				Private
 				{#if myPatterns.length}
 					<span class="lib-tab__badge">{myPatterns.length}</span>
 				{/if}
@@ -489,11 +504,23 @@
 
 		{#if tab === "library"}
 		<!-- Project type switcher -->
-		<div class="mode-switcher" role="group" aria-label="Project type">
-			<button class="mode-btn" class:active={projectType === "vehicle"} onclick={() => switchProjectType("vehicle")} aria-pressed={projectType === "vehicle"}>Vehicle</button>
-			<button class="mode-btn" class:active={projectType === "residential"} onclick={() => switchProjectType("residential")} aria-pressed={projectType === "residential"}>Residential</button>
-			<button class="mode-btn" class:active={projectType === "commercial"} onclick={() => switchProjectType("commercial")} aria-pressed={projectType === "commercial"}>Commercial</button>
-			<button class="mode-btn" class:active={projectType === "custom"} onclick={() => switchProjectType("custom")} aria-pressed={projectType === "custom"}>Custom</button>
+		<div class="mode-switcher mode-switcher--full" role="group" aria-label="Project type">
+			<button class="mode-btn mode-btn--lg" class:active={projectType === "vehicle"} onclick={() => switchProjectType("vehicle")} aria-pressed={projectType === "vehicle"}>
+				Vehicle
+				{#if totalVehicleTypePatterns > 0}<span class="mode-count">{totalVehicleTypePatterns}</span>{/if}
+			</button>
+			<button class="mode-btn mode-btn--lg" class:active={projectType === "residential"} onclick={() => switchProjectType("residential")} aria-pressed={projectType === "residential"}>
+				Residential
+				{#if totalResidentialTypePatterns > 0}<span class="mode-count">{totalResidentialTypePatterns}</span>{/if}
+			</button>
+			<button class="mode-btn mode-btn--lg" class:active={projectType === "commercial"} onclick={() => switchProjectType("commercial")} aria-pressed={projectType === "commercial"}>
+				Commercial
+				{#if totalCommercialTypePatterns > 0}<span class="mode-count">{totalCommercialTypePatterns}</span>{/if}
+			</button>
+			<button class="mode-btn mode-btn--lg" class:active={projectType === "custom"} onclick={() => switchProjectType("custom")} aria-pressed={projectType === "custom"}>
+				Custom
+				{#if totalCustomTypePatterns > 0}<span class="mode-count">{totalCustomTypePatterns}</span>{/if}
+			</button>
 		</div>
 
 		{#if projectType === "vehicle"}
@@ -1214,6 +1241,15 @@
 	.mode-btn:hover { color: var(--text-primary); }
 	.mode-btn.active { background: var(--bg-surface-3); color: var(--text-primary); box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
 
+	.mode-switcher--full { display: flex; width: 100%; align-self: stretch; }
+	.mode-btn--lg {
+		flex: 1 1 0;
+		justify-content: center;
+		padding: 10px 16px;
+		font-size: 0.9375rem;
+		font-weight: 600;
+	}
+
 	.mode-count {
 		display: inline-flex;
 		align-items: center;
@@ -1682,10 +1718,10 @@
 	.lib-tab {
 		display: flex;
 		align-items: center;
-		gap: 6px;
-		padding: 8px 16px;
-		font-size: 0.875rem;
-		font-weight: 500;
+		gap: 8px;
+		padding: 10px 18px;
+		font-size: 1rem;
+		font-weight: 600;
 		color: var(--text-tertiary);
 		background: transparent;
 		border: none;
@@ -1694,12 +1730,13 @@
 		cursor: pointer;
 		transition: color 0.12s, border-color 0.12s;
 	}
+	.lib-tab__icon { flex-shrink: 0; opacity: 0.8; }
 	.lib-tab:hover { color: var(--text-secondary); }
 	.lib-tab--active {
-		color: var(--text-primary);
+		color: var(--color-brand);
 		border-bottom-color: var(--color-brand);
-		font-weight: 600;
 	}
+	.lib-tab--active .lib-tab__icon { opacity: 1; }
 	.lib-tab__badge {
 		background: var(--bg-surface-3);
 		color: var(--text-primary);

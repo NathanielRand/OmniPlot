@@ -43,6 +43,7 @@
 	interface MultiSlot {
 		svgPath: string;
 		zone: PatternZone | "";
+		customZoneLabel: string;
 		widthInches: number;
 		heightInches: number;
 		skip: boolean;
@@ -57,6 +58,7 @@
 	type MultiMethod = "individual" | "single-file";
 	interface IndividualSlot {
 		zone: PatternZone | "";
+		customZoneLabel: string;
 		widthInches: number;
 		heightInches: number;
 		svgPath: string;
@@ -64,7 +66,7 @@
 	let uploadMode  = $state<UploadMode>("single");
 	let multiMethod = $state<MultiMethod>("individual");
 	let multiFileSvgPath = $state("");
-	let individualSlots = $state<IndividualSlot[]>([{ zone: "" as PatternZone | "", widthInches: 0, heightInches: 0, svgPath: "" }]);
+	let individualSlots = $state<IndividualSlot[]>([{ zone: "" as PatternZone | "", customZoneLabel: "", widthInches: 0, heightInches: 0, svgPath: "" }]);
 	let indivErrors = $state<Record<number, Record<string, string>>>({});
 
 	// ─── Project type ─────────────────────────────
@@ -97,12 +99,17 @@
 	let pattern = $state({
 		category:     "window-tint" as PatternCategory,
 		zones:        [] as PatternZone[],
+		customZoneLabels: [] as string[], // parallel to zones; only meaningful where zones[i] === "custom"
 		coverage:     "full" as PatternCoverage,
 		widthInches:  0,
 		heightInches: 0,
 		svgPath:      "",
 		notes:        "",
 	});
+
+	// ─── Pending "custom" zone label entry (single-pattern mode) ──
+	let pendingCustomZone = $state(false);
+	let pendingCustomLabel = $state("");
 
 	let modelInput = $state("");
 	let yearInput  = $state("");
@@ -131,14 +138,16 @@
 	);
 
 	// Reset zones when category or pattern type changes (zone lists are disjoint)
-	$effect(() => { zoneList; pattern.zones = []; });
+	$effect(() => { zoneList; pattern.zones = []; pattern.customZoneLabels = []; pendingCustomZone = false; pendingCustomLabel = ""; });
 
 	$effect(() => {
 		if (pattern.category === "window-tint") pattern.coverage = "full";
 	});
 
+	// "custom" stays available for repeated selection so a submission can carry
+	// several distinctly-named custom zones; every other zone can only be added once.
 	const availableZones = $derived(
-		zoneList.filter(z => !pattern.zones.includes(z.value)),
+		zoneList.filter(z => z.value === "custom" || !pattern.zones.includes(z.value)),
 	);
 
 	const hasMirrorPair = $derived(
@@ -160,17 +169,37 @@
 	})());
 
 	// ─── Zone helpers ─────────────────────────────
-	function addZone(z: PatternZone) {
-		if (!pattern.zones.includes(z)) pattern.zones = [...pattern.zones, z];
+	function addZone(z: PatternZone, label = "") {
+		if (z === "custom") {
+			pattern.zones = [...pattern.zones, z];
+			pattern.customZoneLabels = [...pattern.customZoneLabels, label];
+			return;
+		}
+		if (!pattern.zones.includes(z)) {
+			pattern.zones = [...pattern.zones, z];
+			pattern.customZoneLabels = [...pattern.customZoneLabels, ""];
+		}
 	}
-	function removeZone(z: PatternZone) {
-		pattern.zones = pattern.zones.filter(z2 => z2 !== z);
+	function removeZone(i: number) {
+		pattern.zones = pattern.zones.filter((_, idx) => idx !== i);
+		pattern.customZoneLabels = pattern.customZoneLabels.filter((_, idx) => idx !== i);
 	}
 	function onZoneAdd(e: Event) {
 		const val = (e.target as HTMLSelectElement).value as PatternZone;
-		if (val) { addZone(val); (e.target as HTMLSelectElement).value = ""; }
+		(e.target as HTMLSelectElement).value = "";
+		if (!val) return;
+		if (val === "custom") { pendingCustomZone = true; pendingCustomLabel = ""; return; }
+		addZone(val);
 	}
-	function zoneLabel(z: PatternZone): string {
+	function confirmCustomZone() {
+		const label = pendingCustomLabel.trim();
+		if (!label) return;
+		addZone("custom", label);
+		pendingCustomZone = false;
+		pendingCustomLabel = "";
+	}
+	function zoneLabel(z: PatternZone, i?: number): string {
+		if (z === "custom" && i !== undefined) return pattern.customZoneLabels[i]?.trim() || "Custom";
 		return zoneList.find(zl => zl.value === z)?.label ?? z;
 	}
 	function mirrorOf(z: PatternZone): PatternZone | undefined {
@@ -179,7 +208,7 @@
 
 	// ─── Individual slot helpers ──────────────────
 	function addIndividualSlot() {
-		individualSlots = [...individualSlots, { zone: "" as PatternZone | "", widthInches: 0, heightInches: 0, svgPath: "" }];
+		individualSlots = [...individualSlots, { zone: "" as PatternZone | "", customZoneLabel: "", widthInches: 0, heightInches: 0, svgPath: "" }];
 	}
 	function removeIndividualSlot(i: number) {
 		if (individualSlots.length > 1) individualSlots = individualSlots.filter((_, idx) => idx !== i);
@@ -189,6 +218,7 @@
 		individualSlots.forEach((slot, i) => {
 			const e: Record<string, string> = {};
 			if (!slot.zone)                                    e.zone    = "Select a zone";
+			else if (slot.zone === "custom" && !slot.customZoneLabel.trim()) e.zone = "Name this custom zone";
 			if (!slot.widthInches  || slot.widthInches  <= 0) e.width   = "Enter a positive width";
 			if (!slot.heightInches || slot.heightInches <= 0) e.height  = "Enter a positive height";
 			if (!slot.svgPath.trim())                          e.svgPath = "Import a pattern first";
@@ -196,6 +226,10 @@
 		});
 		indivErrors = errs;
 		return Object.keys(errs).length === 0;
+	}
+	function slotZoneLabel(slot: { zone: PatternZone | ""; customZoneLabel: string }): string {
+		if (slot.zone === "custom") return slot.customZoneLabel.trim() || "Custom";
+		return zoneLabel(slot.zone as PatternZone);
 	}
 
 	// ─── Year helpers ─────────────────────────────
@@ -226,7 +260,7 @@
 
 	// ─── Multi-pattern extraction ─────────────────
 	function handleMultiExtract(paths: string[]) {
-		multiSlots = paths.map(p => ({ svgPath: p, zone: "" as PatternZone | "", widthInches: 0, heightInches: 0, skip: false }));
+		multiSlots = paths.map(p => ({ svgPath: p, zone: "" as PatternZone | "", customZoneLabel: "", widthInches: 0, heightInches: 0, skip: false }));
 		multiErrors = {};
 		multiMode = true;
 	}
@@ -285,6 +319,7 @@
 			if (slot.skip) return;
 			const e: Record<string, string> = {};
 			if (!slot.zone) e.zone = "Select a zone";
+			else if (slot.zone === "custom" && !slot.customZoneLabel.trim()) e.zone = "Name this custom zone";
 			if (!slot.widthInches  || slot.widthInches  <= 0) e.width  = "Enter a positive width";
 			if (!slot.heightInches || slot.heightInches <= 0) e.height = "Enter a positive height";
 			if (Object.keys(e).length) errs[i] = e;
@@ -344,7 +379,8 @@
 						...identityPayload(),
 						category:          pattern.category,
 						zones:             [zone],
-						name:              zoneLabel(zone),
+						customZoneLabels:  zone === "custom" ? [slot.customZoneLabel.trim()] : undefined,
+						name:              slotZoneLabel(slot),
 						coverage:          pattern.coverage,
 						widthInches:       slot.widthInches,
 						heightInches:      slot.heightInches,
@@ -383,7 +419,8 @@
 						...identityPayload(),
 						category:          pattern.category,
 						zones:             [zone],
-						name:              zoneLabel(zone),
+						customZoneLabels:  zone === "custom" ? [slot.customZoneLabel.trim()] : undefined,
+						name:              slotZoneLabel(slot),
 						coverage:          pattern.coverage,
 						widthInches:       slot.widthInches,
 						heightInches:      slot.heightInches,
@@ -406,13 +443,14 @@
 		if (!validate()) return;
 		submitting = true;
 		try {
-			const name = pattern.zones.map(z => zoneLabel(z)).join(" + ");
+			const name = pattern.zones.map((z, i) => zoneLabel(z, i)).join(" + ");
 			await addUserPattern({
 				ownerId:           userStore.user.uid,
 				submitToCommunity: mode === "community",
 				...identityPayload(),
 				category:          pattern.category,
 				zones:             pattern.zones,
+				customZoneLabels:  pattern.zones.includes("custom") ? pattern.customZoneLabels : undefined,
 				name,
 				coverage:          pattern.coverage,
 				widthInches:       pattern.widthInches,
@@ -435,7 +473,9 @@
 		propertyAddress  = "";
 		propertyLabel    = "";
 		vehicle    = { make: "", models: [], years: [], bodyStyle: "sedan" };
-		pattern    = { category: "ppf", zones: [], coverage: "full", widthInches: 0, heightInches: 0, svgPath: "", notes: "" };
+		pattern    = { category: "ppf", zones: [], customZoneLabels: [], coverage: "full", widthInches: 0, heightInches: 0, svgPath: "", notes: "" };
+		pendingCustomZone  = false;
+		pendingCustomLabel = "";
 		modelInput = "";
 		yearInput  = "";
 		errors     = {};
@@ -448,7 +488,7 @@
 		uploadMode  = "single";
 		multiMethod = "individual";
 		multiFileSvgPath = "";
-		individualSlots = [{ zone: "" as PatternZone | "", widthInches: 0, heightInches: 0, svgPath: "" }];
+		individualSlots = [{ zone: "" as PatternZone | "", customZoneLabel: "", widthInches: 0, heightInches: 0, svgPath: "" }];
 		indivErrors = {};
 	}
 </script>
@@ -490,10 +530,10 @@
 					<p class="success-body">
 						<strong>{identitySummary}</strong> pattern
 						({uploadMode === "multi" && multiMethod === "individual"
-							? individualSlots.map(s => zoneLabel(s.zone as PatternZone)).join(" + ")
+							? individualSlots.map(s => slotZoneLabel(s)).join(" + ")
 							: multiMode
-								? multiSlots.filter(s => !s.skip && s.zone).map(s => zoneLabel(s.zone as PatternZone)).join(" + ")
-								: pattern.zones.map(z => zoneLabel(z)).join(" + ")
+								? multiSlots.filter(s => !s.skip && s.zone).map(s => slotZoneLabel(s)).join(" + ")
+								: pattern.zones.map((z, i) => zoneLabel(z, i)).join(" + ")
 						}) is available in your library.
 						{#if mode === "community"}
 							It's been queued for review — once approved it will appear in the public library.
@@ -738,7 +778,7 @@
 						<div class="radio-group" role="radiogroup" aria-label="Upload type">
 							<label class="radio-option" class:radio-option--active={uploadMode === "single"}>
 								<input type="radio" name="uploadMode" value="single" bind:group={uploadMode}
-									onchange={() => { multiMode = false; multiSlots = []; multiErrors = {}; multiFileSvgPath = ""; individualSlots = [{ zone: "" as PatternZone | "", widthInches: 0, heightInches: 0, svgPath: "" }]; indivErrors = {}; }}
+									onchange={() => { multiMode = false; multiSlots = []; multiErrors = {}; multiFileSvgPath = ""; individualSlots = [{ zone: "" as PatternZone | "", customZoneLabel: "", widthInches: 0, heightInches: 0, svgPath: "" }]; indivErrors = {}; }}
 								/>
 								<span class="radio-option__label">Single Pattern</span>
 								<span class="radio-option__sub">One pattern for one or more zones</span>
@@ -772,7 +812,7 @@
 								</label>
 								<label class="radio-option" class:radio-option--active={multiMethod === "single-file"}>
 									<input type="radio" name="multiMethod" value="single-file" bind:group={multiMethod}
-										onchange={() => { individualSlots = [{ zone: "" as PatternZone | "", widthInches: 0, heightInches: 0, svgPath: "" }]; indivErrors = {}; }}
+										onchange={() => { individualSlots = [{ zone: "" as PatternZone | "", customZoneLabel: "", widthInches: 0, heightInches: 0, svgPath: "" }]; indivErrors = {}; }}
 									/>
 									<span class="radio-option__label">Combined file</span>
 									<span class="radio-option__sub">One image containing all patterns — split and assign each</span>
@@ -803,6 +843,12 @@
 										</select>
 										{#if slotErrs.zone}<span class="field__error">{slotErrs.zone}</span>{/if}
 									</div>
+									{#if slot.zone === "custom"}
+										<div class="field">
+											<label class="field__label" for="indiv-custom-{i}">Custom Zone Name</label>
+											<input id="indiv-custom-{i}" class="field__input" type="text" bind:value={slot.customZoneLabel} placeholder="e.g. Sunroof Trim" aria-label="Custom zone name for slot {i + 1}"/>
+										</div>
+									{/if}
 									<div class="field-row field-row--2">
 										<div class="field" class:field--error={!!slotErrs.width}>
 											<label class="field__label" for="indiv-width-{i}">Width (inches)</label>
@@ -868,6 +914,12 @@
 												</select>
 												{#if slotErrs.zone}<span class="multi-slot__err">{slotErrs.zone}</span>{/if}
 											</div>
+											{#if slot.zone === "custom"}
+												<div class="multi-slot__row">
+													<label class="multi-slot__label" for="multi-custom-{i}">Custom Zone Name</label>
+													<input id="multi-custom-{i}" type="text" class="multi-slot__input" bind:value={slot.customZoneLabel} placeholder="e.g. Sunroof Trim" aria-label="Custom zone name for pattern {i + 1}"/>
+												</div>
+											{/if}
 											<div class="multi-slot__dims">
 												<div class:field--error={!!slotErrs.width}>
 													<label class="multi-slot__label" for="multi-width-{i}">Width (in)</label>
@@ -918,21 +970,33 @@
 						<div class="field" class:field--error={!!errors.zones}>
 							<span class="field__label">Zones</span>
 							<div class="multitag" class:multitag--error={!!errors.zones}>
-								{#each pattern.zones as z (z)}
+								{#each pattern.zones as z, i (i)}
 									{@const mirror = mirrorOf(z)}
 									<span class="chip">
-										<span class="chip__label">{zoneLabel(z)}</span>
+										<span class="chip__label">{zoneLabel(z, i)}</span>
 										{#if mirror && !pattern.zones.includes(mirror)}
 											<button type="button" class="chip__mirror" title="Also add {zoneLabel(mirror)}" onclick={() => addZone(mirror)}>↔</button>
 										{/if}
-										<button type="button" class="chip__remove" aria-label="Remove {zoneLabel(z)}" onclick={() => removeZone(z)}>×</button>
+										<button type="button" class="chip__remove" aria-label="Remove {zoneLabel(z, i)}" onclick={() => removeZone(i)}>×</button>
 									</span>
 								{/each}
-								{#if availableZones.length}
+								{#if pendingCustomZone}
+									<span class="custom-zone-entry">
+										<input
+											type="text"
+											class="custom-zone-entry__input"
+											bind:value={pendingCustomLabel}
+											placeholder="Name this zone…"
+											onkeydown={(e) => { if (e.key === "Enter") { e.preventDefault(); confirmCustomZone(); } else if (e.key === "Escape") { pendingCustomZone = false; pendingCustomLabel = ""; } }}
+										/>
+										<button type="button" class="custom-zone-entry__confirm" disabled={!pendingCustomLabel.trim()} onclick={confirmCustomZone} aria-label="Add custom zone">✓</button>
+										<button type="button" class="custom-zone-entry__cancel" onclick={() => { pendingCustomZone = false; pendingCustomLabel = ""; }} aria-label="Cancel">×</button>
+									</span>
+								{:else if availableZones.length}
 									<select class="zone-add-select" onchange={onZoneAdd} aria-label="Add zone">
 										<option value="">+ Add zone</option>
 										{#each availableZones as z}
-											<option value={z.value}>{z.label}</option>
+											<option value={z.value}>{z.value === "custom" ? "Custom…" : z.label}</option>
 										{/each}
 									</select>
 								{/if}
@@ -1044,7 +1108,10 @@
 	.mode-card:last-child { border-right: none; }
 	.mode-card:hover { background: var(--bg-surface-2); }
 	.mode-card--active {
-		background: color-mix(in srgb, var(--color-brand) 7%, var(--bg-surface));
+		background: radial-gradient(140% 140% at 8% 42%,
+			color-mix(in srgb, var(--color-brand) 20%, var(--bg-surface)) 0%,
+			color-mix(in srgb, var(--color-brand) 7%, var(--bg-surface)) 45%,
+			var(--bg-surface) 100%);
 		border-bottom: 3px solid var(--color-brand);
 	}
 
@@ -1190,6 +1257,43 @@
 	.zone-add-select:hover { background: color-mix(in srgb, var(--color-brand) 18%, var(--bg-surface-2)); }
 	.zone-add-select:focus { outline: none; border-style: solid; box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-brand) 20%, transparent); }
 
+	.custom-zone-entry {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		background: color-mix(in srgb, var(--color-brand) 10%, var(--bg-surface-2));
+		border: 1px dashed color-mix(in srgb, var(--color-brand) 35%, transparent);
+		border-radius: 5px;
+		padding: 3px 4px 3px 8px;
+	}
+	.custom-zone-entry__input {
+		background: transparent;
+		border: none;
+		outline: none;
+		color: var(--text-primary);
+		font-size: 0.875rem;
+		font-family: var(--font-body);
+		min-width: 130px;
+		padding: 3px 2px;
+	}
+	.custom-zone-entry__confirm, .custom-zone-entry__cancel {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: none;
+		border: none;
+		cursor: pointer;
+		padding: 2px 4px;
+		font-size: 0.8125rem;
+		line-height: 1;
+		border-radius: 3px;
+	}
+	.custom-zone-entry__confirm { color: var(--color-brand); }
+	.custom-zone-entry__confirm:disabled { color: var(--text-tertiary); cursor: not-allowed; }
+	.custom-zone-entry__confirm:not(:disabled):hover { background: color-mix(in srgb, var(--color-brand) 20%, transparent); }
+	.custom-zone-entry__cancel { color: var(--text-tertiary); }
+	.custom-zone-entry__cancel:hover { background: color-mix(in srgb, var(--color-danger, #f44) 15%, transparent); color: var(--color-danger, #f44); }
+
 	/* ─── Form wrap ─── */
 	.form-wrap {
 		max-width: 960px;
@@ -1320,7 +1424,10 @@
 	.category-card input[type="radio"] { display: none; }
 	.category-card--active {
 		border-color: var(--cat-accent);
-		background: color-mix(in srgb, var(--cat-accent) 12%, var(--bg-surface-2));
+		background: radial-gradient(130% 130% at 14% 32%,
+			color-mix(in srgb, var(--cat-accent) 26%, var(--bg-surface-2)) 0%,
+			color-mix(in srgb, var(--cat-accent) 10%, var(--bg-surface-2)) 45%,
+			var(--bg-surface-2) 100%);
 		box-shadow: 0 0 0 1px color-mix(in srgb, var(--cat-accent) 40%, transparent);
 	}
 	.category-card__icon {
@@ -1361,7 +1468,10 @@
 	.type-card:hover { background: var(--bg-surface-2); }
 	.type-card--active {
 		border-color: var(--color-brand);
-		background: color-mix(in srgb, var(--color-brand) 8%, var(--bg-surface-2));
+		background: radial-gradient(130% 130% at 18% 22%,
+			color-mix(in srgb, var(--color-brand) 20%, var(--bg-surface-2)) 0%,
+			color-mix(in srgb, var(--color-brand) 8%, var(--bg-surface-2)) 45%,
+			var(--bg-surface-2) 100%);
 	}
 	.type-card__icon {
 		display: flex;

@@ -86,6 +86,10 @@
 		return `${sub.years.join("/")} ${sub.make} ${sub.models.join(", ")}`;
 	}
 
+	function submissionZoneLabels(sub: UserPattern): string {
+		return sub.zones.map((z, i) => z === "custom" ? (sub.customZoneLabels?.[i]?.trim() || "Custom") : z).join(", ");
+	}
+
 	function openReview(sub: UserPattern) {
 		reviewTarget = sub;
 		reviewEdits = { name: sub.name, widthInches: sub.widthInches, heightInches: sub.heightInches, notes: sub.notes ?? "" };
@@ -365,7 +369,7 @@
 	let pendingDeleteId   = $state<string | null>(null);
 
 	let newPattern = $state({
-		zone: "custom" as PatternZone, name: "", coverage: "full" as PatternCoverage,
+		zone: "custom" as PatternZone, customZoneLabel: "", name: "", coverage: "full" as PatternCoverage,
 		widthInches: 24, heightInches: 16, svgPath: "", svgUrl: "", notes: "", isPublished: false,
 	});
 	let editPatch = $state({ name: "", widthInches: 0, heightInches: 0, svgUrl: "", isPublished: false, notes: "" });
@@ -383,9 +387,12 @@
 
 	function handleAddPattern() {
 		if (!editingVehicle || !newPattern.name.trim()) return;
+		if (newPattern.zone === "custom" && !newPattern.customZoneLabel.trim()) return;
 		patternStore.addPattern({
 			vehicleId: editingVehicle.id, category: editPanelTab,
-			zone: newPattern.zone, name: newPattern.name.trim(),
+			zone: newPattern.zone,
+			customZoneLabel: newPattern.zone === "custom" ? newPattern.customZoneLabel.trim() || undefined : undefined,
+			name: newPattern.name.trim(),
 			coverage: newPattern.coverage,
 			svgPath: newPattern.svgPath.trim() || "M10,90 Q15,20 50,5 Q85,20 90,90",
 			svgUrl: newPattern.svgUrl.trim() || undefined,
@@ -394,7 +401,7 @@
 			notes: newPattern.notes.trim() || undefined,
 			isPublished: newPattern.isPublished,
 		});
-		newPattern = { zone: zoneOptions[0]?.value ?? "custom", name: "", coverage: "full", widthInches: 24, heightInches: 16, svgPath: "", svgUrl: "", notes: "", isPublished: false };
+		newPattern = { zone: zoneOptions[0]?.value ?? "custom", customZoneLabel: "", name: "", coverage: "full", widthInches: 24, heightInches: 16, svgPath: "", svgUrl: "", notes: "", isPublished: false };
 		showAddPattern = false;
 	}
 
@@ -506,7 +513,7 @@ onMount(() => {
 										</div>
 										<div>
 											<div class="cell-name">{sub.name}</div>
-											<div class="cell-meta">{sub.zones.join(", ")}</div>
+											<div class="cell-meta">{submissionZoneLabels(sub)}</div>
 										</div>
 									</div>
 								</td>
@@ -888,7 +895,7 @@ onMount(() => {
 				</div>
 				<div class="review-meta__row">
 					<span class="review-meta__label">Zone</span>
-					<span class="review-meta__val">{reviewTarget.zones.join(", ")}</span>
+					<span class="review-meta__val">{submissionZoneLabels(reviewTarget)}</span>
 				</div>
 				<div class="review-meta__row">
 					<span class="review-meta__label">Coverage</span>
@@ -1140,7 +1147,7 @@ onMount(() => {
 						</div>
 						<div class="pattern-row__info">
 							<div class="pattern-row__name">{pat.name}</div>
-							<div class="pattern-row__meta">{pat.widthInches}" × {pat.heightInches}" · {pat.zone}</div>
+							<div class="pattern-row__meta">{pat.widthInches}" × {pat.heightInches}" · {pat.zone === "custom" && pat.customZoneLabel ? pat.customZoneLabel : pat.zone}</div>
 						</div>
 						<div class="ep-row-right">
 							<button class="ep-toggle" class:ep-toggle--on={pat.isPublished} onclick={() => patternStore.updatePattern(pat.id, { isPublished: !pat.isPublished })} title={pat.isPublished ? "Unpublish" : "Publish"}>
@@ -1188,6 +1195,9 @@ onMount(() => {
 						<div class="form-group" style="flex:2"><label class="form-label" for="np-zone">Zone</label><select id="np-zone" class="form-input form-input--sm" bind:value={newPattern.zone}>{#each zoneOptions as z}<option value={z.value}>{z.label}</option>{/each}</select></div>
 						<div class="form-group"><label class="form-label" for="np-coverage">Coverage</label><select id="np-coverage" class="form-input form-input--sm" bind:value={newPattern.coverage}><option value="full">Full</option><option value="partial">Partial</option><option value="edge-only">Edge only</option></select></div>
 					</div>
+					{#if newPattern.zone === "custom"}
+						<div class="form-group"><label class="form-label" for="np-custom-zone">Custom Zone Name</label><input id="np-custom-zone" type="text" class="form-input form-input--sm" bind:value={newPattern.customZoneLabel} placeholder="e.g. Sunroof Trim, Rocker Panel Insert" required/></div>
+					{/if}
 					<div class="form-group"><label class="form-label" for="np-name">Pattern Name</label><input id="np-name" type="text" class="form-input form-input--sm" bind:value={newPattern.name} placeholder="e.g. Front Driver Window" required/></div>
 					<div class="form-row">
 						<div class="form-group"><label class="form-label" for="np-width">Width (in)</label><input id="np-width" type="number" class="form-input form-input--sm" bind:value={newPattern.widthInches} min="0.5" step="0.5"/></div>
@@ -1200,7 +1210,7 @@ onMount(() => {
 						<label class="toggle-label"><input type="checkbox" bind:checked={newPattern.isPublished}/>Publish immediately</label>
 						<div class="ep-row-actions">
 							<button class="btn-ghost btn-ghost--sm" onclick={() => (showAddPattern = false)}>Cancel</button>
-							<button class="btn-primary btn-primary--sm" onclick={handleAddPattern}>Add Pattern</button>
+							<button class="btn-primary btn-primary--sm" disabled={!newPattern.name.trim() || (newPattern.zone === "custom" && !newPattern.customZoneLabel.trim())} onclick={handleAddPattern}>Add Pattern</button>
 						</div>
 					</div>
 				</div>
