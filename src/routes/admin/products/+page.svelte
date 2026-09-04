@@ -21,8 +21,6 @@
 		active: boolean; metadata: Record<string, string>;
 		created: number; prices: PriceData[];
 	}
-	interface EnvVar { envVar: string; priceId: string; configId: string; isNew: boolean; }
-
 	// ─── State ─────────────────────────────────────
 	let loading      = $state(true);
 	let error        = $state<string | null>(null);
@@ -31,8 +29,11 @@
 	let showArchived = $state(false);
 
 	let syncing    = $state(false);
-	let syncResult = $state<{ created: { products: { id: string; name: string }[]; prices: { id: string; configId: string }[] }; envVars: EnvVar[] } | null>(null);
-	let copied     = $state(false);
+	let syncResult = $state<{
+		created:  { products: { id: string; name: string }[]; prices: { id: string; configId: string; unit_amount: number }[] };
+		adopted:  { id: string; configId: string }[];
+		archived: string[];
+	} | null>(null);
 
 	let creatingProduct = $state(false);
 	let savingProduct   = $state(false);
@@ -41,6 +42,58 @@
 	let addingPriceTo = $state<string | null>(null);
 	let savingPrice   = $state(false);
 	let newPrice      = $state({ amount: '', interval: 'month' as 'month' | 'year', nickname: '' });
+
+	// Plan allowances (cut limits, gated features, and pricing) — Firestore-
+	// backed via /api/admin/settings; enforced/displayed client-side via the
+	// public /api/settings/plans mirror. Price changes take effect on the
+	// next "Sync from config" run below, which mints new Stripe prices and
+	// archives the old ones (Stripe prices are immutable).
+	interface PlanAllowance {
+		cutsPerMonth: number | null; cutsPerDay: number | null; customUpload: boolean;
+		price: number; yearlyPrice: number;
+		stripePriceId: string | null; stripeYearlyPriceId: string | null;
+	}
+	interface ShopPlanAllowance {
+		seats: number; price: number; yearlyPrice: number;
+		stripePriceId: string | null; stripeYearlyPriceId: string | null;
+	}
+	let plans     = $state<{ free: PlanAllowance; lite: PlanAllowance; pro: PlanAllowance } | null>(null);
+	let shopPlans = $state<{ starter: ShopPlanAllowance; team: ShopPlanAllowance; studio: ShopPlanAllowance } | null>(null);
+	let plansLoading  = $state(true);
+	let plansSaving   = $state(false);
+
+	async function loadPlans() {
+		plansLoading = true;
+		try {
+			const res  = await fetch('/api/admin/settings', { headers: await authHeaders() });
+			if (!res.ok) throw new Error('Failed to load plan allowances');
+			const data = await res.json();
+			plans     = data.plans;
+			shopPlans = data.shopPlans;
+		} catch (e) {
+			toastStore.error('Load failed', e instanceof Error ? e.message : 'Could not load plan allowances');
+		} finally {
+			plansLoading = false;
+		}
+	}
+
+	async function savePlans() {
+		if (!plans) return;
+		plansSaving = true;
+		try {
+			const res = await fetch('/api/admin/settings', {
+				method: 'POST',
+				headers: await authHeaders(),
+				body: JSON.stringify({ plans, shopPlans }),
+			});
+			if (!res.ok) throw new Error('Save failed');
+			toastStore.success('Allowances saved', 'Plan limits, features, and prices updated. Run "Sync from config" below to mint new Stripe prices for any amount changes.');
+		} catch (e) {
+			toastStore.error('Save failed', e instanceof Error ? e.message : 'Could not save plan allowances');
+		} finally {
+			plansSaving = false;
+		}
+	}
 
 	let archivingProduct = $state<string | null>(null);
 	let archivingPrice   = $state<string | null>(null);
@@ -91,6 +144,7 @@
 	}
 
 	onMount(load);
+	onMount(loadPlans);
 
 	// ─── Sync from config ──────────────────────────
 	async function syncConfig() {
@@ -104,9 +158,11 @@
 			const data = await res.json();
 			if (!res.ok) throw new Error(data.error ?? 'Sync failed');
 			syncResult = data;
+			plans     = data.plans;     // pick up freshly-minted price IDs
+			shopPlans = data.shopPlans;
 			const np = data.created.products.length, nr = data.created.prices.length;
 			if (np === 0 && nr === 0) {
-				toastStore.success('Already in sync', 'All plans already exist in Stripe.');
+				toastStore.success('Already in sync', 'All prices match the saved allowances.');
 			} else {
 				toastStore.success('Sync complete', `Created ${np} product${np !== 1 ? 's' : ''} and ${nr} price${nr !== 1 ? 's' : ''}.`);
 			}
@@ -215,13 +271,6 @@
 		}
 	}
 
-	async function copyEnvVars() {
-		if (!syncResult) return;
-		const text = syncResult.envVars.map(v => `${v.envVar}=${v.priceId}`).join('\n');
-		await copyText(text);
-		copied = true;
-		setTimeout(() => (copied = false), 2000);
-	}
 </script>
 
 <svelte:head><title>Products — Admin — OmniPlot</title></svelte:head>
@@ -280,6 +329,104 @@
 		</div>
 	{/if}
 
+	<!-- Plan allowances -->
+	<div class="section">
+		<div class="section-header">
+			<div>
+				<h2 class="section-title">Plan allowances</h2>
+				<p class="section-desc">Cut limits and gated features per tier — saved to Firestore, enforced live in the app (no deploy needed).</p>
+			</div>
+			<Button variant="primary" size="sm" onclick={savePlans} disabled={plansSaving || plansLoading || !plans}>
+				{plansSaving ? 'Saving…' : 'Save changes'}
+			</Button>
+		</div>
+
+		{#if plansLoading}
+			<div class="products-skeleton">
+				{#each { length: 2 } as _}
+					<div class="product-skel">
+						<div class="skel" style="width:180px;height:13px;"></div>
+						<div class="skel" style="width:80px;height:10px;margin-top:4px;"></div>
+					</div>
+				{/each}
+			</div>
+		{:else if plans && shopPlans}
+			<div class="allowances-grid">
+				<div class="allowance-card">
+					<div class="allowance-card__title">Free</div>
+					<div class="form-field">
+						<label class="field-label" for="free-cuts">Cuts per month</label>
+						<input id="free-cuts" class="field-input field-input--sm" type="number" min="0" bind:value={plans.free.cutsPerMonth} />
+					</div>
+					<label class="allowance-toggle">
+						<input type="checkbox" bind:checked={plans.free.customUpload} />
+						<span>Allow custom pattern uploads</span>
+					</label>
+					<p class="allowance-hint">When off, Free is limited to platform &amp; community patterns.</p>
+				</div>
+
+				<div class="allowance-card">
+					<div class="allowance-card__title">Lite</div>
+					<div class="form-field">
+						<label class="field-label" for="lite-cuts">Cuts per day</label>
+						<input id="lite-cuts" class="field-input field-input--sm" type="number" min="0" bind:value={plans.lite.cutsPerDay} />
+					</div>
+					<div class="allowance-price-row">
+						<div class="form-field">
+							<label class="field-label" for="lite-price">$/month</label>
+							<input id="lite-price" class="field-input field-input--sm" type="number" min="0" step="1" bind:value={plans.lite.price} />
+						</div>
+						<div class="form-field">
+							<label class="field-label" for="lite-yearly">$/month (yearly billing)</label>
+							<input id="lite-yearly" class="field-input field-input--sm" type="number" min="0" step="1" bind:value={plans.lite.yearlyPrice} />
+						</div>
+					</div>
+					<label class="allowance-toggle">
+						<input type="checkbox" bind:checked={plans.lite.customUpload} />
+						<span>Allow custom pattern uploads</span>
+					</label>
+				</div>
+
+				<div class="allowance-card">
+					<div class="allowance-card__title">Pro</div>
+					<div class="allowance-price-row">
+						<div class="form-field">
+							<label class="field-label" for="pro-price">$/month</label>
+							<input id="pro-price" class="field-input field-input--sm" type="number" min="0" step="1" bind:value={plans.pro.price} />
+						</div>
+						<div class="form-field">
+							<label class="field-label" for="pro-yearly">$/month (yearly billing)</label>
+							<input id="pro-yearly" class="field-input field-input--sm" type="number" min="0" step="1" bind:value={plans.pro.yearlyPrice} />
+						</div>
+					</div>
+					<p class="allowance-hint">Unlimited cuts, uploads always on.</p>
+				</div>
+
+				{#each [['starter', 'Starter'], ['team', 'Team'], ['studio', 'Studio']] as [key, label] (key)}
+					{@const sp = shopPlans[key as 'starter' | 'team' | 'studio']}
+					<div class="allowance-card">
+						<div class="allowance-card__title">Shop — {label}</div>
+						<div class="form-field">
+							<label class="field-label" for="{key}-seats">Seats</label>
+							<input id="{key}-seats" class="field-input field-input--sm" type="number" min="1" bind:value={sp.seats} />
+						</div>
+						<div class="allowance-price-row">
+							<div class="form-field">
+								<label class="field-label" for="{key}-price">$/month</label>
+								<input id="{key}-price" class="field-input field-input--sm" type="number" min="0" step="1" bind:value={sp.price} />
+							</div>
+							<div class="form-field">
+								<label class="field-label" for="{key}-yearly">$/month (yearly billing)</label>
+								<input id="{key}-yearly" class="field-input field-input--sm" type="number" min="0" step="1" bind:value={sp.yearlyPrice} />
+							</div>
+						</div>
+					</div>
+				{/each}
+			</div>
+			<p class="allowance-footnote">Price changes take effect after running <strong>Sync from config</strong> below — Stripe prices can't be edited in place, so a changed amount mints a new price and archives the old one.</p>
+		{/if}
+	</div>
+
 	<!-- Sync from config -->
 	<div class="section">
 		<div class="section-header">
@@ -315,45 +462,16 @@
 				<div class="sync-result__header">
 					<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" style="color:var(--color-success)"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
 					<span class="sync-result__title">
-						{#if syncResult.created.products.length === 0 && syncResult.created.prices.length === 0}
-							All plans already in Stripe — nothing to create
+						{#if syncResult.created.products.length === 0 && syncResult.created.prices.length === 0 && syncResult.adopted.length === 0}
+							Already in sync — no amounts changed
 						{:else}
-							Created {syncResult.created.products.length} product{syncResult.created.products.length !== 1 ? 's' : ''} and {syncResult.created.prices.length} price{syncResult.created.prices.length !== 1 ? 's' : ''}
+							{#if syncResult.adopted.length > 0}Linked {syncResult.adopted.length} existing price{syncResult.adopted.length !== 1 ? 's' : ''}{#if syncResult.created.prices.length > 0}, {/if}{/if}
+							{#if syncResult.created.prices.length > 0}created {syncResult.created.products.length} product{syncResult.created.products.length !== 1 ? 's' : ''} and {syncResult.created.prices.length} price{syncResult.created.prices.length !== 1 ? 's' : ''}{/if}
+							{#if syncResult.archived.length > 0}, archived {syncResult.archived.length} stale price{syncResult.archived.length !== 1 ? 's' : ''}{/if}
 						{/if}
 					</span>
 				</div>
-
-				{#if syncResult.envVars.length > 0}
-					<div class="env-block">
-						<div class="env-block__header">
-							<span class="env-block__title">Add to your <code>.env</code> file</span>
-							<button class="copy-btn" onclick={copyEnvVars}>
-								{#if copied}
-									<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
-									Copied
-								{:else}
-									<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
-									Copy all
-								{/if}
-							</button>
-						</div>
-						<div class="env-vars">
-							{#each syncResult.envVars as v}
-								<div class="env-row" class:env-row--new={v.isNew}>
-									<code class="env-key">{v.envVar}</code>
-									<span class="env-eq">=</span>
-									<code class="env-val">{v.priceId}</code>
-									{#if v.isNew}
-										<span class="env-new-badge">new</span>
-									{/if}
-									<button class="env-copy" onclick={() => copyText(`${v.envVar}=${v.priceId}`)} title="Copy">
-										<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
-									</button>
-								</div>
-							{/each}
-						</div>
-					</div>
-				{/if}
+				<p class="sync-result__note">Price IDs are saved to Firestore automatically — no env vars to copy.</p>
 			</div>
 		{/if}
 	</div>
@@ -661,50 +779,7 @@
 	}
 	.sync-result__header { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
 	.sync-result__title  { font-size: 0.875rem; font-weight: 500; color: var(--text-primary); }
-
-	/* Env block */
-	.env-block {
-		background: var(--bg-base); border: 1px solid var(--border-default);
-		border-radius: var(--radius-lg); overflow: hidden;
-	}
-	.env-block__header {
-		display: flex; align-items: center; justify-content: space-between;
-		padding: 8px 12px; border-bottom: 1px solid var(--border-subtle);
-		background: var(--bg-surface-2);
-	}
-	.env-block__title { font-size: 0.8125rem; color: var(--text-secondary); }
-	.env-block__title code { font-family: var(--font-mono); font-size: 0.8125rem; background: var(--bg-surface-3); padding: 1px 5px; border-radius: 3px; }
-	.copy-btn {
-		display: inline-flex; align-items: center; gap: 4px;
-		padding: 4px 10px; font-size: 0.75rem; font-weight: 500;
-		background: var(--bg-surface); border: 1px solid var(--border-default);
-		border-radius: var(--radius-sm); color: var(--text-secondary); cursor: pointer;
-		transition: all 0.12s;
-	}
-	.copy-btn:hover { background: var(--bg-surface-3); color: var(--text-primary); }
-
-	.env-vars { padding: 4px 0; }
-	.env-row {
-		display: flex; align-items: center; gap: 4px;
-		padding: 6px 12px; font-family: var(--font-mono); font-size: 0.8125rem;
-		border-top: 1px solid var(--border-subtle);
-	}
-	.env-row:first-child { border-top: none; }
-	.env-row--new { background: color-mix(in srgb, var(--color-success) 5%, transparent); }
-	.env-key  { color: var(--text-brand); flex-shrink: 0; }
-	.env-eq   { color: var(--text-tertiary); padding: 0 2px; }
-	.env-val  { color: var(--text-secondary); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-	.env-new-badge {
-		font-size: 0.625rem; font-weight: 700; font-family: var(--font-mono);
-		text-transform: uppercase; color: var(--color-success);
-		background: color-mix(in srgb, var(--color-success) 15%, transparent);
-		padding: 1px 5px; border-radius: 3px; flex-shrink: 0;
-	}
-	.env-copy {
-		background: none; border: none; cursor: pointer; padding: 3px; border-radius: 3px;
-		color: var(--text-tertiary); transition: color 0.1s, background 0.1s; flex-shrink: 0;
-	}
-	.env-copy:hover { color: var(--text-primary); background: var(--bg-surface-2); }
+	.sync-result__note   { font-size: 0.8125rem; color: var(--text-tertiary); margin: 0; }
 
 	/* Products list */
 	.products-skeleton { padding: 16px; display: flex; flex-direction: column; gap: 20px; }
@@ -845,6 +920,21 @@
 	.cancel-btn:hover { color: var(--text-primary); }
 
 	.create-hint { padding: 14px 16px; font-size: 0.8125rem; color: var(--text-tertiary); }
+
+	/* Plan allowances */
+	.allowances-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; padding: 16px; }
+	.allowance-price-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+	.allowance-price-row .field-input--sm { width: 100%; }
+	.allowance-footnote { padding: 0 16px 16px; font-size: 0.75rem; color: var(--text-tertiary); line-height: 1.5; }
+	.allowance-card {
+		background: var(--bg-surface-2); border: 1px solid var(--border-subtle);
+		border-radius: var(--radius-lg); padding: 14px; display: flex; flex-direction: column; gap: 10px;
+	}
+	.allowance-card--muted { opacity: 0.65; }
+	.allowance-card__title { font-size: 0.8125rem; font-weight: 700; color: var(--text-primary); }
+	.allowance-toggle { display: flex; align-items: center; gap: 8px; font-size: 0.8125rem; color: var(--text-secondary); cursor: pointer; user-select: none; }
+	.allowance-toggle input { accent-color: var(--color-brand-dim); }
+	.allowance-hint { font-size: 0.75rem; color: var(--text-tertiary); margin: 0; line-height: 1.5; }
 
 	@media (max-width: 768px) {
 		.billing-page  { padding: 16px; }

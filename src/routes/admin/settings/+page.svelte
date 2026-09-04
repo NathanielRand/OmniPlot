@@ -27,8 +27,6 @@
 		appName:      "OmniPlot",
 		supportEmail: "support@omniplot.app",
 		docsUrl:      "https://docs.omniplot.app",
-		maxFreeCuts:  5,
-		maxLiteCuts:  50,
 	});
 
 	let admins = $state<{ uid: string; displayName: string; email: string; createdAt: string | null }[]>([]);
@@ -184,15 +182,8 @@
 						<label class="field-label" for="docs-url">Docs URL</label>
 						<input id="docs-url" class="field-input" type="url" bind:value={platform.docsUrl} />
 					</div>
-					<div class="form-field">
-						<label class="field-label" for="free-cuts">Free tier monthly cut limit</label>
-						<input id="free-cuts" class="field-input field-input--sm" type="number" min="0" bind:value={platform.maxFreeCuts} />
-					</div>
-					<div class="form-field">
-						<label class="field-label" for="lite-cuts">Lite tier monthly cut limit</label>
-						<input id="lite-cuts" class="field-input field-input--sm" type="number" min="0" bind:value={platform.maxLiteCuts} />
-					</div>
 				</div>
+				<p style="margin-top:8px;font-size:0.8125rem;color:var(--text-tertiary);">Cut limits and plan features (free/lite/pro) now live on <a href="/admin/products" style="color:var(--text-brand);">Products → Plan allowances</a>.</p>
 				<div class="form-footer">
 					<Button variant="primary" size="sm" onclick={savePlatform} disabled={platformSaving}>
 						{#if platformSaving}

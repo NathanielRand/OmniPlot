@@ -30,8 +30,8 @@ export const SUPPORT_EMAIL = "support@omniplot.app";
 
 // ─── Tier limits ──────────────────────────────
 export const TIER_LIMITS = {
-	free: { cutsPerMonth: 1, cutsPerDay: null, seats: 1 },
-	lite: { cutsPerMonth: null, cutsPerDay: 1, seats: 1 },
+	free: { cutsPerMonth: 10, cutsPerDay: null, seats: 1 },
+	lite: { cutsPerMonth: null, cutsPerDay: 5, seats: 1 },
 	pro:  { cutsPerMonth: null, cutsPerDay: null, seats: 1 },
 } as const;
 
@@ -130,15 +130,15 @@ export const PRICING_PLANS: PricingPlan[] = [
 		yearlyPrice: 0,
 		description: "Sample the full pattern library risk-free.",
 		features: [
-			"1 cut per 30 days",
-			"Full pattern library access",
+			"10 cuts per month",
+			"Platform & community pattern library",
 			"HPGL / SVG / DXF export",
 			"Any plotter, any device",
 			"Auto-nesting preview",
 		],
 		limits: {
 			cutsPerDay: null,
-			cutsPerMonth: 1,
+			cutsPerMonth: 10,
 			seats: 1,
 			customPatterns: false,
 			aiAssist: false,
@@ -155,7 +155,7 @@ export const PRICING_PLANS: PricingPlan[] = [
 		yearlyPrice: 24,
 		description: "For installers doing a few jobs a day.",
 		features: [
-			"1 cut per day",
+			"5 cuts per day",
 			"Everything in Free",
 			"Auto-nesting optimizer",
 			"Cut history & job log (90 days)",
@@ -163,7 +163,7 @@ export const PRICING_PLANS: PricingPlan[] = [
 			"1 seat",
 		],
 		limits: {
-			cutsPerDay: 1,
+			cutsPerDay: 5,
 			cutsPerMonth: null,
 			seats: 1,
 			customPatterns: false,
@@ -673,6 +673,7 @@ export const ADMIN_NAV = [
 	{ label: "Patterns",  href: "/admin/patterns",    icon: "vector-bezier" },
 	{ label: "Insights",  href: "/admin/insights",    icon: "book-open" },
 	{ label: "Plotters",  href: "/admin/plotters",    icon: "printer" },
+	{ label: "Errors",    href: "/admin/errors",      icon: "alert-triangle" },
 	{ label: "Analytics", href: "/admin/analytics",   icon: "chart-bar" },
 	{ label: "Products",  href: "/admin/products",    icon: "package" },
 	{ label: "Coupons",   href: "/admin/coupons",     icon: "tag" },

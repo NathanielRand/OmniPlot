@@ -2,6 +2,8 @@ import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import Jimp from 'jimp';
 import { morphOpen, readJimp, jimpToBuffer, runTrace, preprocessForTrace } from '$lib/server/vectorize';
+import { checkRateLimit, rateLimitedResponse } from '$lib/server/rate-limit';
+import { logServerError } from '$lib/server/log-error';
 
 export const config = {
 	runtime:     'nodejs20.x',
@@ -88,7 +90,11 @@ function createWhiteJimp(w: number, h: number): Promise<Jimp> {
 	});
 }
 
-export const POST: RequestHandler = async ({ request }) => {
+export const POST: RequestHandler = async ({ request, getClientAddress }) => {
+	// Heaviest of the vectorize endpoints (multi-blob potrace) — tighter cap.
+	const limit = await checkRateLimit(`vectorize-multi:${getClientAddress()}`, { max: 10, windowSeconds: 60 });
+	if (!limit.allowed) return rateLimitedResponse(limit);
+
 	try {
 		let formData: FormData;
 		try {
@@ -191,6 +197,7 @@ export const POST: RequestHandler = async ({ request }) => {
 		if (err && typeof err === 'object' && 'status' in err) throw err;
 		const msg = err instanceof Error ? err.message : String(err);
 		console.error('[vectorize-multi] unexpected error:', err);
+		await logServerError(err, { source: 'api', route: '/api/vectorize-multi', severity: 'warning' });
 		throw error(500, `Vectorization service error: ${msg}`);
 	}
 };

@@ -4,6 +4,8 @@ import { stripe, connectedAccount } from '$lib/server/stripe';
 import { getAdminDb, verifyIdToken } from '$lib/server/firebase-admin';
 import { PRICING_PLANS, SHOP_PRICING_PLANS } from '$lib/config';
 
+const SETTINGS_DOC = 'settings/platform';
+
 async function assertAdmin(authHeader: string | null): Promise<boolean> {
 	const uid = await verifyIdToken(authHeader);
 	if (!uid) return false;
@@ -14,20 +16,6 @@ async function assertAdmin(authHeader: string | null): Promise<boolean> {
 function productId(p: string | { id: string }): string {
 	return typeof p === 'string' ? p : p.id;
 }
-
-// Maps our pricing config keys → .env var names
-const PRICE_CONFIG_TO_ENV: Record<string, string> = {
-	lite_monthly:         'VITE_STRIPE_LITE_MONTHLY',
-	lite_yearly:          'VITE_STRIPE_LITE_YEARLY',
-	pro_monthly:          'VITE_STRIPE_PRO_MONTHLY',
-	pro_yearly:           'VITE_STRIPE_PRO_YEARLY',
-	org_starter_monthly: 'VITE_STRIPE_SHOP_STARTER_MONTHLY',
-	org_starter_yearly:  'VITE_STRIPE_SHOP_STARTER_YEARLY',
-	org_team_monthly:    'VITE_STRIPE_SHOP_TEAM_MONTHLY',
-	org_team_yearly:     'VITE_STRIPE_SHOP_TEAM_YEARLY',
-	org_studio_monthly:  'VITE_STRIPE_SHOP_STUDIO_MONTHLY',
-	org_studio_yearly:   'VITE_STRIPE_SHOP_STUDIO_YEARLY',
-};
 
 export const GET: RequestHandler = async ({ request }) => {
 	if (!await assertAdmin(request.headers.get('authorization'))) {
@@ -150,27 +138,44 @@ export const POST: RequestHandler = async ({ request }) => {
 			return json({ ok: true });
 		}
 
-		// ── Sync from pricing config ──────────────────
-		// Creates all products + prices defined in PRICING_PLANS / SHOP_PRICING_PLANS.
-		// Safe to re-run — uses config_id metadata to skip anything already created.
+		// ── Sync from Firestore plan config ───────────
+		// Mints Stripe products/prices from settings/platform.plans / .shopPlans
+		// (edited in Admin → Products → Plan allowances) and writes the
+		// resulting price IDs back into Firestore so checkout resolves them
+		// deterministically. Stripe prices are immutable, so when an admin
+		// changes an amount this creates a NEW price and archives the old one
+		// (matched by cached price ID, not by config_id lookup) rather than
+		// silently reusing a stale amount.
 		if (action === 'sync_config') {
+			const db   = getAdminDb();
+			const settingsSnap = await db.doc(SETTINGS_DOC).get();
+			const settings = settingsSnap.data() ?? {};
+			const plans: Record<string, any>     = { ...(settings.plans     ?? {}) };
+			const shopPlans: Record<string, any> = { ...(settings.shopPlans ?? {}) };
+
 			const [existingProducts, existingPrices] = await Promise.all([
 				stripe.products.list({ limit: 100 }, connectedAccount),
-				stripe.prices.list({ limit: 100 }, connectedAccount),
+				stripe.prices.list({ limit: 100, active: true }, connectedAccount),
 			]);
-
-			const prodByConfigId  = new Map<string, string>();
-			const priceByConfigId = new Map<string, string>();
-
+			const prodByConfigId = new Map<string, string>();
 			for (const p of existingProducts.data) {
 				if (p.metadata?.config_id) prodByConfigId.set(p.metadata.config_id, p.id);
 			}
+			// Prices already created by an earlier run of this sync (or the old
+			// pre-Firestore flow) — matched by the config_id metadata stamped on
+			// them, same convention checkout's fallback lookup uses. Adopting
+			// these instead of blindly minting new ones is what keeps a first
+			// sync after this migration from orphaning/duplicating the prices
+			// existing subscribers are actually billed on.
+			const priceByConfigId = new Map<string, typeof existingPrices.data[number]>();
 			for (const p of existingPrices.data) {
-				if (p.metadata?.config_id) priceByConfigId.set(p.metadata.config_id, p.id);
+				if (p.metadata?.config_id) priceByConfigId.set(p.metadata.config_id, p);
 			}
 
 			const createdProducts: Array<{ id: string; name: string }> = [];
-			const createdPrices:   Array<{ id: string; configId: string }> = [];
+			const createdPrices:   Array<{ id: string; configId: string; unit_amount: number }> = [];
+			const adoptedPrices:   Array<{ id: string; configId: string }> = [];
+			const archivedPrices:  string[] = [];
 
 			async function ensureProduct(
 				configId: string, name: string, description: string, meta: Record<string, string>,
@@ -184,51 +189,81 @@ export const POST: RequestHandler = async ({ request }) => {
 				return p.id;
 			}
 
-			async function ensurePrice(
+			// Creates a fresh price (Stripe prices can't be edited) whenever the
+			// admin-set amount differs from what's cached, archiving the stale one.
+			async function syncPrice(
+				entry: Record<string, any>, idKey: 'stripePriceId' | 'stripeYearlyPriceId',
 				configId: string, pid: string, cents: number,
 				interval: 'month' | 'year', nickname: string, meta: Record<string, string>,
 			) {
-				if (priceByConfigId.has(configId)) return;
+				const cachedId = entry[idKey] as string | null | undefined;
+				if (cachedId) {
+					const cached = await stripe.prices.retrieve(cachedId, {}, connectedAccount).catch(() => null);
+					if (cached && cached.active && cached.unit_amount === cents) return; // unchanged
+					if (cached && cached.active) {
+						await stripe.prices.update(cachedId, { active: false }, connectedAccount);
+						archivedPrices.push(cachedId);
+					}
+				} else {
+					// Nothing cached yet (first sync after this migration, or a doc
+					// reset) — adopt a matching pre-existing Stripe price rather than
+					// minting a duplicate. Existing subscriptions are bound to a price
+					// by ID, not by config_id, so leaving this one alone is safe.
+					const existing = priceByConfigId.get(configId);
+					if (existing && existing.unit_amount === cents) {
+						entry[idKey] = existing.id;
+						adoptedPrices.push({ id: existing.id, configId });
+						return;
+					}
+					if (existing) {
+						await stripe.prices.update(existing.id, { active: false }, connectedAccount);
+						archivedPrices.push(existing.id);
+					}
+				}
 				const p = await stripe.prices.create({
 					product: pid, unit_amount: cents, currency: 'usd',
 					recurring: { interval }, nickname,
 					metadata: { config_id: configId, ...meta },
 				}, connectedAccount);
-				priceByConfigId.set(configId, p.id);
-				createdPrices.push({ id: p.id, configId });
+				entry[idKey] = p.id;
+				createdPrices.push({ id: p.id, configId, unit_amount: cents });
 			}
 
 			for (const plan of PRICING_PLANS) {
 				if (plan.id === 'free') continue;
+				const entry = plans[plan.id] ?? (plans[plan.id] = {});
+				const price       = Number(entry.price       ?? plan.price);
+				const yearlyPrice = Number(entry.yearlyPrice ?? plan.yearlyPrice);
 				const pid = await ensureProduct(
 					plan.id, `OmniPlot ${plan.name}`, plan.description,
 					{ type: 'individual', tier: plan.id },
 				);
-				await ensurePrice(`${plan.id}_monthly`, pid, plan.price * 100, 'month', `${plan.name} Monthly`, { tier: plan.id });
-				await ensurePrice(`${plan.id}_yearly`,  pid, plan.yearlyPrice * 12 * 100, 'year', `${plan.name} Yearly`, { tier: plan.id });
+				await syncPrice(entry, 'stripePriceId',       `${plan.id}_monthly`, pid, Math.round(price * 100),            'month', `${plan.name} Monthly`, { tier: plan.id });
+				await syncPrice(entry, 'stripeYearlyPriceId', `${plan.id}_yearly`,  pid, Math.round(yearlyPrice * 12 * 100), 'year',  `${plan.name} Yearly`,  { tier: plan.id });
 			}
 
 			for (const plan of SHOP_PRICING_PLANS) {
+				const entry = shopPlans[plan.id] ?? (shopPlans[plan.id] = {});
+				const price       = Number(entry.price       ?? plan.price);
+				const yearlyPrice = Number(entry.yearlyPrice ?? plan.yearlyPrice);
 				const configId = `org_${plan.id}`;
 				const pid = await ensureProduct(
 					configId, `OmniPlot Team — ${plan.name}`, plan.description,
-					{ type: 'org', plan: plan.id, seats: String(plan.seats) },
+					{ type: 'org', plan: plan.id, seats: String(entry.seats ?? plan.seats) },
 				);
-				await ensurePrice(`${configId}_monthly`, pid, plan.price * 100,           'month', `Team ${plan.name} Monthly`, { plan: plan.id });
-				await ensurePrice(`${configId}_yearly`,  pid, plan.yearlyPrice * 12 * 100, 'year',  `Team ${plan.name} Yearly`,  { plan: plan.id });
+				await syncPrice(entry, 'stripePriceId',       `${configId}_monthly`, pid, Math.round(price * 100),            'month', `Team ${plan.name} Monthly`, { plan: plan.id });
+				await syncPrice(entry, 'stripeYearlyPriceId', `${configId}_yearly`,  pid, Math.round(yearlyPrice * 12 * 100), 'year',  `Team ${plan.name} Yearly`,  { plan: plan.id });
 			}
 
-			// Return env var mapping for ALL known config prices (new + existing)
-			const envVars = Object.entries(PRICE_CONFIG_TO_ENV)
-				.filter(([cid]) => priceByConfigId.has(cid))
-				.map(([cid, envVar]) => ({
-					envVar,
-					priceId: priceByConfigId.get(cid)!,
-					configId: cid,
-					isNew: createdPrices.some(p => p.configId === cid),
-				}));
+			// Persist the resolved price IDs (and confirmed amounts) back to Firestore.
+			await db.doc(SETTINGS_DOC).set({ plans, shopPlans }, { merge: true });
 
-			return json({ created: { products: createdProducts, prices: createdPrices }, envVars });
+			return json({
+				created:  { products: createdProducts, prices: createdPrices },
+				adopted:  adoptedPrices,
+				archived: archivedPrices,
+				plans, shopPlans,
+			});
 		}
 
 		return new Response(JSON.stringify({ error: 'Unknown action' }), { status: 400 });

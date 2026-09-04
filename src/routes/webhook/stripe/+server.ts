@@ -6,6 +6,7 @@ import { getAdminDb } from '$lib/server/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { sendReceiptEmail, sendRefundEmail, sendUpgradeEmail } from '$lib/server/email';
 import { attributeUid, chargeToRow, syncSubscriptionToFirestore, upsertTransaction } from '$lib/server/stripe-ledger';
+import { logServerError } from '$lib/server/log-error';
 
 // Single endpoint for every Stripe event on this platform account and its
 // connected account — avoids managing multiple webhooks in the Dashboard.
@@ -122,6 +123,12 @@ export const POST: RequestHandler = async ({ request }) => {
 		}
 	} catch (e) {
 		console.error(`[webhook] Handler error for ${event.type}:`, e);
+		await logServerError(e, {
+			source: 'webhook',
+			route: `stripe:${event.type}`,
+			meta: { eventId: event.id },
+			severity: 'error',
+		});
 		// Ledger/subscription writes are idempotent, so a 500 here just makes
 		// Stripe retry — safe, and necessary, since a swallowed failure is
 		// exactly how Connor's charge went missing in the first place.
@@ -213,9 +220,25 @@ async function onCheckoutComplete(session: Stripe.Checkout.Session) {
 			currentPeriodEnd:   periodEnd,
 			updatedAt:          FieldValue.serverTimestamp(),
 		}, { merge: true });
-		// No upgrade-confirmation email for org checkout — pre-existing gap
-		// (individual checkout has one via sendUpgradeEmail below; the shop
-		// path never had one either, so this isn't a new gap from rescoping).
+
+		// Send upgrade confirmation email to the user who ran checkout (non-fatal).
+		try {
+			const userSnap = await getAdminDb().doc(`users/${uid}`).get();
+			const userData = userSnap.data() ?? {};
+			if (userData.email) {
+				const planLabel = plan ? plan.charAt(0).toUpperCase() + plan.slice(1) : 'Team';
+				await sendUpgradeEmail(
+					userData.email as string,
+					(userData.displayName as string) ?? '',
+					planLabel,
+					unitAmount / 100,
+					currency,
+					periodEnd ?? new Date(),
+				);
+			}
+		} catch (err) {
+			console.error('[webhook] sendUpgradeEmail (org) failed:', err);
+		}
 	} else {
 		// A real nested object, not dotted keys — `.set(..., {merge:true})`
 		// doesn't parse "subscription.status" as a path the way `.update()` does.

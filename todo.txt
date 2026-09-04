@@ -16,21 +16,15 @@
 // NEXT
 ///////////////////////////////
 - add custom zone on pattern uploader form bug preventing from adding name to custom zone or adding a second custom zone if one already exist.
-- option to automatically remove bg on pattern uploaded image if supportable.
+- ADMIN PANEL: admin should be able to edit plan allowances from the admin panel. bump up the lite cuts per day to 5; bump up free to 10 free per month. limit features on free plan such as custom upload. only platform or community patterns can be used by free.
 
 //////////////////////////////////////
 // BACKLOG
 ////////////////////////////////
-- MOve admin sidebar badge next to logo on the samake the cand text.
-- MAJOR mobile responsiveness overhaul end-to-end
-- MAJOR light/dark mode visibility and contrast pass on anything that might have slipped through. make the light mode white less bright / more soft whilte making the light mode text contrast better globally, especially colored text on light mode its too bright to make out.
-- Changelog link from user dashboard on sidebar nac with badge on with version number highlighted on updates until user clicks on the changelog. update modal should show version(s) its updating to with link to changelog.
-- Update changelog since last
-- ADMIN PANEL: admin should be able to edit plan allowances from the admin panel. bump up the lite cuts per day to 5; bump up free to 10 free per month. limit features on free plan such as custom upload. only platform or community patterns can be used by free.
+- One follow-up you'll need to do outside code: enable a Firestore TTL policy on rateLimits.expiresAt (Firebase console → Firestore → TTL) so old window docs get purged automatically — TTL policies can't be set from rules or app code.
 - pattern builder where the uses inputs the exact dimensions to manually craft the pattern directly from the studio. this give true sandbox and potentially unlimited types of patterns.
 - the platform is very vehicle focused which has been good but i want to expand our offerings to include other cut/print needs like residential/commercial windows, art designs that have nothing to do with vehicles or building, idk. How can we keep the vehicles flow and branding but ADD (not take away) features to support anm encourage more than vehicles use. Everything from our pattern library layout/sort/filters/search, pattern uploader.
-- audit core saas infrastructure to verying all systems are fully wired up (not commented out or mocked out or faked in any way). we need to add anything we are missing that would be expected and/or common for saas infrastructure of this type to handle large scale.
-- audit all advertised features, services, pages (marketing & user dashboard) to make sure we support, enforce, and have the right systems in place for the whole process. update any marketing pages with features we've added since updating those last or process changes. find where we have inaccurate or mock data to prevent misadvertising. build a list of whats incomplete and also what is missing entirely or something we should have considering our product line. we need proper disclousure and badges next to everything we dont support or is in dev and disable to prevent misuse or abuse.
+- audit all advertised features, services, pages (marketing & user dashboard) to make sure we support, enforce, and have the right systems in place for the whole process. update any marketing pages with features we've added since updating those last or process changes. find where we have inaccurate or mock data to prevent misadvertising. build a list of whats incomplete and also what is missing entirely or something we should have considering our reexpanded product line. we need proper disclousure and badges next to everything we dont support or is in dev and disable to prevent misuse or abuse.
 - triggered email notifications/receipts for our various user actions (welcome, subscription, any transaction receipt, usage alerts, feature drops, account specific emails, etc..) that admin can view, test, update, create, and pause from the admin dashboard. notification activity needs to be viewable from admin. admin options to manual send.
 - reports/support systems needs conversational ability for user and admin (user must be logged in to start this kindof support chat) to address "report an issue" reports directly from the ui from both user and admin. like a persistant message conversation formed from that report an issue message that the user started that admin can change the state on as it progresses.
 - select material should dynamically change the gray box "cut zone/print zone" on the studio canvas size to match. that way they nest patterns into that zone, it is accruate to the size of the material they have placed those patterns in.

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from "svelte";
 	import { uiStore, userStore, toastStore } from "$lib/stores";
 	import { PRICING_PLANS } from "$lib/config";
 	import type { PricingPlan } from "$lib/types";
@@ -8,6 +9,19 @@
 
 	let billing       = $state<"monthly" | "yearly">("monthly");
 	let checkoutPlan  = $state<string | null>(null); // plan.id being loaded
+
+	// Admin-editable amounts (Admin → Products → Plan allowances), fetched
+	// live so this modal always matches what checkout will actually charge.
+	let livePrices = $state<Record<string, { price: number; yearlyPrice: number }> | null>(null);
+	onMount(() => {
+		fetch("/api/settings/plans")
+			.then((r) => (r.ok ? r.json() : null))
+			.then((data) => { if (data) livePrices = { free: data.free, lite: data.lite, pro: data.pro }; })
+			.catch(() => {});
+	});
+	const plans = $derived(
+		PRICING_PLANS.map((p) => ({ ...p, ...(livePrices?.[p.id] ? { price: livePrices[p.id].price, yearlyPrice: livePrices[p.id].yearlyPrice } : {}) })),
+	);
 
 	function closeOnBackdrop(e: MouseEvent) {
 		if (e.target === e.currentTarget) uiStore.closePricing();
@@ -109,7 +123,7 @@
 			</div>
 
 			<div class="plans">
-				{#each PRICING_PLANS as plan}
+				{#each plans as plan}
 					<div class="plan" class:plan--featured={plan.popular}>
 						{#if plan.popular}
 							<div class="plan__badge">Most popular</div>

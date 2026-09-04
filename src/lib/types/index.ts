@@ -22,6 +22,8 @@ export interface UserProfile {
 		lastCutAt: Date | null;
 		monthlyCount: number;
 		monthResetAt: Date;
+		dailyCount: number;
+		dayResetAt: Date | null;
 	};
 
 	// Subscription
@@ -603,6 +605,26 @@ export interface PlotterErrorReport {
 	autoReported: boolean;
 	resolvedAt: Date | null;
 	createdAt: Date;
+}
+
+// ─── Server error logs ────────────────────────
+export type ErrorLogSource = "api" | "webhook" | "unhandled";
+export type ErrorLogSeverity = "error" | "warning";
+
+export interface ErrorLogReport {
+	id: string;
+	fingerprint: string;
+	source: ErrorLogSource;
+	route: string;
+	message: string;
+	stack: string | null;
+	severity: ErrorLogSeverity;
+	uid: string | null;
+	meta: Record<string, unknown>;
+	occurrenceCount: number;
+	firstSeenAt: Date;
+	lastSeenAt: Date;
+	resolvedAt: Date | null;
 }
 
 // ─── UI State ─────────────────────────────────

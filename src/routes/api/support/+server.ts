@@ -2,6 +2,16 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { getAdminDb } from '$lib/server/firebase-admin';
 import { RESEND_API_KEY } from '$env/static/private';
+import { checkRateLimit, rateLimitedResponse } from '$lib/server/rate-limit';
+
+function escapeHtml(s: string): string {
+	return s
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;')
+		.replace(/"/g, '&quot;')
+		.replace(/'/g, '&#39;');
+}
 
 const TOPIC_LABELS: Record<string, string> = {
 	account:   'Account & Login',
@@ -13,6 +23,10 @@ const TOPIC_LABELS: Record<string, string> = {
 };
 
 export const POST: RequestHandler = async ({ request, getClientAddress }) => {
+	// Unauthenticated form — throttle per IP to prevent spam.
+	const limit = await checkRateLimit(`support:${getClientAddress()}`, { max: 5, windowSeconds: 300 });
+	if (!limit.allowed) return rateLimitedResponse(limit);
+
 	let body: { topic?: string; name?: string; email?: string; message?: string };
 	try {
 		body = await request.json();
@@ -62,12 +76,12 @@ export const POST: RequestHandler = async ({ request, getClientAddress }) => {
 					from:     'OmniPlot Support <noreply@omniplot.app>',
 					to:       ['support@omniplot.app'],
 					reply_to: email.trim(),
-					subject:  `[${topicLabel}] ${name.trim() || email.trim()}`,
+					subject:  `[${topicLabel}] ${escapeHtml(name.trim() || email.trim())}`,
 					html: `
-						<p><strong>Topic:</strong> ${topicLabel}</p>
-						<p><strong>From:</strong> ${name.trim() || '(no name)'} &lt;${email.trim()}&gt;</p>
+						<p><strong>Topic:</strong> ${escapeHtml(topicLabel)}</p>
+						<p><strong>From:</strong> ${escapeHtml(name.trim() || '(no name)')} &lt;${escapeHtml(email.trim())}&gt;</p>
 						<hr/>
-						<p>${message.trim().replace(/\n/g, '<br>')}</p>
+						<p>${escapeHtml(message.trim()).replace(/\n/g, '<br>')}</p>
 					`.trim(),
 				}),
 			});

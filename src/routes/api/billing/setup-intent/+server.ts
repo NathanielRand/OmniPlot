@@ -4,11 +4,15 @@ import Stripe from 'stripe';
 import { stripe, connectedAccount } from '$lib/server/stripe';
 import { getAdminDb, verifyIdToken } from '$lib/server/firebase-admin';
 import { STRIPE_CONNECTED_ACCOUNT_ID } from '$env/static/private';
+import { checkRateLimit, rateLimitedResponse } from '$lib/server/rate-limit';
 
 export const POST: RequestHandler = async ({ request }) => {
 	try {
 		const uid = await verifyIdToken(request.headers.get('authorization'));
 		if (!uid) return json({ error: 'Unauthorized' }, { status: 401 });
+
+		const limit = await checkRateLimit(`setup-intent:${uid}`, { max: 10, windowSeconds: 60 });
+		if (!limit.allowed) return rateLimitedResponse(limit);
 
 		const db   = getAdminDb();
 		const snap = await db.doc(`users/${uid}`).get();

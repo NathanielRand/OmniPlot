@@ -117,6 +117,10 @@ export function toUserProfile(id: string, data: DocumentData): UserProfile {
 				: null,
 			monthlyCount: data.usage?.monthlyCount ?? 0,
 			monthResetAt: fromTimestamp(data.usage?.monthResetAt),
+			dailyCount: data.usage?.dailyCount ?? 0,
+			dayResetAt: data.usage?.dayResetAt
+				? fromTimestamp(data.usage.dayResetAt)
+				: null,
 		},
 		subscription: {
 			stripeCustomerId:     data.subscription?.stripeCustomerId     ?? null,
@@ -210,6 +214,8 @@ export async function createUserProfile(
 			lastCutAt: null,
 			monthlyCount: 0,
 			monthResetAt: serverTimestamp(),
+			dailyCount: 0,
+			dayResetAt: null,
 		},
 		subscription: {
 			stripeCustomerId: null,
@@ -357,9 +363,11 @@ export async function getUserJobs(
 export async function incrementCutUsage(
 	uid: string,
 	currentMonthResetAt: Date | null,
+	currentDayResetAt: Date | null = null,
 ): Promise<void> {
 	const now = new Date();
-	const windowExpired = !currentMonthResetAt || now >= currentMonthResetAt;
+	const monthWindowExpired = !currentMonthResetAt || now >= currentMonthResetAt;
+	const dayWindowExpired = !currentDayResetAt || now >= currentDayResetAt;
 
 	const patch: Record<string, unknown> = {
 		"usage.cutCount": increment(1),
@@ -367,7 +375,7 @@ export async function incrementCutUsage(
 		updatedAt: serverTimestamp(),
 	};
 
-	if (windowExpired) {
+	if (monthWindowExpired) {
 		// Start a fresh 30-day window
 		patch["usage.monthlyCount"] = 1;
 		patch["usage.monthResetAt"] = Timestamp.fromDate(
@@ -375,6 +383,16 @@ export async function incrementCutUsage(
 		);
 	} else {
 		patch["usage.monthlyCount"] = increment(1);
+	}
+
+	if (dayWindowExpired) {
+		// Start a fresh 24-hour window
+		patch["usage.dailyCount"] = 1;
+		patch["usage.dayResetAt"] = Timestamp.fromDate(
+			new Date(now.getTime() + 24 * 60 * 60 * 1000),
+		);
+	} else {
+		patch["usage.dailyCount"] = increment(1);
 	}
 
 	await updateDoc(doc(db, Collections.USERS, uid), patch);

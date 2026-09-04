@@ -28,6 +28,7 @@
     'vector-bezier':    'M3 3l4 4 10-10 4 4-10 10-4-4zM3 17v4h4l10-10-4-4L3 17z',
     'book-open':        'M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2zM22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z',
     'printer':          'M6 9V2h12v7M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2M6 14h12v8H6z',
+    'alert-triangle':   'M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0zM12 9v4M12 17h.01',
     'chart-bar':        'M18 20V10M12 20V4M6 20v-6',
     'package':          'M16.5 9.4L7.55 4.24M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 002 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16zM3.27 6.96L12 12.01l8.73-5.05M12 22.08V12',
     'receipt':          'M4 2h16a1 1 0 011 1v18l-3-2-2 2-2-2-2 2-2-2-3 2V3a1 1 0 011-1zM8 9h8M8 13h6',
@@ -63,6 +64,9 @@
   }
 
   function closeMenu() { menuOpen = false; }
+
+  // ─── Sidebar collapse ─────────────────────────
+  let sidebarCollapsed = $state(false);
 </script>
 
 {#if userStore.loading}
@@ -70,16 +74,30 @@
     <span class="auth-gate__spinner"></span>
   </div>
 {:else if userStore.isAdmin}
-<div class="admin-shell">
+<div class="admin-shell" class:admin-shell--collapsed={sidebarCollapsed}>
   <!-- Sidebar -->
   <aside class="admin-sidebar">
     <div class="admin-sidebar__header">
       <div class="admin-sidebar__brand">
         <Logo size={26} />
-        <EarlyAccessBadge />
+        {#if !sidebarCollapsed}<EarlyAccessBadge />{/if}
       </div>
-      <Badge variant="danger" size="sm">Admin</Badge>
     </div>
+
+    <button
+      class="admin-sidebar__collapse-btn"
+      onclick={() => (sidebarCollapsed = !sidebarCollapsed)}
+      aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+      title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+    >
+      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        {#if sidebarCollapsed}
+          <path d="M9 18l6-6-6-6"/>
+        {:else}
+          <path d="M15 18l-6-6 6-6"/>
+        {/if}
+      </svg>
+    </button>
 
     <nav class="admin-nav" aria-label="Admin navigation">
       {#each ADMIN_NAV as item}
@@ -88,19 +106,20 @@
           class="admin-nav-item"
           class:active={currentPath === item.href || (item.href !== '/admin' && currentPath.startsWith(item.href))}
           aria-current={currentPath === item.href ? 'page' : undefined}
+          title={sidebarCollapsed ? item.label : undefined}
         >
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d={NAV_ICONS[item.icon] ?? ''} />
           </svg>
-          {item.label}
+          {#if !sidebarCollapsed}{item.label}{/if}
         </a>
       {/each}
     </nav>
 
     <div class="admin-sidebar__footer">
-      <a href="/" class="admin-back-link">
+      <a href="/" class="admin-back-link" title={sidebarCollapsed ? 'Back to app' : undefined}>
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
-        Back to app
+        {#if !sidebarCollapsed}Back to app{/if}
       </a>
     </div>
   </aside>
@@ -114,6 +133,7 @@
         <span class="admin-topbar__page">{currentPath.split('/').pop() || 'Overview'}</span>
       </div>
       <div class="admin-topbar__right">
+        <Badge variant="danger" size="sm">Admin</Badge>
         <ThemeToggle />
         <div class="avatar-wrap" bind:this={menuRef}>
           <button
@@ -219,14 +239,39 @@
     height: 100vh;
     overflow: hidden;
     background: var(--bg-base);
+    transition: grid-template-columns 0.16s var(--ease-smooth);
   }
 
+  .admin-shell--collapsed { grid-template-columns: 60px 1fr; }
+
   .admin-sidebar {
+    position: relative;
     background: var(--bg-surface);
     border-right: 1px solid var(--border-subtle);
     display: flex;
     flex-direction: column;
     overflow: hidden;
+  }
+
+  .admin-sidebar__collapse-btn {
+    position: absolute;
+    top: 50%;
+    right: -10px;
+    transform: translateY(-50%);
+    width: 20px; height: 20px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: 50%;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    z-index: 10;
+    transition: color 0.12s, border-color 0.12s, background 0.12s;
+  }
+  .admin-sidebar__collapse-btn:hover {
+    color: var(--text-primary);
+    background: var(--interactive-hover);
+    border-color: var(--border-strong, var(--border-default));
   }
 
   .admin-sidebar__header {
@@ -268,6 +313,10 @@
 
   .admin-nav-item:hover  { background: var(--interactive-hover); color: var(--text-primary); }
   .admin-nav-item.active { background: var(--bg-surface-3); color: var(--text-primary); }
+
+  .admin-shell--collapsed .admin-nav-item { justify-content: center; padding: 8px; }
+  .admin-shell--collapsed .admin-sidebar__header { justify-content: center; padding: 16px 8px; }
+  .admin-shell--collapsed .admin-back-link { justify-content: center; padding: 6px; }
 
   .admin-sidebar__footer {
     padding: 12px 8px;

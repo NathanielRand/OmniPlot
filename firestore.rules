@@ -84,6 +84,19 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // ─── Rate limit counters ──────────────────────────────────────────────
+    // Written only via Admin SDK in src/lib/server/rate-limit.ts; deny all client access.
+    match /rateLimits/{docId} {
+      allow read, write: if false;
+    }
+
+    // ─── Server error logs ────────────────────────────────────────────────
+    // Written only via Admin SDK in src/lib/server/log-error.ts; read only
+    // through src/routes/api/admin/errors (Admin SDK, asserts isAdmin server-side).
+    match /errorLogs/{docId} {
+      allow read, write: if false;
+    }
+
     // ─── Plotters ─────────────────────────────────────────────────────────
     match /plotters/{plotterId} {
       allow read:          if signedIn() && resource.data.userId == uid();

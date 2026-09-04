@@ -32,6 +32,7 @@
 		uid,
 		formatCutTime,
 		formatEfficiency,
+		DEFAULT_CUT_LIMITS,
 	} from "$lib/utils";
 	import { DEFAULT_MATERIALS, PLOTTER_PRESETS, CURRENT_AGENT_VERSION, type PlotterPreset } from "$lib/config";
 	import {
@@ -810,10 +811,14 @@
 	});
 
 	// ─── Metered feature gates ────────────────────
-	// Re-derives whenever user or shop subscription changes (real-time listener).
+	// Admin-configurable cut limits (settings/platform.maxFreeCuts/maxLiteCuts),
+	// fetched once on mount; falls back to DEFAULT_CUT_LIMITS until it lands.
+	let cutLimits = $state(DEFAULT_CUT_LIMITS);
+
+	// Re-derives whenever user, shop subscription, or cutLimits changes.
 	const cutCheck = $derived(
 		userStore.user
-			? canCut(userStore.user, shopStore.shop)
+			? canCut(userStore.user, shopStore.shop, cutLimits)
 			: { allowed: true }, // don't block while auth is loading
 	);
 	// True for free-tier users with no active shop subscription — gates non-cut features.
@@ -1448,7 +1453,7 @@
 		cutJobStore.addJob(job);
 		// Only count usage increments for completed jobs
 		if (status === "complete") {
-			incrementCutUsage(opts.user.uid, opts.user.usage.monthResetAt).catch(() => {});
+			incrementCutUsage(opts.user.uid, opts.user.usage.monthResetAt, opts.user.usage.dayResetAt).catch(() => {});
 		}
 	}
 
@@ -1489,7 +1494,7 @@
 		if (format === "hpgl") {
 			downloadHpgl(canvasStore.state, plotterStore.config, exportSlug);
 			if (userStore.user) {
-				incrementCutUsage(userStore.user.uid, userStore.user.usage.monthResetAt).catch(() => {});
+				incrementCutUsage(userStore.user.uid, userStore.user.usage.monthResetAt, userStore.user.usage.dayResetAt).catch(() => {});
 			}
 		} else if (format === "dxf") {
 			downloadDxf(canvasStore.state, exportSlug);
@@ -1662,6 +1667,14 @@
 	onMount(() => {
 		canvasStore.restoreFromStorage();
 		_mounted = true;
+		fetch("/api/settings/plans")
+			.then((r) => (r.ok ? r.json() : null))
+			.then((plans) => {
+				if (plans?.free?.cutsPerMonth && plans?.lite?.cutsPerDay) {
+					cutLimits = { maxFreeCuts: plans.free.cutsPerMonth, maxLiteCuts: plans.lite.cutsPerDay };
+				}
+			})
+			.catch(() => {});
 		requestAnimationFrame(fitToView);
 		// Restore any interrupted job resume checkpoint
 		if (typeof localStorage !== "undefined") {

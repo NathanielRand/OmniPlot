@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from "svelte";
 	import Badge from "$lib/components/ui/Badge.svelte";
 	import Button from "$lib/components/ui/Button.svelte";
 	import { PRICING_PLANS, SHOP_PRICING_PLANS, FAQ_ITEMS } from "$lib/config";
@@ -6,6 +7,36 @@
 	let billing = $state<"monthly" | "yearly">("monthly");
 
 	const CHECK = "M5 13l4 4L19 7";
+
+	// Amounts are admin-editable (Admin → Products → Plan allowances), stored
+	// in Firestore, and fetched live here so the marketing page always shows
+	// what checkout will actually charge. Copy (name/description/features)
+	// stays in the static config — only price/yearlyPrice/seats are overridden.
+	let livePrices = $state<Record<string, { price: number; yearlyPrice: number; seats?: number }> | null>(null);
+	onMount(() => {
+		fetch("/api/settings/plans")
+			.then((r) => (r.ok ? r.json() : null))
+			.then((data) => {
+				if (!data) return;
+				livePrices = {
+					free: data.free, lite: data.lite, pro: data.pro,
+					starter: data.shopPlans?.starter, team: data.shopPlans?.team, studio: data.shopPlans?.studio,
+				};
+			})
+			.catch(() => {});
+	});
+
+	const plans = $derived(
+		PRICING_PLANS.map((p) => ({ ...p, ...(livePrices?.[p.id] ? { price: livePrices[p.id].price, yearlyPrice: livePrices[p.id].yearlyPrice } : {}) })),
+	);
+	const shopPlans = $derived(
+		SHOP_PRICING_PLANS.map((p) => ({
+			...p,
+			...(livePrices?.[p.id]
+				? { price: livePrices[p.id].price, yearlyPrice: livePrices[p.id].yearlyPrice, seats: livePrices[p.id].seats ?? p.seats }
+				: {}),
+		})),
+	);
 </script>
 
 <svelte:head>
@@ -43,7 +74,7 @@
 
 	<div class="plans-label">Individual plans — 1 seat per account</div>
 	<div class="plans-row">
-		{#each PRICING_PLANS as plan}
+		{#each plans as plan}
 			<div class="plan-card" class:plan-card--featured={plan.popular}>
 				{#if plan.popular}
 					<div class="plan-card__badge">Most popular</div>
@@ -124,7 +155,7 @@
 		</div>
 
 		<div class="shop-plans-row">
-			{#each SHOP_PRICING_PLANS as plan}
+			{#each shopPlans as plan}
 				<div class="shop-plan-card" class:shop-plan-card--featured={plan.popular}>
 					{#if plan.popular}
 						<div class="shop-plan-card__badge">Most popular</div>

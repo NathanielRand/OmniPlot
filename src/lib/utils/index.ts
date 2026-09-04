@@ -95,9 +95,14 @@ export function deepClone<T>(obj: T): T {
 // ─── Check tier limits ────────────────────────
 import type { UserProfile, Shop } from "$lib/types";
 
+// Defaults mirror the platform-config fallback in `/api/admin/settings` —
+// admins can raise/lower these from the admin panel without a deploy.
+export const DEFAULT_CUT_LIMITS = { maxFreeCuts: 10, maxLiteCuts: 5 };
+
 export function canCut(
 	user: UserProfile,
 	shop?: Shop | null,
+	limits: { maxFreeCuts: number; maxLiteCuts: number } = DEFAULT_CUT_LIMITS,
 ): { allowed: boolean; reason?: string } {
 	const { tier, usage } = user;
 	const now = new Date();
@@ -114,30 +119,29 @@ export function canCut(
 			? new Date(usage.monthResetAt)
 			: null;
 		const sameMonth = resetAt && now < resetAt;
-		if (sameMonth && usage.monthlyCount >= 1) {
+		if (sameMonth && usage.monthlyCount >= limits.maxFreeCuts) {
 			const daysLeft = Math.ceil(
 				(resetAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24),
 			);
 			return {
 				allowed: false,
-				reason: `Free tier: 1 cut per 30 days. Resets in ${daysLeft} day${daysLeft !== 1 ? "s" : ""}.`,
+				reason: `Free tier: ${limits.maxFreeCuts} cut${limits.maxFreeCuts !== 1 ? "s" : ""} per 30 days. Resets in ${daysLeft} day${daysLeft !== 1 ? "s" : ""}.`,
 			};
 		}
 		return { allowed: true };
 	}
 
 	if (tier === "lite") {
-		const lastCut = usage.lastCutAt ? new Date(usage.lastCutAt) : null;
-		if (lastCut) {
-			const hoursAgo =
-				(now.getTime() - lastCut.getTime()) / (1000 * 60 * 60);
-			if (hoursAgo < 24) {
-				const hoursLeft = Math.ceil(24 - hoursAgo);
-				return {
-					allowed: false,
-					reason: `Lite tier: 1 cut per day. Available in ${hoursLeft}h.`,
-				};
-			}
+		const resetAt = usage.dayResetAt ? new Date(usage.dayResetAt) : null;
+		const sameDay = resetAt && now < resetAt;
+		if (sameDay && usage.dailyCount >= limits.maxLiteCuts) {
+			const hoursLeft = Math.ceil(
+				(resetAt.getTime() - now.getTime()) / (1000 * 60 * 60),
+			);
+			return {
+				allowed: false,
+				reason: `Lite tier: ${limits.maxLiteCuts} cut${limits.maxLiteCuts !== 1 ? "s" : ""} per day. Available in ${hoursLeft}h.`,
+			};
 		}
 		return { allowed: true };
 	}

@@ -1,6 +1,7 @@
 <script lang="ts">
+	import { onMount } from "svelte";
 	import { goto } from "$app/navigation";
-	import { userStore, toastStore } from "$lib/stores";
+	import { userStore, shopStore, toastStore } from "$lib/stores";
 	import { patternStore, RESIDENTIAL_ZONES_LIST, COMMERCIAL_ZONES_LIST, MIRROR_PAIRS, PATTERN_CATEGORIES, zonesForCategory } from "$lib/stores/patternStore.svelte";
 	import { addUserPattern } from "$lib/firebase/firestore";
 	import SvgPathInput from "$lib/components/ui/SvgPathInput.svelte";
@@ -9,6 +10,26 @@
 	import type { VehicleEntry } from "$lib/stores/patternStore.svelte";
 
 	type BodyStyle = NonNullable<VehicleEntry["bodyStyle"]>;
+
+	// ─── Free-tier gate ───────────────────────────
+	// Custom pattern uploads are gated per-tier via the admin-editable plan
+	// allowances (settings/platform.plans, /admin/products) — not hardcoded.
+	// Defaults to locked-for-free until the real config lands.
+	let planAllowsUpload = $state<boolean | null>(null); // null = still loading
+	onMount(() => {
+		fetch("/api/settings/plans")
+			.then((r) => (r.ok ? r.json() : null))
+			.then((plans) => {
+				const tier = userStore.user?.tier ?? "free";
+				planAllowsUpload = plans?.[tier]?.customUpload ?? (tier === "pro" || tier === "admin");
+			})
+			.catch(() => { planAllowsUpload = userStore.user?.tier === "pro" || userStore.user?.tier === "admin"; });
+	});
+	const isFreeLocked = $derived(
+		planAllowsUpload === false &&
+		shopStore.shop?.subscriptionStatus !== "active" &&
+		shopStore.shop?.subscriptionStatus !== "trialing",
+	);
 
 	// ─── Top-level mode: private or community ────
 	let mode = $state<"private" | "community">("private");
@@ -308,6 +329,7 @@
 	async function handleSubmit(e: SubmitEvent) {
 		e.preventDefault();
 		if (!userStore.user) { toastStore.error("Not signed in", "Please log in first."); return; }
+		if (isFreeLocked) { toastStore.error("Upgrade required", "Custom pattern uploads need a Lite or Pro plan."); return; }
 
 		if (uploadMode === "multi" && multiMethod === "individual") {
 			if (!validateIdentity() || !validateIndividual()) return;
@@ -437,7 +459,19 @@
 
 <div class="page">
 
-	{#if step === "success"}
+	{#if isFreeLocked}
+		<div class="upgrade-lock">
+			<div class="upgrade-lock__icon" aria-hidden="true">
+				<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+			</div>
+			<h2 class="upgrade-lock__title">Custom uploads need Lite or Pro</h2>
+			<p class="upgrade-lock__body">
+				Free accounts can use the full platform and community pattern library.
+				Upgrade to save your own private or community-submitted patterns.
+			</p>
+			<button class="btn btn--primary" onclick={() => goto("/pricing")}>See plans</button>
+		</div>
+	{:else if step === "success"}
 		<div class="success-wrap">
 			<div class="success-card">
 				<div class="success-icon" aria-hidden="true">
@@ -1544,6 +1578,33 @@
 	}
 
 	/* ─── Success ─── */
+	.upgrade-lock {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		text-align: center;
+		gap: 14px;
+		max-width: 420px;
+		margin: 48px auto;
+		padding: 40px 32px;
+		background: var(--bg-surface);
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-lg);
+	}
+	.upgrade-lock__icon {
+		width: 56px;
+		height: 56px;
+		border-radius: 50%;
+		background: var(--bg-surface-2);
+		border: 1px solid var(--border-default);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		color: var(--text-secondary);
+	}
+	.upgrade-lock__title { font-size: 1.125rem; font-weight: 700; color: var(--text-primary); margin: 0; }
+	.upgrade-lock__body { font-size: 0.9375rem; color: var(--text-secondary); line-height: 1.6; margin: 0; }
+
 	.success-wrap {
 		display: flex;
 		align-items: center;

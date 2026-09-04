@@ -1,6 +1,8 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { preprocessCutout, runTrace } from '$lib/server/vectorize';
+import { checkRateLimit, rateLimitedResponse } from '$lib/server/rate-limit';
+import { logServerError } from '$lib/server/log-error';
 
 export const config = {
 	runtime:     'nodejs20.x',
@@ -12,7 +14,10 @@ const ALLOWED_TYPES = new Set([
 	'image/bmp', 'image/gif', 'image/tiff',
 ]);
 
-export const POST: RequestHandler = async ({ request }) => {
+export const POST: RequestHandler = async ({ request, getClientAddress }) => {
+	const limit = await checkRateLimit(`vectorize:${getClientAddress()}`, { max: 20, windowSeconds: 60 });
+	if (!limit.allowed) return rateLimitedResponse(limit);
+
 	try {
 		let formData: FormData;
 		try {
@@ -52,6 +57,7 @@ export const POST: RequestHandler = async ({ request }) => {
 		if (err && typeof err === 'object' && 'status' in err) throw err;
 		const msg = err instanceof Error ? err.message : String(err);
 		console.error('[vectorize-cutout] unexpected error:', err);
+		await logServerError(err, { source: 'api', route: '/api/vectorize-cutout', severity: 'warning' });
 		throw error(500, `Cutout service error: ${msg}`);
 	}
 };

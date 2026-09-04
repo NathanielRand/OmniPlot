@@ -13,7 +13,6 @@
 		createRecaptchaVerifier,
 	} from "$lib/firebase/auth";
 	import type { ConfirmationResult, RecaptchaVerifier } from "firebase/auth";
-	import { PRICING_PLANS, SHOP_PRICING_PLANS } from "$lib/config";
 	import {
 		getShop,
 		getOrg,
