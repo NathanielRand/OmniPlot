@@ -10,6 +10,21 @@
 // surface pdfjs draws into (prebuilt native binary, same deployment story
 // as sharp — works on Vercel's Linux/x64 Node runtime).
 import { createCanvas } from '@napi-rs/canvas';
+import * as pdfjsWorker from 'pdfjs-dist/legacy/build/pdf.worker.mjs';
+
+// pdfjs normally runs its parser on a worker thread, spun up by dynamically
+// import()-ing pdf.worker.mjs by path at runtime (pdfjsLib.getDocument() call
+// site below). That path resolution works in a normal node_modules install,
+// but not inside a Vercel serverless function bundle: the dynamic import
+// target is just a runtime string, so Vercel's dependency tracer never sees
+// it and doesn't include the file — producing "Cannot find module
+// .../pdf.worker.mjs" in production even though it works locally.
+// Registering the worker's exports on globalThis.pdfjsWorker short-circuits
+// that dynamic import (pdfjs checks for it first — see PDFWorker's
+// #mainThreadWorkerMessageHandler) — and because this import is a normal
+// static ESM import, Vite/Rollup bundle it and Vercel's tracer includes it
+// like any other dependency.
+(globalThis as unknown as { pdfjsWorker: typeof pdfjsWorker }).pdfjsWorker = pdfjsWorker;
 
 // pdfjs-dist (as of v6) uses Promise.withResolvers, which landed in V8/Node 22 —
 // the api routes here run on the nodejs20.x runtime, so it's missing there.
