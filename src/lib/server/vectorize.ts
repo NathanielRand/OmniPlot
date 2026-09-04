@@ -471,6 +471,53 @@ export async function preprocessCutout(inputBuffer: Buffer, targetLongEdge = TAR
 	return jimpToBuffer(img);
 }
 
+// Visual enhance: cleans up a low-quality (blurry/noisy/JPEG-blocky) source image
+// and upscales it, keeping full color — unlike preprocessForTrace/preprocessCutout
+// this never thresholds or traces. Used to give the user a genuinely better source
+// to trace from, not just a cosmetically "punchier" preview.
+//
+// v1 of this (upscale → double unsharp-mask) looked dramatic on a clean test image
+// but on a real blurry/noisy photo it just amplified whatever noise and JPEG block
+// artifacts were already there — reading as harsh pixelation, not sharpness. No
+// classical filter can invent detail that was never captured (that needs an ML
+// super-resolution model, which isn't part of this stack); the honest ceiling here
+// is: remove noise BEFORE it gets amplified, recover real local contrast, then
+// sharpen only as much as the upscale factor actually calls for.
+//
+// Order matters:
+//   1. Denoise at native resolution — a median filter kills JPEG blocking/sensor
+//      noise while it's still small, before upscaling would blow it up too.
+//   2. Upscale with Lanczos3 (sharpest correct interpolation available).
+//   3. CLAHE (local, tile-based histogram equalization) — reveals real edge
+//      contrast in flat/underexposed regions instead of a single global stretch.
+//   4. One sharpen pass, sized to the upscale ratio — stronger for a heavily
+//      upscaled small source, gentler for one that's already near targetLongEdge,
+//      so it can't out-sharpen the actual information present.
+export async function preprocessEnhance(inputBuffer: Buffer, targetLongEdge = 2400): Promise<Buffer> {
+	const meta       = await sharp(inputBuffer).metadata();
+	const origLong   = Math.max(meta.width ?? 1, meta.height ?? 1);
+	const scaleRatio = Math.max(1, targetLongEdge / origLong);
+
+	const denoised = await sharp(inputBuffer)
+		.median(3)
+		.toFormat('png')
+		.toBuffer();
+
+	const upscaled = await sharp(denoised)
+		.resize(targetLongEdge, targetLongEdge, { fit: 'inside', kernel: sharp.kernel.lanczos3, withoutEnlargement: false })
+		.toFormat('png')
+		.toBuffer();
+
+	const sharpenSigma = Math.max(1.0, Math.min(2.2, scaleRatio * 0.6));
+	const sharpenM2    = Math.max(0.8, Math.min(2.5, scaleRatio * 0.5));
+
+	return sharp(upscaled)
+		.clahe({ width: 48, height: 48, maxSlope: 3 })
+		.sharpen({ sigma: sharpenSigma, m1: 0.3, m2: sharpenM2 })
+		.toFormat('png')
+		.toBuffer();
+}
+
 export async function preprocessForTrace(inputBuffer: Buffer, targetLongEdge = TARGET_LONG_EDGE): Promise<Buffer> {
 	const meta     = await sharp(inputBuffer).metadata();
 	const origLong = Math.max(meta.width ?? 1, meta.height ?? 1);

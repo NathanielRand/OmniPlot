@@ -16,6 +16,23 @@
 	}
 	let { value = $bindable(""), id = "svgPath", error = false, showMirror = false, mirrorOrigLabel, mirrorFlipLabel, onMultiExtract, autoExtract = false, onVectorizingChange }: Props = $props();
 
+	// ─── Resolution rating (shared by the Input / Output info bars) ─────────
+	interface ImgDims { w: number; h: number }
+	function loadImageDims(url: string): Promise<ImgDims> {
+		return new Promise((resolve, reject) => {
+			const img = new Image();
+			img.onload  = () => resolve({ w: img.naturalWidth, h: img.naturalHeight });
+			img.onerror = () => reject(new Error("Could not read image dimensions."));
+			img.src = url;
+		});
+	}
+	type ResTier = "low" | "med" | "high";
+	function resRating(longEdge: number): { label: string; tier: ResTier } {
+		if (longEdge < 500)  return { label: "Low res",    tier: "low"  };
+		if (longEdge < 1500) return { label: "Medium res", tier: "med"  };
+		return { label: "High res", tier: "high" };
+	}
+
 	// ─── Tab state ────────────────────────────────
 	// No default — nothing is selected/run until the user explicitly picks a
 	// method. Picking a method processes the uploaded image for real.
@@ -65,7 +82,72 @@
 	}
 	let resultsByTab = $state<Partial<Record<Tab, TabResult>>>({});
 
-	function setUploadedFile(file: File) {
+	// ─── Enhance (sharpen/clean up a low-quality input image) ─────────────
+	let enhancing = $state(false);
+	let enhanceErr = $state("");
+	let enhanceDone = $state(false);
+	let _enhanceDoneTimeout: ReturnType<typeof setTimeout> | null = null;
+
+	// Before/after snapshot from the most recent enhance run, so the user can
+	// see exactly what changed rather than just trusting a silent file swap.
+	interface CompareSnap extends ImgDims { url: string }
+	let compareBefore = $state<CompareSnap | null>(null);
+	let compareAfter  = $state<CompareSnap | null>(null);
+
+	async function enhanceUploadedImage() {
+		if (!uploadedFile || enhancing) return;
+		enhanceErr = "";
+		enhancing = true;
+		if (_enhanceDoneTimeout !== null) { clearTimeout(_enhanceDoneTimeout); _enhanceDoneTimeout = null; }
+		enhanceDone = false;
+		let beforeUrl = "";
+		try {
+			const isRasterImage = uploadedFile.type.startsWith("image/") && uploadedFile.type !== "image/svg+xml";
+			if (!isRasterImage) throw new Error("Enhance only applies to raster images.");
+
+			// Snapshot the current image before it gets replaced — this is what
+			// "before" compares against, independent of the live preview URL.
+			beforeUrl = URL.createObjectURL(uploadedFile);
+			const beforeDims = await loadImageDims(beforeUrl);
+
+			const fd = new FormData();
+			fd.append("image", uploadedFile);
+			const res = await fetch("/api/enhance", { method: "POST", body: fd });
+			if (!res.ok) {
+				const body = await res.text().catch(() => "");
+				let msg = "";
+				try { msg = (JSON.parse(body) as { message?: string }).message ?? ""; } catch { msg = body; }
+				throw new Error(msg || `Server error ${res.status}`);
+			}
+			const { image } = await res.json() as { image: string };
+			const blob = await (await fetch(image)).blob();
+			const enhancedFile = new File([blob], uploadedFile.name.replace(/\.\w+$/, "") + "-enhanced.png", { type: "image/png" });
+
+			setUploadedFile(enhancedFile, { keepCompare: true });
+			const afterDims = await loadImageDims(uploadedPreviewUrl);
+
+			if (compareBefore) URL.revokeObjectURL(compareBefore.url);
+			compareBefore = { url: beforeUrl, ...beforeDims };
+			compareAfter  = { url: uploadedPreviewUrl, ...afterDims };
+			beforeUrl = ""; // ownership transferred to compareBefore — don't revoke below
+
+			enhanceDone = true;
+			_enhanceDoneTimeout = setTimeout(() => { enhanceDone = false; _enhanceDoneTimeout = null; }, 2200);
+		} catch (err) {
+			enhanceErr = err instanceof Error ? err.message : "Enhance failed.";
+			if (beforeUrl) URL.revokeObjectURL(beforeUrl);
+		} finally {
+			enhancing = false;
+		}
+	}
+
+	function dismissCompare() {
+		if (compareBefore) URL.revokeObjectURL(compareBefore.url);
+		compareBefore = null;
+		compareAfter  = null;
+	}
+
+	function setUploadedFile(file: File, opts?: { keepCompare?: boolean }) {
 		uploadedFile = file;
 		if (uploadedPreviewUrl) URL.revokeObjectURL(uploadedPreviewUrl);
 		uploadedPreviewUrl = URL.createObjectURL(file);
@@ -78,7 +160,24 @@
 		cutoutErr    = "";
 		pasteErr     = "";
 		traceErr     = "";
+		// A genuinely new upload (not the result of Enhance replacing the image
+		// with its own cleaned-up version) invalidates any pending before/after.
+		if (!opts?.keepCompare) {
+			if (compareBefore) URL.revokeObjectURL(compareBefore.url);
+			compareBefore = null;
+			compareAfter  = null;
+		}
 	}
+
+	// ─── Input image resolution (for the Input info bar) ─────────────────
+	let inputDims = $state<ImgDims | null>(null);
+	$effect(() => {
+		const url = uploadedPreviewUrl;
+		if (!url) { inputDims = null; return; }
+		let cancelled = false;
+		loadImageDims(url).then(d => { if (!cancelled) inputDims = d; }).catch(() => { if (!cancelled) inputDims = null; });
+		return () => { cancelled = true; };
+	});
 
 	function tabError(t: Tab): string {
 		if (t === "vectorize") return vectorizeErr;
@@ -1119,7 +1218,54 @@
 					<img src={uploadedPreviewUrl} alt="Uploaded input" class="spi__io-img"
 						style="transform: translate({inputPanX}px, {inputPanY}px) scale({inputZoom});"/>
 				</div>
+				{#if uploadedFile.type.startsWith("image/") && uploadedFile.type !== "image/svg+xml"}
+					<button type="button" class="spi__pview-enhance-btn" class:spi__pview-enhance-btn--done={enhanceDone} onclick={enhanceUploadedImage} disabled={enhancing}
+						title="Enhance: sharpen and clean up edges" aria-label="Enhance image — sharpen and clean up edges">
+						{#if enhancing}
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="spi__spin" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9"/></svg>
+							<span>Enhancing…</span>
+						{:else if enhanceDone}
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+							<span>Enhanced</span>
+						{:else}
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 4 1.5 3L20 8.5 16.5 10 15 13l-1.5-3L10 8.5 13.5 7z"/><path d="m5 15 .9 1.8L8 18l-2.1.8L5 21l-.9-2.2L2 18l2.1-1.2z"/><path d="M4 4v3M2.5 5.5h3"/></svg>
+							<span>Enhance</span>
+						{/if}
+					</button>
+				{/if}
 			</div>
+			{#if inputDims}
+				<div class="spi__io-info">
+					<span class="spi__io-info-res">{inputDims.w} × {inputDims.h}px</span>
+					<span class="spi__res-pill spi__res-pill--{resRating(Math.max(inputDims.w, inputDims.h)).tier}">{resRating(Math.max(inputDims.w, inputDims.h)).label}</span>
+				</div>
+			{/if}
+			{#if enhanceErr}<span class="spi__io-enhance-err">{enhanceErr}</span>{/if}
+			{#if compareBefore && compareAfter}
+				<div class="spi__compare">
+					<div class="spi__compare-head">
+						<span>Enhance result</span>
+						<button type="button" class="spi__compare-close" onclick={dismissCompare} aria-label="Dismiss comparison">×</button>
+					</div>
+					<div class="spi__compare-row">
+						<div class="spi__compare-cell">
+							<span class="spi__compare-label">Before</span>
+							<img src={compareBefore.url} alt="Before enhance" class="spi__compare-img"/>
+							<span class="spi__io-info-res">{compareBefore.w} × {compareBefore.h}px</span>
+							<span class="spi__res-pill spi__res-pill--{resRating(Math.max(compareBefore.w, compareBefore.h)).tier}">{resRating(Math.max(compareBefore.w, compareBefore.h)).label}</span>
+						</div>
+						<div class="spi__compare-arrow" aria-hidden="true">
+							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+						</div>
+						<div class="spi__compare-cell">
+							<span class="spi__compare-label">After</span>
+							<img src={compareAfter.url} alt="After enhance" class="spi__compare-img"/>
+							<span class="spi__io-info-res">{compareAfter.w} × {compareAfter.h}px</span>
+							<span class="spi__res-pill spi__res-pill--{resRating(Math.max(compareAfter.w, compareAfter.h)).tier}">{resRating(Math.max(compareAfter.w, compareAfter.h)).label}</span>
+						</div>
+					</div>
+				</div>
+			{/if}
 			<label class="spi__io-replace">
 				<input type="file" accept=".svg,image/svg+xml,image/*" onchange={handleFileSelected} class="spi__file-input"/>
 				Replace image
@@ -1440,6 +1586,12 @@
 			</div>
 		{/if}
 	</div>
+	{#if previewPath}
+		<div class="spi__io-info">
+			<span class="spi__io-info-res">Vector · resolution-independent</span>
+			<span class="spi__res-pill spi__res-pill--high">High res</span>
+		</div>
+	{/if}
 	</div>
 	</div>
 	</div>
@@ -1704,6 +1856,111 @@
 		transform-origin: center center;
 		pointer-events: none;
 	}
+	/* ─── Resolution info bar (Input / Output) ─── */
+	.spi__io-info {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		margin-top: 6px;
+		padding: 5px 8px;
+		background: var(--bg-surface-2);
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-md);
+		font-size: 0.72rem;
+	}
+	.spi__io-info-res {
+		color: var(--text-secondary);
+		font-variant-numeric: tabular-nums;
+		font-weight: 500;
+	}
+	.spi__res-pill {
+		margin-left: auto;
+		padding: 2px 7px;
+		border-radius: 999px;
+		font-size: 0.68rem;
+		font-weight: 700;
+		letter-spacing: 0.02em;
+		white-space: nowrap;
+	}
+	.spi__res-pill--low {
+		background: color-mix(in srgb, var(--color-danger, #e5484d) 15%, transparent);
+		color: var(--color-danger, #e5484d);
+	}
+	.spi__res-pill--med {
+		background: color-mix(in srgb, #f5a623 18%, transparent);
+		color: #b7791f;
+	}
+	.spi__res-pill--high {
+		background: color-mix(in srgb, var(--color-success, #30a46c) 15%, transparent);
+		color: var(--color-success, #30a46c);
+	}
+
+	/* ─── Enhance before/after comparison ─── */
+	.spi__compare {
+		margin-top: 8px;
+		padding: 8px;
+		background: var(--bg-surface-2);
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-md);
+	}
+	.spi__compare-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		font-size: 0.72rem;
+		font-weight: 600;
+		color: var(--text-secondary);
+		margin-bottom: 6px;
+	}
+	.spi__compare-close {
+		background: none;
+		border: none;
+		color: var(--text-tertiary);
+		font-size: 1rem;
+		line-height: 1;
+		cursor: pointer;
+		padding: 0 2px;
+	}
+	.spi__compare-close:hover { color: var(--text-primary); }
+	.spi__compare-row {
+		display: grid;
+		grid-template-columns: 1fr auto 1fr;
+		align-items: center;
+		gap: 8px;
+	}
+	.spi__compare-cell {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 4px;
+		min-width: 0;
+	}
+	.spi__compare-label {
+		font-size: 0.68rem;
+		font-weight: 700;
+		letter-spacing: 0.03em;
+		text-transform: uppercase;
+		color: var(--text-tertiary);
+	}
+	.spi__compare-img {
+		width: 100%;
+		aspect-ratio: 1 / 1;
+		object-fit: contain;
+		border-radius: calc(var(--radius-md) - 2px);
+		border: 1px solid var(--border-default);
+		background: var(--bg-surface);
+	}
+	.spi__compare-arrow {
+		display: flex;
+		align-items: center;
+		color: var(--text-tertiary);
+	}
+	.spi__compare-cell .spi__io-info-res,
+	.spi__compare-cell .spi__res-pill {
+		font-size: 0.68rem;
+	}
+	.spi__compare-cell .spi__res-pill { margin-left: 0; }
+
 	.spi__io-replace {
 		display: inline-flex;
 		align-self: flex-start;
@@ -1962,6 +2219,48 @@
 	.spi__pview-expand-btn:hover {
 		color: var(--color-brand);
 		border-color: color-mix(in srgb, var(--color-brand) 40%, var(--border-default));
+	}
+
+	.spi__pview-enhance-btn {
+		position: absolute;
+		bottom: 8px;
+		right: 8px;
+		z-index: 2;
+		display: flex;
+		align-items: center;
+		gap: 5px;
+		padding: 5px 9px;
+		font-size: 0.75rem;
+		font-family: var(--font-body);
+		font-weight: 600;
+		color: var(--color-brand);
+		background: var(--bg-surface-2);
+		border: 1px solid color-mix(in srgb, var(--color-brand) 40%, var(--border-default));
+		border-radius: var(--radius-md);
+		cursor: pointer;
+		box-shadow: 0 1px 4px rgba(0,0,0,0.18);
+		transition: background 0.12s, color 0.12s, border-color 0.12s;
+	}
+	.spi__pview-enhance-btn:hover:not(:disabled) {
+		background: color-mix(in srgb, var(--color-brand) 12%, var(--bg-surface-2));
+		border-color: var(--color-brand);
+	}
+	.spi__pview-enhance-btn:disabled {
+		opacity: 0.6;
+		cursor: default;
+	}
+	.spi__pview-enhance-btn--done {
+		color: var(--color-success, #30a46c);
+		border-color: color-mix(in srgb, var(--color-success, #30a46c) 40%, var(--border-default));
+	}
+	.spi__spin { animation: spi-spin 0.8s linear infinite; }
+	@keyframes spi-spin { to { transform: rotate(360deg); } }
+
+	.spi__io-enhance-err {
+		display: block;
+		font-size: 0.75rem;
+		color: var(--color-danger, #e5484d);
+		margin-top: 4px;
 	}
 
 	.spi__pview-toolbar {
