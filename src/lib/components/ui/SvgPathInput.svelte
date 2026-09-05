@@ -26,6 +26,14 @@
 			img.src = url;
 		});
 	}
+	function loadImageEl(url: string): Promise<HTMLImageElement> {
+		return new Promise((resolve, reject) => {
+			const img = new Image();
+			img.onload  = () => resolve(img);
+			img.onerror = () => reject(new Error("Could not load image."));
+			img.src = url;
+		});
+	}
 	type ResTier = "low" | "med" | "high";
 	function resRating(longEdge: number): { label: string; tier: ResTier } {
 		if (longEdge < 500)  return { label: "Low res",    tier: "low"  };
@@ -145,6 +153,36 @@
 		if (compareBefore) URL.revokeObjectURL(compareBefore.url);
 		compareBefore = null;
 		compareAfter  = null;
+	}
+
+	// ─── Manual rotation (fix a sideways/upside-down input photo) ──────────
+	// Rotates the actual uploaded pixels (via canvas), not just the preview —
+	// the pattern still needs to trace right-side-up regardless of which way
+	// the source photo happened to be shot. Done entirely client-side since
+	// it's a cheap transform with no need for a server round trip.
+	let rotating = $state(false);
+	async function rotateUploadedImage(deg: 90 | -90) {
+		if (!uploadedFile || rotating || enhancing || pdfConverting) return;
+		const isRasterImage = uploadedFile.type.startsWith("image/") && uploadedFile.type !== "image/svg+xml";
+		if (!isRasterImage) return;
+		rotating = true;
+		try {
+			const img = await loadImageEl(uploadedPreviewUrl);
+			const canvas = document.createElement("canvas");
+			canvas.width  = img.naturalHeight;
+			canvas.height = img.naturalWidth;
+			const ctx = canvas.getContext("2d");
+			if (!ctx) throw new Error("Canvas not supported.");
+			ctx.translate(canvas.width / 2, canvas.height / 2);
+			ctx.rotate((deg * Math.PI) / 180);
+			ctx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2);
+			const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+			if (!blob) throw new Error("Could not export rotated image.");
+			const rotatedFile = new File([blob], uploadedFile.name.replace(/\.\w+$/, "") + "-rotated.png", { type: "image/png" });
+			setUploadedFile(rotatedFile);
+		} finally {
+			rotating = false;
+		}
 	}
 
 	function setUploadedFile(file: File, opts?: { keepCompare?: boolean }) {
@@ -1250,6 +1288,14 @@
 						<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
 						Fit
 					</button>
+					{#if uploadedFile.type.startsWith("image/") && uploadedFile.type !== "image/svg+xml"}
+						<button type="button" class="spi__pview-btn spi__pview-rotate" onclick={() => rotateUploadedImage(-90)} disabled={rotating} title="Rotate left 90°" aria-label="Rotate image left 90 degrees">
+							<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 010 11H11"/></svg>
+						</button>
+						<button type="button" class="spi__pview-btn" onclick={() => rotateUploadedImage(90)} disabled={rotating} title="Rotate right 90°" aria-label="Rotate image right 90 degrees">
+							<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 14l5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 000 11H13"/></svg>
+						</button>
+					{/if}
 				</div>
 				<div class="spi__io-imgwrap"
 					role="img"
@@ -2369,6 +2415,16 @@
 		border-left: 1px solid var(--border-default);
 		margin-left: 2px;
 		padding-left: 8px;
+	}
+	.spi__pview-rotate {
+		border-left: 1px solid var(--border-default);
+		margin-left: 2px;
+		padding-left: 8px;
+	}
+	.spi__pview-btn:disabled {
+		opacity: 0.5;
+		cursor: default;
+		pointer-events: none;
 	}
 
 	.spi__pview-svg {
