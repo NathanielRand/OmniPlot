@@ -1596,10 +1596,10 @@
 								<path d="M 10 0 L 0 0 0 10" fill="none" stroke="var(--border-default)" stroke-width="0.3" opacity="0.5"/>
 							</pattern>
 							<filter id="spi-fade-blur-l" x="-50%" y="-50%" width="200%" height="200%">
-								<feGaussianBlur stdDeviation="6"/>
+								<feGaussianBlur stdDeviation="2"/>
 							</filter>
 							<mask id="spi-fade-mask-l" maskUnits="userSpaceOnUse" x="-9999" y="-9999" width="19998" height="19998">
-								<path d={previewPath} fill="none" stroke="#fff" stroke-width="24" stroke-linejoin="round" stroke-linecap="round" filter="url(#spi-fade-blur-l)"/>
+								<path d={previewPath} fill="none" stroke="#fff" stroke-width="10" stroke-linejoin="round" stroke-linecap="round" filter="url(#spi-fade-blur-l)"/>
 							</mask>
 						</defs>
 						<rect x="0" y="0" width="100" height="100" fill="url(#spi-grid-l)"/>
@@ -1616,10 +1616,10 @@
 								<path d="M 10 0 L 0 0 0 10" fill="none" stroke="var(--border-default)" stroke-width="0.3" opacity="0.5"/>
 							</pattern>
 							<filter id="spi-fade-blur-r" x="-50%" y="-50%" width="200%" height="200%">
-								<feGaussianBlur stdDeviation="6"/>
+								<feGaussianBlur stdDeviation="2"/>
 							</filter>
 							<mask id="spi-fade-mask-r" maskUnits="userSpaceOnUse" x="-9999" y="-9999" width="19998" height="19998">
-								<path d={previewPath} transform="matrix(-1 0 0 1 100 0)" fill="none" stroke="#fff" stroke-width="24" stroke-linejoin="round" stroke-linecap="round" filter="url(#spi-fade-blur-r)"/>
+								<path d={previewPath} transform="matrix(-1 0 0 1 100 0)" fill="none" stroke="#fff" stroke-width="10" stroke-linejoin="round" stroke-linecap="round" filter="url(#spi-fade-blur-r)"/>
 							</mask>
 						</defs>
 						<rect x="0" y="0" width="100" height="100" fill="url(#spi-grid-r)"/>
@@ -1660,10 +1660,10 @@
 						<path d="M 10 0 L 0 0 0 10" fill="none" stroke="var(--border-default)" stroke-width="0.3" opacity="0.5"/>
 					</pattern>
 					<filter id="spi-fade-blur" x="-50%" y="-50%" width="200%" height="200%">
-						<feGaussianBlur stdDeviation={6 / zoom}/>
+						<feGaussianBlur stdDeviation={2 / zoom}/>
 					</filter>
 					<mask id="spi-fade-mask" maskUnits="userSpaceOnUse" x="-9999" y="-9999" width="19998" height="19998">
-						<path d={previewPath} fill="none" stroke="#fff" stroke-width={24 / zoom} stroke-linejoin="round" stroke-linecap="round" filter="url(#spi-fade-blur)"/>
+						<path d={previewPath} fill="none" stroke="#fff" stroke-width={10 / zoom} stroke-linejoin="round" stroke-linecap="round" filter="url(#spi-fade-blur)"/>
 					</mask>
 				</defs>
 				<rect x="-9999" y="-9999" width="19998" height="19998" fill="url(#spi-grid)"/>
