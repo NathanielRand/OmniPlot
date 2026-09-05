@@ -225,7 +225,7 @@ function base(previewText: string, content: string): string {
               <table border="0" cellpadding="0" cellspacing="0" width="100%" role="presentation">
                 <tr>
                   <td style="font-family:'Instrument Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:12px;color:#6a7288;line-height:1.6;text-align:center;">
-                    OmniPlot &middot; Professional PPF Cutting Software<br/>
+                    OmniPlot &middot; Professional Cutting Software<br/>
                     <a href="${APP_URL}/settings?tab=notifications" style="color:#6a7288;text-decoration:underline;">Manage notifications</a>
                     &nbsp;&middot;&nbsp;
                     <a href="${APP_URL}/privacy" style="color:#6a7288;text-decoration:underline;">Privacy</a>

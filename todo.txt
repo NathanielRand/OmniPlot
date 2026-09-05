@@ -13,35 +13,29 @@
 - Support as a core feature reworking our vehicle focus to include the following products/users: "custom", "vehicle", "residential", "commerical" with PPF, Window Tint, and ANYTHING else we have add that can be used in a commerical plotting/cutting device. think creative. think about other professions who use those types of machines and who could benefit from our platform. we need to craft project types and features and marketing for them from the start. we are really sticking with the mission of our delivering on our name "OmniPlot" not just a vehicle platform. requires major upgrade but with production paying users so we must preserve their data and not break any patterns they've uploaded, we can migrate what we can.
 
 ///////////////////////////////
-// NEXT
+// ONGOING
 ///////////////////////////////
-- pattern vectorize smoothed out a corner that it shouldn't have.
+- check community patterns are only visible by all other users only once admin approves. user reports seeing other user's unapproved community or even private patterns.
+- Plotters page "add plotter" btns/modal isnt wired correctly with as it doesnt detect usb or cut agent or anything.
+- btn for user to scan for installed cut agent already on local device.
+- admin billing invoices are showing for either the wrong connected account or the master account for stripe, either way those invoices are wrong.
+- reminting pricing/allowances didnt reflect changes on the /pricing page.
+- remove in email footer "PPF" as we are more than PPF now.
 
 //////////////////////////////////////
 // BACKLOG
 ////////////////////////////////
+- upload pattern btn dyancmially changes to incorrect values for the pattern library category filter views such as still showing vehicle veribage when they are clciked into a different category
+- audit all advertised features, services, pages (marketing & user dashboard) to make sure we support, enforce, and have the right systems in place for the whole process. update any marketing pages with features we've added since updating those last or process changes. find where we have inaccurate or mock data to prevent misadvertising. build a list of whats incomplete and also what is missing entirely or something we should have considering our reexpanded product line. we need proper disclousure and badges next to everything we dont support or is in dev and disable to prevent misuse or abuse.
 - BG remove option (on by default) on pattern uploader input images to help clean up the input image before before for a cleaner vectorization.
-- Plotters page "add plotter" modal isnt wired correctly with as it doesnt detect usb or cut agent or anything.
-- upload pattern btn dyancmially changes to incorrect values for the pattern library category filter views
-- btn for user to scan for installed cut agent already on local device.
-- check community patterns are only visible by all other users only once admin approves. user reports seeing other user's unapproved community or even private patterns
-- admin billing invoices are showing for either the wrong connected account or the master account for stripe, either way those invoices are wrong.
-- reminting pricing/allowances didnt reflect changes on the /pricing page.
-- remove in email footer "PPF" as we are more than PPF now.
 - Fixing OmniPlot's autonesting so it uses all patterns without stranding pieces outside the cut zone, even partially so all bounds need to be checked.
 - Next: enable the Firestore TTL policy on errorLogs.expiresAt in the Firebase console....One follow-up you'll need to do outside code: enable a Firestore TTL policy on rateLimits.expiresAt (Firebase console → Firestore → TTL) so old window docs get purged automatically — TTL policies can't be set from rules or app code./.
 - Create a local plotter emulator/simulator to verify the communication between plotter and agent (or other method) is bidirectional and valid throughout each expected communication event with proper processing and response. we need to test without having the quipment in person.
 - 'pattern builder' where the uses inputs the exact dimensions and sides/intersection points with drag option on connecting points to manually craft the pattern directly from the studio. this give true sandbox and potentially unlimited types of patterns.
-- audit all advertised features, services, pages (marketing & user dashboard) to make sure we support, enforce, and have the right systems in place for the whole process. update any marketing pages with features we've added since updating those last or process changes. find where we have inaccurate or mock data to prevent misadvertising. build a list of whats incomplete and also what is missing entirely or something we should have considering our reexpanded product line. we need proper disclousure and badges next to everything we dont support or is in dev and disable to prevent misuse or abuse.
-- triggered email notifications/receipts for our various user actions (welcome, subscription, any transaction receipt, usage alerts, feature drops, account specific emails, etc..) that admin can view, test, update, create, and pause from the admin dashboard. notification activity needs to be viewable from admin. admin options to manual send.
 - reports/support systems needs conversational ability for user and admin (user must be logged in to start this kindof support chat) to address "report an issue" reports directly from the ui from both user and admin. like a persistant message conversation formed from that report an issue message that the user started that admin can change the state on as it progresses.
-- select material should dynamically change the gray box "cut zone/print zone" on the studio canvas size to match. that way they nest patterns into that zone, it is accruate to the size of the material they have placed those patterns in.
-- any img type -> rm background -> convert to svg -  inherit svg upload functionality
-- the agent connection is throwing serial port errors.
 - multiple usdb connections seemd to have popped up. idk of the same or if it just detected multiple but there was a lot of connections. we should find a way to compress the unactive connections box size to clerarly differiate the the active connected vs inactive methods.
 - need optional end cut that cut with enough force to cleanly cut both layers of the roll to separate the job from the master roll completely.
 https://www.rvinyl.com/collections/chevrolet-precut-window-tint/products/chevrolet-silverado-2007-2013-2-door-avery-dennison-nr-nano-ceramic-ir-precut-window-tint?metaobject_handle=chevrolet-silverado-precut-window-tint
-- investors page
 - verify only after disconnecting usb connection method, agent option card/status show on plotter tab in studio as should with the usb connection method card/status as if to choose a new method now. Since the user disconnects one method, they'll likely want to see the others like in whatever state (if any) they are in.
 - Patterns: https://www.thetinteffect.com/precut-window-tint-kits/2014-2018-2019-limited-chevrolet-silverado-1500-truck-visor-eye-brow-precut-tint-kit-automotive-window-film/?srsltid=AfmBOooS3aialyaNfEgmkpu9aVOmeudAYHUx4fMVRufxybaruT3WlFOB
 - offer cutting services with simple user flow to select from db of patterns or submit own then submit order. we cut at our shop and send to customer in hardened tube. priced material cost +
@@ -52,11 +46,11 @@ https://www.rvinyl.com/collections/chevrolet-precut-window-tint/products/chevrol
 - fully custom pattern upload for custom shapes/logos/icons/etc.. with option to submit to community under a more fitting category than vehicles.
 - User should be able to upload and use any vehicles pattern they want with the option to submit to community. if they want to submit to the community they must provide any missing information before submission to gurantee it matches our other pattern datap points.
 - Verify/refactor User request of a pattern to be sourced by admin or community, not themselves. Maybe other community members will respond. Upvote system seems like a nice touch in case its a bade design.
-- User uploaded 2d scanning tool data output as a pattern.
-- turn users phone camera into web-based 2d scanning tool.
 - Add flagging for review/report for all patterns (platform or community provided) in case of inaccuracies that warn the users when a pattern is flagged for review when selected to add to the canvas.
 - The patterns are wrong. None of the windows are accurate. Our system didnt seem to take the curvature of the windows into consideration.
 - HEAT SHRINKAGE: add option/setting for user to add internal buffer to each design to intentional give excess inside the cut zone line a 1cm-ish default (can be changed by user) for user's placements and make up from HEAT SHRINKAGE
+- User uploaded 2d scanning tool data output as a pattern.
+- turn users phone camera into web-based 2d scanning tool.
 
 /////////////////////////////
 // LONG TERM VERIFICATION / NEEDS TESTING

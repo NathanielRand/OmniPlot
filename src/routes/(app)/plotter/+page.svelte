@@ -17,8 +17,9 @@
 		detectUsbPlotters,
 		detectAgentPorts,
 		scanNetworkViaAgent,
+		matchPortToPreset,
 	} from "$lib/utils/plotter-detect";
-	import { sendToPlotter, flushPlotter, reconnectSerialPort } from "$lib/utils/plotter-connection";
+	import { sendToPlotter, flushPlotter, reconnectSerialPort, connectSerialPort } from "$lib/utils/plotter-connection";
 	import type { PlotterDiagnostic } from "$lib/utils/plotter-errors";
 	import PlotterDiagPanel from "$lib/components/ui/PlotterDiagPanel.svelte";
 	import type { PlotterDevice, PlotterConnection, PlotterConfig, CutJob } from "$lib/types";
@@ -172,6 +173,26 @@
 			toastStore.info("No plotter detected", "Try selecting your device manually.");
 		}
 		detecting = false;
+	}
+
+	// getPorts() only returns ports the browser has already been granted access
+	// to, so it can't discover a plotter on its own — requestPort() is what
+	// actually shows the browser's device picker for a new/unauthorized device.
+	async function handleRequestUsbDevice() {
+		try {
+			const info = await connectSerialPort(form.baudRate);
+			const match = matchPortToPreset(info.vendorId, info.productId);
+			form = { ...form,
+				name: match?.preset.name ?? form.name || "USB Plotter",
+				presetName: match?.preset.name ?? form.presetName,
+				connection: "usb-serial",
+				vendorId: info.vendorId, productId: info.productId,
+			};
+			toastStore.success(match ? "Plotter detected" : "Device selected", match?.detail ?? info.label);
+		} catch (err) {
+			if (err instanceof Error && err.name === "NotFoundError") return; // user dismissed the picker
+			toastStore.error("USB selection failed", err instanceof Error ? err.message : "");
+		}
 	}
 
 	async function handleNetworkScan() {
@@ -517,6 +538,7 @@
 			<span class="agent-text">Cut Agent offline —</span>
 			<a class="agent-link" href="/studio/agent">open Agent page</a>
 			<span class="agent-text">or run <code>./omniplot-agent</code></span>
+			<button class="agent-link agent-rescan" onclick={pollAgent} title="Check again for an already-running Cut Agent">Rescan</button>
 		{/if}
 	</div>
 
@@ -751,10 +773,14 @@
 					<button class="detect-btn" onclick={handleDetect} disabled={detecting}>
 						{detecting ? "Scanning USB…" : "Scan USB / Agent Ports"}
 					</button>
+					<button class="detect-btn" onclick={handleRequestUsbDevice}>
+						Select USB Device…
+					</button>
 					<button class="detect-btn" onclick={handleNetworkScan} disabled={networkScanning}>
 						{networkScanning ? "Scanning LAN…" : "Scan Local Network"}
 					</button>
 				</div>
+				<p class="modal-hint">"Scan USB / Agent Ports" only finds devices already authorized in this browser — use "Select USB Device…" to grant access to a new one.</p>
 
 				{#if networkDevices.length > 0}
 					<div class="network-list">
@@ -989,6 +1015,7 @@
 	.agent-text code { font-family: var(--font-mono, monospace); font-size: 0.72rem; color: var(--text-muted); }
 	.agent-link { color: var(--text-brand, var(--color-brand)); text-decoration: none; }
 	.agent-link:hover { text-decoration: underline; }
+	.agent-rescan { background: none; border: none; padding: 0; font: inherit; cursor: pointer; }
 
 	/* ─── Main grid ─── */
 	.grid {

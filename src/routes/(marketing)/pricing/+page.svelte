@@ -12,7 +12,10 @@
 	// in Firestore, and fetched live here so the marketing page always shows
 	// what checkout will actually charge. Copy (name/description/features)
 	// stays in the static config — only price/yearlyPrice/seats are overridden.
-	let livePrices = $state<Record<string, { price: number; yearlyPrice: number; seats?: number }> | null>(null);
+	let livePrices = $state<Record<
+		string,
+		{ price: number; yearlyPrice: number; seats?: number; cutsPerMonth?: number | null; cutsPerDay?: number | null; customUpload?: boolean }
+	> | null>(null);
 	onMount(() => {
 		fetch("/api/settings/plans")
 			.then((r) => (r.ok ? r.json() : null))
@@ -26,8 +29,23 @@
 			.catch(() => {});
 	});
 
+	// The cuts allowance is always the first line of `features` for free/lite/pro —
+	// rewrite it from the live allowance so admin edits (Admin → Products) show up here.
+	function cutsFeatureLine(live?: { cutsPerMonth?: number | null; cutsPerDay?: number | null }): string | null {
+		if (!live) return null;
+		if (live.cutsPerDay != null) return `${live.cutsPerDay} cuts per day`;
+		if (live.cutsPerMonth != null) return `${live.cutsPerMonth} cuts per month`;
+		return "Unlimited cuts";
+	}
+
 	const plans = $derived(
-		PRICING_PLANS.map((p) => ({ ...p, ...(livePrices?.[p.id] ? { price: livePrices[p.id].price, yearlyPrice: livePrices[p.id].yearlyPrice } : {}) })),
+		PRICING_PLANS.map((p) => {
+			const live = livePrices?.[p.id];
+			if (!live) return p;
+			const cutsLine = cutsFeatureLine(live);
+			const features = cutsLine ? [cutsLine, ...p.features.slice(1)] : p.features;
+			return { ...p, price: live.price, yearlyPrice: live.yearlyPrice, features };
+		}),
 	);
 	const shopPlans = $derived(
 		SHOP_PRICING_PLANS.map((p) => ({
