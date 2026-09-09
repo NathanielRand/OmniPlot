@@ -129,9 +129,14 @@ function sampleSubpaths(
 		svg.appendChild(fullEl);
 		const bbox = fullEl.getBBox();
 		svg.removeChild(fullEl);
-		const scaleX = nominalW / (bbox.width  || 1);
-		const scaleY = nominalH / (bbox.height || 1);
-		const avgScale = (scaleX + scaleY) / 2;
+		// Uniform (fit-to-box) scale — independent X/Y factors would stretch
+		// any non-axis-aligned edge whenever the stored widthInches/heightInches
+		// don't exactly match the traced path's true aspect ratio, distorting
+		// polygon geometry. A single scale plus centering keeps the shape
+		// undistorted and simply fits it within the nominal box.
+		const scale = Math.min(nominalW / (bbox.width || 1), nominalH / (bbox.height || 1));
+		const offsetX = (nominalW - bbox.width * scale) / 2;
+		const offsetY = (nominalH - bbox.height * scale) / 2;
 
 		const loops: Array<Array<{ x: number; y: number }>> = [];
 		for (const sub of splitSubpaths(svgPath)) {
@@ -141,7 +146,7 @@ function sampleSubpaths(
 			let total = 0;
 			try { total = el.getTotalLength(); } catch { total = 0; }
 			if (total > 0) {
-				const estInchLength = total * avgScale;
+				const estInchLength = total * scale;
 				const samplesPerLoop = Math.min(
 					MAX_SAMPLES_PER_LOOP,
 					Math.max(MIN_SAMPLES_PER_LOOP, Math.ceil(estInchLength / TARGET_CHORD_INCHES)),
@@ -150,7 +155,7 @@ function sampleSubpaths(
 				const pts: Array<{ x: number; y: number }> = [];
 				for (let i = 0; i <= samplesPerLoop; i++) {
 					const pt = el.getPointAtLength(i * step);
-					pts.push({ x: (pt.x - bbox.x) * scaleX, y: (pt.y - bbox.y) * scaleY });
+					pts.push({ x: (pt.x - bbox.x) * scale + offsetX, y: (pt.y - bbox.y) * scale + offsetY });
 				}
 				loops.push(pts);
 			}
@@ -201,15 +206,18 @@ function samplePathInchPoints(
 		const total  = el.getTotalLength();
 		const step   = total / samples;
 		const bbox   = el.getBBox();
-		const scaleX = nominalW / (bbox.width  || 1);
-		const scaleY = nominalH / (bbox.height || 1);
+		// Uniform (fit-to-box) scale — see sampleSubpaths() for why independent
+		// X/Y factors are unsafe.
+		const scale = Math.min(nominalW / (bbox.width || 1), nominalH / (bbox.height || 1));
+		const offsetX = (nominalW - bbox.width * scale) / 2;
+		const offsetY = (nominalH - bbox.height * scale) / 2;
 
 		const pts: Array<{ x: number; y: number }> = [];
 		for (let i = 0; i <= samples; i++) {
 			const pt = el.getPointAtLength(i * step);
 			pts.push({
-				x: (pt.x - bbox.x) * scaleX,
-				y: (pt.y - bbox.y) * scaleY,
+				x: (pt.x - bbox.x) * scale + offsetX,
+				y: (pt.y - bbox.y) * scale + offsetY,
 			});
 		}
 		document.body.removeChild(svg);
