@@ -40,6 +40,47 @@ import {
 // intentional overlap; the user has to explicitly opt into that.
 let PADDING_INCHES = 0.05;
 
+// ─── Edge-clearance margin (sheet-boundary version of PADDING_INCHES) ──────
+// Every packer in this file (skyline, NFP, row-balance, gap-fill) enforces
+// PAD between ITEMS, but happily treats {x:0, y:0} and the far rollWidth
+// edge as legal — none of them keep the same PAD clearance from the sheet's
+// own physical boundary. Patching that into each packer individually was
+// tried first and reverted: shifting one item to gain edge clearance ate
+// into a *different*, already-correct inter-item gap another pass had
+// computed, producing an unresolvable collision (the overlap-nudge loop can
+// only slide along x, so a y-axis collision it creates just burns its
+// iteration budget for nothing) — a regression, not a fix.
+//
+// The safe way to add a margin to a coordinate system is to shrink the
+// system, run everything exactly as before inside the smaller space (every
+// existing inter-item invariant stays intact, since nothing about their
+// relative math changes), then translate the whole result outward by PAD.
+// A uniform translation can never introduce a new collision — it preserves
+// every distance between items exactly. Only the roll-WIDTH axis (bounded
+// on both sides) needs shrinking; the length axis's far end is an oversized
+// stand-in for "as long as the roll needs to be," not a real edge, so it
+// only needs the uniform +PAD shift at the end, not a shrink up front.
+// Hard floor on sheet-edge clearance, independent of the user's configurable
+// item-to-item buffer. bufferInches can legitimately be 0 (touching pieces)
+// or even negative (intentional overlap, per its own doc comment) — but a
+// piece is never supposed to render flush against, let alone past, the
+// sheet's own physical edge regardless of that setting. Every packer's
+// item-to-item spacing still uses the real bufferInches unchanged; only the
+// margin kept from the sheet boundary itself is floored here.
+const MIN_EDGE_MARGIN_INCHES = 0.01;
+
+function edgeMarginFor(bufferInches: number): number {
+	return Math.max(bufferInches, MIN_EDGE_MARGIN_INCHES);
+}
+function shrinkForEdgeMargin(sheet: MaterialSheet, margin: number): MaterialSheet {
+	return { ...sheet, heightInches: Math.max(0.01, sheet.heightInches - 2 * margin) };
+}
+function applyEdgeMargin(items: CanvasItem[], margin: number): CanvasItem[] {
+	return items.map((it) =>
+		it.outOfBounds ? it : { ...it, x: it.x + margin, y: it.y + margin },
+	);
+}
+
 // ─── Module-level caches ──────────────────────
 const _sampleCache  = new Map<string, Array<{ x: number; y: number }>>();
 const _bboxCache    = new Map<string, { w: number; h: number }>();
@@ -281,6 +322,9 @@ function candidateXs(
 		const rightAligned = seg.x + seg.width - iW;
 		if (rightAligned > 0) xs.add(rightAligned); // right-align to segment end
 	}
+	// Edge clearance from the sheet boundary is applied once, uniformly, by
+	// the exported entry points (see applyEdgeMargin) — this packer treats
+	// [0,sheetW] as the literal usable area.
 	return Array.from(xs)
 		.filter((x) => x >= 0 && x + iW <= sheetW + 0.001)
 		.sort((a, b) => a - b);
@@ -1223,7 +1267,7 @@ export interface SmartNestResult {
 // show "↑ 18% efficiency improvement" after the optimization completes.
 export function smartNest(
 	items: CanvasItem[],
-	sheet: MaterialSheet,
+	outerSheet: MaterialSheet,
 	allowRotation = true,
 	bufferInches = PADDING_INCHES,
 ): SmartNestResult {
@@ -1231,6 +1275,12 @@ export function smartNest(
 	if (!items.length) {
 		return { items, improvementPct: 0, trialsRun: 0 };
 	}
+	// See shrinkForEdgeMargin/applyEdgeMargin (bestNest uses the same
+	// approach): pack into a roll-width shrunk by the buffer on both sides so
+	// every pass below keeps its existing item-to-item-only invariants, then
+	// shift the finished layout outward once, right before returning.
+	const edgeMargin = edgeMarginFor(bufferInches);
+	const sheet = shrinkForEdgeMargin(outerSheet, edgeMargin);
 
 	// 3-second wall-clock budget — prevents browser freeze on large layouts.
 	const deadline = Date.now() + 3000;
@@ -1341,7 +1391,10 @@ export function smartNest(
 	// smartNest is bbox/skyline-based throughout (unlike nfpNest, it has no
 	// true-shape verification of its own) — run the same declash backstop
 	// used by bestNest so its output respects the buffer too.
-	const declashed = finalDeclash(best, sheet.widthInches, sheet.heightInches, bufferInches);
+	const declashed = applyEdgeMargin(
+		finalDeclash(best, sheet.widthInches, sheet.heightInches, bufferInches),
+		edgeMargin,
+	);
 	const byId = new Map(declashed.map((r) => [r.id, r]));
 	return {
 		items: items.map((item) => byId.get(item.id) ?? item),
@@ -1463,6 +1516,15 @@ function placeAgainst(
 	// actually needs to match the real rendered shape.
 	const verifyPoly = normalizeToBBox(inflatePolygon(ensureCCW(itemPolygon(item, rot, VERIFY_POLY_SAMPLES)), halfPad(PAD)));
 
+	// Edge clearance (keeping items PAD away from the sheet's own physical
+	// boundary, not just from each other) is applied once, uniformly, by the
+	// exported entry points (bestNest/smartNest) shrinking the sheet they
+	// pass down here and shifting the final output — see applyEdgeMargin.
+	// Doing it there means every packer in this file, including this one,
+	// can keep treating [0,maxLength]×[0,rollWidth] as the literal usable
+	// area, with no risk of an edge-clamp here eating into spacing another
+	// pass already computed correctly (that cross-pass cascade is what
+	// caused a real regression when this was first tried per-packer).
 	const ifp = innerFitBounds(maxLength, rollWidth, localPoly);
 	if (!ifp) return null;
 
@@ -1579,6 +1641,33 @@ export function finalDeclash(
 	// guard*STEP = 5" of pure padding bloat for shapes that never resolve.
 	for (const it of order) {
 		const localPoly = normalizeToBBox(inflatePolygon(ensureCCW(itemPolygon(it, it.rotation, VERIFY_POLY_SAMPLES)), halfPad(PAD)));
+
+		const oob = (): void => {
+			fixed.push({
+				...it,
+				x: PAD + overflowRow * (it.width + PAD),
+				y: rollWidth + PAD,
+				outOfBounds: true,
+			});
+			overflowRow++;
+		};
+
+		// This is meant to be the final, unconditional guarantee that nothing
+		// renders outside the cut zone — but until now it only ever checked
+		// the length axis (maxX). An item an upstream pass placed past the
+		// roll-WIDTH edge (bounds.maxY/minY) sailed through unflagged, fully
+		// opaque, with none of the "won't be cut" styling — exactly what let
+		// a mis-sized/mis-rotated shape (e.g. a near-circular custom pattern,
+		// whose true bbox can differ from any single upstream approximation
+		// of it) end up rendered outside the dashed boundary. Checking both
+		// axes here means the guarantee holds regardless of which shape or
+		// which upstream stage produced the bad placement.
+		// Unlike maxLength (the length axis, treated as effectively unbounded
+		// elsewhere in this file — the roll can just be cut longer), rollWidth
+		// is a hard physical edge: the roll is only ever as wide as it is. No
+		// PAD slack belongs here — only floating-point noise tolerance —
+		// otherwise a shape can bleed up to a full buffer's width past the
+		// roll edge before this backstop catches it.
 		let x = it.x;
 		let guard = 0;
 		let poly = translatePolygon(localPoly, x, it.y);
@@ -1590,30 +1679,9 @@ export function finalDeclash(
 			console.log(`NEST v17 finalDeclash nudged ${it.id} by guard=${guard} steps (${(guard * STEP).toFixed(2)}")`);
 		}
 		const bounds = polygonBounds(poly);
-		// This is meant to be the final, unconditional guarantee that nothing
-		// renders outside the cut zone — but until now it only ever checked
-		// the length axis (maxX). An item an upstream pass placed past the
-		// roll-WIDTH edge (bounds.maxY/minY) sailed through unflagged, fully
-		// opaque, with none of the "won't be cut" styling — exactly what let
-		// a mis-sized/mis-rotated shape (e.g. a near-circular custom pattern,
-		// whose true bbox can differ from any single upstream approximation
-		// of it) end up rendered outside the dashed boundary. Checking both
-		// axes here means the guarantee holds regardless of which shape or
-		// which upstream stage produced the bad placement.
-		const widthOverflow = bounds.maxY > rollWidth + PAD + 1e-6 || bounds.minY < -PAD - 1e-6;
+		const widthOverflow = bounds.maxY > rollWidth + 1e-6 || bounds.minY < -1e-6;
 		if (bounds.maxX > maxLength + PAD + 1e-6 || widthOverflow) {
-			// Match the same "excluded strip past the width edge" convention
-			// bestFitPack's own overflow branch uses, so these items land in
-			// the widened oob strip the studio UI already renders for them —
-			// not off the far end of a possibly 1200"-long roll where they'd
-			// never scroll into view.
-			fixed.push({
-				...it,
-				x: PAD + overflowRow * (it.width + PAD),
-				y: rollWidth + PAD,
-				outOfBounds: true,
-			});
-			overflowRow++;
+			oob();
 		} else {
 			fixed.push({ ...it, x });
 			fixedPolys.push(poly);
@@ -1822,8 +1890,16 @@ export function bestNest(
 ): CanvasItem[] {
 	if (!items.length) return items;
 
-	const nfpResult = nfpNest(items, sheet, allowRotation, bufferInches);
-	const skylineResult = autoNest(items, sheet, allowRotation, bufferInches);
+	// See shrinkForEdgeMargin: pack into a roll-width shrunk by the buffer on
+	// both sides so every downstream pass keeps its existing (item-to-item
+	// only) invariants, then shift the finished layout outward once at the
+	// very end — the only way to add sheet-edge clearance without risking a
+	// cross-pass cascade.
+	const edgeMargin = edgeMarginFor(bufferInches);
+	const innerSheet = shrinkForEdgeMargin(sheet, edgeMargin);
+
+	const nfpResult = nfpNest(items, innerSheet, allowRotation, bufferInches);
+	const skylineResult = autoNest(items, innerSheet, allowRotation, bufferInches);
 
 	const nfpOob = nfpResult.filter((i) => i.outOfBounds).length;
 	const skylineOob = skylineResult.filter((i) => i.outOfBounds).length;
@@ -1859,14 +1935,14 @@ export function bestNest(
 	const oobCount = (arr: CanvasItem[]) => arr.filter((i) => i.outOfBounds).length;
 	const chosenOob = oobCount(chosen);
 
-	const rowBalanced = rowBalanceGroupPass(chosen, sheet, allowRotation);
+	const rowBalanced = rowBalanceGroupPass(chosen, innerSheet, allowRotation);
 	let refined = (rowBalanced && oobCount(rowBalanced) <= chosenOob && layoutLen(rowBalanced) < layoutLen(chosen) - 0.001)
 		? rowBalanced
 		: chosen;
 	const refinedOob = oobCount(refined);
 
 	const gapFillDeadline = Date.now() + 800;
-	const gapFilled = gapFillPass(refined, sheet, allowRotation, () => Date.now() < gapFillDeadline);
+	const gapFilled = gapFillPass(refined, innerSheet, allowRotation, () => Date.now() < gapFillDeadline);
 	const gapFilledOob = oobCount(gapFilled);
 	if (gapFilledOob < refinedOob || (gapFilledOob <= refinedOob && layoutLen(gapFilled) <= layoutLen(refined))) {
 		refined = gapFilled;
@@ -1878,7 +1954,8 @@ export function bestNest(
 	// declash pass only ran against the OTHER items present when IT was
 	// computed — re-run it here, once, against the final chosen set.
 	PADDING_INCHES = bufferInches;
-	return finalDeclash(refined, sheet.widthInches, sheet.heightInches, bufferInches);
+	const declashed = finalDeclash(refined, innerSheet.widthInches, innerSheet.heightInches, bufferInches);
+	return applyEdgeMargin(declashed, edgeMargin);
 }
 
 // ─── Placement result ─────────────────────────

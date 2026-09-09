@@ -494,3 +494,56 @@ describe('bestNest: rowBalanceGroupPass must not strand items out of bounds', ()
 		expect(result.every((i) => !i.outOfBounds)).toBe(true);
 	});
 });
+
+// ─── Sheet-edge clearance ─────────────────────
+// Regression for a live bug: every packer in this file enforces PAD between
+// ITEMS but happily placed a piece flush against x=0 or the rollWidth edges
+// — the buffer was never applied against the sheet's own physical boundary,
+// so a shape (a near-circular custom pattern in the reported case) could
+// render touching or crossing the dashed cut-zone line. bestNest/smartNest
+// now shrink the roll width they pack into by the buffer on both sides and
+// shift the finished layout outward by the same amount (shrinkForEdgeMargin
+// / applyEdgeMargin) — a uniform translation, so it can't introduce new
+// item-to-item collisions the way a per-item post-hoc nudge did the first
+// time this was attempted (see git history: it ate into an already-correct
+// inter-row gap and produced an unresolvable collision).
+describe('sheet-edge clearance', () => {
+	function circlePath(): string {
+		const cx = 20, cy = 20, r = 20;
+		const pts: string[] = [];
+		for (let i = 0; i <= 64; i++) {
+			const a = (i / 64) * Math.PI * 2;
+			pts.push(`${(cx + r * Math.cos(a)).toFixed(3)},${(cy + r * Math.sin(a)).toFixed(3)}`);
+		}
+		return `M ${pts.join(' L ')} Z`;
+	}
+
+	it('keeps a lone circle off the sheet edges by the configured buffer', () => {
+		const pattern: Pattern = {
+			...makePattern('circle', 40, 40),
+			svgPath: circlePath(),
+		};
+		const item = makeItem('c1', pattern);
+		const bufferInches = 0.05;
+		const [placed] = bestNest([item], sheet, true, bufferInches);
+		expect(placed.outOfBounds).toBe(false);
+		expect(placed.x).toBeGreaterThanOrEqual(bufferInches - 0.01);
+		expect(placed.y).toBeGreaterThanOrEqual(bufferInches - 0.01);
+		expect(placed.y + placed.height).toBeLessThanOrEqual(sheet.heightInches - bufferInches + 0.01);
+	});
+
+	it('still finds the unbalanced row-split optimum with edge margin applied (no cascading collision)', () => {
+		const pat = makePattern('window', 34.11, 24.14);
+		const items = Array.from({ length: 6 }, (_, i) => makeItem(`w${i}`, pat));
+		const result = smartNest(items, sheet, true, 0.05);
+
+		expect(result.items.every((i) => !i.outOfBounds)).toBe(true);
+		for (const it of result.items) {
+			expect(it.x).toBeGreaterThanOrEqual(0.05 - 0.01);
+			expect(it.y).toBeGreaterThanOrEqual(0.05 - 0.01);
+			expect(it.y + it.height).toBeLessThanOrEqual(sheet.heightInches - 0.05 + 0.01);
+		}
+		const len = Math.max(...result.items.map((i) => i.x + i.width));
+		expect(len).toBeLessThan(97.2); // ~96.71 optimum + margin, still far from the 102.43 greedy baseline
+	});
+});

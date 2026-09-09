@@ -131,6 +131,16 @@
 		estimateCutTime(canvasStore.items, plotterStore.config.cuttingSpeed),
 	);
 
+	// Mirrors nesting.ts's MIN_EDGE_MARGIN_INCHES/edgeMarginFor: the buffer
+	// setting can legitimately be 0 or negative (intentional overlap between
+	// pieces), but clearance from the sheet's own physical edge is never
+	// supposed to go to zero — keep this display calc in sync with what
+	// bestNest/smartNest actually reserve, or the drawn cut zone drifts out
+	// of sync with the real one again.
+	function edgeMarginInches(): number {
+		return Math.max(canvasStore.state.bufferInches, 0.01);
+	}
+
 	// ─── Roll canvas dimensions (in the sheet's own, unrotated frame) ──
 	// Internally the sheet is still laid out with length along X and roll
 	// width along Y — that matches how items are positioned/nested. It gets
@@ -140,14 +150,38 @@
 	const displaySheetLength = $derived.by(() => {
 		const inBounds = canvasStore.items.filter((i) => !i.outOfBounds);
 		if (!inBounds.length) return 20;
-		return Math.max(...inBounds.map((i) => i.x + i.width));
+		// The nesting engine treats the length axis as effectively unbounded
+		// internally (it never needed a hard "end" to check against), so it
+		// never had a reason to reserve trailing clearance past the last
+		// piece — every piece's own leading edge already carries the buffer
+		// (see shrinkForEdgeMargin/applyEdgeMargin in nesting.ts), but nothing
+		// upstream extends the roll past the LAST piece's far edge. This is
+		// the one place that "how much roll gets used" is actually decided
+		// for display/export, so the trailing buffer has to be added here —
+		// otherwise the dashed cut-zone boundary is drawn flush against the
+		// last shape with zero clearance, and its cut buffer visibly bleeds
+		// past the zone it's supposed to render inside of.
+		return Math.max(...inBounds.map((i) => i.x + i.width)) + edgeMarginInches();
 	});
 	// Canvas cross-dimension always mirrors the selected roll's physical
 	// width — it's a visual stand-in for the roll, so it must track the roll
 	// size directly rather than being clamped/cropped to content extent.
 	const displaySheetWidth = $derived.by(() => {
 		const rollWidth = canvasStore.sheet.widthInches;
-		const oobStrip = outOfBoundsCount > 0 ? 20 : 0;
+		const oobItems = canvasStore.items.filter((i) => i.outOfBounds);
+		// The strip past the roll edge has to be wide enough to actually hold
+		// the widest excluded piece — item.height is what determines an
+		// item's rendered extent along this (roll-width/screen-horizontal)
+		// axis, same as every in-bounds item's "top" position formula below.
+		// A fixed 20" guess worked fine for small oob pieces, but a large
+		// pattern (e.g. a 60"+ wide hood panel that doesn't fit the current
+		// roll) rendered far wider than that fixed strip — its footprint
+		// silently overflowed .material-sheet without ever growing
+		// .canvas-content, so nothing (not even scrolling) could bring it
+		// into view; only shrinking the whole browser's zoom made it visible.
+		const oobStrip = oobItems.length
+			? Math.max(20, ...oobItems.map((i) => i.height)) + canvasStore.state.bufferInches
+			: 0;
 		return rollWidth + oobStrip;
 	});
 
@@ -195,7 +229,10 @@
 	const usedLengthFt = $derived.by(() => {
 		const inBounds = canvasStore.items.filter((i) => !i.outOfBounds);
 		if (!inBounds.length) return 0;
-		return Math.max(...inBounds.map((i) => i.x + i.width)) / 12;
+		// Matches displaySheetLength's trailing-buffer addition above — the
+		// roll actually consumed includes the cut buffer past the last piece,
+		// not just the piece's own bounding box.
+		return (Math.max(...inBounds.map((i) => i.x + i.width)) + edgeMarginInches()) / 12;
 	});
 
 	// ─── Transposed sheet for nesting ─────────────
@@ -229,7 +266,17 @@
 	});
 
 	function fitWidthToView() {
-		if (!canvasEl) return;
+		if (!canvasEl || !canvasViewportEl) return;
+		// Measure canvasEl (the actual scroller), not canvasViewportEl (the
+		// non-scrolling wrapper) — canvasEl always has a vertical scrollbar
+		// once the roll is longer than the viewport (true for almost any real
+		// layout), and that scrollbar's width is exactly the "sliver" this
+		// fit was leaving uncovered on the right: viewportEl.clientWidth
+		// doesn't subtract it, so the computed zoom always overshot by the
+		// scrollbar's width. The ResizeObserver below still watches
+		// canvasViewportEl, not canvasEl, so there's no feedback loop — only
+		// the MEASUREMENT used to compute the zoom value needs to be
+		// scrollbar-aware; what triggers a re-measure does not.
 		const viewW = canvasEl.clientWidth;
 		const PAD = 96; // 48px canvas-content padding × 2 — the left gutter, mirrored on the right
 		const rollPxW = displaySheetWidth * 48;
@@ -249,8 +296,8 @@
 	// of those layout changes resizes canvasEl itself.
 	let _fitResizeRaf = 0;
 	$effect(() => {
-		if (!canvasEl) return;
-		const el = canvasEl;
+		if (!canvasViewportEl) return;
+		const el = canvasViewportEl;
 		const ro = new ResizeObserver(() => {
 			if (!autoFitZoomOnRollChange) return;
 			cancelAnimationFrame(_fitResizeRaf);
@@ -433,6 +480,18 @@
 
 	// ─── Canvas interaction ───────────────────────
 	let canvasEl = $state<HTMLDivElement | null>(null);
+	// Non-scrolling wrapper around canvasEl — used (instead of canvasEl
+	// itself) to measure available viewport size for fit calculations.
+	// canvasEl has overflow:auto, so its own clientWidth/clientHeight shrink
+	// whenever a scrollbar appears (e.g. zooming in grows canvas-content
+	// past the viewport height, which adds a vertical scrollbar). Measuring
+	// off canvasEl fed that shrink back into fitWidthToView via the resize
+	// observer below, which computed a smaller "fit" zoom and reset the
+	// user's zoom-in right back down — a feedback loop that capped zoom at
+	// whatever percentage first triggered a scrollbar. canvasViewportEl's
+	// size is fixed by the surrounding layout (sidebar/window), never by its
+	// scrolling child's content, so it isn't subject to that loop.
+	let canvasViewportEl = $state<HTMLDivElement | null>(null);
 	let cursorX = $state(0);
 	let cursorY = $state(0);
 
@@ -1658,7 +1717,10 @@
 	// Calculates zoom so all placed content fits the canvas viewport.
 	// canvas-content has 48px padding on each side → 96px total in each axis.
 	function fitToView() {
-		if (!canvasEl) return;
+		if (!canvasEl || !canvasViewportEl) return;
+		// See fitWidthToView: measure the scroller (canvasEl), which already
+		// excludes its own scrollbar width/height, not the non-scrolling
+		// wrapper.
 		const viewW = canvasEl.clientWidth;
 		const viewH = canvasEl.clientHeight;
 		const PAD = 96; // 48px canvas-content padding × 2
@@ -1715,6 +1777,18 @@
 
 	onMount(() => {
 		canvasStore.restoreFromStorage();
+		// Persisted items carry whatever x/y the nesting engine computed at
+		// save time — restoring them verbatim means a correctness fix to the
+		// nesting engine (buffer/edge-clearance rules, overlap handling, etc.)
+		// never actually reaches a layout that was already saved before the
+		// fix shipped; it silently keeps rendering the stale, pre-fix
+		// positions until the user happens to trigger a manual re-nest.
+		// Re-nesting once on load closes that gap so a loaded canvas always
+		// reflects the current engine's guarantees.
+		if (canvasStore.items.length > 0) {
+			const nested = bestNest(canvasStore.items, transposedSheet(), true, canvasStore.state.bufferInches);
+			canvasStore.setItems(nested);
+		}
 		_mounted = true;
 		fetch("/api/settings/plans")
 			.then((r) => (r.ok ? r.json() : null))
@@ -2574,7 +2648,7 @@
 		{/if}
 
 		<!-- Canvas -->
-		<div class="canvas-viewport">
+		<div class="canvas-viewport" bind:this={canvasViewportEl}>
 		<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions, a11y_no_noninteractive_element_interactions -->
 		<div
 			class="canvas-area"
@@ -2774,6 +2848,19 @@
 								{/each}
 								<button
 									class="cut-item__del"
+									onpointerdown={(e) => {
+										// Without this, the pointerdown bubbles to the parent
+										// .cut-item's onpointerdown, which calls startItemDrag —
+										// that sets pointer capture on the PARENT div, and per
+										// the Pointer Events spec, once an element captures the
+										// pointer the resulting synthetic click is delivered to
+										// the capturing element, not whatever was actually
+										// pressed. So this button's own onclick below never
+										// fired at all; the parent's onclick (just re-select)
+										// silently ran instead — the delete "did nothing"
+										// because the click never reached the delete handler.
+										e.stopPropagation();
+									}}
 									onclick={(e) => {
 										e.stopPropagation();
 										canvasStore.select(item.id);
@@ -5857,19 +5944,31 @@
 	}
 
 	/* ─── Responsive ────── */
-
-	@media (max-width: 1024px) {
-		.studio__body {
-			grid-template-columns: 1fr 300px;
-		}
-	}
+	/* Single "compact" breakpoint (≤1024px) covers both tablet and mobile.
+	   This used to split at 768px: tablet (769–1024px) kept the desktop
+	   "rail" collapse (panel shrinks to a 24px sliver, gear button floats
+	   -32px off its left edge) while only ≤768px got the bottom-sheet + FAB
+	   pattern. That rail behavior depends on .studio__body actually shrinking
+	   .studio__panel's grid track down to 24px when collapsed — but the
+	   ≤1024px media query redeclared plain .studio__body{grid-template-columns}
+	   AFTER .studio__body--collapsed's base-level rule, so at equal
+	   specificity the later (tablet) rule won and the collapsed track stayed
+	   at 300px instead of shrinking. The panel never visually collapsed in
+	   that range, and the gear button — positioned assuming a 24px-wide
+	   collapsed rail — ended up floating over whatever the still-full-width
+	   panel put in its way, with no other way to reopen it once toggled
+	   closed (the FAB that would've rescued that didn't exist until 768px).
+	   Rather than re-tune the rail math for a third screen size, tablet now
+	   gets the same bottom-sheet + FAB pattern already proven at mobile —
+	   one less responsive state to keep in sync, and it directly removes the
+	   floating button that was the actual source of both symptoms. */
 
 	.mobile-panel-fab,
 	.mobile-panel-backdrop {
 		display: none;
 	}
 
-	@media (max-width: 768px) {
+	@media (max-width: 1024px) {
 		.studio__body {
 			grid-template-columns: 1fr;
 		}
@@ -5935,6 +6034,23 @@
 		/* App sidebar is hidden entirely below this breakpoint (see AppShell) */
 		.studio__statusbar {
 			left: 0 !important;
+		}
+	}
+
+	/* Phone-sized refinements layered on top of the shared ≤1024px sheet —
+	   shorter sheet (leaves more canvas visible above it on a short phone
+	   screen) and a slightly smaller FAB so it doesn't crowd a narrow
+	   viewport's own edge gestures. */
+	@media (max-width: 480px) {
+		.studio__panel {
+			height: 80vh;
+			max-height: 80vh;
+		}
+		.mobile-panel-fab {
+			width: 44px;
+			height: 44px;
+			right: 12px;
+			bottom: 12px;
 		}
 	}
 

@@ -548,6 +548,21 @@ function createCanvasStore() {
 					},
 				}));
 				if (parsed.sheet) state.sheet = parsed.sheet;
+				// bufferInches (and the rest of the user's canvas preferences)
+				// used to be silently dropped here — saveToStorage persists the
+				// WHOLE state, but restore only ever read back .items and
+				// .sheet, so every reload quietly reset the cut buffer to the
+				// compiled-in 0.05" default no matter what the user had set it
+				// to. That's what made a "still not enough buffer" report look
+				// like the nesting math was broken when the buffer value it
+				// was actually asked to keep clearance for had already been
+				// reset out from under it before nesting ever ran.
+				if (typeof parsed.bufferInches === "number") state.bufferInches = parsed.bufferInches;
+				if (typeof parsed.rulerStepInches === "number") state.rulerStepInches = parsed.rulerStepInches;
+				if (typeof parsed.gridSizeInches === "number") state.gridSizeInches = parsed.gridSizeInches;
+				if (typeof parsed.showGrid === "boolean") state.showGrid = parsed.showGrid;
+				if (typeof parsed.showRulers === "boolean") state.showRulers = parsed.showRulers;
+				if (typeof parsed.snapToGrid === "boolean") state.snapToGrid = parsed.snapToGrid;
 			} catch {
 				localStorage.removeItem("cc-canvas-state");
 			}
