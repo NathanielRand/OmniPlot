@@ -10,7 +10,7 @@
 		agentStore,
 		confirmStore,
 	} from "$lib/stores";
-	import { bestNest, smartNest, findNextPosition, samplePolygonArea, getSvgPathBBox, type PlacementResult } from "$lib/utils/nesting";
+	import { bestNest, smartNest, findNextPosition, samplePolygonArea, tightPathAt, trueBBoxAt, wouldOverlapAny, type PlacementResult } from "$lib/utils/nesting";
 	import {
 		downloadHpgl,
 		downloadSvg,
@@ -138,7 +138,7 @@
 	// bestNest/smartNest actually reserve, or the drawn cut zone drifts out
 	// of sync with the real one again.
 	function edgeMarginInches(): number {
-		return Math.max(canvasStore.state.bufferInches, 0.01);
+		return Math.max(canvasStore.state.bufferInches, 0.05);
 	}
 
 	// ─── Roll canvas dimensions (in the sheet's own, unrotated frame) ──
@@ -351,6 +351,78 @@
 	// Axis currently being scrub-dragged (for the position field's drag cursor/highlight state).
 	let scrubbingAxis = $state<"x" | "y" | null>(null);
 
+	// ─── Manual-edit overlap guard ────────────────
+	// Every hand-driven transform (drag, position input, rotate/flip button)
+	// used to write straight to the store with no check at all — the packer
+	// guarantees a non-overlapping layout, but nothing preserved that
+	// invariant once a piece could be nudged by hand afterward. This is the
+	// one place that guard runs: build the proposed item, test it against
+	// everyone else's real (rotation+flip+position) footprint, and only
+	// commit if it's still clear. Discrete actions (buttons, input commits,
+	// drag-end) all go through this rather than being checked live on every
+	// pointermove, which would run a full polygon-overlap sweep per pixel.
+	function applyIfClear(item: CanvasItem, patch: Partial<CanvasItem>, opts: { label: string } = { label: "move" }): boolean {
+		const candidate = { ...item, ...patch, outOfBounds: false };
+		const others = canvasStore.items.filter((i) => i.id !== item.id);
+		if (wouldOverlapAny(candidate, others, canvasStore.state.bufferInches)) {
+			toastStore.warning(`Can't ${opts.label} — it would overlap another piece.`);
+			return false;
+		}
+		canvasStore.updateItem(item.id, patch);
+		return true;
+	}
+
+	// Rotating changes which axis is "wide" for anything non-square — the
+	// stored width/height MUST be recomputed for the new rotation before the
+	// overlap check runs, or the check (and the box everything renders into)
+	// is testing the OLD rotation's footprint size against the NEW rotation's
+	// shape. That mismatch is exactly what let a manually-rotated piece's
+	// real outline spill past its neighbors undetected.
+	function rotateItem(item: CanvasItem, deltaDeg: number) {
+		const rotation = (item.rotation + deltaDeg + 360) % 360;
+		const { width, height } = trueBBoxAt(item, rotation);
+		applyIfClear(item, { rotation, width, height }, { label: "rotate" });
+	}
+
+	function flipItem(item: CanvasItem, axis: "h" | "v") {
+		const patch = axis === "h" ? { flippedH: !item.flippedH } : { flippedV: !item.flippedV };
+		applyIfClear(item, patch, { label: "flip" });
+	}
+
+	// ─── Free rotation (0-359°) ────────────────────
+	// The ±90° buttons stay for quick nudges; this is full manual control at
+	// any angle. Dragging the slider previews live (unguarded, same as
+	// position drag — a per-tick overlap sweep would be excessive) using
+	// trueBBoxAt so the allocated box always matches the CURRENT angle as it
+	// moves, not just its start/end; the overlap guard runs once the drag
+	// settles (slider "change", or the number input's "change"), reverting to
+	// the angle the drag started from if the final angle overlaps a neighbor.
+	let rotationDragStart = $state<number | null>(null);
+	function previewRotation(item: CanvasItem, angleDeg: number) {
+		if (rotationDragStart === null) rotationDragStart = item.rotation;
+		const rotation = ((Math.round(angleDeg) % 360) + 360) % 360;
+		const { width, height } = trueBBoxAt(item, rotation);
+		canvasStore.updateItem(item.id, { rotation, width, height, outOfBounds: false });
+	}
+	function commitRotation(item: CanvasItem) {
+		const startAngle = rotationDragStart;
+		rotationDragStart = null;
+		const settled = canvasStore.items.find((i) => i.id === item.id);
+		if (!settled || startAngle === null) return;
+		const others = canvasStore.items.filter((i) => i.id !== item.id);
+		if (wouldOverlapAny(settled, others, canvasStore.state.bufferInches)) {
+			const { width, height } = trueBBoxAt(settled, startAngle);
+			canvasStore.updateItem(item.id, { rotation: startAngle, width, height });
+			toastStore.warning("Reverted — that angle overlaps another piece.");
+		}
+	}
+	function setRotationExact(item: CanvasItem, angleDeg: number) {
+		if (Number.isNaN(angleDeg)) return;
+		const rotation = ((Math.round(angleDeg) % 360) + 360) % 360;
+		const { width, height } = trueBBoxAt(item, rotation);
+		applyIfClear(item, { rotation, width, height }, { label: "rotate" });
+	}
+
 	// ─── Position field: click-drag "scrub" like Figma/design-tool number fields ──
 	// Dragging the X/Y tag left/right adjusts that axis live, in real time, without
 	// needing to click into the input, select the text, and retype a number.
@@ -375,8 +447,10 @@
 			// be scrubbed straight through the cut-zone edge and renders fully
 			// opaque outside it, with no out-of-bounds indicator, since this
 			// path never re-derives item.outOfBounds.
-			const max = axis === "x" ? Infinity : Math.max(0, canvasStore.sheet.widthInches - item.height);
-			const next = Math.min(Math.max(0, raw), max);
+			const margin = edgeMarginInches();
+			const min = axis === "x" ? margin : margin;
+			const max = axis === "x" ? Infinity : Math.max(min, canvasStore.sheet.widthInches - margin - item.height);
+			const next = Math.min(Math.max(min, raw), max);
 			canvasStore.updateItem(item.id, axis === "x" ? { x: next } : { y: next, outOfBounds: false });
 		}
 		function onUp(ev: PointerEvent) {
@@ -389,6 +463,19 @@
 				const input = handle.parentElement?.querySelector("input");
 				input?.focus();
 				input?.select();
+			} else {
+				// onMove wrote every intermediate position live with no overlap
+				// check (a per-pixel polygon sweep would be excessive) — validate
+				// only the FINAL resting position here, and revert if it landed on
+				// top of another piece.
+				const settled = canvasStore.items.find((i) => i.id === item.id);
+				if (settled) {
+					const others = canvasStore.items.filter((i) => i.id !== item.id);
+					if (wouldOverlapAny(settled, others, canvasStore.state.bufferInches)) {
+						canvasStore.updateItem(item.id, axis === "x" ? { x: startVal } : { y: startVal });
+						toastStore.warning("Reverted — that position overlaps another piece.");
+					}
+				}
 			}
 		}
 		window.addEventListener("pointermove", onMove);
@@ -403,9 +490,10 @@
 		const dir = e.key === "ArrowUp" ? 1 : -1;
 		const current = axis === "x" ? item.x : item.y;
 		const raw = +(current + dir * step).toFixed(2);
-		const max = axis === "x" ? Infinity : Math.max(0, canvasStore.sheet.widthInches - item.height);
-		const next = Math.min(Math.max(0, raw), max);
-		canvasStore.updateItem(item.id, axis === "x" ? { x: next } : { y: next, outOfBounds: false });
+		const margin = edgeMarginInches();
+		const max = axis === "x" ? Infinity : Math.max(margin, canvasStore.sheet.widthInches - margin - item.height);
+		const next = Math.min(Math.max(margin, raw), max);
+		applyIfClear(item, axis === "x" ? { x: next } : { y: next }, { label: "move" });
 	}
 
 	// ─── Drag a pattern directly on the canvas ────
@@ -444,16 +532,31 @@
 			const px = 48 * (canvasStore.zoom / 100);
 			const rawX = startX + dy / px;
 			const rawY = startY + dx / px;
-			const maxY = Math.max(0, canvasStore.sheet.widthInches - item.height);
-			const nextX = Math.max(0, +rawX.toFixed(2));
-			const nextY = Math.min(Math.max(0, +rawY.toFixed(2)), maxY);
+			const margin = edgeMarginInches();
+			const maxY = Math.max(margin, canvasStore.sheet.widthInches - margin - item.height);
+			const nextX = Math.max(margin, +rawX.toFixed(2));
+			const nextY = Math.min(Math.max(margin, +rawY.toFixed(2)), maxY);
 			canvasStore.updateItem(item.id, { x: nextX, y: nextY, outOfBounds: false });
 		}
 		function onUp() {
 			el.releasePointerCapture(e.pointerId);
 			window.removeEventListener("pointermove", onMove);
 			window.removeEventListener("pointerup", onUp);
-			if (dragged) requestAnimationFrame(() => { itemJustDragged = false; });
+			if (dragged) {
+				requestAnimationFrame(() => { itemJustDragged = false; });
+				// Live dragging never checked for overlap (a per-pixel polygon
+				// sweep would be excessive) — validate only the FINAL resting
+				// position, and revert to where the drag started if it landed on
+				// top of another piece.
+				const settled = canvasStore.items.find((i) => i.id === item.id);
+				if (settled) {
+					const others = canvasStore.items.filter((i) => i.id !== item.id);
+					if (wouldOverlapAny(settled, others, canvasStore.state.bufferInches)) {
+						canvasStore.updateItem(item.id, { x: startX, y: startY });
+						toastStore.warning("Reverted — that position overlaps another piece.");
+					}
+				}
+			}
 		}
 		window.addEventListener("pointermove", onMove);
 		window.addEventListener("pointerup", onUp);
@@ -1613,62 +1716,6 @@
 		toastStore.success("Exported", `Downloaded as .${format}`);
 	}
 
-	// ─── Demo: add a sample item ──────────────────
-	function addSampleItem() {
-		const colors = ["#00E5FF", "#A78BFA", "#00D68F", "#FFB547"];
-		const idx = canvasStore.items.length;
-		const w = 18 - (idx % 4) * 2;
-		const h = 12 - (idx % 4);
-		const demoPath = "M10,90 Q15,20 50,5 Q85,20 90,90";
-		const pos = findNextPosition(canvasStore.items, transposedSheet(), w, h, demoPath);
-		const item: CanvasItem = {
-			id: uid("item_"),
-			patternId: `demo_${idx}`,
-			pattern: {
-				id: `demo_${idx}`,
-				vehicleId: "bmw-m4-2024",
-				category: "ppf",
-				zone: "hood",
-				name: ["Hood Main", "Fender L", "Bumper Front", "Rocker L"][
-					idx % 4
-				],
-				coverage: "full",
-				svgPath: "M10,90 Q15,20 50,5 Q85,20 90,90",
-				widthInches: w,
-				heightInches: h,
-				revision: "2024-11",
-				isPublished: true,
-				createdAt: new Date(),
-				updatedAt: new Date(),
-			},
-			x: pos.x,
-			y: pos.y,
-			width: pos.width,
-			height: pos.height,
-			rotation: pos.rotation,
-			outOfBounds: pos.outOfBounds,
-			flippedH: false,
-			flippedV: false,
-			scale: 1,
-			layer: idx,
-			locked: false,
-			color: colors[idx % colors.length],
-			label: ["Hood Main", "Fender L", "Bumper Front", "Rocker L"][
-				idx % 4
-			],
-		};
-		if (aiNestEnabled) {
-			const nested = bestNest([...canvasStore.items, item], transposedSheet(), true, canvasStore.state.bufferInches);
-			canvasStore.setItems(nested);
-			canvasStore.select(item.id);
-		} else {
-			canvasStore.setItems([...canvasStore.items, item]);
-			canvasStore.select(item.id);
-		}
-		toastStore.info("Pattern added", item.label);
-		requestAnimationFrame(fitToView);
-	}
-
 	// ─── Vehicle grouping ─────────────────────────
 	// Groups all canvas items by their vehicleId so the legend and Patterns tab
 	// can show which patterns belong to which car.
@@ -1694,35 +1741,22 @@
 	// ─── Zoom shortcuts ───────────────────────────
 	let showExport = $state(false);
 
-	// ─── SVG viewBox for a pattern at its current rotation ───────────────────
-	// Computes the minimal viewBox in SVG coordinate space that fully contains
-	// the rotated path, so the pattern fills its canvas div with no phantom
-	// whitespace from the 0-100 authoring coordinate system.
-	function itemViewBox(svgPath: string, rotation: number): string {
-		const bb = getSvgPathBBox(svgPath);
-		const cx = bb.x + bb.w / 2;
-		const cy = bb.y + bb.h / 2;
-		const hw = bb.w / 2;
-		const hh = bb.h / 2;
-		const rad = (rotation * Math.PI) / 180;
-		const cos = Math.abs(Math.cos(rad));
-		const sin = Math.abs(Math.sin(rad));
-		const rHW = hw * cos + hh * sin;
-		const rHH = hw * sin + hh * cos;
-		const PAD = 0.5; // sub-unit float safety margin
-		return `${cx - rHW - PAD} ${cy - rHH - PAD} ${(rHW + PAD) * 2} ${(rHH + PAD) * 2}`;
-	}
-
 	// ─── Fit to view ─────────────────────────────
 	// Calculates zoom so all placed content fits the canvas viewport.
 	// canvas-content has 48px padding on each side → 96px total in each axis.
 	function fitToView() {
 		if (!canvasEl || !canvasViewportEl) return;
-		// See fitWidthToView: measure the scroller (canvasEl), which already
-		// excludes its own scrollbar width/height, not the non-scrolling
-		// wrapper.
+		// Width: see fitWidthToView — measure the scroller (canvasEl), which
+		// already excludes its own vertical scrollbar width, not the
+		// non-scrolling wrapper.
+		// Height: measure canvasViewportEl instead. canvasEl (.canvas-area)
+		// carries a large `padding-bottom` reserving room for the fixed status
+		// bar (see its own comment), which inflates canvasEl.clientHeight well
+		// past what's actually visible — using it here overestimates available
+		// height and zooms in too far, leaving the roll's bottom clipped.
+		// canvasViewportEl has no such padding and matches the true visible box.
 		const viewW = canvasEl.clientWidth;
-		const viewH = canvasEl.clientHeight;
+		const viewH = canvasViewportEl.clientHeight;
 		const PAD = 96; // 48px canvas-content padding × 2
 		const rollPxW = displaySheetWidth * 48;
 		const rollPxH = displaySheetLength * 48;
@@ -1980,9 +2014,9 @@
 								onclick={(e) => e.stopPropagation()}
 								onkeydown={(e) => nudgePosition(e, item, "x")}
 								onchange={(e) =>
-									canvasStore.updateItem(item.id, {
+									applyIfClear(item, {
 										x: parseFloat((e.target as HTMLInputElement).value),
-									})}
+									}, { label: "move" })}
 							/>
 							<span class="pattern-card__field-unit">in</span>
 						</div>
@@ -2005,9 +2039,9 @@
 								onclick={(e) => e.stopPropagation()}
 								onkeydown={(e) => nudgePosition(e, item, "y")}
 								onchange={(e) =>
-									canvasStore.updateItem(item.id, {
+									applyIfClear(item, {
 										y: parseFloat((e.target as HTMLInputElement).value),
-									})}
+									}, { label: "move" })}
 							/>
 							<span class="pattern-card__field-unit">in</span>
 						</div>
@@ -2032,11 +2066,41 @@
 						<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 11-3.5-7.1" /><polyline points="21 3 21 9 15 9" /></svg>
 						Transform
 					</div>
+					<!-- Free rotation: drag the dial for any angle 0-359°, or type an
+					     exact value. The ±90° quick buttons below stay for square/panel
+					     patterns where an exact right angle is what you actually want. -->
+					<div class="pattern-card__row pattern-card__rot-row">
+						<input
+							type="range"
+							class="pattern-card__rot-slider"
+							min="0"
+							max="359"
+							step="1"
+							value={item.rotation}
+							aria-label="Rotation angle"
+							onclick={(e) => e.stopPropagation()}
+							oninput={(e) => previewRotation(item, parseFloat((e.target as HTMLInputElement).value))}
+							onchange={() => commitRotation(item)}
+						/>
+						<div class="pattern-card__field pattern-card__field--rot">
+							<input
+								type="number"
+								class="pattern-card__field-input"
+								value={item.rotation}
+								min="0"
+								max="359"
+								step="1"
+								aria-label="Rotation angle in degrees"
+								onclick={(e) => e.stopPropagation()}
+								onchange={(e) => setRotationExact(item, parseFloat((e.target as HTMLInputElement).value))}
+							/>
+							<span class="pattern-card__field-unit">°</span>
+						</div>
+					</div>
 					<div class="pattern-card__row">
-						<span class="pattern-card__rot-value">{item.rotation}°</span>
 						<button
 							class="pattern-card__ctrl-btn"
-							onclick={(e) => { e.stopPropagation(); canvasStore.updateItem(item.id, { rotation: (item.rotation + 270) % 360 }); }}
+							onclick={(e) => { e.stopPropagation(); rotateItem(item, 270); }}
 							aria-label="Rotate -90°"
 							title="Rotate -90°"
 						>
@@ -2044,7 +2108,7 @@
 						</button>
 						<button
 							class="pattern-card__ctrl-btn"
-							onclick={(e) => { e.stopPropagation(); canvasStore.updateItem(item.id, { rotation: (item.rotation + 90) % 360 }); }}
+							onclick={(e) => { e.stopPropagation(); rotateItem(item, 90); }}
 							aria-label="Rotate +90°"
 							title="Rotate +90°"
 						>
@@ -2053,12 +2117,12 @@
 						<button
 							class="pattern-card__ctrl-btn pattern-card__ctrl-btn--wide"
 							class:active={item.flippedH}
-							onclick={(e) => { e.stopPropagation(); canvasStore.updateItem(item.id, { flippedH: !item.flippedH }); }}
+							onclick={(e) => { e.stopPropagation(); flipItem(item, "h"); }}
 						>Flip H</button>
 						<button
 							class="pattern-card__ctrl-btn pattern-card__ctrl-btn--wide"
 							class:active={item.flippedV}
-							onclick={(e) => { e.stopPropagation(); canvasStore.updateItem(item.id, { flippedV: !item.flippedV }); }}
+							onclick={(e) => { e.stopPropagation(); flipItem(item, "v"); }}
 						>Flip V</button>
 					</div>
 					<div class="pattern-card__row">
@@ -2347,25 +2411,6 @@
 			>
 		</button>
 
-		<!-- Add demo item -->
-		<button
-			class="tool-btn"
-			title="Add sample pattern"
-			onclick={addSampleItem}
-			aria-label="Add sample pattern"
-		>
-			<svg
-				width="14"
-				height="14"
-				viewBox="0 0 24 24"
-				fill="none"
-				stroke="currentColor"
-				stroke-width="2"
-				stroke-linecap="round"
-				aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg
-			>
-		</button>
-
 		<!-- Clear canvas -->
 		<button
 			class="tool-btn tool-btn--danger"
@@ -2576,31 +2621,6 @@
 		</div>
 	{/if}
 
-	<!-- ─── Vehicle legend ─── -->
-	{#if hasMultipleVehicles}
-		<div class="vehicle-legend" role="region" aria-label="Subject breakdown">
-			{#each vehicleGroups as group (group.vehicleId)}
-				<div class="vl-group">
-					<span class="vl-car">{group.vehicleName}</span>
-					<div class="vl-chips">
-						{#each group.items as item (item.id)}
-							<button
-								class="vl-chip"
-								class:vl-chip--sel={canvasStore.selected.includes(item.id)}
-								style="--chip: {item.color}"
-								onclick={() => canvasStore.select(item.id)}
-								title="{item.label ?? item.pattern.name} · {item.width.toFixed(1)}&quot; × {item.height.toFixed(1)}&quot;"
-							>
-								<span class="vl-dot" aria-hidden="true"></span>
-								{item.label ?? item.pattern.zone}
-							</button>
-						{/each}
-					</div>
-				</div>
-			{/each}
-		</div>
-	{/if}
-
 	<!-- ─── Resume banner ─── -->
 	{#if resumeCheckpoint && !cutting}
 		<div class="resume-banner" role="alert">
@@ -2762,7 +2782,6 @@
 
 					<!-- Cut items -->
 					{#each canvasStore.items as item (item.id)}
-						{@const _bb = getSvgPathBBox(item.pattern.svgPath)}
 						{@const _textBase = item.label ?? item.pattern.zone ?? ''}
 						{@const _textStr = _textBase ? `${_textBase} (${itemIndexMap.get(item.id) ?? ''})` : `(${itemIndexMap.get(item.id) ?? ''})`}
 						{@const _vname = hasMultipleVehicles ? getVehicleName(item.pattern.vehicleId).split(' ').slice(1).join(' ') : ''}
@@ -2799,26 +2818,23 @@
 							<svg
 								width="100%"
 								height="100%"
-								viewBox={itemViewBox(item.pattern.svgPath, item.rotation)}
+								viewBox="0 0 {item.width} {item.height}"
 								preserveAspectRatio="none"
 								aria-hidden="true"
 							>
-								<g transform="rotate({item.rotation} {_bb.x + _bb.w / 2} {_bb.y + _bb.h / 2})">
-									<g transform={item.flippedH ? `matrix(-1 0 0 1 ${2 * (_bb.x + _bb.w / 2)} 0)` : undefined}>
-										<path
-											d={item.pattern.svgPath}
-											fill="{item.color}20"
-											stroke={item.color}
-											stroke-width="1.5"
-											stroke-linecap="round"
-											stroke-linejoin="round"
-											vector-effect="non-scaling-stroke"
-											class:marching-ants={canvasStore.selected.includes(
-												item.id,
-											)}
-										/>
-									</g>
-								</g>
+								<path
+									d={tightPathAt(item)}
+									fill-rule="evenodd"
+									fill="{item.color}20"
+									stroke={item.color}
+									stroke-width="1.5"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									vector-effect="non-scaling-stroke"
+									class:marching-ants={canvasStore.selected.includes(
+										item.id,
+									)}
+								/>
 							</svg>
 							<!-- Label rendered as plain HTML, outside the rotated/skewed SVG
 							     (the SVG uses preserveAspectRatio="none" to fill the item's
@@ -5689,11 +5705,45 @@
 		margin-left: 3px;
 	}
 
-	.pattern-card__rot-value {
-		font-family: var(--font-mono);
-		font-size: 0.9rem;
-		color: var(--text-secondary);
-		min-width: 34px;
+	/* Free-rotation row — full-range drag slider + exact-degree input */
+	.pattern-card__rot-row {
+		flex-wrap: nowrap;
+	}
+	.pattern-card__rot-slider {
+		flex: 1;
+		min-width: 0;
+		-webkit-appearance: none;
+		appearance: none;
+		height: 4px;
+		border-radius: 2px;
+		background: var(--bg-surface-3);
+		outline: none;
+		cursor: ew-resize;
+		touch-action: none;
+	}
+	.pattern-card__rot-slider::-webkit-slider-thumb {
+		-webkit-appearance: none;
+		appearance: none;
+		width: 16px;
+		height: 16px;
+		border-radius: 50%;
+		background: var(--color-brand-dim);
+		border: 2px solid var(--bg-surface);
+		box-shadow: 0 0 0 1px var(--border-default);
+		cursor: ew-resize;
+	}
+	.pattern-card__rot-slider::-moz-range-thumb {
+		width: 16px;
+		height: 16px;
+		border-radius: 50%;
+		background: var(--color-brand-dim);
+		border: 2px solid var(--bg-surface);
+		box-shadow: 0 0 0 1px var(--border-default);
+		cursor: ew-resize;
+	}
+	.pattern-card__field--rot {
+		flex: 0 0 auto;
+		width: 72px;
 	}
 	.pattern-card__ctrl-btn {
 		display: flex;

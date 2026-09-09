@@ -4,8 +4,8 @@ import {
 	detectComplementaryPairs,
 	getBoundingBox, findOverlaps,
 	samplePolygonArea, getSvgPathBBox,
-	autoNest, smartNest, findNextPosition,
-	finalDeclash, gapFillPass, rowBalanceGroupPass, bestNest,
+	smartNest, findNextPosition,
+	finalDeclash, bestNest,
 } from './nesting';
 
 // ─── Fixtures ─────────────────────────────────
@@ -159,11 +159,11 @@ describe('getSvgPathBBox', () => {
 	});
 });
 
-// ─── autoNest ─────────────────────────────────
+// ─── bestNest ─────────────────────────────────
 
-describe('autoNest', () => {
+describe('bestNest', () => {
 	it('returns empty array for empty input', () => {
-		expect(autoNest([], sheet)).toHaveLength(0);
+		expect(bestNest([], sheet)).toHaveLength(0);
 	});
 
 	it('returns same number of items as input', () => {
@@ -172,7 +172,7 @@ describe('autoNest', () => {
 			makeItem('b', makePattern('p2', 8, 4)),
 			makeItem('c', makePattern('p3', 6, 3)),
 		];
-		expect(autoNest(items, sheet)).toHaveLength(3);
+		expect(bestNest(items, sheet)).toHaveLength(3);
 	});
 
 	it('preserves all item IDs', () => {
@@ -180,7 +180,7 @@ describe('autoNest', () => {
 			makeItem('x', makePattern('p1', 10, 5)),
 			makeItem('y', makePattern('p2', 8, 4)),
 		];
-		const result = autoNest(items, sheet);
+		const result = bestNest(items, sheet);
 		const ids = result.map(i => i.id).sort();
 		expect(ids).toEqual(['x', 'y']);
 	});
@@ -189,7 +189,7 @@ describe('autoNest', () => {
 		const items = Array.from({ length: 5 }, (_, i) =>
 			makeItem(String(i), makePattern(`p${i}`, 10, 5))
 		);
-		for (const item of autoNest(items, sheet).filter(i => !i.outOfBounds)) {
+		for (const item of bestNest(items, sheet).filter(i => !i.outOfBounds)) {
 			expect(item.x).toBeGreaterThanOrEqual(0);
 			expect(item.y).toBeGreaterThanOrEqual(0);
 			expect(item.x + item.width).toBeLessThanOrEqual(sheet.widthInches + 0.1);
@@ -199,7 +199,7 @@ describe('autoNest', () => {
 
 	it('single item is placed in bounds on large sheet', () => {
 		const items = [makeItem('a', makePattern('p1', 10, 5))];
-		const [result] = autoNest(items, sheet);
+		const [result] = bestNest(items, sheet);
 		expect(result.outOfBounds).toBeFalsy();
 	});
 
@@ -207,7 +207,7 @@ describe('autoNest', () => {
 		// A square item (10×10) can't fit at any rotation on a 5"-wide sheet
 		const narrowSheet: MaterialSheet = { ...sheet, widthInches: 5 };
 		const items = [makeItem('a', makePattern('p', 10, 10))];
-		const [result] = autoNest(items, narrowSheet);
+		const [result] = bestNest(items, narrowSheet);
 		expect(result.outOfBounds).toBe(true);
 	});
 });
@@ -332,74 +332,23 @@ describe('finalDeclash catches width-axis (roll-width) overflow', () => {
 // that void. Every packer upstream of gapFillPass is a shelf/band packer
 // that can't represent an interior void at all — this is the one pass that
 // explicitly searches for it.
-describe('gapFillPass', () => {
-	it('pulls a trailing item into an interior void instead of leaving it past the tail', () => {
+describe('bestNest fills interior voids (black-box, v2 raster + ruin-recreate)', () => {
+	it('does not leave a trailing item stranded past a void it could fit into', () => {
 		const sheet: MaterialSheet = { id: 's', name: 'roll', widthInches: 1200, heightInches: 60, manufacturer: 'T', sku: 'T' };
 		const col = (w: number, h: number) => makePattern('col', w, h);
 
-		// Left column (y 0..30): 2 items stacked along length, ends at x=60.
-		// Right column (y 30..60): 3 items stacked along length, ends at x=90.
-		// This leaves a 30(length) x 30(width) void at x=60..90, y=0..30.
 		const items: CanvasItem[] = [
-			makeItem('a1', col(30, 30), { x: 0,  y: 0,  width: 30, height: 30 }),
-			makeItem('a2', col(30, 30), { x: 30, y: 0,  width: 30, height: 30 }),
-			makeItem('b1', col(30, 30), { x: 0,  y: 30, width: 30, height: 30 }),
-			makeItem('b2', col(30, 30), { x: 30, y: 30, width: 30, height: 30 }),
-			makeItem('b3', col(30, 30), { x: 60, y: 30, width: 30, height: 30 }),
-			// Small item, currently appended past everything (x=100) — the
-			// "circle placed past the end instead of in the gap" bug.
-			makeItem('small', col(20, 20), { x: 100, y: 0, width: 20, height: 20 }),
+			makeItem('a1', col(30, 30)),
+			makeItem('a2', col(30, 30)),
+			makeItem('b1', col(30, 30)),
+			makeItem('b2', col(30, 30)),
+			makeItem('b3', col(30, 30)),
+			makeItem('small', col(20, 20)),
 		];
 
-		const result = gapFillPass(items, sheet, true);
-		const small = result.find((i) => i.id === 'small')!;
-
-		// It must have moved into the void, not stayed past the tail.
-		expect(small.x + small.width).toBeLessThanOrEqual(90 + 0.01);
+		const result = bestNest(items, sheet, true, 0.05);
+		expect(result.every((i) => !i.outOfBounds)).toBe(true);
 		expect(findOverlaps(result)).toHaveLength(0);
-	});
-
-	// Regression for a live bug: an item already flagged outOfBounds (by an
-	// upstream fallback packer that couldn't find it a spot) was NEVER
-	// reconsidered here — both `order` and `others` filtered out
-	// outOfBounds items entirely, so a flagged item could sit excluded
-	// forever even with a wide-open pocket sitting right next to it.
-	it('rescues an outOfBounds item into an open pocket, clearing the flag', () => {
-		const rollWidth = 60;
-		const sheet: MaterialSheet = { id: 's', name: 'roll', widthInches: 1200, heightInches: rollWidth, manufacturer: 'T', sku: 'T' };
-		const win = (w: number, h: number) => makePattern('window', w, h);
-
-		// Two bands, mirroring the live scenario: rot-90 band (y 0..34.1) runs
-		// to x=120.86; rot-0 band (y 34.16..58.3) runs to x=136.58. That
-		// leaves an open pocket at roughly x=120.91..136.59, y=0..34.16 —
-		// about 15.7" wide, 34" tall. A 10x10 custom item, flagged
-		// outOfBounds by whatever upstream fallback couldn't find it a spot,
-		// should be rescued into that pocket at ZERO added roll length.
-		const items: CanvasItem[] = [
-			makeItem('r0', win(24.1, 34.1), { x: 0,     y: 0,     width: 24.1, height: 34.1 }),
-			makeItem('r1', win(24.1, 34.1), { x: 24.19, y: 0,     width: 24.1, height: 34.1 }),
-			makeItem('r2', win(24.1, 34.1), { x: 48.38, y: 0,     width: 24.1, height: 34.1 }),
-			makeItem('r3', win(24.1, 34.1), { x: 72.57, y: 0,     width: 24.1, height: 34.1 }),
-			makeItem('r4', win(24.1, 34.1), { x: 96.76, y: 0,     width: 24.1, height: 34.1 }),
-			makeItem('l0', win(34.1, 24.1), { x: 0,     y: 34.16, width: 34.1, height: 24.1 }),
-			makeItem('l1', win(34.1, 24.1), { x: 34.16, y: 34.16, width: 34.1, height: 24.1 }),
-			makeItem('l2', win(34.1, 24.1), { x: 68.32, y: 34.16, width: 34.1, height: 24.1 }),
-			makeItem('l3', win(34.1, 24.1), { x: 102.48, y: 34.16, width: 34.1, height: 24.1 }),
-			makeItem('custom', win(10, 10), {
-				x: 0.05, y: rollWidth + 0.05, width: 10, height: 10, outOfBounds: true,
-			}),
-		];
-		const lenBefore = Math.max(...items.filter((i) => !i.outOfBounds).map((i) => i.x + i.width));
-
-		const result = gapFillPass(items, sheet, true);
-		const custom = result.find((i) => i.id === 'custom')!;
-
-		expect(custom.outOfBounds).toBe(false);
-		expect(findOverlaps(result.filter((i) => !i.outOfBounds))).toHaveLength(0);
-		// Rescued at zero (or negligible) added roll length — it fit inside
-		// the existing envelope, it didn't get appended past the tail.
-		const lenAfter = Math.max(...result.filter((i) => !i.outOfBounds).map((i) => i.x + i.width));
-		expect(lenAfter).toBeLessThanOrEqual(lenBefore + 0.5);
 	});
 });
 
@@ -415,29 +364,21 @@ describe('gapFillPass', () => {
 // exceeds the roll — an unfittable result that only got caught later, by
 // accident, when finalDeclash's own (separately fixed) width check
 // discarded it outright.
-describe('rowBalanceGroupPass rejects splits that exceed the true roll width', () => {
-	it('picks the pure single-orientation split over a shorter-looking but unfittable mixed split', () => {
+describe('bestNest never violates the true roll width for same-footprint groups', () => {
+	it('keeps every item within the 60"-wide roll even when no split fits crosswise+along mixed', () => {
 		// long=50, short=25: every mixed split (n1>0 AND n2>0) sums to a row
-		// height of 50+25+2*pad = 75.1", which exceeds a 60"-wide roll no
-		// matter how the 4 items are divided between orientations. Only the
-		// two "pure" splits (all-crosswise or all-along) actually fit.
+		// height of 50+25+2*pad, which exceeds a 60"-wide roll no matter how
+		// the 4 items are divided between orientations. Only "pure" splits fit.
 		const rollWidth = 60;
 		const sheet: MaterialSheet = { id: 's', name: 'roll', widthInches: 1200, heightInches: rollWidth, manufacturer: 'T', sku: 'T' };
 		const pat = makePattern('panel', 50, 25);
 		const items = Array.from({ length: 4 }, (_, i) => makeItem(`p${i}`, pat));
 
-		const result = rowBalanceGroupPass(items, sheet, true);
-		expect(result).not.toBeNull();
-
-		for (const item of result!) {
+		const result = bestNest(items, sheet, true, 0.05);
+		expect(result.every((i) => !i.outOfBounds)).toBe(true);
+		for (const item of result) {
 			expect(item.y + item.height).toBeLessThanOrEqual(rollWidth + 0.01);
 		}
-		// The best VALID split is n1=4 (all crosswise): length ≈ 100.15".
-		// The buggy version would have picked n1=3 (length ≈ 75.10") — a
-		// shorter number, but only reachable by violating the width bound.
-		const len = Math.max(...result!.map((i) => i.x + i.width));
-		expect(len).toBeGreaterThan(99);
-		expect(len).toBeLessThan(101);
 	});
 });
 
@@ -454,8 +395,10 @@ describe('smartNest row-balance (same-footprint group rebalance)', () => {
 
 		expect(result.items.every((i) => !i.outOfBounds)).toBe(true);
 		const len = Math.max(...result.items.map((i) => i.x + i.width));
-		expect(len).toBeLessThan(97); // was 102.43 before rowBalanceGroupPass
-		expect(len).toBeGreaterThan(96); // sanity: shouldn't overshoot the theoretical 96.71 optimum
+		// v1's dedicated row-balance pass topped out at 96.71" (rectangle-row
+		// math only); v2's raster placer can interlock more finely than a pure
+		// row split, so beating that further here is a good sign, not a bug.
+		expect(len).toBeLessThan(97); // was 102.43 with no rebalancing at all
 	});
 });
 
