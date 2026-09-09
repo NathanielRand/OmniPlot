@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from "svelte";
+	import { onMount, tick } from "svelte";
 	import { goto } from "$app/navigation";
 	import { userStore, shopStore, toastStore } from "$lib/stores";
 	import { patternStore, RESIDENTIAL_ZONES_LIST, COMMERCIAL_ZONES_LIST, MIRROR_PAIRS, PATTERN_CATEGORIES, zonesForCategory } from "$lib/stores/patternStore.svelte";
@@ -361,13 +361,31 @@
 	}
 
 	// ─── Submit ───────────────────────────────────
+	// After a failed validation, the errors are already set — but the invalid
+	// field may be several steps above the submit button, off-screen. Surface
+	// a toast with the count and scroll the first invalid field into view.
+	async function focusValidationErrors() {
+		await tick();
+		const errorEls = Array.from(
+			document.querySelectorAll<HTMLElement>(".upload-form .field--error"),
+		);
+		const count = errorEls.length;
+		if (count === 0) return;
+		toastStore.error(
+			count === 1 ? "1 field needs your attention" : `${count} fields need your attention`,
+			"Scroll up to fix the highlighted field.",
+		);
+		errorEls[0].scrollIntoView({ behavior: "smooth", block: "center" });
+		errorEls[0].querySelector<HTMLElement>("input, select, textarea")?.focus();
+	}
+
 	async function handleSubmit(e: SubmitEvent) {
 		e.preventDefault();
 		if (!userStore.user) { toastStore.error("Not signed in", "Please log in first."); return; }
 		if (isFreeLocked) { toastStore.error("Upgrade required", "Custom pattern uploads need a Lite or Pro plan."); return; }
 
 		if (uploadMode === "multi" && multiMethod === "individual") {
-			if (!validateIdentity() || !validateIndividual()) return;
+			if (!validateIdentity() || !validateIndividual()) { focusValidationErrors(); return; }
 			submitting = true;
 			try {
 				let saved = 0;
@@ -406,7 +424,7 @@
 		}
 
 		if (multiMode) {
-			if (!validateIdentity() || !validateMulti()) return;
+			if (!validateIdentity() || !validateMulti()) { focusValidationErrors(); return; }
 			submitting = true;
 			try {
 				const active = multiSlots.filter(s => !s.skip && s.zone);
@@ -440,7 +458,7 @@
 			return;
 		}
 
-		if (!validate()) return;
+		if (!validate()) { focusValidationErrors(); return; }
 		submitting = true;
 		try {
 			const name = pattern.zones.map((z, i) => zoneLabel(z, i)).join(" + ");
@@ -645,6 +663,37 @@
 					</h2>
 
 					{#if projectType === "vehicle"}
+						<div class="field" class:field--error={errors.make}>
+							<label class="field__label" for="make">Make</label>
+							<VehicleCombobox id="make" bind:value={vehicle.make} placeholder="Chevrolet" options={allMakes} error={!!errors.make}/>
+							{#if errors.make}<span class="field__error">{errors.make}</span>{/if}
+						</div>
+
+						<div class="field" class:field--error={!!errors.models}>
+							<label class="field__label" for="model-input">
+								Model
+								{#if vehicle.make.trim()}
+									<span class="field__hint">Matches narrow to {vehicle.make.trim()}</span>
+								{/if}
+							</label>
+							<div class="multitag" class:multitag--error={!!errors.models}>
+								{#each vehicle.models as m (m)}
+									<span class="chip">
+										<span class="chip__label">{m}</span>
+										<button type="button" class="chip__remove" aria-label="Remove {m}" onclick={() => { vehicle.models = vehicle.models.filter(x => x !== m); }}>×</button>
+									</span>
+								{/each}
+								<VehicleCombobox
+									id="model-input"
+									bind:value={modelInput}
+									placeholder={vehicle.models.length ? "Add another…" : "Silverado 1500 Crew Cab"}
+									options={makeModels.filter(m => !vehicle.models.includes(m))}
+									oncommit={(m) => { if (!vehicle.models.includes(m)) vehicle.models = [...vehicle.models, m]; }}
+								/>
+							</div>
+							{#if errors.models}<span class="field__error">{errors.models}</span>{/if}
+						</div>
+
 						<div class="field-row field-row--2">
 							<div class="field" class:field--error={!!errors.years}>
 								<label class="field__label" for="upload-year-input">Year(s)</label>
@@ -667,44 +716,18 @@
 								</div>
 								{#if errors.years}<span class="field__error">{errors.years}</span>{/if}
 							</div>
-							<div class="field" class:field--error={errors.make}>
-								<label class="field__label" for="make">Make</label>
-								<VehicleCombobox id="make" bind:value={vehicle.make} placeholder="Chevrolet" options={allMakes} error={!!errors.make}/>
-								{#if errors.make}<span class="field__error">{errors.make}</span>{/if}
+							<div class="field">
+								<label class="field__label" for="bodyStyle">Body Style</label>
+								<select id="bodyStyle" class="field__select" bind:value={vehicle.bodyStyle}>
+									<option value="sedan">Sedan</option>
+									<option value="coupe">Coupe</option>
+									<option value="suv">SUV / Crossover</option>
+									<option value="truck">Truck</option>
+									<option value="convertible">Convertible</option>
+									<option value="wagon">Wagon</option>
+									<option value="hatchback">Hatchback</option>
+								</select>
 							</div>
-						</div>
-
-						<div class="field" class:field--error={!!errors.models}>
-							<label class="field__label" for="model-input">Model</label>
-							<div class="multitag" class:multitag--error={!!errors.models}>
-								{#each vehicle.models as m (m)}
-									<span class="chip">
-										<span class="chip__label">{m}</span>
-										<button type="button" class="chip__remove" aria-label="Remove {m}" onclick={() => { vehicle.models = vehicle.models.filter(x => x !== m); }}>×</button>
-									</span>
-								{/each}
-								<VehicleCombobox
-									id="model-input"
-									bind:value={modelInput}
-									placeholder={vehicle.models.length ? "Add another…" : "Silverado 1500 Crew Cab"}
-									options={makeModels.filter(m => !vehicle.models.includes(m))}
-									oncommit={(m) => { if (!vehicle.models.includes(m)) vehicle.models = [...vehicle.models, m]; }}
-								/>
-							</div>
-							{#if errors.models}<span class="field__error">{errors.models}</span>{/if}
-						</div>
-
-						<div class="field field--half">
-							<label class="field__label" for="bodyStyle">Body Style</label>
-							<select id="bodyStyle" class="field__select" bind:value={vehicle.bodyStyle}>
-								<option value="sedan">Sedan</option>
-								<option value="coupe">Coupe</option>
-								<option value="suv">SUV / Crossover</option>
-								<option value="truck">Truck</option>
-								<option value="convertible">Convertible</option>
-								<option value="wagon">Wagon</option>
-								<option value="hatchback">Hatchback</option>
-							</select>
 						</div>
 
 					{:else if projectType === "custom"}
@@ -771,6 +794,14 @@
 							</select>
 						</div>
 					{/if}
+				</section>
+
+				<!-- Zones & Dimensions -->
+				<section class="form-section">
+					<h2 class="section-title">
+						<span class="section-num">4</span>
+						Zones & Dimensions
+					</h2>
 
 					<!-- ─── Upload type ─── -->
 					<div class="field">
@@ -790,12 +821,64 @@
 							</label>
 						</div>
 					</div>
+
+					{#if uploadMode === "single"}
+						<div class="field" class:field--error={!!errors.zones}>
+							<span class="field__label">Zones</span>
+							<div class="multitag" class:multitag--error={!!errors.zones}>
+								{#each pattern.zones as z, i (i)}
+									{@const mirror = mirrorOf(z)}
+									<span class="chip">
+										<span class="chip__label">{zoneLabel(z, i)}</span>
+										{#if mirror && !pattern.zones.includes(mirror)}
+											<button type="button" class="chip__mirror" title="Also add {zoneLabel(mirror)}" onclick={() => addZone(mirror)}>↔</button>
+										{/if}
+										<button type="button" class="chip__remove" aria-label="Remove {zoneLabel(z, i)}" onclick={() => removeZone(i)}>×</button>
+									</span>
+								{/each}
+								{#if pendingCustomZone}
+									<span class="custom-zone-entry">
+										<input
+											type="text"
+											class="custom-zone-entry__input"
+											bind:value={pendingCustomLabel}
+											placeholder="Name this zone…"
+											onkeydown={(e) => { if (e.key === "Enter") { e.preventDefault(); confirmCustomZone(); } else if (e.key === "Escape") { pendingCustomZone = false; pendingCustomLabel = ""; } }}
+										/>
+										<button type="button" class="custom-zone-entry__confirm" disabled={!pendingCustomLabel.trim()} onclick={confirmCustomZone} aria-label="Add custom zone">✓</button>
+										<button type="button" class="custom-zone-entry__cancel" onclick={() => { pendingCustomZone = false; pendingCustomLabel = ""; }} aria-label="Cancel">×</button>
+									</span>
+								{:else if availableZones.length}
+									<select class="zone-add-select" onchange={onZoneAdd} aria-label="Add zone">
+										<option value="">+ Add zone</option>
+										{#each availableZones as z}
+											<option value={z.value}>{z.value === "custom" ? "Custom…" : z.label}</option>
+										{/each}
+									</select>
+								{/if}
+							</div>
+							{#if errors.zones}<span class="field__error">{errors.zones}</span>{/if}
+						</div>
+
+						<div class="field-row field-row--2">
+							<div class="field" class:field--error={errors.width}>
+								<label class="field__label" for="width">Width (inches)</label>
+								<input id="width" class="field__input" type="number" min="0.1" step="0.1" bind:value={pattern.widthInches} placeholder="60.5"/>
+								{#if errors.width}<span class="field__error">{errors.width}</span>{/if}
+							</div>
+							<div class="field" class:field--error={errors.height}>
+								<label class="field__label" for="height">Height (inches)</label>
+								<input id="height" class="field__input" type="number" min="0.1" step="0.1" bind:value={pattern.heightInches} placeholder="48.0"/>
+								{#if errors.height}<span class="field__error">{errors.height}</span>{/if}
+							</div>
+						</div>
+					{/if}
 				</section>
 
 				<!-- Pattern Importer -->
 				<section class="form-section">
 					<h2 class="section-title">
-						<span class="section-num">4</span>
+						<span class="section-num">5</span>
 						Pattern Importer
 					</h2>
 
@@ -967,58 +1050,6 @@
 
 					{:else}
 						<!-- ─── Single pattern form ─── -->
-						<div class="field" class:field--error={!!errors.zones}>
-							<span class="field__label">Zones</span>
-							<div class="multitag" class:multitag--error={!!errors.zones}>
-								{#each pattern.zones as z, i (i)}
-									{@const mirror = mirrorOf(z)}
-									<span class="chip">
-										<span class="chip__label">{zoneLabel(z, i)}</span>
-										{#if mirror && !pattern.zones.includes(mirror)}
-											<button type="button" class="chip__mirror" title="Also add {zoneLabel(mirror)}" onclick={() => addZone(mirror)}>↔</button>
-										{/if}
-										<button type="button" class="chip__remove" aria-label="Remove {zoneLabel(z, i)}" onclick={() => removeZone(i)}>×</button>
-									</span>
-								{/each}
-								{#if pendingCustomZone}
-									<span class="custom-zone-entry">
-										<input
-											type="text"
-											class="custom-zone-entry__input"
-											bind:value={pendingCustomLabel}
-											placeholder="Name this zone…"
-											onkeydown={(e) => { if (e.key === "Enter") { e.preventDefault(); confirmCustomZone(); } else if (e.key === "Escape") { pendingCustomZone = false; pendingCustomLabel = ""; } }}
-										/>
-										<button type="button" class="custom-zone-entry__confirm" disabled={!pendingCustomLabel.trim()} onclick={confirmCustomZone} aria-label="Add custom zone">✓</button>
-										<button type="button" class="custom-zone-entry__cancel" onclick={() => { pendingCustomZone = false; pendingCustomLabel = ""; }} aria-label="Cancel">×</button>
-									</span>
-								{:else if availableZones.length}
-									<select class="zone-add-select" onchange={onZoneAdd} aria-label="Add zone">
-										<option value="">+ Add zone</option>
-										{#each availableZones as z}
-											<option value={z.value}>{z.value === "custom" ? "Custom…" : z.label}</option>
-										{/each}
-									</select>
-								{/if}
-							</div>
-							{#if errors.zones}<span class="field__error">{errors.zones}</span>{/if}
-						</div>
-
-						<div class="field-row field-row--2">
-							<div class="field" class:field--error={errors.width}>
-								<label class="field__label" for="width">Width (inches)</label>
-								<input id="width" class="field__input" type="number" min="0.1" step="0.1" bind:value={pattern.widthInches} placeholder="60.5"/>
-								{#if errors.width}<span class="field__error">{errors.width}</span>{/if}
-							</div>
-							<div class="field" class:field--error={errors.height}>
-								<label class="field__label" for="height">Height (inches)</label>
-								<input id="height" class="field__input" type="number" min="0.1" step="0.1" bind:value={pattern.heightInches} placeholder="48.0"/>
-								{#if errors.height}<span class="field__error">{errors.height}</span>{/if}
-							</div>
-						</div>
-
-						<div class="stage-divider" role="separator" aria-hidden="true"></div>
-
 						<div class="field" class:field--error={errors.svgPath}>
 							<label class="field__label" for="svgPath">
 								Pattern Importer
@@ -1041,7 +1072,7 @@
 				<!-- Notes -->
 				<section class="form-section">
 					<h2 class="section-title">
-						<span class="section-num">5</span>
+						<span class="section-num">6</span>
 						Notes
 					</h2>
 
@@ -1406,7 +1437,7 @@
 	/* ─── Category cards ─── */
 	.category-cards {
 		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+		grid-template-columns: repeat(4, 1fr);
 		gap: 8px;
 	}
 	.category-card {
@@ -1442,8 +1473,8 @@
 		color: var(--cat-accent);
 	}
 	.category-card__text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-	.category-card__label { font-size: 0.8125rem; font-weight: 600; color: var(--text-primary); line-height: 1.2; }
-	.category-card__sub { font-size: 0.6875rem; color: var(--text-tertiary); line-height: 1.25; }
+	.category-card__label { font-size: 1.0625rem; font-weight: 700; color: var(--text-primary); line-height: 1.2; }
+	.category-card__sub { font-size: 0.9375rem; color: var(--text-tertiary); line-height: 1.3; }
 	.category-card--active .category-card__label { color: var(--cat-accent); }
 
 	/* ─── Project type grid ─── */

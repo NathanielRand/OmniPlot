@@ -19,7 +19,8 @@
 //////////////////////////////////////
 // BACKLOG
 ////////////////////////////////
-- tooltips need responsive algining.
+- tooltips need responsive aligning.
+- save draft btn on each step of the pattern importer
 - pattern uplaoder: ui message and/or reposition to missing or incorrect values on the form instead ofg silently failing the submit.
 - upload pattern btn dyancmially changes to incorrect values for the pattern library category filter views such as still showing vehicle veribage when they are clciked into a different category
 - audit all advertised features, services, pages (marketing & user dashboard) to make sure we support, enforce, and have the right systems in place for the whole process. update any marketing pages with features we've added since updating those last or process changes. find where we have inaccurate or mock data to prevent misadvertising. build a list of whats incomplete and also what is missing entirely or something we should have considering our reexpanded product line. we need proper disclousure and badges next to everything we dont support or is in dev and disable to prevent misuse or abuse.

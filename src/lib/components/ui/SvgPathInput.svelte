@@ -1187,76 +1187,6 @@
 			<span class="spi__paste-hint">Used exactly as pasted — must already be in 0–100 normalized space.</span>
 		{/if}
 	{:else}
-	<!-- ─── Method picker (revealed once an input exists) ─── -->
-	<div class="spi__section">
-	<span class="spi__section-title">Import method</span>
-	<div class="spi__methods" role="tablist" aria-label="Pattern import method">
-		<button type="button" class="spi__method" class:spi__method--active={tab === "vectorize"}
-			role="tab" aria-selected={tab === "vectorize"} onclick={() => switchTab("vectorize")}>
-			<span class="spi__method-icon" aria-hidden="true">
-				<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-			</span>
-			<span class="spi__method-body">
-				<span class="spi__method-title">Vectorize <span class="spi__badge spi__badge--rec">Recommended</span></span>
-				<span class="spi__method-sub">Any image — SVG extracted losslessly, raster traced to precise curves</span>
-			</span>
-		</button>
-		<button type="button" class="spi__method" class:spi__method--active={tab === "cutout"}
-			role="tab" aria-selected={tab === "cutout"} onclick={() => switchTab("cutout")}>
-			<span class="spi__method-icon" aria-hidden="true">
-				<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 9a3 3 0 100-6 3 3 0 000 6z"/><path d="M6 21a3 3 0 100-6 3 3 0 000 6z"/><path d="M20 4L8.12 15.88"/><path d="M14.47 14.48L20 20"/><path d="M8.12 8.12L12 12"/></svg>
-			</span>
-			<span class="spi__method-body">
-				<span class="spi__method-title">Cutout <span class="spi__badge spi__badge--exp">Experimental</span></span>
-				<span class="spi__method-sub">Photo on a plain background — auto-removed, then the silhouette is traced</span>
-			</span>
-		</button>
-		<button type="button" class="spi__method" class:spi__method--active={tab === "paste"}
-			role="tab" aria-selected={tab === "paste"} onclick={() => switchTab("paste")}>
-			<span class="spi__method-icon" aria-hidden="true">
-				<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.1 2.1 0 013 3L12 15l-4 1 1-4z"/></svg>
-			</span>
-			<span class="spi__method-body">
-				<span class="spi__method-title">Path Data</span>
-				<span class="spi__method-sub">Upload an SVG to extract its path data, or paste it directly</span>
-			</span>
-		</button>
-		<button type="button" class="spi__method" class:spi__method--active={tab === "trace"}
-			role="tab" aria-selected={tab === "trace"} onclick={() => switchTab("trace")}>
-			<span class="spi__method-icon" aria-hidden="true">
-				<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
-			</span>
-			<span class="spi__method-body">
-				<span class="spi__method-title">Trace Image <span class="spi__badge spi__badge--exp">Experimental</span></span>
-				<span class="spi__method-sub">B&W image, traced entirely in-browser</span>
-			</span>
-		</button>
-	</div>
-	</div>
-
-	<!-- ─── Contour preference ─── -->
-	<div class="spi__section">
-	<span class="spi__section-title">Multiple contours in a file</span>
-	<div class="spi__contour-pref">
-		<div class="spi__contour-pref-group" role="radiogroup" aria-label="Contour handling">
-			<button type="button" class="spi__contour-pref-btn" class:spi__contour-pref-btn--active={contourPref === "outer"}
-				onclick={() => setContourPref("outer")}>Keep outer only</button>
-			<button type="button" class="spi__contour-pref-btn" class:spi__contour-pref-btn--active={contourPref === "inner"}
-				onclick={() => setContourPref("inner")}>Keep inner only</button>
-			<button type="button" class="spi__contour-pref-btn" class:spi__contour-pref-btn--active={contourPref === "all"}
-				onclick={() => setContourPref("all")}>
-				Keep all layers
-				{#if detectedLayers.length > 1}
-					<span class="spi__contour-pref-badge">{detectedLayers.length}</span>
-				{/if}
-			</button>
-			<button type="button" class="spi__contour-pref-btn" class:spi__contour-pref-btn--active={layerManageOpen}
-				disabled={detectedLayers.length <= 1}
-				onclick={() => (layerManageOpen = !layerManageOpen)}>Manage layers manually</button>
-		</div>
-	</div>
-	</div>
-
 	<!-- ─── Content + preview: Input / Output, side-by-side ─── -->
 	<div class="spi__section">
 	<span class="spi__section-title">Previews</span>
@@ -1357,10 +1287,6 @@
 					</div>
 				</div>
 			{/if}
-			<label class="spi__io-replace">
-				<input type="file" accept=".svg,image/svg+xml,image/*,.pdf,application/pdf" onchange={handleFileSelected} class="spi__file-input"/>
-				Replace image
-			</label>
 		{:else}
 			<div class="spi__pview">
 				<div class="spi__pview-empty">
@@ -1368,6 +1294,151 @@
 					<span>No image uploaded</span>
 				</div>
 			</div>
+		{/if}
+	</div>
+
+	<!-- ─── Zoomable preview panel ─── -->
+	<div class="spi__pview-col">
+	<span class="spi__io-label">Output</span>
+	{#if previewFullscreen}
+		<button type="button" class="spi__pview-backdrop" aria-label="Close fullscreen preview" onclick={() => (previewFullscreen = false)}></button>
+	{/if}
+	<div class="spi__pview" class:spi__pview--fullscreen={previewFullscreen}>
+		{#if previewPath || scanImageUrl}
+			<button type="button" class="spi__pview-expand-btn" onclick={() => (previewFullscreen = !previewFullscreen)}
+				title={previewFullscreen ? "Exit fullscreen" : "Expand fullscreen"} aria-label={previewFullscreen ? "Exit fullscreen preview" : "Expand fullscreen preview"}>
+				{#if previewFullscreen}
+					<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+				{:else}
+					<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+				{/if}
+			</button>
+		{/if}
+		{#if scanImageUrl}
+			<!-- Scan effect: image with a sweeping beam tracking progress -->
+			<div class="spi__scan-view" aria-hidden="true">
+				<img src={scanImageUrl} alt="" class="spi__scan-img"/>
+				<div class="spi__scan-dim" style="top: {Math.round(scanProgress)}%"></div>
+				<div class="spi__scan-beam" style="top: calc({Math.round(scanProgress)}% - 1px)"></div>
+				<div class="spi__scan-hud">
+					<span>{scanLabel || (scanPhases[scanPhaseIndex]?.label ?? "Analyzing")}</span>
+					{#if scanTotalCount > 0 && scanPhaseIndex === 1}
+						<span class="spi__scan-pct-hud">{scanDoneCount}/{scanTotalCount}</span>
+					{:else}
+						<span class="spi__scan-pct-hud">{Math.round(scanProgress)}%</span>
+					{/if}
+					<span>{scanElapsed}s elapsed</span>
+				</div>
+			</div>
+		{:else if showMirror && previewPath}
+			<div class="spi__mirror-bar" aria-hidden="true">
+				<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 3H5a2 2 0 00-2 2v14a2 2 0 002 2h3"/><path d="M16 3h3a2 2 0 012 2v14a2 2 0 01-2 2h-3"/><line x1="12" y1="3" x2="12" y2="21"/></svg>
+				Mirror pair — both sides shown
+			</div>
+			<div class="spi__mirror-panels">
+				<div class="spi__mirror-panel">
+					<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" class="spi__pview-svg" aria-label="Original path orientation">
+						<defs>
+							<pattern id="spi-grid-l" width="10" height="10" patternUnits="userSpaceOnUse">
+								<path d="M 10 0 L 0 0 0 10" fill="none" stroke="var(--border-default)" stroke-width="0.3" opacity="0.5"/>
+							</pattern>
+							<filter id="spi-fade-blur-l" x="-50%" y="-50%" width="200%" height="200%">
+								<feGaussianBlur stdDeviation="2"/>
+							</filter>
+							<mask id="spi-fade-mask-l" maskUnits="userSpaceOnUse" x="-9999" y="-9999" width="19998" height="19998">
+								<path d={previewPath} fill="none" stroke="#fff" stroke-width="10" stroke-linejoin="round" stroke-linecap="round" filter="url(#spi-fade-blur-l)"/>
+							</mask>
+						</defs>
+						<rect x="0" y="0" width="100" height="100" fill="url(#spi-grid-l)"/>
+						<path d={previewPath} fill="var(--color-brand)" opacity="1" mask="url(#spi-fade-mask-l)"/>
+						<path d={previewPath} fill="none" stroke="var(--color-brand)" stroke-width="1.1" stroke-linecap="round"/>
+					</svg>
+					<span class="spi__mirror-lbl">{mirrorOrigLabel ?? "As uploaded"}</span>
+				</div>
+				<div class="spi__mirror-divider" aria-hidden="true"></div>
+				<div class="spi__mirror-panel">
+					<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" class="spi__pview-svg" aria-label="Mirrored path orientation">
+						<defs>
+							<pattern id="spi-grid-r" width="10" height="10" patternUnits="userSpaceOnUse">
+								<path d="M 10 0 L 0 0 0 10" fill="none" stroke="var(--border-default)" stroke-width="0.3" opacity="0.5"/>
+							</pattern>
+							<filter id="spi-fade-blur-r" x="-50%" y="-50%" width="200%" height="200%">
+								<feGaussianBlur stdDeviation="2"/>
+							</filter>
+							<mask id="spi-fade-mask-r" maskUnits="userSpaceOnUse" x="-9999" y="-9999" width="19998" height="19998">
+								<path d={previewPath} transform="matrix(-1 0 0 1 100 0)" fill="none" stroke="#fff" stroke-width="10" stroke-linejoin="round" stroke-linecap="round" filter="url(#spi-fade-blur-r)"/>
+							</mask>
+						</defs>
+						<rect x="0" y="0" width="100" height="100" fill="url(#spi-grid-r)"/>
+						<path d={previewPath} transform="matrix(-1 0 0 1 100 0)" fill="var(--color-brand)" opacity="1" mask="url(#spi-fade-mask-r)"/>
+						<path d={previewPath} transform="matrix(-1 0 0 1 100 0)" fill="none" stroke="var(--color-brand)" stroke-width="1.1" stroke-linecap="round"/>
+					</svg>
+					<span class="spi__mirror-lbl">{mirrorFlipLabel ?? "Mirrored"}</span>
+				</div>
+			</div>
+		{:else if previewPath}
+			<div class="spi__pview-toolbar">
+				<button type="button" class="spi__pview-btn" onclick={zoomOut} title="Zoom out">
+					<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+				</button>
+				<span class="spi__pview-zoom">{Math.round(zoom * 100)}%</span>
+				<button type="button" class="spi__pview-btn" onclick={zoomIn} title="Zoom in">
+					<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+				</button>
+				<button type="button" class="spi__pview-btn spi__pview-fit" onclick={resetView} title="Reset to fit">
+					<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+					Fit
+				</button>
+			</div>
+			<svg
+				class="spi__pview-svg"
+				viewBox={zoomedViewBox}
+				preserveAspectRatio="xMidYMid meet"
+				style="cursor: {isPanning ? 'grabbing' : 'grab'}"
+				onwheel={onWheel}
+				onpointerdown={onPointerDown}
+				onpointermove={onPointerMove}
+				onpointerup={onPointerUp}
+				aria-label="SVG path preview — scroll to zoom, drag to pan"
+				role="img"
+			>
+				<defs>
+					<pattern id="spi-grid" width="10" height="10" patternUnits="userSpaceOnUse">
+						<path d="M 10 0 L 0 0 0 10" fill="none" stroke="var(--border-default)" stroke-width="0.3" opacity="0.5"/>
+					</pattern>
+					<filter id="spi-fade-blur" x="-50%" y="-50%" width="200%" height="200%">
+						<feGaussianBlur stdDeviation={2 / zoom}/>
+					</filter>
+					<mask id="spi-fade-mask" maskUnits="userSpaceOnUse" x="-9999" y="-9999" width="19998" height="19998">
+						<path d={previewPath} fill="none" stroke="#fff" stroke-width={10 / zoom} stroke-linejoin="round" stroke-linecap="round" filter="url(#spi-fade-blur)"/>
+					</mask>
+				</defs>
+				<rect x="-9999" y="-9999" width="19998" height="19998" fill="url(#spi-grid)"/>
+				<path d={previewPath} fill="var(--color-brand)" opacity="1" mask="url(#spi-fade-mask)"/>
+				<path d={previewPath} fill="none" stroke="var(--color-brand)" stroke-width={1.1 / zoom} stroke-linecap="round"/>
+			</svg>
+		{:else}
+			<div class="spi__pview-empty">
+				<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+				<span>Preview appears here</span>
+			</div>
+		{/if}
+	</div>
+	{#if previewPath}
+		<div class="spi__io-info">
+			<span class="spi__io-info-res">Vector · resolution-independent</span>
+			<span class="spi__res-pill spi__res-pill--high">High res</span>
+		</div>
+	{/if}
+	</div>
+
+	<!-- ─── Import content: replace-image + active importer, full width ─── -->
+	<div class="spi__full-row">
+		{#if uploadedFile}
+			<label class="spi__io-replace">
+				<input type="file" accept=".svg,image/svg+xml,image/*,.pdf,application/pdf" onchange={handleFileSelected} class="spi__file-input"/>
+				Replace image
+			</label>
 		{/if}
 		<div class="spi__input">
 
@@ -1547,143 +1618,77 @@
 			{/if}
 
 		</div>
-
+	</div>
+	</div>
 	</div>
 
-	<!-- ─── Zoomable preview panel ─── -->
-	<div class="spi__pview-col">
-	<span class="spi__io-label">Output</span>
-	{#if previewFullscreen}
-		<button type="button" class="spi__pview-backdrop" aria-label="Close fullscreen preview" onclick={() => (previewFullscreen = false)}></button>
-	{/if}
-	<div class="spi__pview" class:spi__pview--fullscreen={previewFullscreen}>
-		{#if previewPath || scanImageUrl}
-			<button type="button" class="spi__pview-expand-btn" onclick={() => (previewFullscreen = !previewFullscreen)}
-				title={previewFullscreen ? "Exit fullscreen" : "Expand fullscreen"} aria-label={previewFullscreen ? "Exit fullscreen preview" : "Expand fullscreen preview"}>
-				{#if previewFullscreen}
-					<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
-				{:else}
-					<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+	<!-- ─── Method picker (revealed once an input exists) ─── -->
+	<div class="spi__section">
+	<span class="spi__section-title">Import method</span>
+	<div class="spi__methods" role="tablist" aria-label="Pattern import method">
+		<button type="button" class="spi__method" class:spi__method--active={tab === "vectorize"}
+			role="tab" aria-selected={tab === "vectorize"} onclick={() => switchTab("vectorize")}>
+			<span class="spi__method-icon" aria-hidden="true">
+				<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+			</span>
+			<span class="spi__method-body">
+				<span class="spi__method-title">Vectorize <span class="spi__badge spi__badge--rec">Recommended</span></span>
+				<span class="spi__method-sub">Any image — SVG extracted losslessly, raster traced to precise curves</span>
+			</span>
+		</button>
+		<button type="button" class="spi__method" class:spi__method--active={tab === "cutout"}
+			role="tab" aria-selected={tab === "cutout"} onclick={() => switchTab("cutout")}>
+			<span class="spi__method-icon" aria-hidden="true">
+				<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 9a3 3 0 100-6 3 3 0 000 6z"/><path d="M6 21a3 3 0 100-6 3 3 0 000 6z"/><path d="M20 4L8.12 15.88"/><path d="M14.47 14.48L20 20"/><path d="M8.12 8.12L12 12"/></svg>
+			</span>
+			<span class="spi__method-body">
+				<span class="spi__method-title">Cutout <span class="spi__badge spi__badge--exp">Experimental</span></span>
+				<span class="spi__method-sub">Photo on a plain background — auto-removed, then the silhouette is traced</span>
+			</span>
+		</button>
+		<button type="button" class="spi__method" class:spi__method--active={tab === "paste"}
+			role="tab" aria-selected={tab === "paste"} onclick={() => switchTab("paste")}>
+			<span class="spi__method-icon" aria-hidden="true">
+				<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.1 2.1 0 013 3L12 15l-4 1 1-4z"/></svg>
+			</span>
+			<span class="spi__method-body">
+				<span class="spi__method-title">Path Data</span>
+				<span class="spi__method-sub">Upload an SVG to extract its path data, or paste it directly</span>
+			</span>
+		</button>
+		<button type="button" class="spi__method" class:spi__method--active={tab === "trace"}
+			role="tab" aria-selected={tab === "trace"} onclick={() => switchTab("trace")}>
+			<span class="spi__method-icon" aria-hidden="true">
+				<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
+			</span>
+			<span class="spi__method-body">
+				<span class="spi__method-title">Trace Image <span class="spi__badge spi__badge--exp">Experimental</span></span>
+				<span class="spi__method-sub">B&W image, traced entirely in-browser</span>
+			</span>
+		</button>
+	</div>
+	</div>
+
+	<!-- ─── Contour preference ─── -->
+	<div class="spi__section">
+	<span class="spi__section-title">Multiple contours in a file</span>
+	<div class="spi__contour-pref">
+		<div class="spi__contour-pref-group" role="radiogroup" aria-label="Contour handling">
+			<button type="button" class="spi__contour-pref-btn" class:spi__contour-pref-btn--active={contourPref === "outer"}
+				onclick={() => setContourPref("outer")}>Keep outer only</button>
+			<button type="button" class="spi__contour-pref-btn" class:spi__contour-pref-btn--active={contourPref === "inner"}
+				onclick={() => setContourPref("inner")}>Keep inner only</button>
+			<button type="button" class="spi__contour-pref-btn" class:spi__contour-pref-btn--active={contourPref === "all"}
+				onclick={() => setContourPref("all")}>
+				Keep all layers
+				{#if detectedLayers.length > 1}
+					<span class="spi__contour-pref-badge">{detectedLayers.length}</span>
 				{/if}
 			</button>
-		{/if}
-		{#if scanImageUrl}
-			<!-- Scan effect: image with a sweeping beam tracking progress -->
-			<div class="spi__scan-view" aria-hidden="true">
-				<img src={scanImageUrl} alt="" class="spi__scan-img"/>
-				<div class="spi__scan-dim" style="top: {Math.round(scanProgress)}%"></div>
-				<div class="spi__scan-beam" style="top: calc({Math.round(scanProgress)}% - 1px)"></div>
-				<div class="spi__scan-hud">
-					<span>{scanLabel || (scanPhases[scanPhaseIndex]?.label ?? "Analyzing")}</span>
-					{#if scanTotalCount > 0 && scanPhaseIndex === 1}
-						<span class="spi__scan-pct-hud">{scanDoneCount}/{scanTotalCount}</span>
-					{:else}
-						<span class="spi__scan-pct-hud">{Math.round(scanProgress)}%</span>
-					{/if}
-					<span>{scanElapsed}s elapsed</span>
-				</div>
-			</div>
-		{:else if showMirror && previewPath}
-			<div class="spi__mirror-bar" aria-hidden="true">
-				<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 3H5a2 2 0 00-2 2v14a2 2 0 002 2h3"/><path d="M16 3h3a2 2 0 012 2v14a2 2 0 01-2 2h-3"/><line x1="12" y1="3" x2="12" y2="21"/></svg>
-				Mirror pair — both sides shown
-			</div>
-			<div class="spi__mirror-panels">
-				<div class="spi__mirror-panel">
-					<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" class="spi__pview-svg" aria-label="Original path orientation">
-						<defs>
-							<pattern id="spi-grid-l" width="10" height="10" patternUnits="userSpaceOnUse">
-								<path d="M 10 0 L 0 0 0 10" fill="none" stroke="var(--border-default)" stroke-width="0.3" opacity="0.5"/>
-							</pattern>
-							<filter id="spi-fade-blur-l" x="-50%" y="-50%" width="200%" height="200%">
-								<feGaussianBlur stdDeviation="2"/>
-							</filter>
-							<mask id="spi-fade-mask-l" maskUnits="userSpaceOnUse" x="-9999" y="-9999" width="19998" height="19998">
-								<path d={previewPath} fill="none" stroke="#fff" stroke-width="10" stroke-linejoin="round" stroke-linecap="round" filter="url(#spi-fade-blur-l)"/>
-							</mask>
-						</defs>
-						<rect x="0" y="0" width="100" height="100" fill="url(#spi-grid-l)"/>
-						<path d={previewPath} fill="var(--color-brand)" opacity="1" mask="url(#spi-fade-mask-l)"/>
-						<path d={previewPath} fill="none" stroke="var(--color-brand)" stroke-width="1.1" stroke-linecap="round"/>
-					</svg>
-					<span class="spi__mirror-lbl">{mirrorOrigLabel ?? "As uploaded"}</span>
-				</div>
-				<div class="spi__mirror-divider" aria-hidden="true"></div>
-				<div class="spi__mirror-panel">
-					<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" class="spi__pview-svg" aria-label="Mirrored path orientation">
-						<defs>
-							<pattern id="spi-grid-r" width="10" height="10" patternUnits="userSpaceOnUse">
-								<path d="M 10 0 L 0 0 0 10" fill="none" stroke="var(--border-default)" stroke-width="0.3" opacity="0.5"/>
-							</pattern>
-							<filter id="spi-fade-blur-r" x="-50%" y="-50%" width="200%" height="200%">
-								<feGaussianBlur stdDeviation="2"/>
-							</filter>
-							<mask id="spi-fade-mask-r" maskUnits="userSpaceOnUse" x="-9999" y="-9999" width="19998" height="19998">
-								<path d={previewPath} transform="matrix(-1 0 0 1 100 0)" fill="none" stroke="#fff" stroke-width="10" stroke-linejoin="round" stroke-linecap="round" filter="url(#spi-fade-blur-r)"/>
-							</mask>
-						</defs>
-						<rect x="0" y="0" width="100" height="100" fill="url(#spi-grid-r)"/>
-						<path d={previewPath} transform="matrix(-1 0 0 1 100 0)" fill="var(--color-brand)" opacity="1" mask="url(#spi-fade-mask-r)"/>
-						<path d={previewPath} transform="matrix(-1 0 0 1 100 0)" fill="none" stroke="var(--color-brand)" stroke-width="1.1" stroke-linecap="round"/>
-					</svg>
-					<span class="spi__mirror-lbl">{mirrorFlipLabel ?? "Mirrored"}</span>
-				</div>
-			</div>
-		{:else if previewPath}
-			<div class="spi__pview-toolbar">
-				<button type="button" class="spi__pview-btn" onclick={zoomOut} title="Zoom out">
-					<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/></svg>
-				</button>
-				<span class="spi__pview-zoom">{Math.round(zoom * 100)}%</span>
-				<button type="button" class="spi__pview-btn" onclick={zoomIn} title="Zoom in">
-					<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-				</button>
-				<button type="button" class="spi__pview-btn spi__pview-fit" onclick={resetView} title="Reset to fit">
-					<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
-					Fit
-				</button>
-			</div>
-			<svg
-				class="spi__pview-svg"
-				viewBox={zoomedViewBox}
-				preserveAspectRatio="xMidYMid meet"
-				style="cursor: {isPanning ? 'grabbing' : 'grab'}"
-				onwheel={onWheel}
-				onpointerdown={onPointerDown}
-				onpointermove={onPointerMove}
-				onpointerup={onPointerUp}
-				aria-label="SVG path preview — scroll to zoom, drag to pan"
-				role="img"
-			>
-				<defs>
-					<pattern id="spi-grid" width="10" height="10" patternUnits="userSpaceOnUse">
-						<path d="M 10 0 L 0 0 0 10" fill="none" stroke="var(--border-default)" stroke-width="0.3" opacity="0.5"/>
-					</pattern>
-					<filter id="spi-fade-blur" x="-50%" y="-50%" width="200%" height="200%">
-						<feGaussianBlur stdDeviation={2 / zoom}/>
-					</filter>
-					<mask id="spi-fade-mask" maskUnits="userSpaceOnUse" x="-9999" y="-9999" width="19998" height="19998">
-						<path d={previewPath} fill="none" stroke="#fff" stroke-width={10 / zoom} stroke-linejoin="round" stroke-linecap="round" filter="url(#spi-fade-blur)"/>
-					</mask>
-				</defs>
-				<rect x="-9999" y="-9999" width="19998" height="19998" fill="url(#spi-grid)"/>
-				<path d={previewPath} fill="var(--color-brand)" opacity="1" mask="url(#spi-fade-mask)"/>
-				<path d={previewPath} fill="none" stroke="var(--color-brand)" stroke-width={1.1 / zoom} stroke-linecap="round"/>
-			</svg>
-		{:else}
-			<div class="spi__pview-empty">
-				<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-				<span>Preview appears here</span>
-			</div>
-		{/if}
-	</div>
-	{#if previewPath}
-		<div class="spi__io-info">
-			<span class="spi__io-info-res">Vector · resolution-independent</span>
-			<span class="spi__res-pill spi__res-pill--high">High res</span>
+			<button type="button" class="spi__contour-pref-btn" class:spi__contour-pref-btn--active={layerManageOpen}
+				disabled={detectedLayers.length <= 1}
+				onclick={() => (layerManageOpen = !layerManageOpen)}>Manage layers manually</button>
 		</div>
-	{/if}
-	</div>
 	</div>
 	</div>
 
@@ -1916,6 +1921,14 @@
 	@media (max-width: 640px) {
 		.spi__workarea { grid-template-columns: 1fr; }
 		.spi__pview-col { order: -1; }
+	}
+
+	/* ─── Full-width row below Input/Output: replace-image + active importer ─── */
+	.spi__full-row {
+		grid-column: 1 / -1;
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
 	}
 
 	/* ─── Input / Output labeled row ─── */
