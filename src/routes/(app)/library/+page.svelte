@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { onMount } from "svelte";
 	import { toastStore, canvasStore, userStore } from "$lib/stores";
 	import { patternStore, TINT_ZONE_GROUP, PPF_ZONE_GROUP, MIRROR_PAIRS, zonesForCategory, categoryShortLabel, categoryMeta } from "$lib/stores/patternStore.svelte";
 	import Badge from "$lib/components/ui/Badge.svelte";
@@ -37,16 +36,19 @@
 	let myPatternsLoading = $state(false);
 	let myPatternsError  = $state("");
 
-	onMount(async () => {
-		if (!userStore.user) return;
+	// Reactive on userStore.user so patterns load once auth resolves,
+	// even if it resolves after this component mounts.
+	let loadedForUid = $state<string | null>(null);
+	$effect(() => {
+		const uid = userStore.user?.uid;
+		if (!uid || uid === loadedForUid) return;
+		loadedForUid = uid;
 		myPatternsLoading = true;
-		try {
-			myPatterns = await getUserPatterns(userStore.user.uid);
-		} catch {
-			myPatternsError = "Could not load your patterns.";
-		} finally {
-			myPatternsLoading = false;
-		}
+		myPatternsError = "";
+		getUserPatterns(uid)
+			.then((patterns) => { myPatterns = patterns; })
+			.catch(() => { myPatternsError = "Could not load your patterns."; })
+			.finally(() => { myPatternsLoading = false; });
 	});
 
 	async function toggleCommunitySubmit(p: UserPattern) {
@@ -1267,7 +1269,7 @@
 	}
 	.mode-btn.active .mode-count {
 		background: var(--color-brand);
-		color: #fff;
+		color: #0a0a0a;
 	}
 
 	.library__header {
@@ -1704,8 +1706,46 @@
 
 	/* Responsive */
 	@media (max-width: 768px) {
-		.library { grid-template-columns: 1fr; }
-		.library__sidebar { display: none; }
+		.library { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+
+		/* Sidebar becomes a horizontally-scrollable filter strip instead of
+		   vanishing — hiding it outright removed search/filters/request on mobile. */
+		.library__sidebar {
+			flex-direction: row;
+			align-items: center;
+			overflow-x: auto;
+			overflow-y: hidden;
+			border-right: none;
+			border-bottom: 1px solid var(--border-subtle);
+			padding: 10px 12px;
+			gap: 8px;
+			-webkit-overflow-scrolling: touch;
+		}
+		.lib-search-wrap { margin-bottom: 0; flex: 0 0 150px; }
+		.lib-section-label { display: none; }
+		.lib-filter-pills { flex-wrap: nowrap; margin-bottom: 0; flex-shrink: 0; }
+		.lib-stats { display: none; }
+		.lib-request-btn { margin-top: 0; width: auto; flex-shrink: 0; white-space: nowrap; }
+
+		.library__main { padding: 14px; }
+		.library__header { flex-direction: column; align-items: stretch; gap: 10px; }
+		.library__header-actions { justify-content: space-between; }
+	}
+
+	@media (max-width: 480px) {
+		.mode-btn--lg { padding: 8px 6px; font-size: 0.75rem; }
+	}
+
+	/* Touch devices have no hover — the per-card add affordance must stay visible,
+	   not appear only on :hover (which never fires on touch). */
+	@media (hover: none) {
+		.zone-card__add { opacity: 1; }
+	}
+
+	@media (max-width: 640px) {
+		.my-pattern-card { flex-wrap: wrap; }
+		.my-pattern-card__body { flex-basis: 100%; order: 1; }
+		.my-pattern-card__actions { flex-wrap: wrap; order: 2; width: 100%; justify-content: flex-end; }
 	}
 
 	/* ─── Library / My Patterns tab bar ─── */

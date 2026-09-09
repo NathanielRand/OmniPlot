@@ -15,16 +15,11 @@
 ///////////////////////////////
 // ONGOING
 ///////////////////////////////
-- check community patterns are only visible by all other users only once admin approves. user reports seeing other user's unapproved community or even private patterns.
-- Plotters page "add plotter" btns/modal isnt wired correctly with as it doesnt detect usb or cut agent or anything.
-- btn for user to scan for installed cut agent already on local device.
-- admin billing invoices are showing for either the wrong connected account or the master account for stripe, either way those invoices are wrong.
-- reminting pricing/allowances didnt reflect changes on the /pricing page.
-- remove in email footer "PPF" as we are more than PPF now.
 
 //////////////////////////////////////
 // BACKLOG
 ////////////////////////////////
+- pattern uplaoder: ui message and/or reposition to missing or incorrect values on the form instead ofg silently failing the submit.
 - upload pattern btn dyancmially changes to incorrect values for the pattern library category filter views such as still showing vehicle veribage when they are clciked into a different category
 - audit all advertised features, services, pages (marketing & user dashboard) to make sure we support, enforce, and have the right systems in place for the whole process. update any marketing pages with features we've added since updating those last or process changes. find where we have inaccurate or mock data to prevent misadvertising. build a list of whats incomplete and also what is missing entirely or something we should have considering our reexpanded product line. we need proper disclousure and badges next to everything we dont support or is in dev and disable to prevent misuse or abuse.
 - BG remove option (on by default) on pattern uploader input images to help clean up the input image before before for a cleaner vectorization.
