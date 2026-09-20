@@ -1140,4 +1140,12 @@
 			flex-direction: column;
 		}
 	}
+	@media (max-width: 480px) {
+		.trust-stat {
+			min-width: 100%;
+		}
+		.trust-section__inner {
+			gap: 20px;
+		}
+	}
 </style>

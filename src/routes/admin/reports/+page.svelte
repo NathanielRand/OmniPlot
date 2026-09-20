@@ -257,8 +257,8 @@
 </div>
 
 <style>
-	.page { padding: 28px; max-width: 1000px; }
-	.page__header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 24px; }
+	.page { padding: 28px; max-width: 1000px; margin: 0 auto; }
+	.page__header { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 24px; }
 	.page__title { font-size: 1.375rem; font-weight: 700; margin-bottom: 4px; }
 	.page__sub { font-size: 0.875rem; color: var(--text-secondary); margin: 0; }
 
@@ -321,7 +321,8 @@
 	.report-table {
 		border: 1px solid var(--border-subtle);
 		border-radius: var(--radius-lg);
-		overflow: hidden;
+		overflow-x: auto;
+		-webkit-overflow-scrolling: touch;
 	}
 	.report-table__head {
 		display: grid;
@@ -452,4 +453,14 @@
 	}
 	@keyframes spin { to { transform: rotate(360deg); } }
 	.empty-state { color: var(--text-tertiary); font-size: 0.875rem; padding: 32px 0; }
+
+	@media (max-width: 768px) {
+		.page { padding: 16px; }
+		.stats-row { grid-template-columns: repeat(2, 1fr); }
+		.filter-tabs { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+		.filter-tab { white-space: nowrap; }
+	}
+	@media (max-width: 480px) {
+		.stats-row { grid-template-columns: 1fr; }
+	}
 </style>

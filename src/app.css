@@ -60,6 +60,10 @@
 	--text-disabled: #a8aaad;
 	--text-inverse: #f0f2f7;
 	--text-brand: #0058cc;
+	/* Alias for --text-tertiary — several components reference --text-muted
+	   directly (some with a fallback, some without); defining it here keeps
+	   both spellings in sync instead of silently inheriting an unset color. */
+	--text-muted: var(--text-tertiary);
 
 	/* Status text (AA-safe on light surfaces) — separate from the raw
 	   --color-success/warning/danger fills, which stay bright for
@@ -114,6 +118,7 @@
 	--text-disabled: rgba(240, 242, 247, 0.2);
 	--text-inverse: #0a0a0a;
 	--text-brand: #00e5ff;
+	--text-muted: var(--text-tertiary);
 
 	--text-success: #00d68f;
 	--text-warning: #ffb547;

@@ -381,7 +381,7 @@
 </div>
 
 <style>
-	.editor { padding: 24px 32px; }
+	.editor { padding: 24px 32px; max-width: 1400px; margin: 0 auto; }
 
 	/* ─── Header ─── */
 	.editor__header {
@@ -775,5 +775,6 @@
 
 	@media (max-width: 768px) {
 		.editor { padding: 20px 16px; }
+		.editor__header { flex-wrap: wrap; }
 	}
 </style>

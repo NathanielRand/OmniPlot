@@ -399,4 +399,9 @@
 			grid-template-columns: 1fr 1fr;
 		}
 	}
+	@media (max-width: 380px) {
+		.about-split__stat-group {
+			grid-template-columns: 1fr;
+		}
+	}
 </style>

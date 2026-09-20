@@ -420,6 +420,11 @@
 	.article-tag:hover { color: var(--text-primary); border-color: var(--border-default); }
 
 	/* ─── Prose body ───────────────────────────── */
+	/* Cap reading width — the main column runs up to ~836px on desktop,
+	   too wide for comfortable line length. */
+	.article-body {
+		max-width: 720px;
+	}
 	:global(.prose h1),
 	:global(.prose h2),
 	:global(.prose h3),

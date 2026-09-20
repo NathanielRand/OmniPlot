@@ -249,12 +249,14 @@
 </div>
 
 <style>
-	.page { padding: 28px; max-width: 860px; }
+	.page { padding: 28px; max-width: 860px; margin: 0 auto; }
 
 	.page__header {
 		display: flex;
 		align-items: flex-start;
 		justify-content: space-between;
+		flex-wrap: wrap;
+		gap: 12px;
 		margin-bottom: 24px;
 	}
 	.page__title { font-size: 1.375rem; font-weight: 700; margin-bottom: 4px; }
@@ -447,5 +449,14 @@
 		border-radius: 4px;
 		padding: 1px 5px;
 		color: var(--text-secondary);
+	}
+
+	@media (max-width: 640px) {
+		.page { padding: 20px 16px; }
+		.config-strip { flex-direction: column; align-items: flex-start; gap: 10px; }
+		.config-sep { display: none; }
+		.send-bar__input { flex: 1 1 100%; }
+		.tpl-card { flex-direction: column; align-items: stretch; }
+		.tpl-card__right { justify-content: space-between; }
 	}
 </style>

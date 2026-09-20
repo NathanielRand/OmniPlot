@@ -228,6 +228,7 @@
 					</a>
 				{/each}
 				<div class="mkt-mobile-actions">
+					<ThemeToggle />
 					<Button variant="secondary" size="sm" href="/login"
 						>Sign in</Button
 					>
@@ -336,17 +337,20 @@
 
 	.mkt-header__nav {
 		display: flex;
-		gap: 4px;
+		align-items: center;
+		gap: 2px;
 		flex: 1;
-		margin-left: 24px;
+		margin-left: 28px;
+		min-width: 0;
 	}
 
 	.mkt-nav-link {
-		padding: 5px 12px;
-		font-size: 0.875rem;
+		padding: 8px 14px;
+		font-size: 0.9375rem;
 		font-weight: 500;
 		color: var(--text-secondary);
 		text-decoration: none;
+		white-space: nowrap;
 		border-radius: var(--radius-md);
 		transition:
 			background 0.12s,
@@ -449,6 +453,7 @@
 		display: none;
 		align-items: center;
 		justify-content: center;
+		margin-left: auto;
 		width: 36px;
 		height: 36px;
 		border-radius: var(--radius-md);
@@ -572,8 +577,11 @@
 		gap: 16px;
 	}
 
-	/* Responsive */
-	@media (max-width: 768px) {
+	/* Responsive — collapse the full nav + actions into the hamburger menu
+	   well before the links run out of room, so the desktop nav never
+	   crowds or wraps. Threshold accounts for brand + 7 nav links + actions
+	   at their comfortable (non-cramped) sizes. */
+	@media (max-width: 1120px) {
 		.mkt-header__nav {
 			display: none;
 		}
@@ -583,7 +591,23 @@
 		.mkt-header__hamburger {
 			display: flex;
 		}
+	}
 
+	/* Tighten outer spacing a bit on phones so the mobile menu's larger
+	   touch targets still have room to breathe. */
+	@media (max-width: 480px) {
+		.mkt-header__inner {
+			padding: 0 16px;
+		}
+		.mkt-mobile-menu {
+			padding: 16px;
+		}
+		.mkt-mobile-actions {
+			flex-wrap: wrap;
+		}
+	}
+
+	@media (max-width: 768px) {
 		.mkt-footer__inner {
 			grid-template-columns: 1fr;
 			gap: 32px;

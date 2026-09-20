@@ -980,6 +980,15 @@
 		.testimonials-grid {
 			grid-template-columns: repeat(2, 1fr);
 		}
+		/* 3 narrow columns of body copy reads cramped at tablet widths —
+		   collapse before the 768px tier where the other grids do. */
+		.steps {
+			grid-template-columns: 1fr;
+			gap: 32px;
+		}
+		.steps::before {
+			display: none;
+		}
 	}
 
 	@media (max-width: 768px) {
@@ -988,12 +997,6 @@
 		}
 		.features-grid {
 			grid-template-columns: 1fr;
-		}
-		.steps {
-			grid-template-columns: 1fr;
-		}
-		.steps::before {
-			display: none;
 		}
 		.testimonials-grid {
 			grid-template-columns: 1fr;

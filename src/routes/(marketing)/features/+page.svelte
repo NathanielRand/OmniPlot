@@ -76,7 +76,7 @@
 	}
 
 	.features-title {
-		font-size: 2.5rem;
+		font-size: clamp(1.875rem, 6vw, 2.5rem);
 		font-weight: 700;
 		line-height: 1.15;
 		max-width: 640px;

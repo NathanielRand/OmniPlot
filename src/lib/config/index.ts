@@ -782,8 +782,6 @@ export const MARKETING_NAV = [
 	{ label: "Insights",    href: "/insights" },
 	{ label: "Agent",       href: "/agent" },
 	{ label: "FAQ",         href: "/faq" },
-	{ label: "Changelog",   href: "/changelog" },
-	{ label: "About",       href: "/about" },
 	{ label: "Support",     href: "/support" },
 ] as const;
 

@@ -1220,7 +1220,7 @@ onMount(() => {
 {/if}
 
 <style>
-	.patterns-page { padding: 24px; display: flex; flex-direction: column; gap: 20px; max-width: 1100px; }
+	.patterns-page { padding: 24px; display: flex; flex-direction: column; gap: 20px; max-width: 1100px; margin: 0 auto; }
 
 	.page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 	.page-title  { font-size: 1.375rem; margin-bottom: 3px; }
@@ -1536,4 +1536,12 @@ onMount(() => {
 
 	@media (max-width: 1200px) { .summary-row { grid-template-columns: repeat(3, 1fr); } }
 	@media (max-width: 1024px) { .summary-row { grid-template-columns: repeat(2, 1fr); } }
+	@media (max-width: 640px) {
+		.patterns-page { padding: 16px; }
+		.summary-row   { grid-template-columns: 1fr; }
+	}
+	@media (max-width: 480px) {
+		.form-row { flex-direction: column; }
+		.search-input { width: 100%; }
+	}
 </style>

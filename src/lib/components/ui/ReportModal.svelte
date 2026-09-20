@@ -14,10 +14,11 @@
 	let submitted   = $state(false);
 
 	$effect(() => {
-		// Reset when modal opens
+		// Reset when modal opens, honoring any prefill (e.g. from the error page)
 		if (uiStore.reportModalOpen) {
-			type = 'bug'; severity = 'medium';
-			title = ''; description = '';
+			const prefill = uiStore.reportPrefill;
+			type = prefill?.type ?? 'bug'; severity = 'medium';
+			title = prefill?.title ?? ''; description = prefill?.description ?? '';
 			submitted = false; submitting = false;
 		}
 	});

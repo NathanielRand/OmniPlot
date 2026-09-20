@@ -308,33 +308,35 @@
 		{#if recentTransactions.length > 0}
 			<div class="fees-table-wrap">
 				<div class="fees-table-head">Recent transactions</div>
-				<table class="fees-table" aria-label="Recent transactions">
-					<thead>
-						<tr>
-							<th>Date</th>
-							<th>User</th>
-							<th>Description</th>
-							<th>Amount</th>
-							<th>Status</th>
-						</tr>
-					</thead>
-					<tbody>
-						{#each recentTransactions as t}
+				<div class="table-scroll">
+					<table class="fees-table" aria-label="Recent transactions">
+						<thead>
 							<tr>
-								<td class="td-mono">{fmtDate(t.created)}</td>
-								<td class="td-mono">{t.uid ? t.email ?? t.uid : 'Unattributed'}</td>
-								<td class="td-desc">{t.description ?? '—'}</td>
-								<td class="td-mono">{fmtCurrency(t.amount, t.currency)}</td>
-								<td>
-									<Badge
-										variant={t.status === 'succeeded' ? 'success' : t.status === 'refunded' ? 'warning' : t.status === 'disputed' || t.status === 'failed' ? 'danger' : 'default'}
-										size="sm" dot
-									>{t.status}</Badge>
-								</td>
+								<th>Date</th>
+								<th>User</th>
+								<th>Description</th>
+								<th>Amount</th>
+								<th>Status</th>
 							</tr>
-						{/each}
-					</tbody>
-				</table>
+						</thead>
+						<tbody>
+							{#each recentTransactions as t}
+								<tr>
+									<td class="td-mono">{fmtDate(t.created)}</td>
+									<td class="td-mono">{t.uid ? t.email ?? t.uid : 'Unattributed'}</td>
+									<td class="td-desc">{t.description ?? '—'}</td>
+									<td class="td-mono">{fmtCurrency(t.amount, t.currency)}</td>
+									<td>
+										<Badge
+											variant={t.status === 'succeeded' ? 'success' : t.status === 'refunded' ? 'warning' : t.status === 'disputed' || t.status === 'failed' ? 'danger' : 'default'}
+											size="sm" dot
+										>{t.status}</Badge>
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
 			</div>
 		{/if}
 	</div>
@@ -404,28 +406,30 @@
 		{#if recentFees.length > 0}
 			<div class="fees-table-wrap">
 				<div class="fees-table-head">Recent charges</div>
-				<table class="fees-table" aria-label="Recent Stripe charges">
-					<thead>
-						<tr>
-							<th>Date</th>
-							<th>Description</th>
-							<th>Charge</th>
-							<th>Stripe fee</th>
-							<th>Net</th>
-						</tr>
-					</thead>
-					<tbody>
-						{#each recentFees as c}
+				<div class="table-scroll">
+					<table class="fees-table" aria-label="Recent Stripe charges">
+						<thead>
 							<tr>
-								<td class="td-mono">{fmtDate(c.created)}</td>
-								<td class="td-desc">{c.description ?? '—'}</td>
-								<td class="td-mono">{fmtCurrency(c.amount, c.currency)}</td>
-								<td class="td-mono td-fee">{c.fee > 0 ? fmtCurrency(c.fee, c.currency) : '—'}</td>
-								<td class="td-mono td-net">{fmtCurrency(c.amount - c.fee, c.currency)}</td>
+								<th>Date</th>
+								<th>Description</th>
+								<th>Charge</th>
+								<th>Stripe fee</th>
+								<th>Net</th>
 							</tr>
-						{/each}
-					</tbody>
-				</table>
+						</thead>
+						<tbody>
+							{#each recentFees as c}
+								<tr>
+									<td class="td-mono">{fmtDate(c.created)}</td>
+									<td class="td-desc">{c.description ?? '—'}</td>
+									<td class="td-mono">{fmtCurrency(c.amount, c.currency)}</td>
+									<td class="td-mono td-fee">{c.fee > 0 ? fmtCurrency(c.fee, c.currency) : '—'}</td>
+									<td class="td-mono td-net">{fmtCurrency(c.amount - c.fee, c.currency)}</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
 			</div>
 		{/if}
 	</div>
@@ -442,33 +446,35 @@
 			</div>
 		</div>
 
-		<table class="costs-table" aria-label="Platform costs">
-			<thead>
-				<tr>
-					<th>Service</th>
-					<th>Category</th>
-					<th>Estimated cost</th>
-					<th></th>
-				</tr>
-			</thead>
-			<tbody>
-				{#each OTHER_COSTS as row}
+		<div class="table-scroll">
+			<table class="costs-table" aria-label="Platform costs">
+				<thead>
 					<tr>
-						<td class="td-service">{row.service}</td>
-						<td><span class="category-chip">{row.category}</span></td>
-						<td class="td-mono">{row.estimate}</td>
-						<td class="td-link">
-							{#if row.link}
-								<a href={row.link} target="_blank" rel="noopener noreferrer" class="ext-link ext-link--sm">
-									Dashboard
-									<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3"/></svg>
-								</a>
-							{/if}
-						</td>
+						<th>Service</th>
+						<th>Category</th>
+						<th>Estimated cost</th>
+						<th></th>
 					</tr>
-				{/each}
-			</tbody>
-		</table>
+				</thead>
+				<tbody>
+					{#each OTHER_COSTS as row}
+						<tr>
+							<td class="td-service">{row.service}</td>
+							<td><span class="category-chip">{row.category}</span></td>
+							<td class="td-mono">{row.estimate}</td>
+							<td class="td-link">
+								{#if row.link}
+									<a href={row.link} target="_blank" rel="noopener noreferrer" class="ext-link ext-link--sm">
+										Dashboard
+										<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3"/></svg>
+									</a>
+								{/if}
+							</td>
+						</tr>
+					{/each}
+				</tbody>
+			</table>
+		</div>
 	</div>
 
 </div>
@@ -483,10 +489,11 @@
 		flex-direction: column;
 		gap: 20px;
 		max-width: 1080px;
+		margin: 0 auto;
 	}
 
 	/* Header */
-	.page-header  { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+	.page-header  { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 	.page-title   { font-size: 1.375rem; margin-bottom: 3px; }
 	.page-sub     { font-size: 0.875rem; color: var(--text-secondary); }
 	.refresh-btn  {
@@ -592,6 +599,7 @@
 	}
 
 	/* Recent fees table */
+	.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 	.fees-table-wrap { border-top: 1px solid var(--border-subtle); }
 	.fees-table-head { padding: 10px 16px 6px; font-size: 0.6875rem; font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-tertiary); }
 	.fees-table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
@@ -639,5 +647,7 @@
 		.billing-page { padding: 16px; }
 		.usage-grid   { grid-template-columns: 1fr; }
 		.balance-row  { grid-template-columns: 1fr; }
+		.section-head { flex-wrap: wrap; }
+		.ext-link     { margin-left: 0; }
 	}
 </style>

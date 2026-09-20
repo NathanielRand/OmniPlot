@@ -383,6 +383,10 @@
 	}
 	.auth-switch-link:hover { text-decoration: underline; }
 
+	@media (max-width: 480px) {
+		.tab { padding: 10px 12px; }
+	}
+
 	.kicked-banner {
 		display: flex;
 		align-items: flex-start;

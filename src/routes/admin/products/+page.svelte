@@ -546,51 +546,53 @@
 
 						<!-- Prices table -->
 						{#if product.prices.length > 0}
-							<table class="prices-table" aria-label="Prices for {product.name}">
-								<thead>
-									<tr>
-										<th>Nickname</th>
-										<th>Interval</th>
-										<th>Amount</th>
-										<th>Price ID</th>
-										<th>Status</th>
-										<th></th>
-									</tr>
-								</thead>
-								<tbody>
-									{#each product.prices as price (price.id)}
-										<tr class:row--archived={!price.active}>
-											<td class="td-nickname">{price.nickname ?? '—'}</td>
-											<td class="td-interval">{fmtInterval(price.interval)}</td>
-											<td class="td-amount">{fmtAmount(price.unit_amount, price.currency)}</td>
-											<td class="td-id">
-												<div class="id-cell">
-													<code>{truncateId(price.id)}</code>
-													<button class="id-copy" onclick={() => copyText(price.id)} title="Copy price ID">
-														<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
-													</button>
-												</div>
-											</td>
-											<td>
-												<Badge variant={price.active ? 'success' : 'default'} size="sm">
-													{price.active ? 'active' : 'archived'}
-												</Badge>
-											</td>
-											<td class="td-actions">
-												{#if price.active}
-													<button
-														class="action-btn action-btn--danger action-btn--sm"
-														onclick={() => archivePrice(price.id, product.id)}
-														disabled={archivingPrice === price.id}
-													>
-														{archivingPrice === price.id ? '…' : 'Archive'}
-													</button>
-												{/if}
-											</td>
+							<div class="table-scroll">
+								<table class="prices-table" aria-label="Prices for {product.name}">
+									<thead>
+										<tr>
+											<th>Nickname</th>
+											<th>Interval</th>
+											<th>Amount</th>
+											<th>Price ID</th>
+											<th>Status</th>
+											<th></th>
 										</tr>
-									{/each}
-								</tbody>
-							</table>
+									</thead>
+									<tbody>
+										{#each product.prices as price (price.id)}
+											<tr class:row--archived={!price.active}>
+												<td class="td-nickname">{price.nickname ?? '—'}</td>
+												<td class="td-interval">{fmtInterval(price.interval)}</td>
+												<td class="td-amount">{fmtAmount(price.unit_amount, price.currency)}</td>
+												<td class="td-id">
+													<div class="id-cell">
+														<code>{truncateId(price.id)}</code>
+														<button class="id-copy" onclick={() => copyText(price.id)} title="Copy price ID">
+															<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+														</button>
+													</div>
+												</td>
+												<td>
+													<Badge variant={price.active ? 'success' : 'default'} size="sm">
+														{price.active ? 'active' : 'archived'}
+													</Badge>
+												</td>
+												<td class="td-actions">
+													{#if price.active}
+														<button
+															class="action-btn action-btn--danger action-btn--sm"
+															onclick={() => archivePrice(price.id, product.id)}
+															disabled={archivingPrice === price.id}
+														>
+															{archivingPrice === price.id ? '…' : 'Archive'}
+														</button>
+													{/if}
+												</td>
+											</tr>
+										{/each}
+									</tbody>
+								</table>
+							</div>
 						{:else}
 							<div class="no-prices">No prices yet</div>
 						{/if}
@@ -700,10 +702,11 @@
 		flex-direction: column;
 		gap: 20px;
 		max-width: 1080px;
+		margin: 0 auto;
 	}
 
 	/* Header */
-	.page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+	.page-header { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
 	.page-title  { font-size: 1.375rem; margin-bottom: 3px; }
 	.page-sub    { font-size: 0.875rem; color: var(--text-secondary); }
 	.header-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
@@ -827,6 +830,7 @@
 	.id-copy:hover { color: var(--text-primary); background: var(--bg-surface-2); }
 
 	/* Prices table */
+	.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 	.prices-table {
 		width: 100%; border-collapse: collapse; font-size: 0.8125rem;
 		border-top: 1px solid var(--border-subtle);
@@ -941,5 +945,8 @@
 		.summary-bar   { grid-template-columns: repeat(2, 1fr); }
 		.form-grid     { grid-template-columns: 1fr; }
 		.product-header { flex-direction: column; align-items: flex-start; }
+	}
+	@media (max-width: 480px) {
+		.summary-bar { grid-template-columns: 1fr; }
 	}
 </style>

@@ -347,25 +347,27 @@
 					<p>No cut jobs yet</p>
 				</div>
 			{:else}
-				<table class="mini-table" aria-label="Recent cut jobs">
-					<thead>
-						<tr><th>User</th><th>Subject</th><th>Pcs</th><th>Status</th></tr>
-					</thead>
-					<tbody>
-						{#each (stats?.jobs.recent ?? []) as j}
-							<tr>
-								<td class="td-user">{j.userLabel}</td>
-								<td class="td-vehicle">{j.vehicleName}</td>
-								<td class="td-mono">{j.pieces}</td>
-								<td>
-									<Badge variant={j.status === "complete" || j.status === "completed" ? "success" : j.status === "error" ? "danger" : "default"} size="sm" dot>
-										{j.status}
-									</Badge>
-								</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
+				<div class="table-scroll">
+					<table class="mini-table" aria-label="Recent cut jobs">
+						<thead>
+							<tr><th>User</th><th>Subject</th><th>Pcs</th><th>Status</th></tr>
+						</thead>
+						<tbody>
+							{#each (stats?.jobs.recent ?? []) as j}
+								<tr>
+									<td class="td-user">{j.userLabel}</td>
+									<td class="td-vehicle">{j.vehicleName}</td>
+									<td class="td-mono">{j.pieces}</td>
+									<td>
+										<Badge variant={j.status === "complete" || j.status === "completed" ? "success" : j.status === "error" ? "danger" : "default"} size="sm" dot>
+											{j.status}
+										</Badge>
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
 			{/if}
 		</div>
 	</div>
@@ -378,6 +380,7 @@
 		flex-direction: column;
 		gap: 20px;
 		max-width: 1200px;
+		margin: 0 auto;
 	}
 
 	.page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
@@ -488,6 +491,7 @@
 	.panel-empty span { font-size: 0.8125rem; }
 
 	/* Mini table */
+	.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 	.mini-table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
 	.mini-table thead { background: var(--bg-surface-2); }
 	.mini-table th {
@@ -504,4 +508,11 @@
 
 	@media (max-width: 1100px) { .chart-row { grid-template-columns: 1fr; } .bottom-row { grid-template-columns: 1fr; } }
 	@media (max-width: 900px)  { .kpi-row { grid-template-columns: repeat(2, 1fr); } }
+	@media (max-width: 480px) {
+		.analytics-page { padding: 16px; }
+		.kpi-row { grid-template-columns: 1fr; }
+		.range-tabs { flex-wrap: wrap; }
+		.range-tab { flex: 1 1 40%; text-align: center; }
+		.tier-row { grid-template-columns: 40px 1fr 30px 30px; gap: 6px; }
+	}
 </style>

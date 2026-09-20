@@ -183,7 +183,7 @@
 			const info = await connectSerialPort(form.baudRate);
 			const match = matchPortToPreset(info.vendorId, info.productId);
 			form = { ...form,
-				name: match?.preset.name ?? form.name || "USB Plotter",
+				name: (match?.preset.name ?? form.name) || "USB Plotter",
 				presetName: match?.preset.name ?? form.presetName,
 				connection: "usb-serial",
 				vendorId: info.vendorId, productId: info.productId,
@@ -881,6 +881,12 @@
 		gap: 20px;
 		height: 100%;
 		overflow-y: auto;
+		/* .plotter-list is a single flex column, not a reflowing grid — on an
+		   ultrawide monitor an uncapped width stretches each plotter card
+		   edge-to-edge instead of adding more columns, so cap and center it. */
+		max-width: 1600px;
+		margin: 0 auto;
+		width: 100%;
 	}
 
 	.page-header {

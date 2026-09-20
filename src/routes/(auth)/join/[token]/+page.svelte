@@ -532,4 +532,8 @@
 	.auth-switch { text-align: center; font-size: 0.875rem; color: var(--text-secondary); margin: 0; }
 	.auth-switch-link { color: var(--text-brand); text-decoration: none; font-weight: 500; }
 	.auth-switch-link:hover { text-decoration: underline; }
+
+	@media (max-width: 480px) {
+		.tab { padding: 10px 12px; }
+	}
 </style>

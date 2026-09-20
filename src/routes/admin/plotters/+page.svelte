@@ -448,7 +448,8 @@
 		background: var(--bg-surface);
 		border: 1px solid var(--border-subtle);
 		border-radius: var(--radius-lg);
-		overflow: hidden;
+		overflow-x: auto;
+		-webkit-overflow-scrolling: touch;
 	}
 
 	.tbl {
@@ -585,5 +586,12 @@
 
 	@media (max-width: 900px) {
 		.stats-row { grid-template-columns: repeat(2, 1fr); }
+	}
+	@media (max-width: 640px) {
+		.page { padding: 16px; }
+		.page-header { flex-wrap: wrap; }
+	}
+	@media (max-width: 480px) {
+		.stats-row { grid-template-columns: 1fr; }
 	}
 </style>

@@ -201,9 +201,15 @@
 	@media (max-width: 640px) {
 		.promo-banner__inner {
 			gap: 8px;
-			justify-content: flex-start;
-			padding-right: 40px;
+			justify-content: center;
+			/* Symmetric padding so the centered content isn't thrown off by the
+			   dismiss button reserved on the right only. */
+			padding: 9px 40px;
 		}
-		.promo-banner__message { font-size: 0.8125rem; }
+		.promo-banner__message {
+			font-size: 0.8125rem;
+			text-align: center;
+			width: 100%;
+		}
 	}
 </style>

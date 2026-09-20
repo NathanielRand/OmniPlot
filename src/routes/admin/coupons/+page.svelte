@@ -676,6 +676,7 @@
 	.coupons-page {
 		padding: 32px;
 		max-width: 960px;
+		margin: 0 auto;
 		display: flex;
 		flex-direction: column;
 		gap: 24px;
@@ -686,6 +687,7 @@
 		display: flex;
 		align-items: flex-start;
 		justify-content: space-between;
+		flex-wrap: wrap;
 		gap: 16px;
 	}
 	.page-title {
@@ -833,7 +835,8 @@
 	.table-wrap {
 		border: 1px solid var(--border-subtle);
 		border-radius: var(--radius-lg);
-		overflow: hidden;
+		overflow-x: auto;
+		-webkit-overflow-scrolling: touch;
 	}
 	.table {
 		width: 100%;
@@ -1080,5 +1083,9 @@
 		.coupons-page { padding: 20px 16px; }
 		.form-grid { grid-template-columns: 1fr; }
 		.field--full { grid-column: 1; }
+		.promote-form__grid { grid-template-columns: 1fr; }
+		.promote-form { padding: 16px; }
+		.stats-row { flex-direction: column; }
+		.row-actions { flex-wrap: wrap; justify-content: flex-end; }
 	}
 </style>

@@ -259,12 +259,13 @@
 </div>
 
 <style>
-	.insights-admin { padding: 28px 32px; }
+	.insights-admin { padding: 28px 32px; max-width: 1400px; margin: 0 auto; }
 
 	.insights-admin__header {
 		display: flex;
 		align-items: flex-start;
 		justify-content: space-between;
+		flex-wrap: wrap;
 		gap: 16px;
 		margin-bottom: 24px;
 	}
@@ -494,5 +495,10 @@
 
 	@media (max-width: 768px) {
 		.insights-admin { padding: 20px 16px; }
+	}
+	@media (max-width: 480px) {
+		.insights-admin__search-wrap { margin-left: 0; width: 100%; }
+		.insights-admin__search { width: 100%; }
+		.stat-views { order: 1; }
 	}
 </style>

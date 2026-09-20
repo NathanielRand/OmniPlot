@@ -126,7 +126,7 @@
 	}
 
 	.solution-title {
-		font-size: 2.5rem;
+		font-size: clamp(1.875rem, 6vw, 2.5rem);
 		font-weight: 700;
 		line-height: 1.15;
 		max-width: 640px;
@@ -277,6 +277,17 @@
 		border-color: var(--color-brand);
 	}
 
+	/* Tablet: drop from 3 columns to 2 before the 640px full-stack tier —
+	   three columns inside the 880px container gets cramped well before
+	   phone width. */
+	@media (max-width: 980px) {
+		.usecase-grid,
+		.case-grid,
+		.solution-cross__grid {
+			grid-template-columns: repeat(2, 1fr);
+		}
+	}
+
 	@media (max-width: 640px) {
 		.usecase-grid,
 		.case-grid,
@@ -286,6 +297,9 @@
 		.solution-hero__actions {
 			flex-direction: column;
 			width: 100%;
+		}
+		.solution-section--case {
+			padding: 28px 20px;
 		}
 	}
 </style>

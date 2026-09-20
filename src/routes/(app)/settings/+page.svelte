@@ -3189,9 +3189,30 @@
 	@media (max-width: 768px) {
 		.settings-page {
 			grid-template-columns: 1fr;
+			grid-template-rows: auto 1fr;
 		}
+		/* Sidebar becomes a horizontal scrollable tab strip instead of
+		   disappearing — it was the only control that sets activeTab, so
+		   hiding it outright left mobile with no way to switch sections. */
 		.settings-nav {
-			display: none;
+			flex-direction: row;
+			align-items: center;
+			overflow-x: auto;
+			overflow-y: hidden;
+			border-right: none;
+			border-bottom: 1px solid var(--border-subtle);
+			padding: 8px 12px;
+			gap: 4px;
+			flex-shrink: 0;
+		}
+		.settings-nav-item {
+			width: auto;
+			flex-shrink: 0;
+			white-space: nowrap;
+		}
+		.settings-content {
+			padding: 20px 16px;
+			min-height: 0;
 		}
 		.form-grid {
 			grid-template-columns: 1fr;
@@ -3199,6 +3220,17 @@
 		.appearance-row {
 			flex-direction: column;
 			align-items: flex-start;
+		}
+		/* Fixed 5-column invoice grid (110px 1fr 90px 70px 60px = 330px+ before
+		   the flexible column even gets content) doesn't fit a phone viewport —
+		   scroll it horizontally within its own box instead of overflowing the
+		   page or crushing the date/amount columns unreadably. */
+		.invoice-list {
+			overflow-x: auto;
+		}
+		.invoice-list__header,
+		.invoice-row {
+			min-width: 480px;
 		}
 	}
 </style>

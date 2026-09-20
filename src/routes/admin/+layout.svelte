@@ -67,6 +67,17 @@
 
   // ─── Sidebar collapse ─────────────────────────
   let sidebarCollapsed = $state(false);
+
+  // ─── Mobile nav drawer ─────────────────────────
+  let mobileNavOpen = $state(false);
+  // The icon-only collapsed state is a desktop-only affordance — a mobile
+  // drawer that opens with no labels defeats the point of a drawer.
+  const showLabels = $derived(!sidebarCollapsed || mobileNavOpen);
+
+  $effect(() => {
+    currentPath;
+    mobileNavOpen = false;
+  });
 </script>
 
 {#if userStore.loading}
@@ -75,12 +86,18 @@
   </div>
 {:else if userStore.isAdmin}
 <div class="admin-shell" class:admin-shell--collapsed={sidebarCollapsed}>
+  <!-- Mobile drawer backdrop -->
+  {#if mobileNavOpen}
+    <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+    <div class="admin-sidebar-backdrop animate-fade-in" onclick={() => (mobileNavOpen = false)}></div>
+  {/if}
+
   <!-- Sidebar -->
-  <aside class="admin-sidebar">
+  <aside class="admin-sidebar" class:admin-sidebar--mobile-open={mobileNavOpen}>
     <div class="admin-sidebar__header">
       <div class="admin-sidebar__brand">
         <Logo size={26} />
-        {#if !sidebarCollapsed}<EarlyAccessBadge />{/if}
+        {#if showLabels}<EarlyAccessBadge />{/if}
       </div>
     </div>
 
@@ -106,20 +123,20 @@
           class="admin-nav-item"
           class:active={currentPath === item.href || (item.href !== '/admin' && currentPath.startsWith(item.href))}
           aria-current={currentPath === item.href ? 'page' : undefined}
-          title={sidebarCollapsed ? item.label : undefined}
+          title={!showLabels ? item.label : undefined}
         >
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d={NAV_ICONS[item.icon] ?? ''} />
           </svg>
-          {#if !sidebarCollapsed}{item.label}{/if}
+          {#if showLabels}{item.label}{/if}
         </a>
       {/each}
     </nav>
 
     <div class="admin-sidebar__footer">
-      <a href="/" class="admin-back-link" title={sidebarCollapsed ? 'Back to app' : undefined}>
+      <a href="/" class="admin-back-link" title={!showLabels ? 'Back to app' : undefined}>
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
-        {#if !sidebarCollapsed}Back to app{/if}
+        {#if showLabels}Back to app{/if}
       </a>
     </div>
   </aside>
@@ -127,6 +144,20 @@
   <!-- Main -->
   <div class="admin-main">
     <header class="admin-topbar">
+      <button
+        class="admin-topbar__menu-btn"
+        onclick={() => (mobileNavOpen = !mobileNavOpen)}
+        aria-label="Toggle admin navigation"
+        aria-expanded={mobileNavOpen}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+          {#if mobileNavOpen}
+            <path d="M18 6L6 18M6 6l12 12" />
+          {:else}
+            <path d="M3 12h18M3 6h18M3 18h18" />
+          {/if}
+        </svg>
+      </button>
       <div class="admin-topbar__breadcrumb">
         <span class="admin-topbar__section">Admin</span>
         <span class="admin-topbar__sep" aria-hidden="true">/</span>
@@ -339,7 +370,7 @@
   .admin-topbar {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    gap: 12px;
     padding: 0 24px;
     height: 52px;
     background: var(--bg-surface);
@@ -347,16 +378,41 @@
     flex-shrink: 0;
   }
 
+  .admin-topbar__menu-btn {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    flex-shrink: 0;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-default);
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+  .admin-topbar__menu-btn:hover { background: var(--interactive-hover); color: var(--text-primary); }
+
   .admin-topbar__breadcrumb {
     display: flex; align-items: center; gap: 8px;
     font-size: 0.875rem;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
   }
 
-  .admin-topbar__section { color: var(--text-tertiary); }
-  .admin-topbar__sep     { color: var(--text-tertiary); opacity: 0.4; }
-  .admin-topbar__page    { color: var(--text-primary); font-weight: 500; text-transform: capitalize; }
+  .admin-topbar__section { color: var(--text-tertiary); flex-shrink: 0; }
+  .admin-topbar__sep     { color: var(--text-tertiary); opacity: 0.4; flex-shrink: 0; }
+  .admin-topbar__page    {
+    color: var(--text-primary); font-weight: 500; text-transform: capitalize;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
 
-  .admin-topbar__right { display: flex; align-items: center; gap: 10px; }
+  .admin-topbar__right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+
+  .admin-sidebar-backdrop {
+    display: none;
+  }
 
   /* ─── Avatar dropdown ────── */
   .avatar-wrap { position: relative; }
@@ -422,8 +478,69 @@
 
   .admin-content { flex: 1; overflow-y: auto; }
 
+  /* Tablet: still enough room for the fixed sidebar, but tighten it up */
+  @media (max-width: 1024px) {
+    .admin-shell { grid-template-columns: 190px 1fr; }
+    .admin-shell--collapsed { grid-template-columns: 56px 1fr; }
+    .admin-topbar { padding: 0 16px; }
+  }
+
+  /* Below tablet the sidebar becomes a slide-in drawer instead of a fixed
+     column, toggled from the topbar hamburger — a collapsed *and* hidden
+     nav would leave the whole admin area unnavigable on phones. */
   @media (max-width: 768px) {
-    .admin-shell { grid-template-columns: 1fr; }
-    .admin-sidebar { display: none; }
+    .admin-shell,
+    .admin-shell--collapsed {
+      grid-template-columns: 1fr;
+    }
+
+    .admin-topbar__menu-btn { display: flex; }
+
+    .admin-sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      width: 260px;
+      max-width: 82vw;
+      z-index: 210;
+      transform: translateX(-100%);
+      transition: transform 0.18s var(--ease-smooth, ease);
+      box-shadow: var(--shadow-lg);
+    }
+    .admin-sidebar--mobile-open { transform: translateX(0); }
+
+    /* The drawer always shows full labels via showLabels in script, but
+       back up the collapsed-only CSS in case sidebarCollapsed lingers true. */
+    .admin-shell--collapsed .admin-nav-item,
+    .admin-shell--collapsed .admin-sidebar__header,
+    .admin-shell--collapsed .admin-back-link {
+      justify-content: flex-start;
+    }
+    .admin-shell--collapsed .admin-nav-item { padding: 8px 10px; }
+    .admin-shell--collapsed .admin-sidebar__header { padding: 16px 14px; }
+    .admin-shell--collapsed .admin-back-link { padding: 6px 10px; }
+
+    .admin-sidebar__collapse-btn { display: none; }
+
+    .admin-sidebar-backdrop {
+      display: block;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 200;
+    }
+
+    .admin-topbar { padding: 0 16px; gap: 10px; }
+  }
+
+  @media (max-width: 480px) {
+    .admin-topbar { padding: 0 12px; gap: 8px; }
+    .admin-topbar__section,
+    .admin-topbar__sep {
+      display: none;
+    }
+    .admin-topbar__right { gap: 6px; }
+    .admin-sidebar { width: 240px; }
   }
 </style>

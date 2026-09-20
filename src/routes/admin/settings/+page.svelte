@@ -271,25 +271,27 @@
 				<span>Set a user's tier to "admin" on the Users page.</span>
 			</div>
 		{:else}
-			<table class="data-table" aria-label="Admin users">
-				<thead>
-					<tr><th>User</th><th>Email</th><th>Admin since</th></tr>
-				</thead>
-				<tbody>
-					{#each admins as a}
-						<tr>
-							<td>
-								<div class="user-cell">
-									<div class="user-avatar" aria-hidden="true">{(a.displayName || a.email)[0]?.toUpperCase()}</div>
-									<div class="user-name">{a.displayName || "—"}</div>
-								</div>
-							</td>
-							<td class="td-email">{a.email}</td>
-							<td class="td-date">{a.createdAt ? new Date(a.createdAt).toLocaleDateString() : "—"}</td>
-						</tr>
-					{/each}
-				</tbody>
-			</table>
+			<div class="table-scroll">
+				<table class="data-table" aria-label="Admin users">
+					<thead>
+						<tr><th>User</th><th>Email</th><th>Admin since</th></tr>
+					</thead>
+					<tbody>
+						{#each admins as a}
+							<tr>
+								<td>
+									<div class="user-cell">
+										<div class="user-avatar" aria-hidden="true">{(a.displayName || a.email)[0]?.toUpperCase()}</div>
+										<div class="user-name">{a.displayName || "—"}</div>
+									</div>
+								</td>
+								<td class="td-email">{a.email}</td>
+								<td class="td-date">{a.createdAt ? new Date(a.createdAt).toLocaleDateString() : "—"}</td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
 		{/if}
 	</div>
 
@@ -330,6 +332,7 @@
 		flex-direction: column;
 		gap: 20px;
 		max-width: 860px;
+		margin: 0 auto;
 	}
 
 	.page-header { margin-bottom: 4px; }
@@ -360,6 +363,7 @@
 	.section-title        { font-size: 0.9375rem; font-weight: 600; }
 	.section-title--danger { color: var(--color-danger); }
 	.section-note         { font-size: 0.8125rem; color: var(--text-tertiary); margin: 0; }
+	.table-scroll          { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
 	/* Feature flags */
 	.flags-list { padding: 4px 0; }
@@ -493,7 +497,8 @@
 		background: var(--bg-surface-3); padding: 1px 5px; border-radius: 3px; color: var(--color-danger);
 	}
 	.danger-confirm-input {
-		margin-top: 10px; padding: 7px 10px; width: 280px;
+		margin-top: 10px; padding: 7px 10px; width: 280px; max-width: 100%;
+		box-sizing: border-box;
 		background: var(--bg-base); border: 1px solid rgba(255,77,109,0.3);
 		border-radius: var(--radius-md); font-size: 0.8125rem; font-family: var(--font-mono);
 		color: var(--text-primary); outline: none; transition: border-color 0.12s; display: block;
@@ -504,5 +509,9 @@
 	@media (max-width: 700px) {
 		.form-grid { grid-template-columns: 1fr; }
 		.danger-action { flex-direction: column; }
+		.section-header { flex-wrap: wrap; }
+	}
+	@media (max-width: 480px) {
+		.settings-page { padding: 16px; }
 	}
 </style>

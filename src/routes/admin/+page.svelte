@@ -165,32 +165,34 @@
 					<p>No users yet</p>
 				</div>
 			{:else}
-				<table class="mini-table" aria-label="Recent signups">
-					<thead>
-						<tr><th>User</th><th>Tier</th><th>Joined</th></tr>
-					</thead>
-					<tbody>
-						{#each stats.users.recentSignups as u}
-							<tr>
-								<td>
-									<div class="user-cell">
-										<div class="user-avatar" aria-hidden="true">{(u.displayName || u.email)[0]?.toUpperCase()}</div>
-										<div>
-											<div class="user-name">{u.displayName || "—"}</div>
-											<div class="user-email">{u.email}</div>
+				<div class="table-scroll">
+					<table class="mini-table" aria-label="Recent signups">
+						<thead>
+							<tr><th>User</th><th>Tier</th><th>Joined</th></tr>
+						</thead>
+						<tbody>
+							{#each stats.users.recentSignups as u}
+								<tr>
+									<td>
+										<div class="user-cell">
+											<div class="user-avatar" aria-hidden="true">{(u.displayName || u.email)[0]?.toUpperCase()}</div>
+											<div>
+												<div class="user-name">{u.displayName || "—"}</div>
+												<div class="user-email">{u.email}</div>
+											</div>
 										</div>
-									</div>
-								</td>
-								<td>
-									<Badge variant={u.tier === "pro" ? "pro" : u.tier === "lite" ? "lite" : "free"} size="sm">
-										{u.tier}
-									</Badge>
-								</td>
-								<td class="td-time">{u.createdAt ? formatRelativeTime(new Date(u.createdAt)) : "—"}</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
+									</td>
+									<td>
+										<Badge variant={u.tier === "pro" ? "pro" : u.tier === "lite" ? "lite" : "free"} size="sm">
+											{u.tier}
+										</Badge>
+									</td>
+									<td class="td-time">{u.createdAt ? formatRelativeTime(new Date(u.createdAt)) : "—"}</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
 			{/if}
 		</div>
 
@@ -215,41 +217,43 @@
 					<p>No cut jobs yet</p>
 				</div>
 			{:else}
-				<table class="mini-table" aria-label="Recent cut jobs">
-					<thead>
-						<tr><th>User</th><th>Job / Preset</th><th>Pieces</th><th>Via</th><th>Status</th></tr>
-					</thead>
-					<tbody>
-						{#each stats.jobs.recent.slice(0, 5) as j}
-							<tr>
-								<td class="td-user">{j.userLabel}</td>
-								<td class="td-vehicle">
-									<span>{j.vehicleName}</span>
-									{#if j.presetName}
-										<span class="td-preset">{j.presetName}</span>
-									{/if}
-								</td>
-								<td class="td-pieces">
-									{#if j.status === "error" && j.patternsCompleted < j.pieces}
-										<span class="td-partial">{j.patternsCompleted}/{j.pieces}</span>
-									{:else}
-										{j.pieces}
-									{/if}
-								</td>
-								<td class="td-conn">
-									<span class="conn-chip conn-chip--{j.connection}">
-										{j.connection === "cut-agent" ? "Agent" : j.connection === "usb-serial" ? "USB" : j.connection === "network" ? "Net" : j.connection === "download" ? "DL" : j.connection}
-									</span>
-								</td>
-								<td>
-									<Badge variant={j.status === "complete" || j.status === "completed" ? "success" : j.status === "error" ? "danger" : "default"} size="sm" dot>
-										{j.status === "error" && j.patternsCompleted < j.pieces ? "partial" : j.status}
-									</Badge>
-								</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
+				<div class="table-scroll">
+					<table class="mini-table" aria-label="Recent cut jobs">
+						<thead>
+							<tr><th>User</th><th>Job / Preset</th><th>Pieces</th><th>Via</th><th>Status</th></tr>
+						</thead>
+						<tbody>
+							{#each stats.jobs.recent.slice(0, 5) as j}
+								<tr>
+									<td class="td-user">{j.userLabel}</td>
+									<td class="td-vehicle">
+										<span>{j.vehicleName}</span>
+										{#if j.presetName}
+											<span class="td-preset">{j.presetName}</span>
+										{/if}
+									</td>
+									<td class="td-pieces">
+										{#if j.status === "error" && j.patternsCompleted < j.pieces}
+											<span class="td-partial">{j.patternsCompleted}/{j.pieces}</span>
+										{:else}
+											{j.pieces}
+										{/if}
+									</td>
+									<td class="td-conn">
+										<span class="conn-chip conn-chip--{j.connection}">
+											{j.connection === "cut-agent" ? "Agent" : j.connection === "usb-serial" ? "USB" : j.connection === "network" ? "Net" : j.connection === "download" ? "DL" : j.connection}
+										</span>
+									</td>
+									<td>
+										<Badge variant={j.status === "complete" || j.status === "completed" ? "success" : j.status === "error" ? "danger" : "default"} size="sm" dot>
+											{j.status === "error" && j.patternsCompleted < j.pieces ? "partial" : j.status}
+										</Badge>
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
 			{/if}
 		</div>
 	</div>
@@ -294,12 +298,14 @@
 		flex-direction: column;
 		gap: 20px;
 		max-width: 1200px;
+		margin: 0 auto;
 	}
 
 	.overview-header {
 		display: flex;
 		align-items: flex-start;
 		justify-content: space-between;
+		flex-wrap: wrap;
 		gap: 12px;
 	}
 	.overview-title { font-size: 1.375rem; margin-bottom: 3px; }
@@ -452,6 +458,10 @@
 	.panel-empty p { margin: 0; }
 
 	/* Mini table */
+	.table-scroll {
+		overflow-x: auto;
+		-webkit-overflow-scrolling: touch;
+	}
 	.mini-table {
 		width: 100%;
 		border-collapse: collapse;
@@ -510,7 +520,7 @@
 	}
 	.request-row:first-child { border-top: none; }
 	.request-row:hover { background: var(--interactive-hover); }
-	.request-vehicle { font-size: 0.875rem; font-weight: 500; color: var(--text-primary); flex: 1; }
+	.request-vehicle { font-size: 0.875rem; font-weight: 500; color: var(--text-primary); flex: 1; min-width: 0; }
 	.request-votes {
 		display: flex; align-items: center; gap: 4px;
 		font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-tertiary); white-space: nowrap;
@@ -527,5 +537,12 @@
 	@media (max-width: 768px)  {
 		.admin-overview { padding: 16px; }
 		.overview-cols  { grid-template-columns: 1fr; }
+	}
+	@media (max-width: 480px) {
+		.metrics-grid { grid-template-columns: 1fr; }
+		.request-row {
+			flex-wrap: wrap;
+		}
+		.request-vehicle { flex-basis: 100%; }
 	}
 </style>

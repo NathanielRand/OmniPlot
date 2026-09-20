@@ -86,4 +86,11 @@
   }
 
   .auth-footer-link:hover { color: var(--text-primary); }
+
+  @media (max-width: 400px) {
+    .auth-header { padding: 14px 16px; }
+    .auth-main { padding: 20px 12px; }
+    .auth-card { padding: 24px 20px; }
+    .auth-footer { padding: 14px 16px; gap: 14px; }
+  }
 </style>

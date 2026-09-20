@@ -273,6 +273,7 @@ function createUiStore() {
 	let exportModalOpen = $state(false);
 	let commandPaletteOpen = $state(false);
 	let reportModalOpen = $state(false);
+	let reportPrefill = $state<{ type?: "bug" | "feature" | "other"; title?: string; description?: string } | null>(null);
 	let tourOpen = $state(false);
 	let earlyAccessModalOpen = $state(false);
 	let changelogModalOpen = $state(false);
@@ -295,6 +296,9 @@ function createUiStore() {
 		},
 		get reportModalOpen() {
 			return reportModalOpen;
+		},
+		get reportPrefill() {
+			return reportPrefill;
 		},
 		get tourOpen() {
 			return tourOpen;
@@ -333,11 +337,13 @@ function createUiStore() {
 		closeCommandPalette() {
 			commandPaletteOpen = false;
 		},
-		openReport() {
+		openReport(prefill?: { type?: "bug" | "feature" | "other"; title?: string; description?: string }) {
+			reportPrefill = prefill ?? null;
 			reportModalOpen = true;
 		},
 		closeReport() {
 			reportModalOpen = false;
+			reportPrefill = null;
 		},
 		openTour() {
 			tourOpen = true;

@@ -327,7 +327,7 @@
 		display: flex;
 		align-items: center;
 		gap: 6px;
-		padding: 6px 16px;
+		padding: 10px 16px;
 		font-size: 0.875rem;
 		font-weight: 500;
 		font-family: var(--font-body);
@@ -752,13 +752,23 @@
 	}
 	.team-note__link:hover { text-decoration: underline; }
 
-	@media (max-width: 768px) {
+	/* 3-up plan cards (price + feature list each) get cramped well before
+	   768px — collapse to a single, comfortably-capped column starting at
+	   tablet widths instead of squeezing into ~240px columns. */
+	@media (max-width: 1024px) {
 		.plans-row {
 			grid-template-columns: 1fr;
+			max-width: 420px;
+			margin: 0 auto;
 		}
 		.shop-plans-row {
 			grid-template-columns: 1fr;
+			max-width: 420px;
+			margin: 0 auto;
 		}
+	}
+
+	@media (max-width: 768px) {
 		.faq-grid {
 			grid-template-columns: 1fr;
 		}
