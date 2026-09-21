@@ -20,6 +20,9 @@ importers:
       firebase-admin:
         specifier: ^13.10.0
         version: 13.10.0
+      jimp:
+        specifier: ^0.14.0
+        version: 0.14.0
       pdfjs-dist:
         specifier: ^6.3.289
         version: 6.3.289
