@@ -9,6 +9,7 @@
 	import UpdateBanner from "$lib/components/ui/UpdateBanner.svelte";
 	import ConfirmModal from "$lib/components/ui/ConfirmModal.svelte";
 	import ChangelogModal from "$lib/components/ui/ChangelogModal.svelte";
+	import TooltipHost from "$lib/components/ui/TooltipHost.svelte";
 	import { initAuth } from "$lib/firebase/auth";
 	import { subscribeToShop } from "$lib/firebase/firestore";
 
@@ -68,3 +69,4 @@
 <ReportModal />
 <UpdateBanner />
 <ConfirmModal />
+<TooltipHost />

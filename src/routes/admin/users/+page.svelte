@@ -4,6 +4,7 @@
 	import { auth } from "$lib/firebase/client";
 	import { onMount } from "svelte";
 	import { toastStore, confirmStore } from "$lib/stores";
+	import { tooltip } from "$lib/actions/tooltip";
 
 	type Tier       = "free" | "lite" | "pro" | "admin";
 	type Status     = "active" | "suspended";
@@ -486,7 +487,7 @@
 			<div class="uid-bar">
 				<span class="uid-bar__label">UID</span>
 				<code class="uid-bar__value">{detail?.uid ?? detailUid}</code>
-				<button class="uid-copy-btn" onclick={() => copyToClipboard(detail?.uid ?? detailUid ?? "", "UID copied")} title="Copy UID">
+				<button class="uid-copy-btn" onclick={() => copyToClipboard(detail?.uid ?? detailUid ?? "", "UID copied")} use:tooltip={"Copy UID"} aria-label="Copy UID">
 					<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
 				</button>
 			</div>
@@ -578,7 +579,7 @@
 									<span class="kv-label">Stripe customer</span>
 									<div class="kv-copy-row">
 										<code class="kv-value kv-value--mono">{detail.subscription.stripeCustomerId}</code>
-										<button class="uid-copy-btn" onclick={() => copyToClipboard(detail!.subscription.stripeCustomerId!, "Stripe ID copied")} title="Copy">
+										<button class="uid-copy-btn" onclick={() => copyToClipboard(detail!.subscription.stripeCustomerId!, "Stripe ID copied")} use:tooltip={"Copy"} aria-label="Copy Stripe customer ID">
 											<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
 										</button>
 									</div>
@@ -589,7 +590,7 @@
 									<span class="kv-label">Subscription ID</span>
 									<div class="kv-copy-row">
 										<code class="kv-value kv-value--mono">{detail.subscription.stripeSubscriptionId}</code>
-										<button class="uid-copy-btn" onclick={() => copyToClipboard(detail!.subscription.stripeSubscriptionId!, "Subscription ID copied")} title="Copy">
+										<button class="uid-copy-btn" onclick={() => copyToClipboard(detail!.subscription.stripeSubscriptionId!, "Subscription ID copied")} use:tooltip={"Copy"} aria-label="Copy subscription ID">
 											<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
 										</button>
 									</div>
@@ -689,7 +690,7 @@
 								<span class="kv-label">Shop ID</span>
 								<div class="kv-copy-row">
 									<code class="kv-value kv-value--mono">{detail.shopId}</code>
-									<button class="uid-copy-btn" onclick={() => copyToClipboard(detail!.shopId!, "Shop ID copied")} title="Copy">
+									<button class="uid-copy-btn" onclick={() => copyToClipboard(detail!.shopId!, "Shop ID copied")} use:tooltip={"Copy"} aria-label="Copy shop ID">
 										<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
 									</button>
 								</div>
@@ -853,7 +854,7 @@
 								class="action-btn action-btn--ghost"
 								onclick={drawerClearSession}
 								disabled={drawerAction === "session"}
-								title="Clears the active session ID, signing the user out on next request"
+								use:tooltip={"Clears the active session ID, signing the user out on next request"}
 							>
 								{drawerAction === "session" ? "Clearing…" : "Reset session"}
 							</button>
@@ -1021,7 +1022,7 @@
 								<div class="row-actions">
 									<button
 										class="row-btn"
-										title="View details"
+										use:tooltip={"View details"}
 										aria-label="View details for {user.displayName || user.email}"
 										onclick={(e) => { e.stopPropagation(); openDetail(user.uid); }}
 									>
@@ -1029,7 +1030,7 @@
 									</button>
 									<button
 										class="row-btn {user.status === 'suspended' ? 'row-btn--restore' : 'row-btn--danger'}"
-										title={user.status === "suspended" ? "Reactivate" : "Suspend"}
+										use:tooltip={user.status === "suspended" ? "Reactivate" : "Suspend"}
 										aria-label="{user.status === 'suspended' ? 'Reactivate' : 'Suspend'} {user.displayName || user.email}"
 										onclick={(e) => { e.stopPropagation(); toggleSuspend(user); }}
 									>

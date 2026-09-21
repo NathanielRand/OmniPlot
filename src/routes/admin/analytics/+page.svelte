@@ -2,6 +2,7 @@
 	import Badge from "$lib/components/ui/Badge.svelte";
 	import { auth } from "$lib/firebase/client";
 	import { onMount } from "svelte";
+	import { tooltip } from "$lib/actions/tooltip";
 
 	type Range = "7d" | "30d" | "90d" | "ytd";
 
@@ -192,7 +193,7 @@
 					</div>
 					<div class="recent-bar-chart">
 						{#each (stats?.jobs.recent ?? []).slice(0, 10).reverse() as j, i}
-							<div class="bar-col" title="{j.vehicleName} — {j.status}">
+							<div class="bar-col" use:tooltip={`${j.vehicleName} — ${j.status}`}>
 								<div
 									class="bar"
 									class:bar--error={j.status === "error"}

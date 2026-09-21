@@ -4,6 +4,7 @@
 	import { formatDate, formatRelativeTime } from "$lib/utils";
 	import { cutJobStore } from "$lib/stores";
 	import { getVehicleName } from "$lib/stores/patternStore.svelte";
+	import { tooltip } from "$lib/actions/tooltip";
 	import type { JobStatus } from "$lib/types";
 
 	let search = $state("");
@@ -267,7 +268,7 @@
 								{fmtEff(eff)}
 							</td>
 							<td class="td-mono">{fmtTime(job.metrics?.estimatedCutSeconds ?? 0)}</td>
-							<td class="td-date" title={formatDate(job.createdAt)}
+							<td class="td-date" use:tooltip={formatDate(job.createdAt)}
 								>{formatRelativeTime(job.createdAt)}</td
 							>
 							<td
@@ -280,7 +281,7 @@
 											class="row-action-btn"
 											href={job.exportUrl}
 											download
-											title="Download"
+											use:tooltip={"Download"}
 											aria-label="Download {job.name}"
 										>
 											<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
@@ -288,7 +289,7 @@
 									{/if}
 									<button
 										class="row-action-btn row-action-btn--danger"
-										title="Delete"
+										use:tooltip={"Delete"}
 										aria-label="Delete {job.name}"
 									>
 										<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>

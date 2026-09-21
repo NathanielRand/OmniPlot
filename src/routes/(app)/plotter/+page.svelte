@@ -7,6 +7,7 @@
 	import Button from "$lib/components/ui/Button.svelte";
 	import { userStore, toastStore, plotterStore, agentStore, cutJobStore } from "$lib/stores";
 	import { PLOTTER_PRESETS } from "$lib/config";
+	import { tooltip } from "$lib/actions/tooltip";
 	import {
 		getUserPlotters,
 		savePlotter,
@@ -538,7 +539,7 @@
 			<span class="agent-text">Cut Agent offline —</span>
 			<a class="agent-link" href="/studio/agent">open Agent page</a>
 			<span class="agent-text">or run <code>./omniplot-agent</code></span>
-			<button class="agent-link agent-rescan" onclick={pollAgent} title="Check again for an already-running Cut Agent">Rescan</button>
+			<button class="agent-link agent-rescan" onclick={pollAgent} use:tooltip={"Check again for an already-running Cut Agent"}>Rescan</button>
 		{/if}
 	</div>
 
@@ -583,11 +584,11 @@
 						{@const status = plotterStatus(plotter)}
 						<div class="plotter-card" class:plotter-card--cutting={status === "cutting"}>
 							<div class="plotter-card__main">
-								<div class="conn-medallion conn-medallion--{plotter.connection}" title={connFullLabel(plotter.connection)} aria-label={connFullLabel(plotter.connection)}>
+								<div class="conn-medallion conn-medallion--{plotter.connection}" use:tooltip={connFullLabel(plotter.connection)} aria-label={connFullLabel(plotter.connection)}>
 									{@render connMedallionIcon(plotter.connection)}
 									<span class="conn-medallion__label">{connLabel(plotter.connection)}</span>
 								</div>
-								<span class="status-pip status-pip--{status}" title={status}></span>
+								<span class="status-pip status-pip--{status}" use:tooltip={status}></span>
 								<div class="plotter-card__info">
 									<span class="plotter-name">{plotter.name}</span>
 									<span class="plotter-model">{plotter.manufacturer} {plotter.model} · max {(plotter.maxMediaWidthMm / 25.4).toFixed(1)}"

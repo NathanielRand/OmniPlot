@@ -6,6 +6,7 @@
 	import { uid, getItemColor } from "$lib/utils";
 	import { bestNest } from "$lib/utils/nesting";
 	import { getUserPatterns, updateUserPattern, deleteUserPattern, addPatternAdjustmentRequest } from "$lib/firebase/firestore";
+	import { tooltip } from "$lib/actions/tooltip";
 	import type { CanvasItem, Pattern, PatternZone, UserPattern } from "$lib/types";
 	import type { VehicleEntry } from "$lib/stores/patternStore.svelte";
 
@@ -566,7 +567,7 @@
 				</p>
 			</div>
 			<div class="library__header-actions">
-				<a href="/library/upload" class="upload-cta" title="Save a pattern to your library">
+				<a href="/library/upload" class="upload-cta" use:tooltip={"Save a pattern to your library"}>
 					<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
 					Upload Pattern
 				</a>
@@ -622,7 +623,7 @@
 									tabindex="0"
 									aria-pressed={activeYear === String(vehicle.year)}
 									aria-label="Filter by {vehicle.year}"
-									title="Filter by {vehicle.year}"
+									use:tooltip={`Filter by ${vehicle.year}`}
 									onclick={(e) => { e.stopPropagation(); activeYear = activeYear === String(vehicle.year) ? "All" : String(vehicle.year); }}
 									onkeydown={(e: KeyboardEvent) => { e.stopPropagation(); if (e.key === "Enter" || e.key === " ") activeYear = activeYear === String(vehicle.year) ? "All" : String(vehicle.year); }}
 								>{vehicle.year}</span>
@@ -731,7 +732,7 @@
 													next.has(pattern.id) ? next.delete(pattern.id) : next.add(pattern.id);
 													openNotes = next;
 												}}
-												title="View disclosure"
+												use:tooltip={"View disclosure"}
 												aria-label="View pattern disclosure"
 												aria-expanded={openNotes.has(pattern.id)}
 											>
@@ -753,7 +754,7 @@
 									onclick={(e) => { e.stopPropagation(); addPatternToCanvas(pattern); }}
 									onkeydown={(e) => { if (e.key === "Enter") { e.stopPropagation(); addPatternToCanvas(pattern); } }}
 									aria-label="Add {pattern.name} to canvas"
-									title="Add to canvas"
+									use:tooltip={"Add to canvas"}
 								>
 									<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
 								</div>
@@ -827,7 +828,7 @@
 											addPatternToCanvas(pat);
 										}
 									}}
-									title="Add to canvas"
+									use:tooltip={"Add to canvas"}
 									aria-label="Add {p.name} to canvas"
 								>
 									<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
@@ -839,7 +840,7 @@
 									<button
 										class="my-pattern-card__locked"
 										onclick={() => { adjustTarget = p; adjustNotes = ""; }}
-										title="Request a change to this community pattern"
+										use:tooltip={"Request a change to this community pattern"}
 										aria-label="Request changes to {p.name}"
 									>
 										<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
@@ -850,7 +851,7 @@
 									<a
 										href="/library/edit/{p.id}"
 										class="my-pattern-card__edit"
-										title="Edit this pattern"
+										use:tooltip={"Edit this pattern"}
 										aria-label="Edit {p.name}"
 									>
 										<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4z"/></svg>
@@ -860,7 +861,7 @@
 										class="my-pattern-card__share"
 										class:my-pattern-card__share--on={p.submitToCommunity}
 										onclick={() => toggleCommunitySubmit(p)}
-										title={p.submitToCommunity ? "Remove from community queue" : "Submit for community review"}
+										use:tooltip={p.submitToCommunity ? "Remove from community queue" : "Submit for community review"}
 										aria-label={p.submitToCommunity ? "Remove from community queue" : "Submit for community review"}
 									>
 										<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
@@ -885,7 +886,7 @@
 											class="my-pattern-card__delete"
 											onclick={() => confirmDelete(p)}
 											disabled={deleting.has(p.id)}
-											title="Delete this pattern"
+											use:tooltip={"Delete this pattern"}
 											aria-label="Delete {p.name}"
 										>
 											<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>

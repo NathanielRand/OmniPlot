@@ -4,6 +4,7 @@
 	import Button from "$lib/components/ui/Button.svelte";
 	import PhoneInput from "$lib/components/ui/PhoneInput.svelte";
 	import { toastStore, themeStore, userStore, uiStore } from "$lib/stores";
+	import { tooltip } from "$lib/actions/tooltip";
 	import {
 		linkGoogleAccount,
 		sendLinkEmail,
@@ -1059,7 +1060,7 @@
 							type="email"
 							value={email || "—"}
 							readonly
-							title="Your login email is tied to how you sign in and can't be edited here"
+							use:tooltip={"Your login email is tied to how you sign in and can't be edited here"}
 						/>
 					</div>
 				</div>

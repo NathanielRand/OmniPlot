@@ -13,6 +13,7 @@
 <script lang="ts">
 	import { onMount } from "svelte";
 	import { CURRENT_AGENT_VERSION } from "$lib/config";
+	import { tooltip } from "$lib/actions/tooltip";
 
 	type Platform = "windows" | "mac-arm" | "mac-intel" | "linux" | "unknown";
 	type KnownPlatform = Exclude<Platform, "unknown">;
@@ -246,10 +247,12 @@
 						<div class="os-tabs">
 							<button class="os-tab" class:os-tab--active={selectedOS === "windows"} onclick={() => selectedOS = "windows"}>Windows</button>
 							{#if MAC_COMING_SOON}
-								<button class="os-tab os-tab--soon" disabled title="macOS download coming soon">
-									macOS
-									<span class="os-tab__soon">Soon</span>
-								</button>
+								<span use:tooltip={"macOS download coming soon"}>
+									<button class="os-tab os-tab--soon" disabled>
+										macOS
+										<span class="os-tab__soon">Soon</span>
+									</button>
+								</span>
 							{:else}
 								<button class="os-tab" class:os-tab--active={selectedOS === "mac-arm" || selectedOS === "mac-intel"} onclick={() => selectedOS = detected === "mac-intel" ? "mac-intel" : "mac-arm"}>macOS</button>
 							{/if}

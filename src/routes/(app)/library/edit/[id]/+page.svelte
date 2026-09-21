@@ -7,6 +7,7 @@
 	import { getUserPatternById, updateUserPattern, deleteUserPattern } from "$lib/firebase/firestore";
 	import SvgPathInput from "$lib/components/ui/SvgPathInput.svelte";
 	import VehicleCombobox from "$lib/components/ui/VehicleCombobox.svelte";
+	import { tooltip } from "$lib/actions/tooltip";
 	import type { PatternCategory, PatternZone, PatternCoverage, UserPattern } from "$lib/types";
 
 	type BodyStyle = UserPattern["bodyStyle"];
@@ -361,7 +362,7 @@
 								<span class="chip">
 									<span class="chip__label">{zoneLabel(z)}</span>
 									{#if mirror && !pattern.zones.includes(mirror)}
-										<button type="button" class="chip__mirror" title="Also add {zoneLabel(mirror)}" onclick={() => addZone(mirror)}>↔</button>
+										<button type="button" class="chip__mirror" use:tooltip={`Also add ${zoneLabel(mirror)}`} onclick={() => addZone(mirror)}>↔</button>
 									{/if}
 									<button type="button" class="chip__remove" aria-label="Remove {zoneLabel(z)}" onclick={() => removeZone(z)}>×</button>
 								</span>

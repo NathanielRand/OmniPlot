@@ -20,6 +20,7 @@
 		resolveAdjustmentRequest,
 	} from "$lib/firebase/firestore";
 	import { toastStore } from "$lib/stores";
+	import { tooltip } from "$lib/actions/tooltip";
 	import type { PatternCategory, PatternCoverage, PatternZone, UserPattern, UserPatternStatus, PatternAdjustmentRequest } from "$lib/types";
 
 	// ─── Vehicles filter state ────────────────────
@@ -475,7 +476,7 @@ onMount(() => {
 					<span class="badge-pending">{pendingSubmissions.length} pending</span>
 				{/if}
 			</div>
-			<button class="refresh-btn" onclick={loadSubmissions} title="Refresh submissions" aria-label="Refresh submissions">
+			<button class="refresh-btn" onclick={loadSubmissions} use:tooltip={"Refresh submissions"} aria-label="Refresh submissions">
 				<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
 			</button>
 		</div>
@@ -537,7 +538,7 @@ onMount(() => {
 										{#if sub.status === "pending"}
 											<button class="action-btn action-btn--primary" onclick={() => openReview(sub)}>Review</button>
 										{/if}
-										<button class="row-btn" title="Edit submission" onclick={() => openEditSub(sub)}>
+										<button class="row-btn" use:tooltip={"Edit submission"} aria-label="Edit submission" onclick={() => openEditSub(sub)}>
 											<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
 										</button>
 										{#if pendingDeleteSubId === sub.id}
@@ -559,7 +560,7 @@ onMount(() => {
 											<button
 												class="row-btn row-btn--danger"
 												onclick={() => (pendingDeleteSubId = sub.id)}
-												title="Delete submission"
+												use:tooltip={"Delete submission"}
 												aria-label="Delete {sub.name}"
 											><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></button>
 										{/if}
@@ -582,7 +583,7 @@ onMount(() => {
 					<span class="badge-pending">{pendingAdjustments.length} pending</span>
 				{/if}
 			</div>
-			<button class="refresh-btn" onclick={loadAdjustments} title="Refresh" aria-label="Refresh adjustment requests">
+			<button class="refresh-btn" onclick={loadAdjustments} use:tooltip={"Refresh"} aria-label="Refresh adjustment requests">
 				<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
 			</button>
 		</div>
@@ -647,7 +648,7 @@ onMount(() => {
 							style="--cat-accent: {c.accent}"
 							onclick={() => (filterCategory = c.value)}
 							aria-pressed={filterCategory === c.value}
-							title={c.label}
+							use:tooltip={c.label}
 						>
 							<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d={c.icon}/></svg>
 							{c.shortLabel}
@@ -702,10 +703,10 @@ onMount(() => {
 							<td class="td-date">{v.updatedAt}</td>
 							<td class="td-actions">
 								<div class="row-actions">
-									<button class="row-btn" title="Edit patterns" onclick={() => openEditPanel(v)}>
+									<button class="row-btn" use:tooltip={"Edit patterns"} aria-label="Edit patterns" onclick={() => openEditPanel(v)}>
 										<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
 									</button>
-									<button class="row-btn" title="Edit vehicle details" onclick={() => openEditVehicle(v)}>
+									<button class="row-btn" use:tooltip={"Edit vehicle details"} aria-label="Edit vehicle details" onclick={() => openEditVehicle(v)}>
 										<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
 									</button>
 									{#if pendingDeleteVehicleId === v.id}
@@ -726,7 +727,7 @@ onMount(() => {
 										<button
 											class="row-btn row-btn--danger"
 											onclick={() => (pendingDeleteVehicleId = v.id)}
-											title="Delete vehicle"
+											use:tooltip={"Delete vehicle"}
 											aria-label="Delete {subjectName(v)}"
 										><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></button>
 									{/if}
@@ -1143,17 +1144,17 @@ onMount(() => {
 							<svg width="32" height="28" viewBox="0 0 100 100" fill="none" aria-hidden="true">
 								<path d={pat.svgPath} fill="{categoryMeta(editPanelTab).accent}22" stroke={categoryMeta(editPanelTab).accent} stroke-width="3" stroke-linecap="round"/>
 							</svg>
-							{#if pat.svgUrl}<span class="pattern-row__svg-link" title="Full SVG in Cloud Storage">SVG↗</span>{/if}
+							{#if pat.svgUrl}<span class="pattern-row__svg-link" use:tooltip={"Full SVG in Cloud Storage"}>SVG↗</span>{/if}
 						</div>
 						<div class="pattern-row__info">
 							<div class="pattern-row__name">{pat.name}</div>
 							<div class="pattern-row__meta">{pat.widthInches}" × {pat.heightInches}" · {pat.zone === "custom" && pat.customZoneLabel ? pat.customZoneLabel : pat.zone}</div>
 						</div>
 						<div class="ep-row-right">
-							<button class="ep-toggle" class:ep-toggle--on={pat.isPublished} onclick={() => patternStore.updatePattern(pat.id, { isPublished: !pat.isPublished })} title={pat.isPublished ? "Unpublish" : "Publish"}>
+							<button class="ep-toggle" class:ep-toggle--on={pat.isPublished} onclick={() => patternStore.updatePattern(pat.id, { isPublished: !pat.isPublished })} use:tooltip={pat.isPublished ? "Unpublish" : "Publish"} aria-label={pat.isPublished ? "Unpublish" : "Publish"}>
 								<span class="ep-toggle__dot"></span>
 							</button>
-							<button class="row-btn" onclick={() => startEditPattern(pat.id)} title="Edit pattern" aria-label="Edit {pat.name}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+							<button class="row-btn" onclick={() => startEditPattern(pat.id)} use:tooltip={"Edit pattern"} aria-label="Edit {pat.name}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
 							{#if pendingDeleteId === pat.id}
 								<div class="delete-confirm">
 									<span class="delete-confirm__label">Delete?</span>
@@ -1172,7 +1173,7 @@ onMount(() => {
 								<button
 									class="row-btn row-btn--danger"
 									onclick={() => (pendingDeleteId = pat.id)}
-									title="Delete pattern"
+									use:tooltip={"Delete pattern"}
 									aria-label="Delete {pat.name}"
 								><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></button>
 							{/if}

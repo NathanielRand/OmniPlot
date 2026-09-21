@@ -4,6 +4,7 @@
 	import { onMount } from 'svelte';
 	import { toastStore, confirmStore } from '$lib/stores';
 	import { auth } from '$lib/firebase/client';
+	import { tooltip } from '$lib/actions/tooltip';
 	import type { InsightPost, InsightCategory } from '$lib/types';
 
 	const CATEGORY_BADGE: Record<InsightCategory, 'brand' | 'lite' | 'success' | 'warning'> = {
@@ -226,13 +227,13 @@
 								{/if}
 							</td>
 							<td class="td-actions">
-								<a href="/admin/insights/{post.id}" class="action-btn" title="Edit">
+								<a href="/admin/insights/{post.id}" class="action-btn" use:tooltip={"Edit"} aria-label="Edit">
 									<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
 								</a>
 								<button
 									class="action-btn"
 									class:action-btn--danger={post.status === 'published'}
-									title={post.status === 'published' ? 'Unpublish' : 'Publish'}
+									use:tooltip={post.status === 'published' ? 'Unpublish' : 'Publish'}
 									onclick={() => togglePublish(post)}
 								>
 									{#if post.status === 'published'}
@@ -243,7 +244,8 @@
 								</button>
 								<button
 									class="action-btn action-btn--delete"
-									title="Delete"
+									use:tooltip={"Delete"}
+									aria-label="Delete"
 									disabled={deletingId === post.id}
 									onclick={() => confirmDelete(post)}
 								>

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { traceImageData } from '$lib/utils/trace';
 	import { smoothBezierJunctions } from '$lib/utils/bezier-smooth';
+	import { tooltip } from '$lib/actions/tooltip';
 
 	// ─── Props ────────────────────────────────────
 	interface Props {
@@ -1199,7 +1200,7 @@
 			{/if}
 			<div class="spi__pview" class:spi__pview--fullscreen={inputFullscreen}>
 				<button type="button" class="spi__pview-expand-btn" onclick={() => (inputFullscreen = !inputFullscreen)}
-					title={inputFullscreen ? "Exit fullscreen" : "Expand fullscreen"} aria-label={inputFullscreen ? "Exit fullscreen preview" : "Expand fullscreen preview"}>
+					use:tooltip={inputFullscreen ? "Exit fullscreen" : "Expand fullscreen"} aria-label={inputFullscreen ? "Exit fullscreen preview" : "Expand fullscreen preview"}>
 					{#if inputFullscreen}
 						<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
 					{:else}
@@ -1207,22 +1208,22 @@
 					{/if}
 				</button>
 				<div class="spi__pview-toolbar">
-					<button type="button" class="spi__pview-btn" onclick={inputZoomOut} title="Zoom out">
+					<button type="button" class="spi__pview-btn" onclick={inputZoomOut} use:tooltip={"Zoom out"} aria-label="Zoom out">
 						<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/></svg>
 					</button>
 					<span class="spi__pview-zoom">{Math.round(inputZoom * 100)}%</span>
-					<button type="button" class="spi__pview-btn" onclick={inputZoomIn} title="Zoom in">
+					<button type="button" class="spi__pview-btn" onclick={inputZoomIn} use:tooltip={"Zoom in"} aria-label="Zoom in">
 						<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
 					</button>
-					<button type="button" class="spi__pview-btn spi__pview-fit" onclick={resetInputView} title="Reset to fit">
+					<button type="button" class="spi__pview-btn spi__pview-fit" onclick={resetInputView} use:tooltip={"Reset to fit"}>
 						<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
 						Fit
 					</button>
 					{#if uploadedFile.type.startsWith("image/") && uploadedFile.type !== "image/svg+xml"}
-						<button type="button" class="spi__pview-btn spi__pview-rotate" onclick={() => rotateUploadedImage(-90)} disabled={rotating} title="Rotate left 90°" aria-label="Rotate image left 90 degrees">
+						<button type="button" class="spi__pview-btn spi__pview-rotate" onclick={() => rotateUploadedImage(-90)} disabled={rotating} use:tooltip={"Rotate left 90°"} aria-label="Rotate image left 90 degrees">
 							<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 010 11H11"/></svg>
 						</button>
-						<button type="button" class="spi__pview-btn" onclick={() => rotateUploadedImage(90)} disabled={rotating} title="Rotate right 90°" aria-label="Rotate image right 90 degrees">
+						<button type="button" class="spi__pview-btn" onclick={() => rotateUploadedImage(90)} disabled={rotating} use:tooltip={"Rotate right 90°"} aria-label="Rotate image right 90 degrees">
 							<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 14l5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 000 11H13"/></svg>
 						</button>
 					{/if}
@@ -1241,7 +1242,7 @@
 				</div>
 				{#if uploadedFile.type.startsWith("image/") && uploadedFile.type !== "image/svg+xml"}
 					<button type="button" class="spi__pview-enhance-btn" class:spi__pview-enhance-btn--done={enhanceDone} onclick={enhanceUploadedImage} disabled={enhancing}
-						title="Enhance: sharpen and clean up edges" aria-label="Enhance image — sharpen and clean up edges">
+						use:tooltip={"Enhance: sharpen and clean up edges"} aria-label="Enhance image — sharpen and clean up edges">
 						{#if enhancing}
 							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="spi__spin" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9"/></svg>
 							<span>Enhancing…</span>
@@ -1306,7 +1307,7 @@
 	<div class="spi__pview" class:spi__pview--fullscreen={previewFullscreen}>
 		{#if previewPath || scanImageUrl}
 			<button type="button" class="spi__pview-expand-btn" onclick={() => (previewFullscreen = !previewFullscreen)}
-				title={previewFullscreen ? "Exit fullscreen" : "Expand fullscreen"} aria-label={previewFullscreen ? "Exit fullscreen preview" : "Expand fullscreen preview"}>
+				use:tooltip={previewFullscreen ? "Exit fullscreen" : "Expand fullscreen"} aria-label={previewFullscreen ? "Exit fullscreen preview" : "Expand fullscreen preview"}>
 				{#if previewFullscreen}
 					<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
 				{:else}
@@ -1378,14 +1379,14 @@
 			</div>
 		{:else if previewPath}
 			<div class="spi__pview-toolbar">
-				<button type="button" class="spi__pview-btn" onclick={zoomOut} title="Zoom out">
+				<button type="button" class="spi__pview-btn" onclick={zoomOut} use:tooltip={"Zoom out"} aria-label="Zoom out">
 					<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/></svg>
 				</button>
 				<span class="spi__pview-zoom">{Math.round(zoom * 100)}%</span>
-				<button type="button" class="spi__pview-btn" onclick={zoomIn} title="Zoom in">
+				<button type="button" class="spi__pview-btn" onclick={zoomIn} use:tooltip={"Zoom in"} aria-label="Zoom in">
 					<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
 				</button>
-				<button type="button" class="spi__pview-btn spi__pview-fit" onclick={resetView} title="Reset to fit">
+				<button type="button" class="spi__pview-btn spi__pview-fit" onclick={resetView} use:tooltip={"Reset to fit"}>
 					<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
 					Fit
 				</button>
@@ -1476,7 +1477,7 @@
 							{#if scanPatternStates.length > 0}
 								<div class="spi__pattern-grid">
 									{#each scanPatternStates as status, i}
-										<div class="spi__pattern-slot spi__pattern-slot--{status}" title="Pattern {i + 1}"></div>
+										<div class="spi__pattern-slot spi__pattern-slot--{status}" use:tooltip={`Pattern ${i + 1}`}></div>
 									{/each}
 								</div>
 							{/if}

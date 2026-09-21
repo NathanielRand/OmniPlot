@@ -5,6 +5,7 @@
 	import { auth } from '$lib/firebase/client';
 	import { onMount } from 'svelte';
 	import { toastStore } from '$lib/stores';
+	import { tooltip } from '$lib/actions/tooltip';
 
 	interface Props { data: PageData; }
 	let { data }: Props = $props();
@@ -485,7 +486,7 @@
 					<input type="checkbox" bind:checked={showArchived} />
 					<span>Show archived</span>
 				</label>
-				<button class="icon-btn" onclick={load} title="Refresh" disabled={loading}>
+				<button class="icon-btn" onclick={load} use:tooltip={"Refresh"} aria-label="Refresh" disabled={loading}>
 					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
 				</button>
 			</div>
@@ -525,8 +526,8 @@
 								{/if}
 							</div>
 							<div class="product-actions">
-								<code class="product-id" title={product.id}>{truncateId(product.id)}</code>
-								<button class="id-copy" onclick={() => copyText(product.id)} title="Copy product ID">
+								<code class="product-id" use:tooltip={product.id}>{truncateId(product.id)}</code>
+								<button class="id-copy" onclick={() => copyText(product.id)} use:tooltip={"Copy product ID"} aria-label="Copy product ID">
 									<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
 								</button>
 								<Badge variant={product.active ? 'success' : 'default'} size="sm" dot={product.active}>
@@ -567,7 +568,7 @@
 												<td class="td-id">
 													<div class="id-cell">
 														<code>{truncateId(price.id)}</code>
-														<button class="id-copy" onclick={() => copyText(price.id)} title="Copy price ID">
+														<button class="id-copy" onclick={() => copyText(price.id)} use:tooltip={"Copy price ID"} aria-label="Copy price ID">
 															<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
 														</button>
 													</div>

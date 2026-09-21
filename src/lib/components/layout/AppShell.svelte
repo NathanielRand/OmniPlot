@@ -9,6 +9,7 @@
 	import { APP_NAV, LATEST_VERSION } from "$lib/config";
 	import { signOutUser } from "$lib/firebase/auth";
 	import { goto } from "$app/navigation";
+	import { tooltip } from "$lib/actions/tooltip";
 
 	interface Props {
 		children: Snippet;
@@ -114,7 +115,7 @@
 				>
 					{item.label}
 					{#if item.href === "/studio/agent" && agentStore.needsUpdate}
-						<span class="nav-update-dot" title="Agent update available" aria-label="Update available"></span>
+						<span class="nav-update-dot" use:tooltip={"Agent update available"} aria-label="Update available"></span>
 					{/if}
 				</a>
 			{/each}
@@ -122,7 +123,7 @@
 
 		<div class="topbar__right">
 			<!-- Plotter status -->
-			<div class="plotter-status" title="Plotter connected">
+			<div class="plotter-status" use:tooltip={"Plotter connected"}>
 				<span class="plotter-status__dot" aria-hidden="true"></span>
 				<span class="plotter-status__label">Ready</span>
 			</div>
@@ -269,7 +270,7 @@
 				class="sidebar__collapse-btn"
 				onclick={uiStore.toggleSidebar}
 				aria-label={uiStore.sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
-				title={uiStore.sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+				use:tooltip={uiStore.sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
 			>
 				<svg
 					width="14"
@@ -296,7 +297,7 @@
 						class:active={currentPath === item.href}
 						aria-current={currentPath === item.href ? "page" : undefined}
 						data-tour={item.href === "/library" ? "sidebar-library" : undefined}
-						title={!uiStore.sidebarOpen ? item.label : undefined}
+						use:tooltip={!uiStore.sidebarOpen ? item.label : undefined}
 						onclick={uiStore.closeMobileMenu}
 					>
 						<span class="sidebar__icon" aria-hidden="true">
@@ -398,7 +399,7 @@
 						</span>
 						<span class="sidebar__label">{item.label}</span>
 						{#if item.href === "/studio/agent" && agentStore.needsUpdate}
-							<span class="sidebar__update-badge" title="Agent update available" aria-label="Update available">Update</span>
+							<span class="sidebar__update-badge" use:tooltip={"Agent update available"} aria-label="Update available">Update</span>
 						{/if}
 					</a>
 				{/each}
@@ -409,7 +410,7 @@
 					href="/changelog"
 					class="sidebar__item sidebar__item--changelog"
 					class:active={currentPath === "/changelog"}
-					title={!uiStore.sidebarOpen ? "Changelog" : undefined}
+					use:tooltip={!uiStore.sidebarOpen ? "Changelog" : undefined}
 					onclick={() => { changelogStore.markSeen(); uiStore.closeMobileMenu(); }}
 				>
 					<span class="sidebar__icon" aria-hidden="true">
@@ -417,7 +418,7 @@
 					</span>
 					<span class="sidebar__label">Changelog</span>
 					{#if changelogStore.hasUnseen}
-						<span class="sidebar__version-badge" title="New version: v{LATEST_VERSION}">v{LATEST_VERSION}</span>
+						<span class="sidebar__version-badge" use:tooltip={`New version: v${LATEST_VERSION}`}>v{LATEST_VERSION}</span>
 					{/if}
 				</a>
 

@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { tooltip } from "$lib/actions/tooltip";
+
 	interface Props {
 		value?:    string;  // E.164 output, e.g. "+15551234567"
 		id?:       string;
@@ -90,7 +92,7 @@
 		value={selected.code}
 		onchange={handleCountryChange}
 		aria-label="Country code"
-		title="Select country"
+		use:tooltip={"Select country"}
 	>
 		{#each COUNTRIES as c (c.code)}
 			<option value={c.code}>{c.flag} +{c.dial}</option>

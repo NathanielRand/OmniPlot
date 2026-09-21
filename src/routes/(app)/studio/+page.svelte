@@ -58,6 +58,7 @@
 	import EarlyAccessModal from "$lib/components/ui/EarlyAccessModal.svelte";
 	import type { TourStep } from "$lib/components/ui/GuidedTour.svelte";
 	import { getVehicleName } from "$lib/stores/patternStore.svelte";
+	import { tooltip } from "$lib/actions/tooltip";
 	import type { CanvasItem, PlotterConfig } from "$lib/types";
 
 	// ─── Guided tour ─────────────────────────────
@@ -2102,7 +2103,7 @@
 							class="pattern-card__ctrl-btn"
 							onclick={(e) => { e.stopPropagation(); rotateItem(item, 270); }}
 							aria-label="Rotate -90°"
-							title="Rotate -90°"
+							use:tooltip={"Rotate -90°"}
 						>
 							<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14L4 9l5-5" /><path d="M4 9h10a6 6 0 010 12h-1" /></svg>
 						</button>
@@ -2110,7 +2111,7 @@
 							class="pattern-card__ctrl-btn"
 							onclick={(e) => { e.stopPropagation(); rotateItem(item, 90); }}
 							aria-label="Rotate +90°"
-							title="Rotate +90°"
+							use:tooltip={"Rotate +90°"}
 						>
 							<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 14l5-5-5-5" /><path d="M20 9H10a6 6 0 000 12h1" /></svg>
 						</button>
@@ -2155,7 +2156,7 @@
 					class="tool-btn"
 					class:active={canvasStore.tool === toolName}
 					onclick={() => canvasStore.setTool(toolName)}
-					title={toolName}
+					use:tooltip={toolName}
 					aria-pressed={canvasStore.tool === toolName}
 				>
 					{#if toolName === "select"}
@@ -2197,7 +2198,7 @@
 			<button
 				class="tool-btn tool-btn--ai-mode"
 				class:active={aiNestEnabled}
-				title={aiNestEnabled ? "AI Nest ON — patterns auto-arrange on add (click to disable for manual placement)" : "AI Nest OFF — manual placement mode (click to re-enable)"}
+				use:tooltip={aiNestEnabled ? "AI Nest ON — patterns auto-arrange on add (click to disable for manual placement)" : "AI Nest OFF — manual placement mode (click to re-enable)"}
 				onclick={() => { aiNestEnabled = !aiNestEnabled; }}
 				aria-pressed={aiNestEnabled}
 				aria-label="Toggle AI Nest mode"
@@ -2221,7 +2222,7 @@
 			<button
 				class="tool-btn tool-btn--ai-optimize"
 				class:loading={smartNesting}
-				title={isFree ? "AI deep optimization — Lite plan required" : "Re-optimize — run deep AI nesting across all patterns now"}
+				use:tooltip={isFree ? "AI deep optimization — Lite plan required" : "Re-optimize — run deep AI nesting across all patterns now"}
 				onclick={() => handleSmartNest()}
 				disabled={canvasBusy}
 				aria-label="Run deep AI nest optimization"
@@ -2252,7 +2253,7 @@
 			<button
 				class="tool-btn tool-btn--auto-reoptimize"
 				class:active={autoReoptimize}
-				title={autoReoptimize
+				use:tooltip={autoReoptimize
 					? "Auto Re-optimize ON — deep AI nest reruns automatically when a pattern is added or removed (click to switch to manual)"
 					: "Auto Re-optimize OFF — click Re-optimize to run it manually (click to re-enable auto)"}
 				onclick={() => { autoReoptimize = !autoReoptimize; }}
@@ -2276,7 +2277,7 @@
 			</button>
 			<button
 				class="tool-btn"
-				title="Undo"
+				use:tooltip={"Undo"}
 				onclick={canvasStore.undo}
 				disabled={!canvasStore.canUndo}
 				aria-label="Undo"
@@ -2298,7 +2299,7 @@
 			</button>
 			<button
 				class="tool-btn"
-				title="Redo"
+				use:tooltip={"Redo"}
 				onclick={canvasStore.redo}
 				disabled={!canvasStore.canRedo}
 				aria-label="Redo"
@@ -2364,7 +2365,7 @@
 		<!-- Fit to view -->
 		<button
 			class="tool-btn"
-			title="Fit roll to view (F)"
+			use:tooltip={"Fit roll to view (F)"}
 			onclick={fitToView}
 			aria-label="Fit roll to view"
 		>
@@ -2394,7 +2395,7 @@
 			class="tool-btn"
 			class:active={canvasStore.state.showGrid}
 			onclick={canvasStore.toggleGrid}
-			title="Toggle grid"
+			use:tooltip={"Toggle grid"}
 			aria-pressed={canvasStore.state.showGrid}
 			aria-label="Toggle grid"
 		>
@@ -2414,7 +2415,7 @@
 		<!-- Clear canvas -->
 		<button
 			class="tool-btn tool-btn--danger"
-			title="Clear all patterns from canvas"
+			use:tooltip={"Clear all patterns from canvas"}
 			onclick={handleClearCanvas}
 			disabled={canvasStore.items.length === 0}
 			aria-label="Clear canvas"
@@ -2441,7 +2442,7 @@
 		<!-- Plotter status badge: quick-glance name, connection type, and live status -->
 		<div
 			class="plotter-badge plotter-badge--{toolbarPlotterBadge.tone}"
-			title="{toolbarPlotterBadge.name ?? 'No plotter'} · {toolbarPlotterBadge.detail}"
+			use:tooltip={`${toolbarPlotterBadge.name ?? "No plotter"} · ${toolbarPlotterBadge.detail}`}
 			role="status"
 			aria-live="polite"
 		>
@@ -2458,7 +2459,7 @@
 			<button
 				class="plotter-badge__action"
 				onclick={openPlotterTab}
-				title={toolbarPlotterBadge.state === "connected" || toolbarPlotterBadge.state === "cutting" ? "View plotter settings" : "Connect a plotter"}
+				use:tooltip={toolbarPlotterBadge.state === "connected" || toolbarPlotterBadge.state === "cutting" ? "View plotter settings" : "Connect a plotter"}
 			>
 				{toolbarPlotterBadge.state === "connected" || toolbarPlotterBadge.state === "cutting" ? "View" : "Connect"}
 			</button>
@@ -2478,12 +2479,12 @@
 		{/if}
 
 		<!-- Community template upload -->
-		<a class="community-btn" href="/library/upload" data-tour="community-upload" title="Upload a cut pattern to the community library" aria-label="Upload a cut pattern to the community library">
+		<a class="community-btn" href="/library/upload" data-tour="community-upload" use:tooltip={"Upload a cut pattern to the community library"} aria-label="Upload a cut pattern to the community library">
 			<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
 		</a>
 
 		<!-- Export button -->
-		<button class="export-btn" onclick={() => (showExport = !showExport)} title="Export" aria-label="Export">
+		<button class="export-btn" onclick={() => (showExport = !showExport)} use:tooltip={"Export"} aria-label="Export">
 			<svg
 				width="13"
 				height="13"
@@ -2502,7 +2503,7 @@
 
 		<!-- Manual mode reminder — shown whenever a live connection is active -->
 		{#if plotterStore.config.connection !== "download"}
-			<span class="offline-tip" title="Most cutters must be in Manual or Offline mode on their front panel before they will accept serial commands.">
+			<span class="offline-tip" use:tooltip={"Most cutters must be in Manual or Offline mode on their front panel before they will accept serial commands."}>
 				<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
 				Set cutter to <strong>Manual / Offline</strong> mode first
 			</span>
@@ -2513,7 +2514,7 @@
 			<button
 				class="abort-btn"
 				onclick={() => cutAbortController?.abort()}
-				title="Stop the current cut job. The plotter finishes its current move, then stops."
+				use:tooltip={"Stop the current cut job. The plotter finishes its current move, then stops."}
 				aria-label="Abort cut job"
 			>
 				<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
@@ -2521,7 +2522,10 @@
 			</button>
 		{/if}
 
-		<!-- Cut button -->
+		<!-- Cut button — tooltip lives on a wrapping span, not the button
+		     itself: a disabled element doesn't receive mouseenter, which
+		     would silently swallow the one tooltip that explains the lock. -->
+		<span class="cut-btn-wrap" use:tooltip={!cutCheck.allowed ? (cutCheck.reason ?? "Cut limit reached — upgrade to continue") : undefined}>
 		<button
 			class="cut-btn"
 			class:cut-btn--locked={!cutCheck.allowed}
@@ -2529,7 +2533,6 @@
 			data-tour="cut-btn"
 			onclick={handleCut}
 			disabled={cutting || !cutCheck.allowed}
-			title={!cutCheck.allowed ? (cutCheck.reason ?? "Cut limit reached — upgrade to continue") : undefined}
 			aria-disabled={!cutCheck.allowed}
 		>
 			{#if cutting}
@@ -2561,6 +2564,7 @@
 				<span class="cut-btn__count">{cutsRemainingDisplay}</span>
 			{/if}
 		</button>
+		</span>
 	</div>
 
 	<!-- Export dropdown -->
@@ -2654,7 +2658,7 @@
 			class="mobile-panel-fab"
 			onclick={() => (panelCollapsed = false)}
 			aria-label="Open settings panel"
-			title="Settings"
+			use:tooltip={"Settings"}
 		>
 			<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
 				<circle cx="12" cy="12" r="3" />
@@ -2882,7 +2886,7 @@
 										canvasStore.select(item.id);
 										canvasStore.removeSelected();
 									}}
-									title="Delete (Del)"
+									use:tooltip={"Delete (Del)"}
 									aria-label="Delete {item.label ?? item.pattern.name}"
 								>
 									<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12" /></svg>
@@ -2954,7 +2958,7 @@
 			<button
 				class="panel-collapse-btn"
 				onclick={() => (panelCollapsed = !panelCollapsed)}
-				title={panelCollapsed ? "Expand settings panel" : "Collapse settings panel"}
+				use:tooltip={panelCollapsed ? "Expand settings panel" : "Collapse settings panel"}
 				aria-label={panelCollapsed ? "Expand settings panel" : "Collapse settings panel"}
 				aria-expanded={!panelCollapsed}
 			>
@@ -2978,13 +2982,13 @@
 					>
 						{tab.charAt(0).toUpperCase() + tab.slice(1)}
 						{#if tab === "patterns" && canvasStore.items.length > 0}
-							<span class="panel-tab__badge" title="{canvasStore.items.length} patterns on sheet">{canvasStore.items.length}</span>
+							<span class="panel-tab__badge" use:tooltip={`${canvasStore.items.length} patterns on sheet`}>{canvasStore.items.length}</span>
 						{:else if tab === "properties" && canvasStore.items.length > 0}
-							<span class="panel-tab__badge panel-tab__badge--eff" title="Nesting efficiency">{Math.round(efficiency * 100)}%</span>
+							<span class="panel-tab__badge panel-tab__badge--eff" use:tooltip={"Nesting efficiency"}>{Math.round(efficiency * 100)}%</span>
 						{:else if tab === "plotter"}
 							<span
 								class="panel-tab__dot panel-tab__dot--{plotterStatusInfo.tone}"
-								title={plotterStatusInfo.label}
+								use:tooltip={plotterStatusInfo.label}
 								aria-label="Plotter status: {plotterStatusInfo.label}"
 							></span>
 						{/if}
@@ -3188,7 +3192,7 @@
 							/>
 							<span class="buffer-control__unit">in</span>
 							{#if canvasStore.state.bufferInches < 0}
-								<span class="buffer-control__warn" title="Pieces are allowed to intentionally overlap">Overlap allowed</span>
+								<span class="buffer-control__warn" use:tooltip={"Pieces are allowed to intentionally overlap"}>Overlap allowed</span>
 							{/if}
 						</div>
 					</div>
@@ -3271,7 +3275,7 @@
 								class:discovery-rescan-btn--spinning={bgRefreshing}
 								onclick={() => runDiscovery()}
 								disabled={discoveryPhase === "scanning"}
-								title="Rescan for cutters"
+								use:tooltip={"Rescan for cutters"}
 								aria-label="Rescan"
 							>
 								<svg
@@ -3682,7 +3686,7 @@
 
 							<!-- Test cut: sends bracket marks at roll edges -->
 							{#if isConnected}
-								<button class="cal-test-cut-btn" onclick={sendCalCut} title="Cuts bracket marks at the configured roll edges on scrap material to verify alignment">
+								<button class="cal-test-cut-btn" onclick={sendCalCut} use:tooltip={"Cuts bracket marks at the configured roll edges on scrap material to verify alignment"}>
 									<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
 									Send test cut
 								</button>
@@ -3752,7 +3756,7 @@
 					class:warn={efficiency <= 0.65 && efficiency > 0}
 				>{formatEfficiency(efficiency)}</span>
 				{#if smartNestGain !== null && smartNestGain >= 0.5}
-					<span class="ai-badge" title="AI-optimized layout — ↑{smartNestGain.toFixed(0)}% vs baseline">AI ↑{smartNestGain.toFixed(0)}%</span>
+					<span class="ai-badge" use:tooltip={`AI-optimized layout — ↑${smartNestGain.toFixed(0)}% vs baseline`}>AI ↑{smartNestGain.toFixed(0)}%</span>
 				{/if}
 			</span>
 		</div>
@@ -4182,6 +4186,11 @@
 	}
 	.abort-btn:active {
 		background: rgba(255, 77, 109, 0.28);
+	}
+
+	.cut-btn-wrap {
+		display: inline-flex;
+		flex-shrink: 0;
 	}
 
 	.cut-btn--hidden {

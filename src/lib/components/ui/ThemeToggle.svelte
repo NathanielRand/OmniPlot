@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { themeStore } from "$lib/stores";
 	import { onMount } from "svelte";
+	import { tooltip } from "$lib/actions/tooltip";
 
 	onMount(() => themeStore.init());
 </script>
@@ -9,7 +10,7 @@
 	class="theme-toggle"
 	onclick={themeStore.toggle}
 	aria-label="Toggle {themeStore.current === 'dark' ? 'light' : 'dark'} mode"
-	title="Toggle theme"
+	use:tooltip={`Switch to ${themeStore.current === "dark" ? "light" : "dark"} mode`}
 >
 	{#if themeStore.current === "dark"}
 		<!-- Sun icon -->

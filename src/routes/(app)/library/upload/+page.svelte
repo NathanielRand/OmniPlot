@@ -6,6 +6,8 @@
 	import { addUserPattern } from "$lib/firebase/firestore";
 	import SvgPathInput from "$lib/components/ui/SvgPathInput.svelte";
 	import VehicleCombobox from "$lib/components/ui/VehicleCombobox.svelte";
+	import InfoTip from "$lib/components/ui/InfoTip.svelte";
+	import { tooltip } from "$lib/actions/tooltip";
 	import type { PatternCategory, PatternZone, PatternCoverage } from "$lib/types";
 	import type { VehicleEntry } from "$lib/stores/patternStore.svelte";
 
@@ -360,6 +362,113 @@
 		};
 	}
 
+	// ─── Draft persistence ─────────────────────────
+	// One draft per signed-in user, stored locally. Not routed as separate
+	// wizard steps, so a "Save Draft" affordance is repeated at every
+	// numbered section instead of only at the bottom of a long scroll.
+	const DRAFT_KEY = "omniplot-upload-draft";
+
+	interface DraftPayload {
+		savedAt: number;
+		mode: typeof mode;
+		projectType: ProjectType;
+		customName: string;
+		propertyAddress: string;
+		propertyLabel: string;
+		vehicle: typeof vehicle;
+		pattern: typeof pattern;
+		uploadMode: UploadMode;
+		multiMethod: MultiMethod;
+		multiFileSvgPath: string;
+		individualSlots: IndividualSlot[];
+		multiMode: boolean;
+		multiSlots: MultiSlot[];
+	}
+
+	function draftStorageKey(): string | null {
+		const uid = userStore.user?.uid;
+		return uid ? `${DRAFT_KEY}:${uid}` : null;
+	}
+
+	function buildDraft(): DraftPayload {
+		return {
+			savedAt: Date.now(),
+			mode, projectType, customName, propertyAddress, propertyLabel,
+			vehicle: { ...vehicle, models: [...vehicle.models], years: [...vehicle.years] },
+			pattern: { ...pattern, zones: [...pattern.zones], customZoneLabels: [...pattern.customZoneLabels] },
+			uploadMode, multiMethod, multiFileSvgPath,
+			individualSlots: individualSlots.map((s) => ({ ...s })),
+			multiMode,
+			multiSlots: multiSlots.map((s) => ({ ...s })),
+		};
+	}
+
+	function saveDraft() {
+		const key = draftStorageKey();
+		if (!key) { toastStore.error("Sign in required", "Log in to save a draft."); return; }
+		try {
+			localStorage.setItem(key, JSON.stringify(buildDraft()));
+			toastStore.success("Draft saved", "Come back to this page anytime to pick up where you left off.");
+		} catch (err) {
+			console.error(err);
+			toastStore.error("Couldn't save draft", "Your browser storage may be full or blocked.");
+		}
+	}
+
+	function clearDraft() {
+		const key = draftStorageKey();
+		if (key) localStorage.removeItem(key);
+	}
+
+	// The zone-reset $effect above fires whenever zoneList changes (i.e.
+	// whenever projectType/category change) and unconditionally clears
+	// pattern.zones. Restore those fields in a second pass, after that
+	// effect has settled, so it doesn't wipe the draft's zones back out.
+	async function applyDraft(d: DraftPayload) {
+		mode = d.mode ?? mode;
+		projectType = d.projectType ?? projectType;
+		customName = d.customName ?? "";
+		propertyAddress = d.propertyAddress ?? "";
+		propertyLabel = d.propertyLabel ?? "";
+		if (d.vehicle) vehicle = d.vehicle;
+		if (d.pattern) pattern = { ...pattern, ...d.pattern, zones: [], customZoneLabels: [] };
+		uploadMode = d.uploadMode ?? uploadMode;
+		multiMethod = d.multiMethod ?? multiMethod;
+		multiFileSvgPath = d.multiFileSvgPath ?? "";
+		if (d.individualSlots?.length) individualSlots = d.individualSlots;
+		multiMode = !!d.multiMode;
+		if (d.multiSlots) multiSlots = d.multiSlots;
+
+		await tick();
+		if (d.pattern) {
+			pattern.zones = d.pattern.zones ?? [];
+			pattern.customZoneLabels = d.pattern.customZoneLabels ?? [];
+		}
+	}
+
+	function checkForDraft() {
+		const key = draftStorageKey();
+		if (!key) return;
+		try {
+			const raw = localStorage.getItem(key);
+			if (!raw) return;
+			const draft = JSON.parse(raw) as DraftPayload;
+			const ageMin = Math.max(0, Math.round((Date.now() - (draft.savedAt ?? 0)) / 60000));
+			const ageLabel = ageMin < 1 ? "just now" : ageMin < 60 ? `${ageMin}m ago` : `${Math.round(ageMin / 60)}h ago`;
+			toastStore.add({
+				type: "info",
+				title: "Unsaved draft found",
+				message: `Saved ${ageLabel}. Restore it or start fresh.`,
+				duration: 12000,
+				action: { label: "Restore", fn: () => { applyDraft(draft); toastStore.success("Draft restored"); } },
+			});
+		} catch (err) {
+			console.error(err);
+		}
+	}
+
+	onMount(() => { checkForDraft(); });
+
 	// ─── Submit ───────────────────────────────────
 	// After a failed validation, the errors are already set — but the invalid
 	// field may be several steps above the submit button, off-screen. Surface
@@ -408,6 +517,7 @@
 					saved++;
 				}
 				multiSavedCount = saved;
+				clearDraft();
 				step = "success";
 			} catch (err) {
 				console.error(err);
@@ -448,6 +558,7 @@
 					saved++;
 				}
 				multiSavedCount = saved;
+				clearDraft();
 				step = "success";
 			} catch (err) {
 				console.error(err);
@@ -476,6 +587,7 @@
 				svgPath:           pattern.svgPath.trim(),
 				notes:             pattern.notes.trim() || undefined,
 			});
+			clearDraft();
 			step = "success";
 		} catch (err) {
 			console.error(err);
@@ -614,6 +726,19 @@
 
 		<!-- ─── Form ─── -->
 		<div class="form-wrap">
+
+			{#snippet draftButton()}
+				<button
+					type="button"
+					class="draft-btn"
+					onclick={saveDraft}
+					use:tooltip={{ text: "Save your progress — come back to this page anytime to finish", side: "left" }}
+				>
+					<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
+					<span>Save Draft</span>
+				</button>
+			{/snippet}
+
 			<form class="upload-form" onsubmit={handleSubmit} novalidate>
 
 				<!-- Pattern Type -->
@@ -621,6 +746,7 @@
 					<h2 class="section-title">
 						<span class="section-num">1</span>
 						Pattern Type
+						{@render draftButton()}
 					</h2>
 
 					<div class="type-grid" role="radiogroup" aria-label="Pattern type">
@@ -660,6 +786,7 @@
 					<h2 class="section-title">
 						<span class="section-num">2</span>
 						{identityTitle}
+						{@render draftButton()}
 					</h2>
 
 					{#if projectType === "vehicle"}
@@ -760,6 +887,7 @@
 					<h2 class="section-title">
 						<span class="section-num">3</span>
 						Pattern Details
+						{@render draftButton()}
 					</h2>
 
 					<div class="field">
@@ -786,7 +914,10 @@
 
 					{#if pattern.category !== "window-tint"}
 						<div class="field field--half">
-							<label class="field__label" for="coverage">Coverage</label>
+							<label class="field__label" for="coverage">
+								Coverage
+								<InfoTip text="How much of the panel this pattern covers — Full wraps the whole surface, Partial covers a defined portion, Edge Only traces just the border." />
+							</label>
 							<select id="coverage" class="field__select" bind:value={pattern.coverage}>
 								<option value="full">Full</option>
 								<option value="partial">Partial</option>
@@ -801,6 +932,7 @@
 					<h2 class="section-title">
 						<span class="section-num">4</span>
 						Zones & Dimensions
+						{@render draftButton()}
 					</h2>
 
 					<!-- ─── Upload type ─── -->
@@ -824,14 +956,17 @@
 
 					{#if uploadMode === "single"}
 						<div class="field" class:field--error={!!errors.zones}>
-							<span class="field__label">Zones</span>
+							<span class="field__label">
+								Zones
+								<InfoTip text="The specific panels or sections this pattern applies to — add every zone this single pattern should be assigned to." />
+							</span>
 							<div class="multitag" class:multitag--error={!!errors.zones}>
 								{#each pattern.zones as z, i (i)}
 									{@const mirror = mirrorOf(z)}
 									<span class="chip">
 										<span class="chip__label">{zoneLabel(z, i)}</span>
 										{#if mirror && !pattern.zones.includes(mirror)}
-											<button type="button" class="chip__mirror" title="Also add {zoneLabel(mirror)}" onclick={() => addZone(mirror)}>↔</button>
+											<button type="button" class="chip__mirror" use:tooltip={`Also add ${zoneLabel(mirror)}`} onclick={() => addZone(mirror)}>↔</button>
 										{/if}
 										<button type="button" class="chip__remove" aria-label="Remove {zoneLabel(z, i)}" onclick={() => removeZone(i)}>×</button>
 									</span>
@@ -862,7 +997,10 @@
 
 						<div class="field-row field-row--2">
 							<div class="field" class:field--error={errors.width}>
-								<label class="field__label" for="width">Width (inches)</label>
+								<label class="field__label" for="width">
+									Width (inches)
+									<InfoTip text="The bounding box of the flattened pattern, not the vehicle or panel — measure the actual traced shape." />
+								</label>
 								<input id="width" class="field__input" type="number" min="0.1" step="0.1" bind:value={pattern.widthInches} placeholder="60.5"/>
 								{#if errors.width}<span class="field__error">{errors.width}</span>{/if}
 							</div>
@@ -880,6 +1018,7 @@
 					<h2 class="section-title">
 						<span class="section-num">5</span>
 						Pattern Importer
+						{@render draftButton()}
 					</h2>
 
 					{#if uploadMode === "multi"}
@@ -1024,7 +1163,7 @@
 										class="multi-slot__skip-btn"
 										class:multi-slot__skip-btn--skipped={slot.skip}
 										onclick={() => { slot.skip = !slot.skip; }}
-										title={slot.skip ? "Include this pattern" : "Skip this pattern"}
+										use:tooltip={slot.skip ? "Include this pattern" : "Skip this pattern"}
 										aria-label={slot.skip ? "Include pattern {i + 1}" : "Skip pattern {i + 1}"}
 									>
 										{slot.skip ? "Include" : "Skip"}
@@ -1074,6 +1213,7 @@
 					<h2 class="section-title">
 						<span class="section-num">6</span>
 						Notes
+						{@render draftButton()}
 					</h2>
 
 					<div class="field">
@@ -1370,6 +1510,32 @@
 		align-items: center;
 		justify-content: center;
 		flex-shrink: 0;
+	}
+
+	.draft-btn {
+		display: flex;
+		align-items: center;
+		gap: 5px;
+		margin-left: auto;
+		padding: 5px 10px;
+		background: none;
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-md);
+		color: var(--text-tertiary);
+		font-size: 0.75rem;
+		font-weight: 600;
+		font-family: var(--font-body);
+		cursor: pointer;
+		transition: color 0.12s, border-color 0.12s, background 0.12s;
+	}
+	.draft-btn:hover {
+		color: var(--text-primary);
+		border-color: var(--color-brand);
+		background: var(--interactive-hover);
+	}
+	@media (max-width: 560px) {
+		.draft-btn span { display: none; }
+		.draft-btn { padding: 6px; }
 	}
 
 	/* ─── Fields ─── */

@@ -6,6 +6,7 @@
 	import { onMount } from "svelte";
 	import { plotterStore, agentStore } from "$lib/stores";
 	import { CURRENT_AGENT_VERSION } from "$lib/config";
+	import { tooltip } from "$lib/actions/tooltip";
 
 	// ─── Types ────────────────────────────────────
 
@@ -372,14 +373,14 @@
 				<h2 class="panel__title">Live Log</h2>
 				<div class="panel__controls">
 					<span class="log-count">{events.length}/{MAX_EVENTS}</span>
-					<button class="btn-icon" onclick={() => (paused = !paused)} title={paused ? "Resume" : "Pause"}>
+					<button class="btn-icon" onclick={() => (paused = !paused)} use:tooltip={paused ? "Resume" : "Pause"} aria-label={paused ? "Resume" : "Pause"}>
 						{#if paused}
 							<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
 						{:else}
 							<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
 						{/if}
 					</button>
-					<button class="btn-icon" onclick={() => (events = [])} title="Clear log">
+					<button class="btn-icon" onclick={() => (events = [])} use:tooltip={"Clear log"} aria-label="Clear log">
 						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
 					</button>
 				</div>
@@ -432,7 +433,7 @@
 		<div class="panel panel--test">
 			<div class="panel__header">
 				<h2 class="panel__title">Manual Test</h2>
-				<button class="btn-icon" onclick={fetchPorts} title="Refresh ports">
+				<button class="btn-icon" onclick={fetchPorts} use:tooltip={"Refresh ports"} aria-label="Refresh ports">
 					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
 				</button>
 			</div>
