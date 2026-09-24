@@ -33,6 +33,8 @@
 		formatCutTime,
 		formatEfficiency,
 		DEFAULT_CUT_LIMITS,
+		cutLimitsFromPlans,
+		type PlanCutLimits,
 	} from "$lib/utils";
 	import { DEFAULT_MATERIALS, PLOTTER_PRESETS, CURRENT_AGENT_VERSION, type PlotterPreset } from "$lib/config";
 
@@ -1019,36 +1021,26 @@
 	});
 
 	// ─── Metered feature gates ────────────────────
-	// Admin-configurable cut limits (settings/platform.maxFreeCuts/maxLiteCuts),
-	// fetched once on mount; falls back to DEFAULT_CUT_LIMITS until it lands.
-	let cutLimits = $state(DEFAULT_CUT_LIMITS);
+	// Admin-configurable per-tier allowances (Admin → Products), fetched once
+	// on mount; falls back to DEFAULT_CUT_LIMITS until it lands.
+	let cutLimits = $state<PlanCutLimits>(DEFAULT_CUT_LIMITS);
 
-	// Re-derives whenever user, shop subscription, or cutLimits changes.
+	// Re-derives whenever user, team subscription, or cutLimits changes.
 	const cutCheck = $derived(
 		userStore.user
-			? canCut(userStore.user, shopStore.shop, cutLimits)
-			: { allowed: true }, // don't block while auth is loading
+			? canCut(userStore.user, shopStore.isActive, cutLimits)
+			: { allowed: true, remaining: null }, // don't block while auth is loading
 	);
-	// True for free-tier users with no active shop subscription — gates non-cut features.
+	// True for free-tier users with no active team subscription — gates non-cut features.
 	const isFree = $derived(
 		!!userStore.user &&
 		userStore.user.tier === "free" &&
-		shopStore.shop?.subscriptionStatus !== "active" &&
-		shopStore.shop?.subscriptionStatus !== "trialing",
+		!shopStore.isActive,
 	);
-	// Cut-btn counter: unlimited for pro/admin or an active/trialing shop seat
-	// (free/lite are rate-limited to 1 cut per period, not a pool, so their
-	// "remaining" is just whether cutCheck currently allows one).
-	const cutsRemainingDisplay = $derived.by(() => {
-		if (!userStore.user) return "∞";
-		const unlimited =
-			userStore.user.tier === "pro" ||
-			userStore.user.tier === "admin" ||
-			shopStore.shop?.subscriptionStatus === "active" ||
-			shopStore.shop?.subscriptionStatus === "trialing";
-		if (unlimited) return "∞";
-		return cutCheck.allowed ? "1" : "0";
-	});
+	// Cut-btn counter: cuts left in the tier's tightest window (∞ = unlimited).
+	const cutsRemainingDisplay = $derived(
+		cutCheck.remaining === null ? "∞" : String(cutCheck.remaining),
+	);
 	// Pre-compute export lock states for use in template
 	const pltLocked = $derived(!cutCheck.allowed);
 	const dxfLocked = $derived(isFree);
@@ -1467,7 +1459,7 @@
 	async function handleCut() {
 		const user = userStore.user;
 		if (user) {
-			const check = canCut(user, shopStore.shop);
+			const check = canCut(user, shopStore.isActive, cutLimits);
 			if (!check.allowed) {
 				toastStore.warning("Cut limit reached", check.reason);
 				uiStore.openPricing();
@@ -1827,11 +1819,7 @@
 		_mounted = true;
 		fetch("/api/settings/plans")
 			.then((r) => (r.ok ? r.json() : null))
-			.then((plans) => {
-				if (plans?.free?.cutsPerMonth && plans?.lite?.cutsPerDay) {
-					cutLimits = { maxFreeCuts: plans.free.cutsPerMonth, maxLiteCuts: plans.lite.cutsPerDay };
-				}
-			})
+			.then((plans) => { if (plans) cutLimits = cutLimitsFromPlans(plans); })
 			.catch(() => {});
 		requestAnimationFrame(fitToView);
 		// Restore any interrupted job resume checkpoint

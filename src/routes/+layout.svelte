@@ -11,7 +11,7 @@
 	import ChangelogModal from "$lib/components/ui/ChangelogModal.svelte";
 	import TooltipHost from "$lib/components/ui/TooltipHost.svelte";
 	import { initAuth } from "$lib/firebase/auth";
-	import { subscribeToShop } from "$lib/firebase/firestore";
+	import { subscribeToShop, subscribeToOrg } from "$lib/firebase/firestore";
 
 	interface Props {
 		children: Snippet;
@@ -49,6 +49,17 @@
 		}
 		const unsub = subscribeToShop(shopId, (s) => shopStore.set(s));
 		return unsub;
+	});
+
+	// Team subscription status lives on the shop's org — keep it live too so
+	// seat entitlements flip the moment the org's billing changes.
+	$effect(() => {
+		const orgId = shopStore.shop?.orgId;
+		if (!orgId) {
+			shopStore.setOrg(null);
+			return;
+		}
+		return subscribeToOrg(orgId, (o) => shopStore.setOrg(o));
 	});
 </script>
 

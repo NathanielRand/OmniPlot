@@ -25,8 +25,18 @@ service cloud.firestore {
     // ─── Users ────────────────────────────────────────────────────────────
     // Users may only read/write their own document.
     // Admin reads happen server-side via the Admin SDK (bypasses these rules).
+    // `tier` and `subscription` are billing-owned: only the Admin SDK
+    // (Stripe webhook, billing routes, admin panel API) may change them.
+    // Previously any user could set their own tier — including 'admin',
+    // which isAdmin() above trusts.
     match /users/{userId} {
-      allow read, write: if signedIn() && uid() == userId;
+      allow read, delete: if signedIn() && uid() == userId;
+      allow create: if signedIn() && uid() == userId
+                    && request.resource.data.get('tier', 'free') == 'free'
+                    && request.resource.data.get('subscription', {}).get('status', null) == null
+                    && request.resource.data.get('subscription', {}).get('stripeSubscriptionId', null) == null;
+      allow update: if signedIn() && uid() == userId
+                    && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['tier', 'subscription']);
     }
 
     // ─── Vehicles (public catalog) ────────────────────────────────────────

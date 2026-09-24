@@ -93,60 +93,80 @@ export function deepClone<T>(obj: T): T {
 }
 
 // ─── Check tier limits ────────────────────────
-import type { UserProfile, Shop } from "$lib/types";
+import type { UserProfile } from "$lib/types";
 
-// Defaults mirror the platform-config fallback in `/api/admin/settings` —
-// admins can raise/lower these from the admin panel without a deploy.
-export const DEFAULT_CUT_LIMITS = { maxFreeCuts: 10, maxLiteCuts: 5 };
+// Per-tier cut allowances; `null` means unlimited on that window. Defaults
+// mirror DEFAULT_PLANS in `/api/settings/plans` — the live values come from
+// that endpoint (admin-editable in Admin → Products, no deploy needed).
+export type CutAllowance = { cutsPerMonth: number | null; cutsPerDay: number | null };
+export type PlanCutLimits = Record<"free" | "lite" | "pro", CutAllowance>;
 
+export const DEFAULT_CUT_LIMITS: PlanCutLimits = {
+	free: { cutsPerMonth: 10,   cutsPerDay: null },
+	lite: { cutsPerMonth: null, cutsPerDay: 5 },
+	pro:  { cutsPerMonth: null, cutsPerDay: null },
+};
+
+/** Pulls just the cut allowances out of a GET /api/settings/plans response. */
+export function cutLimitsFromPlans(plans: Record<string, Partial<CutAllowance>> | null | undefined): PlanCutLimits {
+	const pick = (t: keyof PlanCutLimits): CutAllowance => ({
+		cutsPerMonth: plans?.[t]?.cutsPerMonth !== undefined ? plans[t]!.cutsPerMonth ?? null : DEFAULT_CUT_LIMITS[t].cutsPerMonth,
+		cutsPerDay:   plans?.[t]?.cutsPerDay   !== undefined ? plans[t]!.cutsPerDay   ?? null : DEFAULT_CUT_LIMITS[t].cutsPerDay,
+	});
+	return { free: pick("free"), lite: pick("lite"), pro: pick("pro") };
+}
+
+/**
+ * Whether the user can cut right now, and how many cuts are left in the
+ * tightest window (`remaining: null` = unlimited). Enforces BOTH the monthly
+ * and daily window when a tier has both set, so an admin can configure
+ * either (or neither) for any tier without a code change.
+ *
+ * `teamActive`: the user is a seat on an org/shop with a live subscription,
+ * which overrides the individual tier with unlimited cuts.
+ */
 export function canCut(
 	user: UserProfile,
-	shop?: Shop | null,
-	limits: { maxFreeCuts: number; maxLiteCuts: number } = DEFAULT_CUT_LIMITS,
-): { allowed: boolean; reason?: string } {
+	teamActive = false,
+	limits: PlanCutLimits = DEFAULT_CUT_LIMITS,
+): { allowed: boolean; reason?: string; remaining: number | null } {
 	const { tier, usage } = user;
+	if (teamActive || tier === "admin") return { allowed: true, remaining: null };
+
+	// Unknown/missing tier is treated as free rather than hard-blocked.
+	const planKey: keyof PlanCutLimits = tier === "lite" || tier === "pro" ? tier : "free";
+	const planName = planKey.charAt(0).toUpperCase() + planKey.slice(1);
+	const { cutsPerMonth, cutsPerDay } = limits[planKey];
 	const now = new Date();
 
-	// Shop subscription overrides individual tier — all seats get unlimited cuts
-	if (shop && (shop.subscriptionStatus === "active" || shop.subscriptionStatus === "trialing")) {
-		return { allowed: true };
-	}
+	let remaining: number | null = null;
+	let blocked: string | undefined;
 
-	if (tier === "pro" || tier === "admin") return { allowed: true };
-
-	if (tier === "free") {
-		const resetAt = usage.monthResetAt
-			? new Date(usage.monthResetAt)
-			: null;
-		const sameMonth = resetAt && now < resetAt;
-		if (sameMonth && usage.monthlyCount >= limits.maxFreeCuts) {
-			const daysLeft = Math.ceil(
-				(resetAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24),
-			);
-			return {
-				allowed: false,
-				reason: `Free tier: ${limits.maxFreeCuts} cut${limits.maxFreeCuts !== 1 ? "s" : ""} per 30 days. Resets in ${daysLeft} day${daysLeft !== 1 ? "s" : ""}.`,
-			};
+	if (cutsPerMonth !== null) {
+		const resetAt = usage.monthResetAt ? new Date(usage.monthResetAt) : null;
+		const used = resetAt && now < resetAt ? usage.monthlyCount : 0;
+		const left = Math.max(0, cutsPerMonth - used);
+		remaining = left;
+		if (left === 0) {
+			const daysLeft = resetAt ? Math.ceil((resetAt.getTime() - now.getTime()) / 86_400_000) : 0;
+			blocked = `${planName} plan: ${cutsPerMonth} cut${cutsPerMonth !== 1 ? "s" : ""} per 30 days.` +
+				(daysLeft > 0 ? ` Resets in ${daysLeft} day${daysLeft !== 1 ? "s" : ""}.` : "");
 		}
-		return { allowed: true };
 	}
 
-	if (tier === "lite") {
+	if (cutsPerDay !== null) {
 		const resetAt = usage.dayResetAt ? new Date(usage.dayResetAt) : null;
-		const sameDay = resetAt && now < resetAt;
-		if (sameDay && usage.dailyCount >= limits.maxLiteCuts) {
-			const hoursLeft = Math.ceil(
-				(resetAt.getTime() - now.getTime()) / (1000 * 60 * 60),
-			);
-			return {
-				allowed: false,
-				reason: `Lite tier: ${limits.maxLiteCuts} cut${limits.maxLiteCuts !== 1 ? "s" : ""} per day. Available in ${hoursLeft}h.`,
-			};
+		const used = resetAt && now < resetAt ? usage.dailyCount : 0;
+		const left = Math.max(0, cutsPerDay - used);
+		remaining = remaining === null ? left : Math.min(remaining, left);
+		if (left === 0 && !blocked) {
+			const hoursLeft = resetAt ? Math.ceil((resetAt.getTime() - now.getTime()) / 3_600_000) : 0;
+			blocked = `${planName} plan: ${cutsPerDay} cut${cutsPerDay !== 1 ? "s" : ""} per day.` +
+				(hoursLeft > 0 ? ` Available in ${hoursLeft}h.` : "");
 		}
-		return { allowed: true };
 	}
 
-	return { allowed: false, reason: "Unknown tier." };
+	return blocked ? { allowed: false, reason: blocked, remaining: 0 } : { allowed: true, remaining };
 }
 
 // ─── Slug ─────────────────────────────────────

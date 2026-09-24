@@ -40,6 +40,7 @@
 	import { signOutUser } from "$lib/firebase/auth";
 	import { goto } from "$app/navigation";
 	import AddCardModal from "$lib/components/ui/AddCardModal.svelte";
+	import { DEFAULT_CUT_LIMITS, cutLimitsFromPlans, type PlanCutLimits } from "$lib/utils";
 	import type { Shop, Organization, Group, GroupMember, ShopMember, ShopInvite, ShopRole, ShopPlan } from "$lib/types";
 
 	let activeTab = $state<
@@ -547,6 +548,9 @@
 		}
 	}
 
+	// Live per-tier cut allowances (Admin → Products) for the usage meter.
+	let cutLimits = $state<PlanCutLimits>(DEFAULT_CUT_LIMITS);
+
 	async function handlePortal(type: "individual" | "org" = "individual") {
 		if (!userStore.user) return;
 		portalLoading = true;
@@ -619,6 +623,10 @@
 			addCardReturnTo = returnTo ?? "";
 		}
 		currentSessionId = localStorage.getItem("omniplot_session_id") ?? "";
+		fetch("/api/settings/plans")
+			.then((r) => (r.ok ? r.json() : null))
+			.then((plans) => { if (plans) cutLimits = cutLimitsFromPlans(plans); })
+			.catch(() => {});
 		loadShopData();
 		loadUserOrgs();
 		loadLinkedProviders();
@@ -1138,8 +1146,12 @@
 			{@const tier     = user?.tier ?? "free"}
 			{@const sub      = user?.subscription}
 			{@const usage    = user?.usage}
-			{@const limit    = tier === "free" ? 1 : null}
-			{@const cutCount = usage?.monthlyCount ?? 0}
+			{@const allowance = cutLimits[tier === "lite" || tier === "pro" ? tier : "free"]}
+			{@const daily    = tier !== "admin" && allowance.cutsPerDay !== null}
+			{@const limit    = tier === "admin" ? null : (allowance.cutsPerDay ?? allowance.cutsPerMonth)}
+			{@const resetAt  = daily ? usage?.dayResetAt : usage?.monthResetAt}
+			{@const inWindow = !!resetAt && new Date() < new Date(resetAt)}
+			{@const cutCount = inWindow ? (daily ? usage?.dailyCount : usage?.monthlyCount) ?? 0 : 0}
 			{@const usagePct = limit ? Math.min(100, Math.round((cutCount / limit) * 100)) : 0}
 
 			<div class="settings-section">
@@ -1165,8 +1177,8 @@
 								<div class="billing-plan__desc billing-plan__desc--warn">Payment past due — update your card below</div>
 							{:else if sub?.status === "canceled" && sub.currentPeriodEnd}
 								<div class="billing-plan__desc billing-plan__desc--warn">Access until {fmtDate(sub.currentPeriodEnd)}</div>
-							{:else if tier === "free"}
-								<div class="billing-plan__desc">1 cut per 30 days</div>
+							{:else if tier === "free" && limit}
+								<div class="billing-plan__desc">{limit} cut{limit !== 1 ? "s" : ""} per {daily ? "day" : "30 days"}</div>
 							{/if}
 						</div>
 						<Badge variant={tier === "lite" ? "lite" : tier === "pro" ? "pro" : "free"}>
@@ -1174,21 +1186,21 @@
 						</Badge>
 					</div>
 
-					{#if tier === "free" && limit}
+					{#if limit !== null}
 						<div class="billing-plan__usage">
 							<div class="usage-row">
-								<span class="usage-label">Cuts this period</span>
+								<span class="usage-label">{daily ? "Cuts today" : "Cuts this period"}</span>
 								<span class="usage-val">{cutCount} / {limit}</span>
 							</div>
 							<div class="usage-bar-track" role="progressbar" aria-valuenow={cutCount} aria-valuemax={limit}>
 								<div class="usage-bar-fill" class:usage-bar-fill--warn={usagePct >= 80} style="width:{usagePct}%"></div>
 							</div>
 						</div>
-					{:else if tier !== "free"}
+					{:else}
 						<div class="billing-plan__usage">
 							<div class="usage-row">
-								<span class="usage-label">Cuts this month</span>
-								<span class="usage-val">{cutCount} <span style="color:var(--text-tertiary)">/ unlimited</span></span>
+								<span class="usage-label">Cuts this period</span>
+								<span class="usage-val">{usage?.monthlyCount ?? 0} <span style="color:var(--text-tertiary)">/ unlimited</span></span>
 							</div>
 						</div>
 					{/if}

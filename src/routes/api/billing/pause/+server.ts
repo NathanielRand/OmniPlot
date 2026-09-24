@@ -4,6 +4,7 @@ import Stripe from 'stripe';
 import { stripe, connectedAccount } from '$lib/server/stripe';
 import { getAdminDb, verifyIdToken } from '$lib/server/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
+import { tierFromSubscription } from '$lib/server/stripe-ledger';
 
 async function getSubId(uid: string): Promise<string | null> {
 	const snap = await getAdminDb().doc(`users/${uid}`).get();
@@ -80,7 +81,7 @@ export const DELETE: RequestHandler = async ({ request }) => {
 			connectedAccount,
 		);
 
-		const tier = sub.metadata?.tier;
+		const tier = await tierFromSubscription(sub);
 		await getAdminDb().doc(`users/${uid}`).set({
 			...(tier ? { tier } : {}),
 			subscription: { pausedCollection: false },

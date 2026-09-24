@@ -23,6 +23,12 @@
 		PRICING_PLANS.map((p) => ({ ...p, ...(livePrices?.[p.id] ? { price: livePrices[p.id].price, yearlyPrice: livePrices[p.id].yearlyPrice } : {}) })),
 	);
 
+	// An existing subscriber's checkout changes the plan on their current
+	// subscription (server-side) instead of opening a new one.
+	const hasLiveSub = $derived(
+		["active", "trialing", "past_due"].includes(userStore.user?.subscription?.status ?? ""),
+	);
+
 	function closeOnBackdrop(e: MouseEvent) {
 		if (e.target === e.currentTarget) uiStore.closePricing();
 	}
@@ -181,6 +187,10 @@
 							<Button variant="secondary" size="md" class="plan__cta" href="/signup">
 								Get started free
 							</Button>
+						{:else if userStore.isAuth && userStore.user?.tier === plan.id}
+							<Button variant="secondary" size="md" class="plan__cta" disabled>
+								Current plan
+							</Button>
 						{:else if userStore.isAuth}
 							<Button
 								variant={plan.popular ? "primary" : "secondary"}
@@ -189,7 +199,7 @@
 								loading={checkoutPlan === plan.id}
 								onclick={() => startCheckout(plan)}
 							>
-								{plan.id === "pro" ? "Get Pro" : `Get ${plan.name}`}
+								{hasLiveSub ? `Switch to ${plan.name}` : plan.id === "pro" ? "Get Pro" : `Get ${plan.name}`}
 							</Button>
 						{:else}
 							<Button

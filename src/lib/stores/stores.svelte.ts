@@ -248,18 +248,24 @@ function createUserStore() {
 export const userStore = createUserStore();
 
 // ─── Shop ─────────────────────────────────────
-import type { Shop } from "$lib/types";
+import type { Shop, Organization } from "$lib/types";
 
 function createShopStore() {
 	let shop = $state<Shop | null>(null);
+	let org  = $state<Organization | null>(null);
 
 	return {
 		get shop() { return shop; },
+		get org() { return org; },
+		// Team billing lives on the org since Phase 4 — the shop's own
+		// subscriptionStatus is a legacy fallback that nothing writes anymore,
+		// so checking only it left every paid team seat gated like free.
 		get isActive() {
-			return shop?.subscriptionStatus === "active" ||
-			       shop?.subscriptionStatus === "trialing";
+			const status = org?.subscriptionStatus ?? shop?.subscriptionStatus;
+			return status === "active" || status === "trialing";
 		},
 		set(s: Shop | null) { shop = s; },
+		setOrg(o: Organization | null) { org = o; },
 	};
 }
 

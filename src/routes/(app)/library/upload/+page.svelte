@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount, tick } from "svelte";
 	import { goto } from "$app/navigation";
-	import { userStore, shopStore, toastStore } from "$lib/stores";
+	import { userStore, shopStore, toastStore, uiStore } from "$lib/stores";
 	import { patternStore, RESIDENTIAL_ZONES_LIST, COMMERCIAL_ZONES_LIST, MIRROR_PAIRS, PATTERN_CATEGORIES, zonesForCategory } from "$lib/stores/patternStore.svelte";
 	import { addUserPattern } from "$lib/firebase/firestore";
 	import SvgPathInput from "$lib/components/ui/SvgPathInput.svelte";
@@ -17,20 +17,28 @@
 	// Custom pattern uploads are gated per-tier via the admin-editable plan
 	// allowances (settings/platform.plans, /admin/products) — not hardcoded.
 	// Defaults to locked-for-free until the real config lands.
-	let planAllowsUpload = $state<boolean | null>(null); // null = still loading
+	// The tier is derived reactively, NOT read once when the fetch resolves —
+	// the user profile often isn't loaded yet at that point, which used to
+	// fall back to "free" and permanently lock paid users out of this page.
+	type UploadPlans = Record<"free" | "lite" | "pro", { customUpload?: boolean }>;
+	let uploadPlans = $state<UploadPlans | null>(null); // null = still loading
 	onMount(() => {
 		fetch("/api/settings/plans")
 			.then((r) => (r.ok ? r.json() : null))
-			.then((plans) => {
-				const tier = userStore.user?.tier ?? "free";
-				planAllowsUpload = plans?.[tier]?.customUpload ?? (tier === "pro" || tier === "admin");
-			})
-			.catch(() => { planAllowsUpload = userStore.user?.tier === "pro" || userStore.user?.tier === "admin"; });
+			.then((plans) => { uploadPlans = plans ?? { free: {}, lite: {}, pro: { customUpload: true } }; })
+			.catch(() => { uploadPlans = { free: {}, lite: {}, pro: { customUpload: true } }; });
 	});
+	const tierAllowsUpload = (t: string | undefined) =>
+		t === "admin" || !!uploadPlans?.[t as keyof UploadPlans]?.customUpload;
+	// Names of the plans that include uploads, for the lock copy (e.g. "Pro" or "Lite or Pro").
+	const uploadPlanNames = $derived(
+		(["lite", "pro"] as const).filter((t) => uploadPlans?.[t]?.customUpload).map((t) => t === "lite" ? "Lite" : "Pro").join(" or ") || "Pro",
+	);
 	const isFreeLocked = $derived(
-		planAllowsUpload === false &&
-		shopStore.shop?.subscriptionStatus !== "active" &&
-		shopStore.shop?.subscriptionStatus !== "trialing",
+		!!userStore.user &&
+		uploadPlans !== null &&
+		!tierAllowsUpload(userStore.user.tier) &&
+		!shopStore.isActive,
 	);
 
 	// ─── Top-level mode: private or community ────
@@ -491,7 +499,7 @@
 	async function handleSubmit(e: SubmitEvent) {
 		e.preventDefault();
 		if (!userStore.user) { toastStore.error("Not signed in", "Please log in first."); return; }
-		if (isFreeLocked) { toastStore.error("Upgrade required", "Custom pattern uploads need a Lite or Pro plan."); return; }
+		if (isFreeLocked) { toastStore.error("Upgrade required", `Custom pattern uploads need a ${uploadPlanNames} plan.`); return; }
 
 		if (uploadMode === "multi" && multiMethod === "individual") {
 			if (!validateIdentity() || !validateIndividual()) { focusValidationErrors(); return; }
@@ -634,12 +642,12 @@
 			<div class="upgrade-lock__icon" aria-hidden="true">
 				<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
 			</div>
-			<h2 class="upgrade-lock__title">Custom uploads need Lite or Pro</h2>
+			<h2 class="upgrade-lock__title">Custom uploads need {uploadPlanNames}</h2>
 			<p class="upgrade-lock__body">
 				Free accounts can use the full platform and community pattern library.
 				Upgrade to save your own private or community-submitted patterns.
 			</p>
-			<button class="btn btn--primary" onclick={() => goto("/pricing")}>See plans</button>
+			<button class="btn btn--primary" onclick={uiStore.openPricing}>See plans</button>
 		</div>
 	{:else if step === "success"}
 		<div class="success-wrap">

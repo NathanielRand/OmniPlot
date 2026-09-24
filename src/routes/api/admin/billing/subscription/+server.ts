@@ -4,6 +4,7 @@ import Stripe from 'stripe';
 import { stripe, connectedAccount } from '$lib/server/stripe';
 import { getAdminDb, verifyIdToken } from '$lib/server/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
+import { tierFromSubscription } from '$lib/server/stripe-ledger';
 import { sendCancellationEmail } from '$lib/server/email';
 
 type Action = 'cancel_at_period_end' | 'cancel_now' | 'resume' | 'pause' | 'unpause';
@@ -94,7 +95,7 @@ export const POST: RequestHandler = async ({ request }) => {
 
 		} else if (action === 'unpause') {
 			const sub = await stripe.subscriptions.update(subId, { pause_collection: null }, connectedAccount);
-			const tier = sub.metadata?.tier;
+			const tier = await tierFromSubscription(sub);
 			await getAdminDb().doc(`users/${uid}`).set(
 				{ ...(tier ? { tier } : {}), subscription: { pausedCollection: false }, updatedAt: FieldValue.serverTimestamp() },
 				{ merge: true },

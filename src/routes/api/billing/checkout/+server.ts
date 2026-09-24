@@ -5,6 +5,10 @@ import { stripe, connectedAccount } from '$lib/server/stripe';
 import { getAdminDb, verifyIdToken } from '$lib/server/firebase-admin';
 import { checkRateLimit, rateLimitedResponse } from '$lib/server/rate-limit';
 import { logServerError } from '$lib/server/log-error';
+import { PAID_TIERS, syncSubscriptionToFirestore } from '$lib/server/stripe-ledger';
+
+const SHOP_PLANS = ['starter', 'team', 'studio'];
+const LIVE_STATUSES = new Set(['active', 'trialing', 'past_due']);
 
 // Build the config_id key that the admin sync stamps on every price
 function buildConfigId(type: string, tier: string, plan: string, interval: 'month' | 'year'): string {
@@ -47,6 +51,17 @@ export const POST: RequestHandler = async ({ request, url }) => {
 
 		const { type = 'individual', orgId, tier, plan, interval = 'month' } = await request.json();
 
+		// Reject anything that isn't a purchasable plan up front — `tier`
+		// lands in subscription metadata, so it must never be free-form.
+		if (interval !== 'month' && interval !== 'year') {
+			return json({ error: 'Invalid billing interval.' }, { status: 400 });
+		}
+		if (type === 'org') {
+			if (!orgId || !SHOP_PLANS.includes(plan)) return json({ error: 'Invalid team plan.' }, { status: 400 });
+		} else if (!(PAID_TIERS as readonly string[]).includes(tier)) {
+			return json({ error: 'Invalid plan.' }, { status: 400 });
+		}
+
 		const priceId = await resolvePriceId(type, tier ?? '', plan ?? '', interval);
 
 		if (!priceId) {
@@ -65,7 +80,40 @@ export const POST: RequestHandler = async ({ request, url }) => {
 			customerId = orgSnap.data()?.stripeCustomerId ?? undefined;
 		} else {
 			const userSnap = await db.doc(`users/${uid}`).get();
-			customerId = userSnap.data()?.subscription?.stripeCustomerId ?? undefined;
+			const subData  = userSnap.data()?.subscription ?? {};
+			customerId = subData.stripeCustomerId ?? undefined;
+
+			// Already subscribed (e.g. Lite → Pro): change the plan on the
+			// EXISTING subscription. Opening a new Checkout here used to
+			// create a second, concurrently-billed subscription whose events
+			// then fought the first one over `users/{uid}.tier`.
+			const existingSubId: string = subData.stripeSubscriptionId ?? '';
+			if (existingSubId) {
+				const existing = await stripe.subscriptions.retrieve(existingSubId, {}, connectedAccount).catch(() => null);
+				if (existing && LIVE_STATUSES.has(existing.status)) {
+					const item = existing.items.data[0];
+					if (item?.price.id === priceId) {
+						return json({ error: 'You are already on this plan.' }, { status: 400 });
+					}
+					if (existing.pause_collection) {
+						return json({ error: 'Resume your paused plan before changing it.' }, { status: 400 });
+					}
+					const updated = await stripe.subscriptions.update(existingSubId, {
+						items: [{ id: item.id, price: priceId }],
+						// Bill/credit the difference now, and refuse the change
+						// outright if the charge fails rather than granting the
+						// new tier on an unpaid invoice.
+						proration_behavior: 'always_invoice',
+						payment_behavior:   'error_if_incomplete',
+						cancel_at_period_end: false,
+						metadata: { ...existing.metadata, uid, type: 'individual', tier },
+					}, connectedAccount);
+					// Write through so the UI flips immediately; the
+					// customer.subscription.updated webhook reconciles the same.
+					await syncSubscriptionToFirestore(updated);
+					return json({ url: `${url.origin}/settings?tab=billing&checkout=success`, updated: true });
+				}
+			}
 		}
 
 		const meta: Record<string, string> = {

@@ -4,7 +4,7 @@
 	import Button from "$lib/components/ui/Button.svelte";
 	import Badge from "$lib/components/ui/Badge.svelte";
 	import PhoneInput from "$lib/components/ui/PhoneInput.svelte";
-	import { toastStore, userStore } from "$lib/stores";
+	import { toastStore, userStore, uiStore } from "$lib/stores";
 	import {
 		signInWithGoogle,
 		sendMagicLink,
@@ -45,9 +45,14 @@
 	let recaptchaEl        = $state<HTMLElement | null>(null);
 	let recaptchaVerifier  = $state<RecaptchaVerifier | null>(null);
 
-	// Redirect once signed in
+	// Redirect once signed in. A paid plan picked on /pricing used to be
+	// dropped here — carry it through by opening the upgrade modal.
 	$effect(() => {
-		if (userStore.isAuth) goto("/studio", { replaceState: true });
+		if (!userStore.isAuth) return;
+		const wantsPaid = plan === "lite" || plan === "pro";
+		goto("/studio", { replaceState: true }).then(() => {
+			if (wantsPaid && userStore.user?.tier === "free") uiStore.openPricing();
+		});
 	});
 
 	// ─── Google ───────────────────────────────

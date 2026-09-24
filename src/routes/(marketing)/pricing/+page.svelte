@@ -3,6 +3,7 @@
 	import Badge from "$lib/components/ui/Badge.svelte";
 	import Button from "$lib/components/ui/Button.svelte";
 	import { PRICING_PLANS, SHOP_PRICING_PLANS, FAQ_ITEMS } from "$lib/config";
+	import { userStore, uiStore } from "$lib/stores";
 
 	let billing = $state<"monthly" | "yearly">("monthly");
 
@@ -47,6 +48,35 @@
 			return { ...p, price: live.price, yearlyPrice: live.yearlyPrice, features };
 		}),
 	);
+	// Comparison-table cells for the live-configurable allowances; the rest
+	// of the table is static copy. The old hardcoded "1 / day" / "1 / 30 days"
+	// cells contradicted the real 5/day and 10/month limits.
+	function cutsCell(t: "free" | "lite" | "pro"): string {
+		const live = livePrices?.[t] ?? PRICING_PLANS.find((p) => p.id === t)!.limits;
+		if (live.cutsPerDay != null) return `${live.cutsPerDay} / day`;
+		if (live.cutsPerMonth != null) return `${live.cutsPerMonth} / 30 days`;
+		return "Unlimited";
+	}
+	function uploadCell(t: "free" | "lite" | "pro"): string {
+		const live = livePrices?.[t];
+		const allowed = live?.customUpload ?? PRICING_PLANS.find((p) => p.id === t)!.limits.customPatterns;
+		return allowed ? "✓" : "—";
+	}
+	const compareRows = $derived([
+		["Cuts", cutsCell("free"), cutsCell("lite"), cutsCell("pro")],
+		["Seats", "1", "1", "1"],
+		["Pattern library", "✓", "✓", "✓"],
+		["HPGL / SVG export", "✓", "✓", "✓"],
+		["DXF export", "—", "✓", "✓"],
+		["PDF export", "—", "—", "✓"],
+		["Auto-nesting", "Preview only", "✓", "✓"],
+		["Web Serial control", "—", "✓", "✓"],
+		["Job history", "—", "90 days", "Unlimited"],
+		["Custom pattern upload", uploadCell("free"), uploadCell("lite"), uploadCell("pro")],
+		["AI pattern assist", "—", "—", "✓"],
+		["Priority support", "—", "—", "✓"],
+	]);
+
 	const shopPlans = $derived(
 		SHOP_PRICING_PLANS.map((p) => ({
 			...p,
@@ -124,9 +154,12 @@
 				<Button
 					variant={plan.popular ? "primary" : "secondary"}
 					size="lg"
-					href={plan.price === 0
-						? "/signup"
-						: `/signup?plan=${plan.id}&billing=${billing}`}
+					href={userStore.isAuth
+						? undefined
+						: plan.price === 0
+							? "/signup"
+							: `/signup?plan=${plan.id}&billing=${billing}`}
+					onclick={userStore.isAuth ? () => (plan.price === 0 ? (location.href = "/studio") : uiStore.openPricing()) : undefined}
 					class="plan-card__cta"
 				>
 					{#if plan.price === 0}Get started free
@@ -242,7 +275,7 @@
 					</tr>
 				</thead>
 				<tbody>
-					{#each [["Cuts per day", "1 / 30 days", "1 / day", "Unlimited"], ["Seats", "1", "1", "1"], ["Pattern library", "✓", "✓", "✓"], ["HPGL / SVG export", "✓", "✓", "✓"], ["DXF export", "—", "✓", "✓"], ["PDF export", "—", "—", "✓"], ["Auto-nesting", "Preview only", "✓", "✓"], ["Web Serial control", "—", "✓", "✓"], ["Job history", "—", "90 days", "Unlimited"], ["Custom pattern upload", "—", "—", "✓"], ["AI pattern assist", "—", "—", "✓"], ["Priority support", "—", "—", "✓"]] as row}
+					{#each compareRows as row}
 						<tr>
 							<td class="td-feature">{row[0]}</td>
 							<td

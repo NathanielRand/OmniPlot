@@ -419,16 +419,6 @@ export async function getAllUsers(limitCount = 50): Promise<UserProfile[]> {
 	return snap.docs.map((d) => toUserProfile(d.id, d.data()));
 }
 
-export async function setUserTier(
-	uid: string,
-	tier: UserProfile["tier"],
-): Promise<void> {
-	await updateDoc(doc(db, Collections.USERS, uid), {
-		tier,
-		updatedAt: serverTimestamp(),
-	});
-}
-
 // ─── Session management ───────────────────────
 export async function writeSessionId(uid: string, sessionId: string): Promise<void> {
 	await updateDoc(doc(db, Collections.USERS, uid), {
@@ -852,6 +842,18 @@ export async function getOrg(orgId: string): Promise<Organization | null> {
 	const snap = await getDoc(doc(db, Collections.ORGS, orgId));
 	if (!snap.exists()) return null;
 	return toOrganization(snap.id, snap.data());
+}
+
+export function subscribeToOrg(
+	orgId: string,
+	callback: (org: Organization | null) => void,
+): () => void {
+	return onSnapshot(
+		doc(db, Collections.ORGS, orgId),
+		(snap) => callback(snap.exists() ? toOrganization(snap.id, snap.data()) : null),
+		// Non-members can't read the org doc — fall back to the shop's own status.
+		() => callback(null),
+	);
 }
 
 export interface OrgSummary {

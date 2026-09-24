@@ -5,7 +5,7 @@ import { STRIPE_CONNECTED_ACCOUNT_ID, STRIPE_WEBHOOK_SECRET } from '$env/static/
 import { getAdminDb } from '$lib/server/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { sendReceiptEmail, sendRefundEmail, sendUpgradeEmail } from '$lib/server/email';
-import { attributeUid, chargeToRow, syncSubscriptionToFirestore, upsertTransaction } from '$lib/server/stripe-ledger';
+import { attributeUid, chargeToRow, syncSubscriptionToFirestore, tierFromSubscription, upsertTransaction } from '$lib/server/stripe-ledger';
 import { logServerError } from '$lib/server/log-error';
 
 // Single endpoint for every Stripe event on this platform account and its
@@ -200,12 +200,10 @@ async function onCheckoutComplete(session: Stripe.Checkout.Session) {
 	if (!uid) return;
 
 	const customerId   = session.customer as string;
-	const subId        = session.subscription as string;
-	const sub          = await stripe.subscriptions.retrieve(subId, {}, connectedAccount);
+	const sub          = await stripe.subscriptions.retrieve(session.subscription as string, {}, connectedAccount);
 	const item         = sub.items.data[0];
 	const priceId      = item?.price.id ?? '';
 	const periodEnd    = item?.current_period_end ? new Date(item.current_period_end * 1000) : null;
-	const trialEnd     = sub.trial_end ? new Date(sub.trial_end * 1000) : null;
 	const unitAmount   = item?.price.unit_amount ?? 0;
 	const currency     = item?.price.currency ?? 'usd';
 
@@ -216,7 +214,7 @@ async function onCheckoutComplete(session: Stripe.Checkout.Session) {
 			...(seats ? { seats } : {}),
 			stripeCustomerId:   customerId,
 			stripePriceId:      priceId,
-			subscriptionStatus: 'active',
+			subscriptionStatus: sub.status,
 			currentPeriodEnd:   periodEnd,
 			updatedAt:          FieldValue.serverTimestamp(),
 		}, { merge: true });
@@ -240,28 +238,22 @@ async function onCheckoutComplete(session: Stripe.Checkout.Session) {
 			console.error('[webhook] sendUpgradeEmail (org) failed:', err);
 		}
 	} else {
-		// A real nested object, not dotted keys — `.set(..., {merge:true})`
-		// doesn't parse "subscription.status" as a path the way `.update()` does.
-		await getAdminDb().doc(`users/${uid}`).set({
-			tier: tier || 'lite',
-			subscription: {
-				stripeCustomerId:     customerId,
-				stripeSubscriptionId: subId,
-				stripePriceId:        priceId,
-				status:               'active',
-				cancelAtPeriodEnd:    false,
-				currentPeriodEnd:     periodEnd,
-				trialEnd,
-			},
-			updatedAt: FieldValue.serverTimestamp(),
-		}, { merge: true });
+		// Same writer as customer.subscription.* — tier is derived from the
+		// price actually purchased (not trusted from metadata or defaulted),
+		// and `trialing` counts as entitled. Previously this branch wrote
+		// `tier || 'lite'` + a hardcoded status of 'active' independently of
+		// the sync, so the two could disagree depending on delivery order.
+		// Session metadata is merged under the sub's so a subscription
+		// missing its own copy (older checkouts) still resolves to the user.
+		await syncSubscriptionToFirestore({ ...sub, metadata: { ...(session.metadata ?? {}), ...(sub.metadata ?? {}) } });
 
 		// Send upgrade confirmation email (non-fatal)
 		try {
 			const userSnap = await getAdminDb().doc(`users/${uid}`).get();
 			const userData = userSnap.data() ?? {};
 			if (userData.email) {
-				const tierLabel = tier ? tier.charAt(0).toUpperCase() + tier.slice(1) : 'Pro';
+				const paidTier  = (await tierFromSubscription(sub)) ?? tier ?? '';
+				const tierLabel = paidTier ? paidTier.charAt(0).toUpperCase() + paidTier.slice(1) : 'your plan';
 				await sendUpgradeEmail(
 					userData.email as string,
 					(userData.displayName as string) ?? '',
@@ -293,11 +285,9 @@ async function onSubscriptionDeleted(sub: Stripe.Subscription) {
 			updatedAt:          FieldValue.serverTimestamp(),
 		}, { merge: true });
 	} else {
-		await getAdminDb().doc(`users/${uid}`).set({
-			tier: 'free',
-			subscription: { status: 'canceled', currentPeriodEnd: null },
-			updatedAt: FieldValue.serverTimestamp(),
-		}, { merge: true });
+		// Routed through the shared sync so deleting a STALE subscription
+		// (not the user's current one) can't knock a paying user to free.
+		await syncSubscriptionToFirestore(sub);
 	}
 }
 
