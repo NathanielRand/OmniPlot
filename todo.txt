@@ -2,7 +2,7 @@
 // URGENT
 //////////////////////////////
 
-- customer support ticket conversation with user to resolve
+- evolve existing customer support ticket system to be a 2-way conversation capabilites, email notifications, nav badges on status changes or action needed for both admin/user ui to resolve based on common situations for this type of saas. prefilled responses and triggers based on certain responses. reference another project's system here for how we built this before but tweaked for OmniPlot specifically (C:\Users\natha\Dev\Code\ccsc)
 - credit effected user's account with free 1 month. how should we approach this and admin being able to credit accounts on the fly from the panel going forward
 - Still needed from you:
 1. Fix the Vercel env: set STRIPE_CONNECTED_ACCOUNT_ID=acct_1Ta4d8FTK26Xr6hG, and check that STRIPE_WEBHOOK_SECRET matches endpoint we_1TatCRF…. Four of today's connected-account events are still undelivered.
@@ -29,10 +29,44 @@
 ///////////////////////////////
 // ONGOING
 ///////////////////////////////
+This checklist is built from your todo list, my notes from the migration, and the current state of the repo. In order:
+
+1. Fix the Vercel environment (blocking, needs you)
+- Set STRIPE_CONNECTED_ACCOUNT_ID=acct_1Ta4d8FTK26Xr6hG.
+- Make sure STRIPE_WEBHOOK_SECRET matches the webhook endpoint we_1TatCRF… on the connected account. As of yesterday, four events there were still undelivered.
+- Once it's fixed, resend those failed events from that endpoint's page in the Stripe dashboard, or rely on the backfill sync in step 3.
+
+2. Deploy before Oct 5
+- main already has the billing fix (5fdf49a). dev is two commits ahead with the support tickets, live plan limits, free-month coupons and billing tools. Merge dev into main and deploy.
+- The deploy also adds the daily support-sweep cron.
+- Oct 5 is when the first migrated Lite subscription bills on the connected account. Oct 19 and 22 follow.
+
+3. After the deploy, in Admin → Billing
+- Run the backfill sync. It re-pullsn from the connected account, which  catches anything the broken webhoo
+- Open Billing health; every check should be green. If a price check says "no cached price ID", run the sync on Admin → Products.
+- For a single account, use Resync billing from Stripe in that user's drawer or on their support     ticket.
+
+4. The three affected Lite customers
+- The customer who filed the sample ticket: open it in Admin → Support.                              a. Click Link to account; it's a ling existed.
+  b. Click Resync and confirm they show as Lite.
+  c. Check the duplicate flag on their charges. Their duplicate was already refunded, so there should be nothing to do.
+  d. Send "Our bug, fixed + month on us" with the free month ticked.
+- The other two: Admin → Users, open their drawer, then Give free month with "Email the customer" on.
+- Timing: each free month comes off their first connected-account invoice (Oct 5, 19 or 22). Those subscriptions must have been created as connected-account subscriptions, which the migration did.
+- Still to tell them: the old item from your todo list stands. Their next statement will show the connected account's business name, and mf6m… will see a $29 refund. The ticket reply covers the    customer who filed it; the other th email is a natural place to add it.
+- Skip anyone marked compedTier: true. Those accounts were given their plan by hand and aren't billed.
+                                                                                                   5. Email and support setup
+- Make sure hello@omniplot.app actually receives mail. It now gets every staff notification, the overdue digest and server-error alerts.
+- The first support-sweep run will send one "overdue" digest listing every old contact-form submission, since none were answered. Close or answer those in Admin → Support.
+                                                                                                   6. Firebase console (from your backl- Turn on Firestore TTL policies forLimits.expiresAt. This can't be donefrom code.
+
+One warning: your local .env has live keys pointing at production Firebase. Running the dev server locally and clicking "Give free montustomers and real Stripe. For a dry
+run of the new tools, use a Stripe tase project, or try them first onyour own account in production.
 
 //////////////////////////////////////
 // BACKLOG
 ////////////////////////////////
+- revenue page for admin panel with accurate data.
 - tooltips need responsive aligning.
 - save draft btn on each step of the pattern importer
 - pattern uplaoder: ui message and/or reposition to missing or incorrect values on the form instead ofg silently failing the submit.
