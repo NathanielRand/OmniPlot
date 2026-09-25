@@ -4,3 +4,4 @@ export * from './cutJobStore.svelte';
 export * from './supportStore.svelte';
 export * from './plansStore.svelte';
 export * from './platformStore.svelte';
+export * from './plotterHistoryStore.svelte';

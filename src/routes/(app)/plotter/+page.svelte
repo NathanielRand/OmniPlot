@@ -5,7 +5,7 @@
 <script lang="ts">
 	import { onMount, onDestroy } from "svelte";
 	import Button from "$lib/components/ui/Button.svelte";
-	import { userStore, toastStore, plotterStore, agentStore, cutJobStore, platformStore } from "$lib/stores";
+	import { userStore, toastStore, plotterStore, agentStore, cutJobStore, platformStore, plotterHistoryStore } from "$lib/stores";
 	import { PLOTTER_PRESETS } from "$lib/config";
 	import { tooltip } from "$lib/actions/tooltip";
 	import {
@@ -19,8 +19,16 @@
 		detectAgentPorts,
 		scanNetworkViaAgent,
 		matchPortToPreset,
+		listLiveDevices,
 	} from "$lib/utils/plotter-detect";
-	import { sendToPlotter, flushPlotter, reconnectSerialPort, connectSerialPort } from "$lib/utils/plotter-connection";
+	import {
+		sendToPlotter, flushPlotter, connectSerialPort, openAuthorizedSerial,
+		getOpenSerialPortInfo, disconnectSerialPort, releaseAgentPort,
+	} from "$lib/utils/plotter-connection";
+	import {
+		findLiveFor, formatUsbId, timeAgo,
+		type PlotterHistoryEntry, type LiveDevice, type ConnectInput,
+	} from "$lib/utils/plotter-history";
 	import type { PlotterDiagnostic } from "$lib/utils/plotter-errors";
 	import PlotterDiagPanel from "$lib/components/ui/PlotterDiagPanel.svelte";
 	import type { PlotterDevice, PlotterConnection, PlotterConfig, CutJob } from "$lib/types";
@@ -268,8 +276,6 @@
 		}
 	}
 
-	let reconnecting = $state<string | null>(null); // plotter id currently reconnecting
-
 	async function markConnected(plotter: PlotterDevice) {
 		const now = new Date();
 		plotters = plotters.map(p => p.id === plotter.id ? { ...p, lastConnectedAt: now } : p);
@@ -280,38 +286,204 @@
 		}
 	}
 
-	async function handleSetActive(plotter: PlotterDevice) {
-		const preset = PLOTTER_PRESETS.find(p => p.name === plotter.presetName);
-		if (!preset) return;
+	// ─── Connect (fleet "Set active" + history) ───
+	// One path for both: applies the plotter's model and route, opens USB
+	// without a dialog when the port is already authorized (falling back to the
+	// picker filtered to this plotter), and records it in plotter history so
+	// the Studio resumes it automatically.
+	let connectingKey = $state<string | null>(null);
 
-		plotterStore.applyPreset(preset);
-		plotterStore.switchConnection(plotter.connection);
-		if (plotter.serialPort) plotterStore.update({ serialPort: plotter.serialPort });
-		if (plotter.agentUrl)   plotterStore.update({ agentUrl: plotter.agentUrl });
-		if (plotter.ipAddress)  plotterStore.update({ ipAddress: plotter.ipAddress });
-		if (plotter.port)       plotterStore.update({ port: plotter.port });
-
-		if (plotter.connection === "usb-serial" && plotter.vendorId !== undefined) {
-			// Quick reconnect — matches the saved USB identity against already-authorized
-			// ports (navigator.serial.getPorts()), so no browser picker dialog is shown.
-			reconnecting = plotter.id;
-			const info = await reconnectSerialPort(plotter.baudRate ?? preset.baudRate ?? 9600, {
-				vendorId: plotter.vendorId, productId: plotter.productId,
-			});
-			reconnecting = null;
-			if (info) {
-				plotterStore.update({ vendorId: info.vendorId, productId: info.productId });
-				plotterStore.persistConnSettings();
-				toastStore.success("Reconnected", `${plotter.name} is now active in Studio.`);
-				await markConnected(plotter);
-				return;
+	async function connectTarget(t: ConnectInput, busyKey: string): Promise<boolean> {
+		const preset = PLOTTER_PRESETS.find(p => p.name === t.presetName) ?? PLOTTER_PRESETS[0];
+		plotterHistoryStore.beginManual();
+		connectingKey = busyKey;
+		try {
+			const baud = t.baudRate ?? preset.baudRate ?? 9600;
+			let usb: { vendorId?: number; productId?: number } | null = null;
+			if (t.connection === "usb-serial") {
+				if (plotterStore.config.connection === "cut-agent") await releaseAgentPort(plotterStore.config);
+				const id = t.vendorId !== undefined ? { vendorId: t.vendorId, productId: t.productId } : undefined;
+				const res = await openAuthorizedSerial(baud, id);
+				if (res.ok) {
+					usb = res.info;
+				} else if (res.reason === "busy" || res.reason === "unsupported") {
+					toastStore.error(res.reason === "busy" ? "Port in use" : "Not supported", res.message);
+					return false;
+				} else {
+					try {
+						usb = await connectSerialPort(baud, id);
+					} catch (err) {
+						if (!(err instanceof Error) || (err.name !== "NotFoundError" && err.name !== "NotAllowedError")) {
+							toastStore.error("Connection failed", err instanceof Error ? err.message : "Could not open the serial port.");
+						}
+						return false;
+					}
+				}
+			} else if (getOpenSerialPortInfo()) {
+				disconnectSerialPort(); // don't hold a COM port the agent may need
 			}
-			toastStore.warning("Reconnect needed", `${plotter.name} isn't authorized in this browser — grant USB access from the Studio page.`);
+
+			plotterStore.applyPreset(preset);
+			plotterStore.switchConnection(t.connection);
+			plotterStore.update({ baudRate: baud });
+			if (t.connection === "cut-agent") plotterStore.update({ serialPort: t.serialPort || "auto", ...(t.agentUrl ? { agentUrl: t.agentUrl } : {}) });
+			if (t.connection === "network")   plotterStore.update({ ipAddress: t.ipAddress, port: t.port ?? 9100 });
+			if (usb) plotterStore.update({ vendorId: usb.vendorId, productId: usb.productId });
+			plotterStore.persistConnSettings();
+			plotterHistoryStore.recordConnect({ ...t, presetName: preset.name, baudRate: baud, ...(usb ? { vendorId: usb.vendorId, productId: usb.productId } : {}) });
+			return true;
+		} finally {
+			connectingKey = null;
+		}
+	}
+
+	async function handleSetActive(plotter: PlotterDevice) {
+		if (plotter.connection === "download") {
+			plotterStore.applyPreset(PLOTTER_PRESETS.find(p => p.name === plotter.presetName) ?? PLOTTER_PRESETS[0]);
+			plotterStore.switchConnection("download");
+			toastStore.success("Active plotter set", `${plotter.name} is now active in Studio.`);
+			await markConnected(plotter);
 			return;
 		}
-
-		toastStore.success("Active plotter set", `${plotter.name} is now active in Studio.`);
+		const ok = await connectTarget({
+			connection: plotter.connection,
+			presetName: plotter.presetName, label: plotter.name, fleetId: plotter.id,
+			vendorId: plotter.vendorId, productId: plotter.productId, serialPort: plotter.serialPort,
+			agentUrl: plotter.agentUrl, ipAddress: plotter.ipAddress, port: plotter.port, baudRate: plotter.baudRate,
+		}, plotter.id);
+		if (!ok) return;
+		toastStore.success(plotter.connection === "usb-serial" ? "Connected" : "Active plotter set", `${plotter.name} is now active in Studio.`);
 		await markConnected(plotter);
+		scanLive();
+	}
+
+	// ─── Plotter history ─────────────────────────
+	let liveDevices = $state<LiveDevice[]>([]);
+	let renamingKey = $state<string | null>(null);
+	let renameValue = $state("");
+	let confirmClearHistory = $state(false);
+
+	async function scanLive() {
+		liveDevices = await listLiveDevices(agentStore.status === "online" ? agentStore.url : null);
+	}
+
+	type Availability = "connected" | "available" | "absent" | "network";
+	function historyAvailability(e: PlotterHistoryEntry): Availability {
+		const c = plotterStore.config;
+		if (e.connection === "network") {
+			return c.connection === "network" && c.ipAddress === e.ipAddress && (c.port ?? 9100) === (e.port ?? 9100) ? "connected" : "network";
+		}
+		if (e.connection === "usb-serial") {
+			const open = getOpenSerialPortInfo();
+			if (c.connection === "usb-serial" && open && open.vendorId === e.vendorId && open.productId === e.productId) return "connected";
+		}
+		const live = findLiveFor(e, liveDevices);
+		if (e.connection === "cut-agent" && live && c.connection === "cut-agent" && agentStore.status === "online" &&
+			(c.serialPort === live.portPath || !c.serialPort || c.serialPort === "auto")) return "connected";
+		return live ? "available" : "absent";
+	}
+
+	function availabilityLabel(a: Availability, e: PlotterHistoryEntry): string {
+		if (a === "connected") return "Connected";
+		if (a === "available") return "Available";
+		if (a === "network") return "Network";
+		return e.connection === "cut-agent" && agentStore.status !== "online" ? "Agent offline" : "Not detected";
+	}
+
+	function endLabel(e: PlotterHistoryEntry): string | null {
+		if (!e.lastEndReason || !e.lastEndedAt) return null;
+		const when = timeAgo(e.lastEndedAt);
+		if (e.lastEndReason === "user") return `you disconnected ${when}`;
+		if (e.lastEndReason === "lost") return `connection lost ${when}`;
+		return `switched away ${when}`;
+	}
+
+	function viaLabel(e: PlotterHistoryEntry): string {
+		if (e.connection === "network") return `${e.ipAddress}:${e.port ?? 9100}`;
+		const id = formatUsbId(e.vendorId, e.productId);
+		if (e.connection === "cut-agent") return [e.serialPort && e.serialPort !== "auto" ? e.serialPort : null, id ? `VID ${id}` : null].filter(Boolean).join(" · ") || "auto port";
+		return id ? `VID ${id}` : "USB";
+	}
+
+	function fleetFor(e: PlotterHistoryEntry): PlotterDevice | null {
+		if (e.fleetId) {
+			const byId = plotters.find(p => p.id === e.fleetId);
+			if (byId) return byId;
+		}
+		return plotters.find(p => p.connection === e.connection && (
+			(e.connection === "usb-serial" && p.vendorId !== undefined && p.vendorId === e.vendorId && p.productId === e.productId) ||
+			(e.connection === "network" && p.ipAddress === e.ipAddress && (p.port ?? 9100) === (e.port ?? 9100)) ||
+			(e.connection === "cut-agent" && !!p.serialPort && p.serialPort === e.serialPort)
+		)) ?? null;
+	}
+
+	function toInput(e: PlotterHistoryEntry): ConnectInput {
+		return {
+			connection: e.connection, presetName: e.presetName, label: e.label, fleetId: e.fleetId,
+			vendorId: e.vendorId, productId: e.productId, serialPort: e.serialPort, agentUrl: e.agentUrl,
+			ipAddress: e.ipAddress, port: e.port, baudRate: e.baudRate,
+		};
+	}
+
+	async function handleHistoryConnect(e: PlotterHistoryEntry) {
+		if (e.connection === "cut-agent") {
+			const live = findLiveFor(e, liveDevices);
+			if (!live) {
+				toastStore.info("Plotter not found", agentStore.status === "online" ? "It isn't plugged into the Cut Agent's computer." : "Start the Cut Agent, then try again.");
+				return;
+			}
+			if (!(await connectTarget({ ...toInput(e), serialPort: live.portPath }, e.key))) return;
+		} else if (!(await connectTarget(toInput(e), e.key))) {
+			return;
+		}
+		toastStore.success("Connected", `${e.label ?? e.presetName} is now active in Studio.`);
+		const fleet = fleetFor(e);
+		if (fleet) await markConnected(fleet);
+		scanLive();
+	}
+
+	function handleHistoryDisconnect(e: PlotterHistoryEntry) {
+		plotterHistoryStore.beginManual();
+		if (e.connection === "usb-serial") disconnectSerialPort();
+		plotterStore.switchConnection("download");
+		plotterHistoryStore.recordDisconnect(e.key, "user");
+		toastStore.info("Disconnected", `${e.label ?? e.presetName} won't reconnect automatically until you connect it again.`);
+	}
+
+	function startRename(e: PlotterHistoryEntry) {
+		renamingKey = e.key;
+		renameValue = e.label ?? "";
+	}
+	function commitRename() {
+		if (renamingKey) plotterHistoryStore.rename(renamingKey, renameValue);
+		renamingKey = null;
+	}
+
+	async function handleSaveToFleet(e: PlotterHistoryEntry) {
+		const uid = userStore.user?.uid;
+		if (!uid) return;
+		const preset = PLOTTER_PRESETS.find(p => p.name === e.presetName) ?? PLOTTER_PRESETS[0];
+		const device: PlotterDevice = {
+			id: crypto.randomUUID(), userId: uid,
+			name: e.label ?? preset.name, presetName: preset.name,
+			manufacturer: preset.manufacturer ?? "", model: preset.model ?? "",
+			protocol: preset.protocol ?? "hpgl", connection: e.connection,
+			maxMediaWidthMm: preset.maxMediaWidthMm,
+			ipAddress: e.ipAddress, port: e.port, baudRate: e.baudRate ?? preset.baudRate,
+			serialPort: e.connection === "cut-agent" ? e.serialPort : undefined,
+			agentUrl: e.agentUrl, compatNote: preset.compatNote,
+			vendorId: e.vendorId, productId: e.productId,
+			lastConnectedAt: new Date(e.lastConnectedAt),
+			createdAt: new Date(), updatedAt: new Date(),
+		};
+		try {
+			await savePlotter(device);
+			plotters = [...plotters, device];
+			plotterHistoryStore.linkFleet(e.key, device.id, device.name);
+			toastStore.success("Saved to fleet", device.name);
+		} catch (err) {
+			toastStore.error("Failed to save", err instanceof Error ? err.message : "");
+		}
 	}
 
 	const TEST_HPGL = "IN;SP1;VS10;FS80;PU0,0;PD1016,0,1016,1016,0,1016,0,0;PU508,508;CI250;PU;SP0;"; // 1" × 1" box + circle
@@ -463,15 +635,27 @@
 	}
 
 	// ─── Lifecycle ───────────────────────────────
+	const onSerialChange = () => scanLive();
+
 	onMount(async () => {
 		await loadAll();
 		await pollAgent();
-		pollTimer = setInterval(pollAgent, 15_000);
+		await scanLive();
+		pollTimer = setInterval(async () => { await pollAgent(); await scanLive(); }, 15_000);
+		if ("serial" in navigator) {
+			(navigator as any).serial.addEventListener("connect", onSerialChange);
+			(navigator as any).serial.addEventListener("disconnect", onSerialChange);
+		}
+		if (location.hash === "#history") document.getElementById("history")?.scrollIntoView({ behavior: "smooth", block: "start" });
 	});
 
 	onDestroy(() => {
 		if (sseConn)   sseConn.close();
 		if (pollTimer) clearInterval(pollTimer);
+		if (typeof navigator !== "undefined" && "serial" in navigator) {
+			(navigator as any).serial.removeEventListener("connect", onSerialChange);
+			(navigator as any).serial.removeEventListener("disconnect", onSerialChange);
+		}
 	});
 </script>
 
@@ -611,8 +795,8 @@
 									{#if status === "cutting"}● Cutting{:else if status === "offline"}● Agent offline{:else}● Ready{/if}
 								</span>
 								<div class="card-actions">
-									<button class="card-btn" onclick={() => handleSetActive(plotter)} disabled={reconnecting === plotter.id}>
-										{reconnecting === plotter.id ? "Reconnecting…" : plotter.connection === "usb-serial" ? "Reconnect" : "Set active"}
+									<button class="card-btn" onclick={() => handleSetActive(plotter)} disabled={connectingKey !== null}>
+										{connectingKey === plotter.id ? "Connecting…" : plotter.connection === "usb-serial" ? "Connect" : "Set active"}
 									</button>
 									<button class="card-btn" onclick={() => handleTestCut(plotter)}>Test cut</button>
 									<button class="card-btn" onclick={() => handleFlush(plotter)} disabled={flushing === plotter.id}>
@@ -662,6 +846,127 @@
 			</div>
 		</section>
 	</div>
+
+	<!-- ─── Connection history ───────────────────── -->
+	<section class="history-section" id="history">
+		<div class="history-head">
+			<div class="col-header" style="margin-bottom:0">
+				<span class="col-label">Connection History</span>
+				{#if plotterHistoryStore.entries.length > 0}
+					<span class="col-count">{plotterHistoryStore.entries.length}</span>
+				{/if}
+			</div>
+			<label class="auto-toggle">
+				<input
+					type="checkbox"
+					checked={plotterHistoryStore.autoReconnect}
+					onchange={(e) => plotterHistoryStore.setAutoReconnect((e.target as HTMLInputElement).checked)}
+				/>
+				<span class="auto-toggle__track" aria-hidden="true"><span class="auto-toggle__thumb"></span></span>
+				<span class="auto-toggle__text">
+					<strong>Auto-reconnect</strong>
+					<span>{plotterHistoryStore.autoReconnect
+						? "The Studio reconnects your last plotter whenever it's available."
+						: "Off — connect plotters yourself from the Studio or this list."}</span>
+				</span>
+			</label>
+		</div>
+		<p class="history-note">
+			Every plotter this browser has connected to. Connecting one — here, in the Studio, or automatically — makes it the one OmniPlot resumes;
+			disconnecting it yourself stops that, so auto-reconnect never overrides your choice.
+		</p>
+
+		{#if plotterHistoryStore.entries.length === 0}
+			<div class="empty-state empty-state--compact">
+				<p class="empty-title">No connection history yet</p>
+				<p class="empty-sub">Plotters appear here after you connect to them in the Studio or from your fleet above.</p>
+			</div>
+		{:else}
+			<ul class="history-list">
+				{#each plotterHistoryStore.entries as entry (entry.key)}
+					{@const avail = historyAvailability(entry)}
+					{@const fleet = fleetFor(entry)}
+					<li class="history-row" class:history-row--connected={avail === "connected"}>
+						<div class="conn-medallion conn-medallion--{entry.connection}" use:tooltip={connFullLabel(entry.connection)} aria-label={connFullLabel(entry.connection)}>
+							{@render connMedallionIcon(entry.connection)}
+							<span class="conn-medallion__label">{connLabel(entry.connection)}</span>
+						</div>
+
+						<div class="history-row__info">
+							<div class="history-row__title">
+								{#if renamingKey === entry.key}
+									<!-- svelte-ignore a11y_autofocus -->
+									<input
+										class="history-rename"
+										bind:value={renameValue}
+										placeholder={entry.presetName}
+										aria-label="Plotter name"
+										autofocus
+										onkeydown={(e) => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") renamingKey = null; }}
+										onblur={commitRename}
+									/>
+								{:else}
+									<button class="history-name" onclick={() => startRename(entry)} use:tooltip={"Rename"}>{entry.label ?? entry.presetName}</button>
+								{/if}
+								<span class="avail-badge avail-badge--{avail}">{availabilityLabel(avail, entry)}</span>
+								{#if entry.key === plotterHistoryStore.autoTargetKey && plotterHistoryStore.autoReconnect}
+									<span class="auto-chip" use:tooltip={"The Studio reconnects this plotter automatically"}>Auto</span>
+								{/if}
+								{#if fleet}
+									<span class="fleet-chip" use:tooltip={`Registered in your fleet as “${fleet.name}”`}>In fleet</span>
+								{/if}
+							</div>
+							<span class="history-row__meta">
+								{viaLabel(entry)} · last connected {timeAgo(entry.lastConnectedAt)} · {entry.connectCount} {entry.connectCount === 1 ? "connection" : "connections"}
+								{#if endLabel(entry)} · {endLabel(entry)}{/if}
+							</span>
+							<label class="history-model">
+								<span>Model</span>
+								<select
+									aria-label="Plotter model"
+									value={entry.presetName}
+									onchange={(e) => plotterHistoryStore.setPreset(entry.key, (e.target as HTMLSelectElement).value)}
+								>
+									{#each PLOTTER_PRESETS as p}
+										<option value={p.name}>{p.name}</option>
+									{/each}
+								</select>
+							</label>
+						</div>
+
+						<div class="card-actions history-row__actions">
+							{#if avail === "connected"}
+								<button class="card-btn" onclick={() => handleHistoryDisconnect(entry)}>Disconnect</button>
+							{:else}
+								<button
+									class="card-btn"
+									class:card-btn--primary={avail === "available"}
+									onclick={() => handleHistoryConnect(entry)}
+									disabled={connectingKey !== null || (entry.connection === "cut-agent" && avail === "absent")}
+									use:tooltip={avail === "absent" && entry.connection === "usb-serial" ? "Opens the USB picker filtered to this plotter" : undefined}
+								>
+									{connectingKey === entry.key ? "Connecting…" : avail === "absent" && entry.connection === "usb-serial" ? "Find & connect" : "Connect"}
+								</button>
+							{/if}
+							{#if !fleet}
+								<button class="card-btn" onclick={() => handleSaveToFleet(entry)} use:tooltip={"Register in your fleet (synced to your account)"}>Save to fleet</button>
+							{/if}
+							<button class="card-btn card-btn--remove" onclick={() => plotterHistoryStore.forget(entry.key)} use:tooltip={"Remove from history"}>Forget</button>
+						</div>
+					</li>
+				{/each}
+			</ul>
+			<div class="history-foot">
+				{#if confirmClearHistory}
+					<span class="history-foot__text">Clear all connection history?</span>
+					<button class="card-btn card-btn--danger" onclick={() => { plotterHistoryStore.clear(); confirmClearHistory = false; }}>Clear</button>
+					<button class="card-btn" onclick={() => confirmClearHistory = false}>Cancel</button>
+				{:else}
+					<button class="link-btn" onclick={() => confirmClearHistory = true}>Clear history</button>
+				{/if}
+			</div>
+		{/if}
+	</section>
 
 	<!-- ─── Job queue ────────────────────────────── -->
 	<section class="jobs-section">
@@ -1610,4 +1915,139 @@
 	}
 
 	.btn-cancel:hover { background: var(--bg-surface-2, var(--bg-hover)); color: var(--text-primary); }
+
+	/* ─── Connection history ─── */
+	.history-section { display: flex; flex-direction: column; gap: 10px; scroll-margin-top: 80px; }
+	.history-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		flex-wrap: wrap;
+	}
+	.history-note {
+		margin: 0;
+		font-size: 0.8125rem;
+		color: var(--text-tertiary, var(--text-muted));
+		max-width: 720px;
+	}
+	.empty-state--compact { padding: 24px 16px; border: 1px dashed var(--border-default); border-radius: var(--radius-lg); }
+	.empty-state--compact .empty-sub { max-width: 360px; }
+
+	.auto-toggle {
+		display: inline-flex;
+		align-items: center;
+		gap: 10px;
+		cursor: pointer;
+		user-select: none;
+	}
+	.auto-toggle input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+	.auto-toggle__track {
+		position: relative;
+		width: 34px;
+		height: 20px;
+		border-radius: 999px;
+		background: var(--text-disabled);
+		transition: background 0.2s ease;
+		flex-shrink: 0;
+	}
+	.auto-toggle__thumb {
+		position: absolute;
+		top: 3px;
+		left: 3px;
+		width: 14px;
+		height: 14px;
+		border-radius: 50%;
+		background: #fff;
+		transition: transform 0.2s ease;
+	}
+	.auto-toggle input:checked + .auto-toggle__track { background: var(--color-brand); }
+	.auto-toggle input:checked + .auto-toggle__track .auto-toggle__thumb { transform: translateX(14px); }
+	.auto-toggle input:focus-visible + .auto-toggle__track { outline: 2px solid var(--color-brand); outline-offset: 2px; }
+	.auto-toggle__text { display: flex; flex-direction: column; line-height: 1.3; }
+	.auto-toggle__text strong { font-size: 0.8125rem; color: var(--text-primary); font-weight: 600; }
+	.auto-toggle__text span { font-size: 0.75rem; color: var(--text-tertiary, var(--text-muted)); }
+
+	.history-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+	.history-row {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		padding: 12px 14px;
+		border-radius: var(--radius-lg);
+		background: var(--bg-surface);
+		border: 1px solid var(--border-subtle);
+	}
+	.history-row--connected { border-color: color-mix(in srgb, var(--color-success) 40%, transparent); }
+	.history-row__info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+	.history-row__title { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+	.history-name {
+		background: none;
+		border: none;
+		padding: 0;
+		font: inherit;
+		font-size: 0.875rem;
+		font-weight: 600;
+		color: var(--text-primary);
+		cursor: text;
+		text-align: left;
+	}
+	.history-name:hover { text-decoration: underline dotted; }
+	.history-rename {
+		font: inherit;
+		font-size: 0.875rem;
+		padding: 2px 6px;
+		border-radius: var(--radius-sm);
+		border: 1px solid var(--border-strong);
+		background: var(--bg-surface-2);
+		color: var(--text-primary);
+		min-width: 0;
+		width: 220px;
+		max-width: 100%;
+	}
+	.history-row__meta { font-size: 0.75rem; color: var(--text-tertiary, var(--text-muted)); overflow-wrap: anywhere; }
+	.history-model { display: inline-flex; align-items: center; gap: 6px; font-size: 0.75rem; color: var(--text-tertiary, var(--text-muted)); }
+	.history-model select {
+		font: inherit;
+		font-size: 0.75rem;
+		padding: 2px 4px;
+		border-radius: var(--radius-sm);
+		border: 1px solid var(--border-default);
+		background: var(--bg-surface-2);
+		color: var(--text-secondary);
+		max-width: 220px;
+	}
+	.history-row__actions { flex-shrink: 0; }
+
+	.avail-badge, .auto-chip, .fleet-chip {
+		padding: 1px 6px;
+		border-radius: var(--radius-sm);
+		font-size: 0.625rem;
+		font-weight: 700;
+		letter-spacing: 0.05em;
+		text-transform: uppercase;
+	}
+	.avail-badge--connected { background: color-mix(in srgb, var(--color-success) 16%, transparent); color: var(--color-success); }
+	.avail-badge--available { background: color-mix(in srgb, var(--color-warning) 16%, transparent); color: var(--color-warning); }
+	.avail-badge--network   { background: color-mix(in srgb, var(--color-brand) 14%, transparent); color: var(--text-brand, var(--color-brand)); }
+	.avail-badge--absent    { background: var(--bg-surface-2); color: var(--text-tertiary, var(--text-muted)); }
+	.auto-chip  { background: color-mix(in srgb, var(--color-brand) 14%, transparent); color: var(--text-brand, var(--color-brand)); }
+	.fleet-chip { background: rgba(139, 92, 246, 0.12); color: #a78bfa; }
+
+	.card-btn--primary {
+		background: var(--color-brand);
+		border-color: var(--color-brand);
+		color: var(--text-inverse, #0a0a0a);
+		font-weight: 600;
+	}
+	.card-btn--primary:hover:not(:disabled) { filter: brightness(0.92); }
+
+	.history-foot { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
+	.history-foot__text { font-size: 0.8125rem; color: var(--text-secondary); }
+
+	@media (max-width: 640px) {
+		.history-row { flex-wrap: wrap; align-items: flex-start; }
+		.history-row__info { flex-basis: calc(100% - 64px); }
+		.history-row__actions { width: 100%; justify-content: flex-start; flex-wrap: wrap; }
+	}
 </style>

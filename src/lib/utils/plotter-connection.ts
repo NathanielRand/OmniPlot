@@ -111,75 +111,11 @@ let _cachedPort: any | null = null;
 
 export type SerialPortInfo = { label: string; vendorId?: number; productId?: number };
 
-// Silently reconnects to a previously-authorized port without showing the
-// browser selection dialog. Called on page mount to restore a USB connection
-// that was active before navigation. If `match` (vendorId/productId) is given
-// and more than one authorized port exists, connects only to the port whose
-// USB identity matches — returns null rather than guessing when the match
-// isn't found among multiple candidates, since opening the wrong physical
-// device would silently mis-attribute the connection (e.g. to the wrong
-// saved PlotterDevice). Falls back to the sole authorized port when there's
-// exactly one, or when no match was requested at all.
-export async function reconnectSerialPort(
-    baudRate: number,
-    match?: { vendorId?: number; productId?: number },
-): Promise<SerialPortInfo | null> {
-    if (!("serial" in navigator)) return null;
-    try {
-        const serial = (navigator as any).serial;
-        const ports: any[] = await serial.getPorts();
-        if (!ports.length) return null;
+export type SerialOpenResult =
+    | { ok: true; info: SerialPortInfo }
+    | { ok: false; reason: "unsupported" | "not-authorized" | "busy" | "error"; message: string };
 
-        let port = ports[0];
-        if (match?.vendorId !== undefined) {
-            const found = ports.find((p) => {
-                const info = p.getInfo?.() ?? {};
-                return info.usbVendorId === match.vendorId &&
-                    (match.productId === undefined || info.usbProductId === match.productId);
-            });
-            if (found) {
-                port = found;
-            } else if (ports.length > 1) {
-                return null;
-            }
-        }
-
-        _cachedPort = port;
-        await _ensurePortOpen(port, baudRate);
-        const info = port.getInfo?.() ?? {};
-        return {
-            label: info.usbVendorId
-                ? `USB ${info.usbVendorId.toString(16).padStart(4, "0")}:${(info.usbProductId ?? 0).toString(16).padStart(4, "0")}`
-                : "Serial port",
-            vendorId: info.usbVendorId,
-            productId: info.usbProductId,
-        };
-    } catch {
-        _cachedPort = null;
-        return null;
-    }
-}
-
-// Requests a port (shows browser dialog) and caches it.
-// Returns the port info for display. Call from a user-gesture handler.
-export async function connectSerialPort(baudRate: number): Promise<SerialPortInfo> {
-    if (!("serial" in navigator)) {
-        throw new Error("Web Serial is only available in Chrome or Edge.");
-    }
-    const serial = (navigator as any).serial;
-    const port = await serial.requestPort();
-    _cachedPort = port;
-
-    if (!port.readable) {
-        await port.open({
-            baudRate,
-            dataBits: 8,
-            stopBits: 1,
-            parity: "none",
-            flowControl: "none",
-        });
-    }
-
+function _portInfo(port: any): SerialPortInfo {
     const info = port.getInfo?.() ?? {};
     return {
         label: info.usbVendorId
@@ -188,6 +124,90 @@ export async function connectSerialPort(baudRate: number): Promise<SerialPortInf
         vendorId: info.usbVendorId,
         productId: info.usbProductId,
     };
+}
+
+function _matches(port: any, match: { vendorId?: number; productId?: number }): boolean {
+    const info = port.getInfo?.() ?? {};
+    return info.usbVendorId === match.vendorId &&
+        (match.productId === undefined || info.usbProductId === match.productId);
+}
+
+// Opens a previously-authorized port without showing the browser dialog.
+// With `match`, only a port with that exact USB identity is opened — never a
+// different device just because it happens to be the only one authorized, since
+// that would silently cut on the wrong plotter. Without `match`, the sole
+// authorized port is used (and nothing when there are several).
+// "busy" means the OS refused to open it: another tab, the Cut Agent, or
+// another program is holding the port.
+export async function openAuthorizedSerial(
+    baudRate: number,
+    match?: { vendorId?: number; productId?: number },
+): Promise<SerialOpenResult> {
+    if (typeof navigator === "undefined" || !("serial" in navigator)) {
+        return { ok: false, reason: "unsupported", message: "USB Direct requires Chrome or Edge." };
+    }
+    const ports: any[] = await (navigator as any).serial.getPorts().catch(() => []);
+    const port = match?.vendorId !== undefined
+        ? (_cachedPort && ports.includes(_cachedPort) && _matches(_cachedPort, match) ? _cachedPort : ports.find((p) => _matches(p, match)))
+        : ports.length === 1 ? ports[0] : undefined;
+    if (!port) {
+        return { ok: false, reason: "not-authorized", message: "This plotter isn't authorized in this browser yet." };
+    }
+    try {
+        await _ensurePortOpen(port, baudRate);
+    } catch (err: any) {
+        const busy = err?.name === "NetworkError" || /failed to open/i.test(err?.message ?? "");
+        return busy
+            ? { ok: false, reason: "busy", message: "The port is in use — close other OmniPlot tabs, or disconnect it in the Cut Agent." }
+            : { ok: false, reason: "error", message: err?.message ?? "Could not open the serial port." };
+    }
+    if (_cachedPort && _cachedPort !== port) {
+        try { await _cachedPort.close?.(); } catch { /* already closed */ }
+    }
+    _cachedPort = port;
+    return { ok: true, info: _portInfo(port) };
+}
+
+// Back-compat wrapper returning info or null.
+export async function reconnectSerialPort(
+    baudRate: number,
+    match?: { vendorId?: number; productId?: number },
+): Promise<SerialPortInfo | null> {
+    const r = await openAuthorizedSerial(baudRate, match);
+    return r.ok ? r.info : null;
+}
+
+// Requests a port (shows browser dialog) and caches it. `filter` narrows the
+// dialog to one known plotter so reconnecting a remembered device is a single
+// click. Call from a user-gesture handler.
+export async function connectSerialPort(
+    baudRate: number,
+    filter?: { vendorId?: number; productId?: number },
+): Promise<SerialPortInfo> {
+    if (!("serial" in navigator)) {
+        throw new Error("Web Serial is only available in Chrome or Edge.");
+    }
+    const serial = (navigator as any).serial;
+    const filters = filter?.vendorId !== undefined
+        ? [{ usbVendorId: filter.vendorId, ...(filter.productId !== undefined ? { usbProductId: filter.productId } : {}) }]
+        : undefined;
+    const port = await serial.requestPort(filters ? { filters } : undefined);
+    await _ensurePortOpen(port, baudRate);
+    if (_cachedPort && _cachedPort !== port) {
+        try { await _cachedPort.close?.(); } catch { /* already closed */ }
+    }
+    _cachedPort = port;
+    return _portInfo(port);
+}
+
+/** The port already open in this tab (e.g. after navigating back to the Studio), or null. */
+export function getOpenSerialPortInfo(): SerialPortInfo | null {
+    return _cachedPort?.readable ? _portInfo(_cachedPort) : null;
+}
+
+/** True when `port` is the one this tab is connected through. */
+export function isCachedPort(port: unknown): boolean {
+    return !!_cachedPort && port === _cachedPort;
 }
 
 export function disconnectSerialPort(): void {

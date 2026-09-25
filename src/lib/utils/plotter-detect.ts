@@ -300,3 +300,34 @@ export function compatLabel(status: CompatibilityStatus): string {
 	if (status === "tight") return "Near limit";
 	return "Too wide";
 }
+
+// ─── Live device list (for plotter history availability) ───
+// Every USB serial device visible right now: Web Serial ports this browser
+// is authorized for, plus the Cut Agent's USB ports when it's online.
+export async function listLiveDevices(
+	agentUrl: string | null,
+): Promise<Array<{ source: "agent" | "usb"; vendorId?: number; productId?: number; portPath?: string }>> {
+	const out: Array<{ source: "agent" | "usb"; vendorId?: number; productId?: number; portPath?: string }> = [];
+	if (typeof navigator !== "undefined" && "serial" in navigator) {
+		const ports: any[] = await (navigator as any).serial.getPorts().catch(() => []);
+		for (const p of ports) {
+			const info = p.getInfo?.() ?? {};
+			out.push({ source: "usb", vendorId: info.usbVendorId, productId: info.usbProductId });
+		}
+	}
+	if (agentUrl) {
+		try {
+			const res = await fetch(`${agentUrl.replace(/\/$/, "")}/api/ports`, { signal: AbortSignal.timeout(3000) });
+			const ports: Array<{ name: string; isUSB: boolean; vendorId?: string; productId?: string }> = res.ok ? await res.json() : [];
+			for (const p of ports.filter((x) => x.isUSB)) {
+				out.push({
+					source: "agent",
+					portPath: p.name,
+					vendorId: p.vendorId ? parseInt(p.vendorId, 16) : undefined,
+					productId: p.productId ? parseInt(p.productId, 16) : undefined,
+				});
+			}
+		} catch { /* agent unreachable */ }
+	}
+	return out;
+}

@@ -642,6 +642,11 @@ function _saveActiveConnection(type: string) {
 	localStorage.setItem(ACTIVE_CONN_KEY, type);
 }
 
+function _autoReconnectEnabled(): boolean {
+	if (typeof localStorage === "undefined") return true;
+	try { return JSON.parse(localStorage.getItem("omniplot-plotter-history") ?? "{}").autoReconnect !== false; } catch { return true; }
+}
+
 function _loadActiveConnection(): PlotterConfig["connection"] {
 	if (typeof localStorage === "undefined") return "download";
 	const saved = localStorage.getItem(ACTIVE_CONN_KEY) as PlotterConfig["connection"] | null;
@@ -681,15 +686,28 @@ function _loadPresetSettings(name: string): Partial<Record<PresetPersistKey, num
 	}
 }
 
+// The plotter model last made active — restored on load so a reload doesn't
+// silently fall back to the generic preset (wrong max width, wrong calibration).
+const ACTIVE_PRESET_KEY = "omniplot-conn:preset";
+
+function _loadActivePreset() {
+	if (typeof localStorage === "undefined") return PLOTTER_PRESETS[0];
+	const name = localStorage.getItem(ACTIVE_PRESET_KEY);
+	return PLOTTER_PRESETS.find((p) => p.name === name) ?? PLOTTER_PRESETS[0];
+}
+
 function createPlotterStore() {
-	const defaultPreset = PLOTTER_PRESETS[0];
+	const defaultPreset = _loadActivePreset();
 
 	// Start from preset defaults, then layer in any saved user customisations
 	const _savedDefaults = _loadPresetSettings(defaultPreset.name!) ?? {};
 
-	// Restore last-used connection type and its per-type settings
-	const _savedConnType = _loadActiveConnection();
-	const _savedConnSettings = _loadConnSettings(_savedConnType);
+	// Restore last-used connection type and its per-type settings — unless the
+	// user turned auto-reconnect off (Plotter history), in which case every
+	// session starts disconnected and they choose the plotter themselves.
+	const _lastConnType = _loadActiveConnection();
+	const _savedConnType = _autoReconnectEnabled() ? _lastConnType : "download";
+	const _savedConnSettings = _loadConnSettings(_lastConnType);
 	const _savedOrientation = _loadOrientation(defaultPreset.name!);
 
 	let config = $state<PlotterConfig>({
@@ -748,6 +766,9 @@ function createPlotterStore() {
 				// Orientation is this plotter model's own calibration.
 				..._loadOrientation(preset.name ?? config.name),
 			};
+			if (preset.name && typeof localStorage !== "undefined") {
+				try { localStorage.setItem(ACTIVE_PRESET_KEY, preset.name); } catch { /* storage blocked */ }
+			}
 		},
 		// Saves the current connection's specific settings, then restores the saved
 		// settings for the new connection type before switching. This ensures IP

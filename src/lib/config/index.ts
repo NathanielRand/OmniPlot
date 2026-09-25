@@ -980,9 +980,48 @@ export const FAQ_ITEMS = [
 // ─── Changelog ────────────────────────────────
 // Newest first. `LATEST_VERSION` drives the sidebar "what's new" badge —
 // bump it whenever a release entry is added below.
-export const LATEST_VERSION = "1.11.0";
+export const LATEST_VERSION = "1.12.0";
 
 export const CHANGELOG = [
+	{
+		version: "1.12.0",
+		date: "2026-09-25",
+		label: "Plotter memory & auto-reconnect",
+		changes: [
+			{
+				type: "feature",
+				text: "Plotter history — OmniPlot remembers every plotter you connect to: its model, your name for it, and how it's connected. Reconnect any of them in one click from Recent plotters in the Studio Plotter tab, or see the full history on the Plotters page.",
+			},
+			{
+				type: "feature",
+				text: "Auto-reconnect — the plotter you last used reconnects by itself when you open OmniPlot, plug it back in, or restart the Cut Agent. It retries quickly at first, then eases off, and shows what it's waiting for. Turn it off anytime with the Auto-reconnect switch.",
+			},
+			{
+				type: "improvement",
+				text: "You're always in control: connecting a different plotter always takes priority over auto-reconnect, and a plotter you disconnect yourself stays disconnected until you connect it again. A \"Stop\" button pauses reconnect attempts for the session.",
+			},
+			{
+				type: "improvement",
+				text: "Reconnecting a USB plotter no longer shows the browser's device picker when it's already authorized. When the picker is needed, it lists only that plotter. A port held by another tab or the Cut Agent now says so clearly.",
+			},
+			{
+				type: "fix",
+				text: "Your plotter model is remembered across reloads and reconnects — it no longer falls back to \"Generic HPGL Cutter\" (with the wrong max width), and \"Set active\" on the Plotters page now sticks in the Studio.",
+			},
+			{
+				type: "fix",
+				text: "Cut Agent jobs follow a plotter whose COM port number changed, instead of being sent to the old port.",
+			},
+			{
+				type: "fix",
+				text: "A plotter you disconnected no longer reconnects on its own a few seconds later, and the Cut Agent no longer shows as connected while it isn't running.",
+			},
+			{
+				type: "fix",
+				text: "Switching between USB Direct and the Cut Agent releases the port from the other side, so both can no longer claim the same plotter. Only the plotter actually in use shows as Connected.",
+			},
+		],
+	},
 	{
 		version: "1.11.0",
 		date: "2026-09-25",

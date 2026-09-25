@@ -9,7 +9,9 @@
 		shopStore,
 		agentStore,
 		confirmStore,
+		plotterHistoryStore,
 	} from "$lib/stores";
+	import { formatUsbId, retryDelayMs, timeAgo, type PlotterHistoryEntry } from "$lib/utils/plotter-history";
 	import { bestNest, smartNest, findNextPosition, samplePolygonArea, canvasPathAt, trueBBoxAt, wouldOverlapAny, type PlacementResult } from "$lib/utils/nesting";
 	import {
 		downloadHpgl,
@@ -23,7 +25,7 @@
 	} from "$lib/utils/hpgl";
 	import { orientationTestHpgl, orientationTestPreview, correctedOrientation } from "$lib/utils/orientationTest";
 	import { isOrientationVerified, saveOrientation } from "$lib/stores";
-	import { sendToPlotter, sendToPlotterSegmented, sendSettings, connectSerialPort, reconnectSerialPort, disconnectSerialPort, isSerialConnected, queryPlotter, releaseAgentPort, type SerialPortInfo, type CutProgress } from "$lib/utils/plotter-connection";
+	import { sendToPlotter, sendToPlotterSegmented, sendSettings, connectSerialPort, openAuthorizedSerial, getOpenSerialPortInfo, isCachedPort, disconnectSerialPort, queryPlotter, releaseAgentPort, type SerialPortInfo, type CutProgress } from "$lib/utils/plotter-connection";
 	import { logPlotterError, incrementCutUsage } from "$lib/firebase/firestore";
 	import { cutJobStore, plansStore, platformStore } from "$lib/stores";
 	import type { PlotterDiagnostic } from "$lib/utils/plotter-errors";
@@ -879,12 +881,14 @@
 		product?: string;
 		status: "detected" | "connected" | "offline";
 		lastSeenMs: number;
+		/** Remembered name from plotter history, e.g. "Bay 1 Roland". */
+		label?: string;
+		historyKey?: string;
 	}
 
 	let discoveredDevices  = $state<DiscoveredDevice[]>([]);
 	let discoveryPhase     = $state<"idle" | "scanning" | "done">("idle");
 	let selectedDeviceId   = $state<string | null>(null);
-	let autoConnectedAgent = $state(false);  // prevents re-auto-connecting on every poll
 	let testingConn        = $state(false);
 	let bgRefreshing       = $state(false);  // silent background poll in progress
 
@@ -894,7 +898,6 @@
 	// ─── Connection UI state ───────────────────────
 	let agentProbeStatus = $state<"probing" | "online" | "offline">("probing");
 	let connecting       = $state(false);
-	let autoReconnecting = false; // guards the background USB auto-reconnect in runDiscovery against overlapping 8s poll ticks
 	let showConfig       = $state(false);
 
 	// ─── Roll alignment calibration ───────────────
@@ -1047,7 +1050,7 @@
 
 	const isConnected = $derived(
 		(plotterStore.config.connection === "usb-serial" && !!serialPortInfo) ||
-		plotterStore.config.connection === "cut-agent"
+		(plotterStore.config.connection === "cut-agent" && agentStore.status === "online")
 	);
 
 	const compat = $derived(
@@ -1186,10 +1189,13 @@
 
 	// ─── Plotter discovery ───────────────────────
 	// Polls all sources (Cut Agent USB ports + Web Serial granted ports),
-	// merges results, auto-connects agent devices, and updates live status.
+	// merges results, and hands off to the reconnect engine (maybeAutoReconnect).
 	// silent=true: background poll — skips the "Scanning…" phase change so the
-	// UI doesn't flicker every 8s. Data is still updated atomically at the end.
+	// UI doesn't flicker. Data is still updated atomically at the end.
+	let lastAgentProbeAt = 0;
+	let discoveryRun = 0;
 	async function runDiscovery(silent = false) {
+		const run = ++discoveryRun;
 		if (silent) {
 			bgRefreshing = true;
 		} else {
@@ -1197,44 +1203,57 @@
 		}
 		const now = Date.now();
 		const next: DiscoveredDevice[] = [];
+		let openPortPresent = false; // the USB port this tab holds is still plugged in
+		const waitingOn = plotterHistoryStore.autoReconnect && !plotterHistoryStore.paused ? plotterHistoryStore.autoTarget : null;
 
 		// 1. Probe agent + enumerate its USB ports (skipped when an admin has
-		// turned the Cut Agent off — Settings → Cut Agent)
+		// turned the Cut Agent off — Settings → Cut Agent). While offline, fast
+		// background retries (waiting on a USB plotter) only re-probe the agent
+		// about once a minute so an absent agent doesn't flood the console.
 		const base = (plotterStore.config.agentUrl ?? "http://localhost:7878").replace(/\/$/, "");
+		const skipAgentProbe = silent && agentProbeStatus === "offline" && now - lastAgentProbeAt < 55_000 && waitingOn?.connection !== "cut-agent";
 		if (!platformStore.flags.cutAgent) {
 			agentProbeStatus = "offline";
 			agentStore.setOffline();
-		} else try {
-			const r = await fetch(`${base}/api/status`, { signal: AbortSignal.timeout(2500) });
-			if (r.ok) {
-				agentProbeStatus = "online";
-				const body: { version?: string } = await r.json().catch(() => ({}));
-				agentStore.setOnline(body.version ?? "");
-			} else {
+		} else if (!skipAgentProbe) {
+			lastAgentProbeAt = now;
+			try {
+				const r = await fetch(`${base}/api/status`, { signal: AbortSignal.timeout(2500) });
+				if (r.ok) {
+					agentProbeStatus = "online";
+					const body: { version?: string } = await r.json().catch(() => ({}));
+					agentStore.setOnline(body.version ?? "");
+				} else {
+					agentProbeStatus = "offline";
+					agentStore.setOffline();
+				}
+			} catch {
 				agentProbeStatus = "offline";
 				agentStore.setOffline();
 			}
-		} catch {
-			agentProbeStatus = "offline";
-			agentStore.setOffline();
 		}
 
 		if (agentProbeStatus === "online") {
 			type AgentPort = { name: string; isUSB: boolean; vendorId?: string; productId?: string; manufacturer?: string; product?: string; };
-			const ports: AgentPort[] = await fetch(`${base}/api/ports`, { signal: AbortSignal.timeout(3000) })
-				.then(r => r.ok ? r.json() : []).catch(() => []);
-			for (const p of (ports as AgentPort[]).filter(pp => pp.isUSB)) {
+			const ports: AgentPort[] | null = await fetch(`${base}/api/ports`, { signal: AbortSignal.timeout(3000) })
+				.then(r => r.ok ? r.json() : null).catch(() => null);
+			// One slow/failed port listing isn't an unplug — keep the agent's
+			// devices as they were rather than reporting them lost.
+			if (!ports) next.push(...discoveredDevices.filter(d => d.source === "agent" && d.status !== "offline"));
+			const usbPorts = (ports ?? []).filter(pp => pp.isUSB);
+			const agentPath = plotterStore.config.serialPort;
+			for (const p of usbPorts) {
 				const vid = p.vendorId ? parseInt(p.vendorId, 16) : undefined;
 				const pid = p.productId ? parseInt(p.productId, 16) : undefined;
-				const matched = matchPortToPreset(vid, pid);
-				const id = `agent:${p.name}`;
-				const isActive = plotterStore.config.connection === "cut-agent";
+				// Connected = the agent is the active route AND this is the port it
+				// cuts through ("auto" only counts when there's a single port).
+				const isActive = plotterStore.config.connection === "cut-agent" &&
+					(agentPath === p.name || ((!agentPath || agentPath === "auto") && usbPorts.length === 1));
 				next.push({
-					id,
+					id: `agent:${p.name}`,
 					source: "agent",
 					portPath: p.name,
-					preset: matched?.preset ?? PLOTTER_PRESETS[0],
-					confidence: matched?.confidence ?? "generic",
+					...identify({ source: "agent", vendorId: vid, productId: pid, portPath: p.name }),
 					vendorId: vid,
 					productId: pid,
 					manufacturer: p.manufacturer,
@@ -1245,21 +1264,25 @@
 			}
 		}
 
-		// 2. Web Serial previously-granted ports (Chrome/Edge only)
+		// 2. Web Serial previously-granted ports (Chrome/Edge only). Identical
+		// cutters share a VID:PID, so the id carries an occurrence suffix to stay
+		// unique; only the port this tab actually holds is marked connected.
 		if (typeof navigator !== "undefined" && "serial" in navigator) {
 			const ports: any[] = await (navigator as any).serial.getPorts().catch(() => []);
+			const seen = new Map<string, number>();
 			for (const port of ports) {
 				const info: { usbVendorId?: number; usbProductId?: number } = port.getInfo?.() ?? {};
 				const vid = info.usbVendorId;
 				const pid = info.usbProductId;
-				const matched = matchPortToPreset(vid, pid);
-				const id = `usb:${vid?.toString(16).padStart(4, "0") ?? "??"}:${pid?.toString(16).padStart(4, "0") ?? "??"}`;
-				const isActive = plotterStore.config.connection === "usb-serial" && !!serialPortInfo;
+				const baseId = `usb:${vid?.toString(16).padStart(4, "0") ?? "??"}:${pid?.toString(16).padStart(4, "0") ?? "??"}`;
+				const n = (seen.get(baseId) ?? 0) + 1;
+				seen.set(baseId, n);
+				const isActive = plotterStore.config.connection === "usb-serial" && !!serialPortInfo && isCachedPort(port);
+				if (isActive) openPortPresent = true;
 				next.push({
-					id,
+					id: n > 1 ? `${baseId}#${n}` : baseId,
 					source: "usb",
-					preset: matched?.preset ?? PLOTTER_PRESETS[0],
-					confidence: matched?.confidence ?? "generic",
+					...identify({ source: "usb", vendorId: vid, productId: pid }),
 					vendorId: vid,
 					productId: pid,
 					status: isActive ? "connected" : "detected",
@@ -1268,13 +1291,24 @@
 			}
 		}
 
-		// 3. Merge — preserve connected devices that vanished (mark offline + disconnect)
+		// A newer scan started while this one was awaiting — let it win.
+		if (run !== discoveryRun) return;
+
+		// 3. Merge — a connected device that vanished was lost (unplugged, agent
+		// stopped): mark it offline, release it, and keep it as the auto target
+		// so it reconnects by itself when it comes back.
 		const merged: DiscoveredDevice[] = [...next];
 		for (const prev of discoveredDevices) {
 			if (!next.find(d => d.id === prev.id) && prev.status === "connected") {
+				// Identical twin cutters renumber card ids when one is unplugged —
+				// the open port still being present means ours wasn't the one.
+				if (prev.source === "usb" && openPortPresent) continue;
 				merged.push({ ...prev, status: "offline" });
 				if (prev.source === "usb") { disconnectSerialPort(); serialPortInfo = null; }
-				if (prev.source === "agent") { plotterStore.switchConnection("download", { save: false }); autoConnectedAgent = false; }
+				if (prev.source === "agent") plotterStore.switchConnection("download", { save: false });
+				plotterHistoryStore.recordDisconnect(prev.historyKey ?? null, "lost");
+				toastStore.warning(`Lost connection · ${prev.label ?? prev.preset.name}`,
+					plotterHistoryStore.autoReconnect ? "It will reconnect automatically when it's back." : "Reconnect it from the Plotter tab.");
 			}
 		}
 
@@ -1282,99 +1316,246 @@
 		if (!silent) discoveryPhase = "done";
 		bgRefreshing = false;
 
-		// 4. Auto-select + auto-connect
+		// 4. Selection — never swap the active plotter's settings for a merely
+		// selected card while something is connected.
 		const online = merged.filter(d => d.status !== "offline");
 		const onlineAgents = online.filter(d => d.source === "agent");
-		if (online.length >= 1) {
-			// Pick selection: prefer existing selection, then single device, then prefer agent over USB
+		const connectedCard = online.find(d => d.status === "connected");
+		if (connectedCard) {
+			selectedDeviceId = connectedCard.id;
+		} else if (online.length >= 1) {
 			const target = (selectedDeviceId ? online.find(d => d.id === selectedDeviceId) : null)
 				?? (online.length === 1 ? online[0] : null)
 				?? (onlineAgents.length === 1 ? onlineAgents[0] : null);
-			if (target) {
-				if (selectedDeviceId !== target.id) {
-					selectedDeviceId = target.id;
-					plotterStore.applyPreset(target.preset);
-					if (target.portPath) plotterStore.update({ serialPort: target.portPath });
-				}
-				// Auto-connect a single agent device (no browser dialog needed; skip if outdated).
-				// Check onlineAgents.length === 1 (not online.length) so USB Direct cards alongside
-				// the agent don't suppress auto-connect.
-				if (onlineAgents.length === 1 && target.source === "agent" && !autoConnectedAgent && !isConnected && !agentStore.needsUpdate) {
-					plotterStore.switchConnection("cut-agent");
-					sendSettings(plotterStore.config).catch(() => {});
-					autoConnectedAgent = true;
-					discoveredDevices = discoveredDevices.map(d =>
-						d.id === target.id ? { ...d, status: "connected" } : d
-					);
-				}
-				// Silently reconnect a USB device the user has connected to before (VID/PID
-				// matches the last-saved usb-serial config) without requiring a click —
-				// covers the case where it's plugged back in mid-session, not just on mount.
-				if (
-					target.source === "usb" && target.status === "detected" && !serialPortInfo &&
-					!autoReconnecting &&
-					plotterStore.config.vendorId !== undefined &&
-					target.vendorId === plotterStore.config.vendorId &&
-					target.productId === plotterStore.config.productId
-				) {
-					autoReconnecting = true;
-					reconnectSerialPort(target.preset.baudRate ?? plotterStore.config.baudRate ?? 9600, {
-						vendorId: target.vendorId, productId: target.productId,
-					}).then((info) => {
-						if (!info) return;
-						serialPortInfo = info;
-						plotterStore.applyPreset(target.preset);
-						plotterStore.switchConnection("usb-serial");
-						discoveredDevices = discoveredDevices.map(d =>
-							d.id === target.id ? { ...d, status: "connected" } : d
-						);
-						toastStore.success(`Reconnected · ${target.preset.name}`, "USB Direct (auto-detected)");
-					}).finally(() => {
-						autoReconnecting = false;
-					});
-				}
+			if (target && selectedDeviceId !== target.id) {
+				selectedDeviceId = target.id;
+				plotterStore.applyPreset(target.preset);
+				if (target.portPath) plotterStore.update({ serialPort: target.portPath });
 			}
 		}
+
+		// 5. Reconnect engine
+		void maybeAutoReconnect(online);
+	}
+
+	// Remembered model + name for a discovered device (from history), falling
+	// back to USB VID matching — so reconnecting never resets a plotter the user
+	// set up as e.g. a VEVOR 28" back to "Generic HPGL Cutter".
+	function identify(dev: { source: "agent" | "usb"; vendorId?: number; productId?: number; portPath?: string }) {
+		const entry = plotterHistoryStore.findEntryFor(dev);
+		const remembered = entry ? PLOTTER_PRESETS.find((p) => p.name === entry.presetName) : undefined;
+		const matched = matchPortToPreset(dev.vendorId, dev.productId);
+		return {
+			preset: remembered ?? matched?.preset ?? PLOTTER_PRESETS[0],
+			confidence: remembered ? "exact-vid" as const : matched?.confidence ?? "generic" as const,
+			label: entry?.label,
+			historyKey: entry?.key,
+		};
+	}
+
+	// ─── Reconnect engine ─────────────────────────
+	// Resumes the history auto target when it's available. Never runs while a
+	// manual connect is in progress, and abandons its result if the user acted
+	// in the meantime (plotterHistoryStore.beginManual bumps the epoch).
+	let autoAttempt: Promise<unknown> | null = null;
+	let retryAttempt = 0;
+
+	async function maybeAutoReconnect(live: DiscoveredDevice[]) {
+		// A network plotter is "connected" whenever it's the active route —
+		// there's no live link to lose, so there's nothing to resume.
+		if (plotterStore.config.connection === "network") return;
+		if (isConnected || connecting || autoAttempt || cutting) {
+			if (isConnected && plotterHistoryStore.status.phase !== "idle") plotterHistoryStore.setStatus({ phase: "idle", key: null, attempt: 0 });
+			return;
+		}
+		const h = plotterHistoryStore;
+		if (!h.autoReconnect || h.paused) return;
+		const pick = h.pickAutoTarget(live);
+		// First run with no history at all: a single Cut Agent cutter needs no
+		// browser permission, so connect it as before.
+		if (!pick && h.entries.length === 0) {
+			const agents = live.filter(d => d.source === "agent");
+			if (agents.length === 1 && !agentStore.needsUpdate) {
+				autoAttempt = connectDevice(agents[0], { auto: true, epoch: h.epoch }).finally(() => { autoAttempt = null; });
+				await autoAttempt;
+			}
+			return;
+		}
+		if (!pick) {
+			const target = h.autoTarget;
+			h.setStatus(target
+				? { phase: h.status.phase === "failed" && h.status.key === target.key ? "failed" : "waiting", key: target.key, attempt: retryAttempt, message: h.status.key === target.key ? h.status.message : undefined }
+				: { phase: "idle", key: null, attempt: 0 });
+			return;
+		}
+		if (pick.device?.source === "agent" && agentStore.needsUpdate) {
+			h.setStatus({ phase: "failed", key: pick.entry.key, attempt: retryAttempt, message: "The Cut Agent needs an update before it can reconnect." });
+			return;
+		}
+		const epoch = h.epoch;
+		h.setStatus({ phase: "connecting", key: pick.entry.key, attempt: retryAttempt });
+		autoAttempt = (pick.device
+			? connectDevice(pick.device, { auto: true, epoch, entry: pick.entry })
+			: connectNetworkEntry(pick.entry, { auto: true, epoch })
+		).finally(() => { autoAttempt = null; });
+		await autoAttempt;
+	}
+
+	// Called before any manual connect/disconnect: claims priority over the
+	// engine and waits for an in-flight automatic attempt to back out.
+	async function beginManual(): Promise<number> {
+		const epoch = plotterHistoryStore.beginManual();
+		retryAttempt = 0;
+		if (autoAttempt) await autoAttempt.catch(() => {});
+		return epoch;
+	}
+
+	function markConnected(deviceId: string | null) {
+		discoveredDevices = discoveredDevices.map(d =>
+			d.id === deviceId ? { ...d, status: "connected" as const } :
+			d.status === "connected" ? { ...d, status: "detected" as const } : d
+		);
+		if (deviceId) selectedDeviceId = deviceId;
+	}
+
+	// One connect path for auto and manual, agent and USB. Manual USB connects
+	// open an already-authorized port directly, and only fall back to the
+	// browser picker (pre-filtered to this plotter) when that's not possible.
+	async function connectDevice(
+		device: DiscoveredDevice,
+		opts: { auto?: boolean; epoch: number; entry?: PlotterHistoryEntry | null },
+	): Promise<boolean> {
+		const h = plotterHistoryStore;
+		const entry = opts.entry ?? (device.historyKey ? h.entries.find(e => e.key === device.historyKey) : null) ?? null;
+		const preset = (entry && PLOTTER_PRESETS.find(p => p.name === entry.presetName)) || device.preset;
+		const name = entry?.label ?? preset.name;
+
+		if (device.source === "agent") {
+			if (opts.auto && !h.isCurrent(opts.epoch)) return false;
+			// The browser holding the same COM port would block the agent.
+			if (serialPortInfo) { disconnectSerialPort(); serialPortInfo = null; }
+			plotterStore.applyPreset(preset);
+			// Switch first: switchConnection restores the saved agent settings,
+			// which would otherwise overwrite this (possibly renumbered) port path.
+			plotterStore.switchConnection("cut-agent");
+			if (device.portPath) plotterStore.update({ serialPort: device.portPath });
+			plotterStore.persistConnSettings();
+			sendSettings(plotterStore.config).catch(() => {});
+			markConnected(device.id);
+			h.recordConnect({
+				connection: "cut-agent", presetName: preset.name, label: entry?.label, fleetId: entry?.fleetId,
+				vendorId: device.vendorId, productId: device.productId, serialPort: device.portPath,
+				agentUrl: plotterStore.config.agentUrl, baudRate: plotterStore.config.baudRate,
+			});
+			retryAttempt = 0;
+			toastStore.success(`${opts.auto ? "Reconnected" : "Connected"} · ${name}`, `Cut Agent · ${device.portPath ?? "auto"}`);
+			return true;
+		}
+
+		// USB Direct
+		if (typeof navigator === "undefined" || !("serial" in navigator)) {
+			if (!opts.auto) toastStore.warning("Not supported", "USB Direct requires Chrome or Edge.");
+			return false;
+		}
+		if (isFree) {
+			if (opts.auto) h.setStatus({ phase: "failed", key: entry?.key ?? null, attempt: retryAttempt, message: "USB Direct is available on Lite and above." });
+			else { toastStore.info("Lite plan required", "USB Direct is available on Lite and above."); uiStore.openPricing(); }
+			return false;
+		}
+		// Switching from the agent: have it let go of the port first.
+		if (!opts.auto && plotterStore.config.connection === "cut-agent") await releaseAgentPort(plotterStore.config);
+		const baud = entry?.baudRate ?? preset.baudRate ?? plotterStore.config.baudRate ?? 9600;
+		const usbId = device.vendorId !== undefined ? { vendorId: device.vendorId, productId: device.productId } : undefined;
+		let info: SerialPortInfo;
+		const res = await openAuthorizedSerial(baud, usbId);
+		if (opts.auto && !h.isCurrent(opts.epoch)) {
+			// The user took over while the port was opening — hand it back.
+			if (res.ok && !serialPortInfo) disconnectSerialPort();
+			return false;
+		}
+		if (res.ok) {
+			info = res.info;
+		} else if (opts.auto) {
+			h.setStatus({ phase: res.reason === "busy" ? "failed" : "waiting", key: entry?.key ?? null, attempt: retryAttempt, message: res.message });
+			return false;
+		} else if (res.reason === "busy") {
+			toastStore.error("Port in use", res.message);
+			return false;
+		} else {
+			try {
+				info = await connectSerialPort(baud, usbId);
+			} catch (err: any) {
+				if (err?.name !== "NotFoundError" && err?.name !== "NotAllowedError") toastStore.error("Connection failed", err?.message ?? "Could not open serial port.");
+				return false;
+			}
+		}
+
+		serialPortInfo = info;
+		plotterStore.applyPreset(preset);
+		plotterStore.switchConnection("usb-serial");
+		plotterStore.update({ vendorId: info.vendorId, productId: info.productId, baudRate: baud });
+		plotterStore.persistConnSettings();
+		markConnected(device.id || null);
+		h.recordConnect({
+			connection: "usb-serial", presetName: preset.name, label: entry?.label, fleetId: entry?.fleetId,
+			vendorId: info.vendorId, productId: info.productId, baudRate: baud,
+		});
+		retryAttempt = 0;
+		sendSettings(plotterStore.config).catch(() => {});
+		toastStore.success(`${opts.auto ? "Reconnected" : "Connected"} · ${name}`, `USB Direct · ${info.label}`);
+		return true;
+	}
+
+	// Network plotters can't be probed from the browser — reconnecting one
+	// restores its address and model as the active route.
+	async function connectNetworkEntry(entry: PlotterHistoryEntry, opts: { auto?: boolean; epoch: number }): Promise<boolean> {
+		if (opts.auto && !plotterHistoryStore.isCurrent(opts.epoch)) return false;
+		const preset = PLOTTER_PRESETS.find(p => p.name === entry.presetName) ?? PLOTTER_PRESETS[0];
+		if (serialPortInfo) { disconnectSerialPort(); serialPortInfo = null; }
+		plotterStore.applyPreset(preset);
+		plotterStore.switchConnection("network");
+		plotterStore.update({ ipAddress: entry.ipAddress, port: entry.port ?? 9100 });
+		plotterStore.persistConnSettings();
+		markConnected(null);
+		plotterHistoryStore.recordConnect({ connection: "network", presetName: preset.name, label: entry.label, fleetId: entry.fleetId, ipAddress: entry.ipAddress, port: entry.port });
+		toastStore.success(`${opts.auto ? "Restored" : "Connected"} · ${entry.label ?? preset.name}`, `Network · ${entry.ipAddress}:${entry.port ?? 9100}`);
+		return true;
 	}
 
 	async function handleConnectDevice(device: DiscoveredDevice) {
 		if (connecting) return;
 		connecting = true;
 		try {
-			if (device.source === "agent") {
-				plotterStore.applyPreset(device.preset);
-				if (device.portPath) plotterStore.update({ serialPort: device.portPath });
-				plotterStore.switchConnection("cut-agent");
-				sendSettings(plotterStore.config).catch(() => {});
-				autoConnectedAgent = true;
-				discoveredDevices = discoveredDevices.map(d =>
-					d.id === device.id ? { ...d, status: "connected" } : d
-				);
-				selectedDeviceId = device.id;
-				toastStore.success(`Connected · ${device.preset.name}`, `Cut Agent · ${device.portPath ?? "auto"}`);
-			} else {
-				if (!("serial" in navigator)) {
-					toastStore.warning("Not supported", "USB Direct requires Chrome or Edge.");
-					return;
-				}
-				if (isFree) { toastStore.info("Lite plan required", "USB Direct is available on Lite and above."); uiStore.openPricing(); return; }
-				try {
-					serialPortInfo = await connectSerialPort(device.preset.baudRate ?? plotterStore.config.baudRate ?? 9600);
-					plotterStore.applyPreset(device.preset);
-					plotterStore.switchConnection("usb-serial");
-					plotterStore.update({ vendorId: serialPortInfo.vendorId, productId: serialPortInfo.productId });
-					plotterStore.persistConnSettings();
-					selectedDeviceId = device.id;
-					discoveredDevices = discoveredDevices.map(d =>
-						d.id === device.id ? { ...d, status: "connected" } : d
-					);
-					sendSettings(plotterStore.config).catch(() => {});
-					toastStore.success(`Connected · ${device.preset.name}`, serialPortInfo.label);
-				} catch (err: any) {
-					if (err?.name !== "NotAllowedError") toastStore.error("Connection failed", err?.message ?? "Could not open serial port.");
-					serialPortInfo = null;
-				}
+			const epoch = await beginManual();
+			await connectDevice(device, { epoch });
+		} finally {
+			connecting = false;
+		}
+	}
+
+	// Quick connect from the Recent plotters list.
+	async function handleConnectHistory(entry: PlotterHistoryEntry) {
+		if (connecting) return;
+		connecting = true;
+		try {
+			const epoch = await beginManual();
+			if (entry.connection === "network") { await connectNetworkEntry(entry, { epoch }); return; }
+			const live = plotterHistoryStore.findLiveFor(entry, discoveredDevices.filter(d => d.status !== "offline"));
+			if (live) { await connectDevice(live, { epoch, entry }); return; }
+			if (entry.connection === "usb-serial") {
+				// Not authorized in this session (common for cutters without a USB
+				// serial number) — the picker is pre-filtered to just this plotter.
+				const ok = await connectDevice({
+					id: "", source: "usb", preset: PLOTTER_PRESETS.find(p => p.name === entry.presetName) ?? PLOTTER_PRESETS[0],
+					confidence: "exact-vid", vendorId: entry.vendorId, productId: entry.productId,
+					status: "detected", lastSeenMs: Date.now(), label: entry.label, historyKey: entry.key,
+				}, { epoch, entry });
+				if (ok) await runDiscovery(true);
+				return;
 			}
+			toastStore.info("Plotter not found", agentProbeStatus === "online"
+				? `${entry.label ?? entry.presetName} isn't plugged into this computer.`
+				: "Start the Cut Agent, then try again.");
 		} finally {
 			connecting = false;
 		}
@@ -1383,8 +1564,11 @@
 	function handleSelectDevice(device: DiscoveredDevice) {
 		if (device.status === "offline") return;
 		selectedDeviceId = device.id;
-		plotterStore.applyPreset(device.preset);
-		if (device.portPath) plotterStore.update({ serialPort: device.portPath });
+		// Selecting a card previews its settings only while nothing is connected.
+		if (!isConnected) {
+			plotterStore.applyPreset(device.preset);
+			if (device.portPath) plotterStore.update({ serialPort: device.portPath });
+		}
 	}
 
 	async function handleTestConnection(device: DiscoveredDevice) {
@@ -1393,7 +1577,7 @@
 		try {
 			const result = await sendToPlotter("PU;", plotterStore.config);
 			if (result.ok) {
-				toastStore.success("Plotter responding", `${device.preset.name} acknowledged the test command.`);
+				toastStore.success("Plotter responding", `${device.label ?? device.preset.name} acknowledged the test command.`);
 			} else {
 				toastStore.warning("Test failed", result.diagnostic.title);
 			}
@@ -1405,19 +1589,52 @@
 	async function handleGrantUsbPort() {
 		if (!("serial" in navigator)) return;
 		if (isFree) { uiStore.openPricing(); return; }
+		await beginManual();
 		try {
+			if (plotterStore.config.connection === "cut-agent") await releaseAgentPort(plotterStore.config);
 			const portInfo = await connectSerialPort(plotterStore.config.baudRate ?? 9600);
 			serialPortInfo = portInfo;
-			const matched = matchPortToPreset(portInfo.vendorId, portInfo.productId);
-			if (matched) plotterStore.applyPreset(matched.preset);
+			const known = plotterHistoryStore.findEntryFor({ source: "usb", vendorId: portInfo.vendorId, productId: portInfo.productId });
+			const preset = (known && PLOTTER_PRESETS.find(p => p.name === known.presetName)) || matchPortToPreset(portInfo.vendorId, portInfo.productId)?.preset;
+			if (preset) plotterStore.applyPreset(preset);
 			plotterStore.switchConnection("usb-serial");
 			plotterStore.update({ vendorId: portInfo.vendorId, productId: portInfo.productId });
 			plotterStore.persistConnSettings();
+			plotterHistoryStore.recordConnect({
+				connection: "usb-serial", presetName: plotterStore.config.name, label: known?.label, fleetId: known?.fleetId,
+				vendorId: portInfo.vendorId, productId: portInfo.productId, baudRate: plotterStore.config.baudRate,
+			});
 			await runDiscovery();
 			toastStore.success("USB port authorized", portInfo.label);
 		} catch (err: any) {
-			if (err?.name !== "NotAllowedError") toastStore.error("Connection failed", err?.message ?? "Could not open port.");
+			if (err?.name !== "NotFoundError" && err?.name !== "NotAllowedError") toastStore.error("Connection failed", err?.message ?? "Could not open port.");
 		}
+	}
+
+	// ─── Recent plotters (quick view) ─────────────
+	const recentPlotters = $derived(plotterHistoryStore.entries.slice(0, 4));
+	function historyAvailability(entry: PlotterHistoryEntry): "connected" | "available" | "absent" | "network" {
+		const active = plotterStore.config.connection;
+		if (entry.connection === "network") {
+			return active === "network" && plotterStore.config.ipAddress === entry.ipAddress && (plotterStore.config.port ?? 9100) === (entry.port ?? 9100) ? "connected" : "network";
+		}
+		const live = plotterHistoryStore.findLiveFor(entry, discoveredDevices.filter(d => d.status !== "offline"));
+		if (!live) return "absent";
+		return live.status === "connected" ? "connected" : "available";
+	}
+	const reconnectTarget = $derived(
+		plotterHistoryStore.status.key ? plotterHistoryStore.entries.find(e => e.key === plotterHistoryStore.status.key) ?? null : null,
+	);
+	function entryName(e: PlotterHistoryEntry) { return e.label ?? e.presetName; }
+	function entryVia(e: PlotterHistoryEntry) {
+		if (e.connection === "network") return `Network · ${e.ipAddress}:${e.port ?? 9100}`;
+		if (e.connection === "cut-agent") return `Cut Agent${e.serialPort && e.serialPort !== "auto" ? ` · ${e.serialPort}` : ""}`;
+		return `USB Direct${formatUsbId(e.vendorId, e.productId) ? ` · ${formatUsbId(e.vendorId, e.productId)}` : ""}`;
+	}
+	function retryNow() {
+		retryAttempt = 0;
+		plotterHistoryStore.setStatus({ ...plotterHistoryStore.status, message: undefined });
+		runDiscovery(true);
 	}
 
 	// `silent`: used by the auto re-optimize effect below — skips the
@@ -1912,22 +2129,22 @@
 
 	// ─── Canvas persistence ───────────────────────
 	let _mounted = false;
-	function handleDisconnect() {
+	// Manual disconnect: releases the plotter and clears it as the auto target,
+	// so the reconnect engine never fights the user's choice.
+	async function handleDisconnect() {
+		await beginManual();
+		const current = discoveredDevices.find(d => d.status === "connected");
+		const key = current?.historyKey ?? plotterHistoryStore.autoTargetKey;
 		// Always release the Web Serial port if one is open, regardless of which
-		// connection type is currently active (USB reconnect on mount may have left
-		// a port open even after the UI switched to cut-agent).
+		// connection type is currently active.
 		if (serialPortInfo) {
 			disconnectSerialPort();
 			serialPortInfo = null;
 		}
-		plotterStore.switchConnection("download", { save: false });
-		// Mark as already-auto-connected so the 8s silent poll does NOT immediately
-		// re-connect the agent after a manual disconnect. The user just chose to
-		// disconnect — both method cards should stay in "Detected" state so they can
-		// pick a new method. autoConnectedAgent resets to false on next onMount.
-		// (The only correct place to reset it to false is line 543: when the agent
-		// device physically vanishes from a scan, allowing reconnect when it returns.)
-		autoConnectedAgent = true;
+		// Saved, so a reload doesn't restore a connection the user just ended.
+		plotterStore.switchConnection("download");
+		plotterHistoryStore.recordDisconnect(key, "user");
+		plotterHistoryStore.setStatus({ phase: "idle", key: null, attempt: 0 });
 		showConfig = false;
 		discoveredDevices = discoveredDevices.map(d =>
 			d.status === "connected" ? { ...d, status: "detected" } : d
@@ -2006,54 +2223,52 @@
 			maybeShowTour();
 		}
 
-		// Initial plotter discovery
+		// Coming back to the Studio within the same tab: the USB port is still
+		// open — adopt it instead of reconnecting.
+		const openPort = plotterStore.config.connection === "usb-serial" ? getOpenSerialPortInfo() : null;
+		if (openPort && openPort.vendorId === plotterStore.config.vendorId && openPort.productId === plotterStore.config.productId) {
+			serialPortInfo = openPort;
+		}
+
+		// Initial plotter discovery — the reconnect engine runs at the end of it
+		// and restores the last plotter if auto-reconnect is on.
 		runDiscovery();
 
-		// If the user had a USB-serial connection before navigation, try to restore it
-		// silently using the already-authorized port (no browser dialog required).
-		if (plotterStore.config.connection === "usb-serial") {
-			const savedVid = plotterStore.config.vendorId;
-			const savedPid = plotterStore.config.productId;
-			reconnectSerialPort(plotterStore.config.baudRate ?? 9600, { vendorId: savedVid, productId: savedPid }).then((info) => {
-				if (info) {
-					serialPortInfo = info;
-					if (info.vendorId !== undefined) plotterStore.update({ vendorId: info.vendorId, productId: info.productId });
-					const matched = matchPortToPreset(info.vendorId, info.productId);
-					toastStore.success(`Reconnected · ${matched?.preset.name ?? info.label}`, "USB Direct");
-					discoveredDevices = discoveredDevices.map(d =>
-						d.source === "usb" ? { ...d, status: "connected" } : d,
-					);
-				} else {
-					// Port no longer available — fall back to download so cut button doesn't lie
-					plotterStore.switchConnection("download", { save: false });
-				}
-			});
-		}
-
-		// Web Serial connect/disconnect events — re-scan immediately on cable change
 		const cleanup: Array<() => void> = [];
+		// Re-scan immediately when something changes: a cable is plugged or
+		// unplugged, the tab comes back into view, or the network returns.
+		const rescanNow = () => { retryAttempt = 0; runDiscovery(true); };
 		if (typeof navigator !== "undefined" && "serial" in navigator) {
 			const serial = (navigator as any).serial;
-			const onSerialConnect    = () => runDiscovery();
-			const onSerialDisconnect = () => runDiscovery();
-			serial.addEventListener("connect",    onSerialConnect);
-			serial.addEventListener("disconnect", onSerialDisconnect);
+			serial.addEventListener("connect",    rescanNow);
+			serial.addEventListener("disconnect", rescanNow);
 			cleanup.push(() => {
-				serial.removeEventListener("connect",    onSerialConnect);
-				serial.removeEventListener("disconnect", onSerialDisconnect);
+				serial.removeEventListener("connect",    rescanNow);
+				serial.removeEventListener("disconnect", rescanNow);
 			});
 		}
+		const onVisible = () => { if (document.visibilityState === "visible") rescanNow(); };
+		document.addEventListener("visibilitychange", onVisible);
+		window.addEventListener("online", rescanNow);
+		cleanup.push(() => {
+			document.removeEventListener("visibilitychange", onVisible);
+			window.removeEventListener("online", rescanNow);
+		});
 
-		// Poll every 8s while an agent is connected (catch disconnects quickly);
-		// back off to 60s while offline — most users never run the local Cut
-		// Agent app, so there's no reason to hammer it (and log a CORS-blocked
-		// request to the console) every 8s indefinitely.
+		// Poll cadence: while waiting to reconnect the last plotter, retry fast
+		// and ease off (3s → 30s); every 8s while a Cut Agent is online (catch
+		// disconnects quickly); otherwise once a minute — most users never run
+		// the agent, so there's no reason to hammer it.
 		let pollTimer: ReturnType<typeof setTimeout>;
 		const schedulePoll = () => {
+			const waiting = !isConnected && plotterHistoryStore.autoReconnect && !plotterHistoryStore.paused &&
+				!!plotterHistoryStore.autoTarget && plotterHistoryStore.autoTarget.connection !== "network";
+			const delay = waiting ? retryDelayMs(retryAttempt) : agentProbeStatus === "online" ? 8_000 : 60_000;
 			pollTimer = setTimeout(async () => {
-				await runDiscovery(true);
+				if (waiting) retryAttempt += 1;
+				if (document.visibilityState === "visible") await runDiscovery(true);
 				schedulePoll();
-			}, agentProbeStatus === "online" ? 8_000 : 60_000);
+			}, delay);
 		};
 		schedulePoll();
 		cleanup.push(() => clearTimeout(pollTimer));
@@ -3531,7 +3746,7 @@
 										<div class="device-card__top">
 											<div class="device-dot device-dot--{device.status}"></div>
 											<div class="device-identity">
-												<span class="device-name">{device.preset.name}</span>
+												<span class="device-name">{device.label ?? device.preset.name}</span>
 												<span class="device-via">
 													{device.source === "agent"
 														? `Cut Agent${agentStore.version ? ` · v${agentStore.version}` : ""}`
@@ -3605,8 +3820,6 @@
 															{#if connecting}
 																<span class="ai-spinner" style="width:10px;height:10px" aria-hidden="true"></span>
 																Connecting…
-															{:else if device.source === "usb"}
-																Select USB Port…
 															{:else}
 																Connect
 															{/if}
@@ -3651,6 +3864,86 @@
 								</p>
 							</div>
 						{/if}
+
+						<!-- ── Recent plotters: quick reconnect + auto-reconnect ── -->
+						<div class="recent-plotters">
+							<div class="recent-plotters__header">
+								<span class="recent-plotters__title">Recent plotters</span>
+								<label class="recent-toggle" use:tooltip={"Reconnect the plotter you last used whenever it's available. Disconnecting a plotter yourself always stops this for that plotter."}>
+									<input
+										type="checkbox"
+										checked={plotterHistoryStore.autoReconnect}
+										onchange={(e) => { plotterHistoryStore.setAutoReconnect((e.target as HTMLInputElement).checked); if ((e.target as HTMLInputElement).checked) retryNow(); }}
+									/>
+									<span class="recent-toggle__track" aria-hidden="true"><span class="recent-toggle__thumb"></span></span>
+									Auto-reconnect
+								</label>
+							</div>
+
+							{#if !isConnected && reconnectTarget && plotterHistoryStore.autoReconnect && !plotterHistoryStore.paused && plotterHistoryStore.status.phase !== "idle"}
+								<div class="reconnect-status reconnect-status--{plotterHistoryStore.status.phase}" role="status" aria-live="polite">
+									{#if plotterHistoryStore.status.phase === "connecting"}
+										<span class="ai-spinner" style="width:10px;height:10px;flex-shrink:0" aria-hidden="true"></span>
+									{:else}
+										<span class="reconnect-status__dot" aria-hidden="true"></span>
+									{/if}
+									<div class="reconnect-status__body">
+										<span class="reconnect-status__title">
+											{plotterHistoryStore.status.phase === "connecting" ? "Reconnecting to" : plotterHistoryStore.status.phase === "failed" ? "Can't reconnect to" : "Waiting for"}
+											<strong>{entryName(reconnectTarget)}</strong>
+										</span>
+										<span class="reconnect-status__sub">
+											{plotterHistoryStore.status.message ?? (reconnectTarget.connection === "cut-agent"
+												? "Reconnects automatically when the Cut Agent sees it."
+												: "Reconnects automatically when it's plugged in and powered on.")}
+										</span>
+									</div>
+									<div class="reconnect-status__actions">
+										<button class="recent-btn" onclick={retryNow}>Retry now</button>
+										<button class="recent-btn recent-btn--ghost" onclick={() => plotterHistoryStore.pause()} use:tooltip={"Stop trying until you connect a plotter or reload the page"}>Stop</button>
+									</div>
+								</div>
+							{/if}
+
+							{#if recentPlotters.length === 0}
+								<p class="recent-plotters__empty">Plotters you connect to show up here for one-click reconnect.</p>
+							{:else}
+								<ul class="recent-list">
+									{#each recentPlotters as entry (entry.key)}
+										{@const avail = historyAvailability(entry)}
+										<li class="recent-row">
+											<span class="recent-dot recent-dot--{avail}" aria-hidden="true"></span>
+											<div class="recent-row__info">
+												<span class="recent-row__name">
+													{entryName(entry)}
+													{#if entry.key === plotterHistoryStore.autoTargetKey && plotterHistoryStore.autoReconnect}
+														<span class="recent-auto-chip" use:tooltip={"Auto-reconnect target — the plotter you last used"}>auto</span>
+													{/if}
+												</span>
+												<span class="recent-row__meta">{entryVia(entry)} · {avail === "connected" ? "connected now" : timeAgo(entry.lastConnectedAt)}</span>
+											</div>
+											{#if avail === "connected"}
+												<span class="recent-row__state">Connected</span>
+											{:else}
+												<button
+													class="recent-btn"
+													class:recent-btn--primary={avail === "available"}
+													onclick={() => handleConnectHistory(entry)}
+													disabled={connecting || (entry.connection === "cut-agent" && avail === "absent")}
+													use:tooltip={avail === "available" ? "Connect now"
+														: entry.connection === "usb-serial" ? "Not detected — opens the USB picker filtered to this plotter"
+														: entry.connection === "cut-agent" ? (agentProbeStatus === "online" ? "Not plugged into the Cut Agent's computer" : "Start the Cut Agent to reconnect")
+														: "Use this network plotter"}
+												>
+													{avail === "available" || entry.connection === "network" ? "Connect" : entry.connection === "usb-serial" ? "Find…" : "Offline"}
+												</button>
+											{/if}
+										</li>
+									{/each}
+								</ul>
+							{/if}
+							<a class="recent-plotters__all" href="/plotter#history">Full history & fleet →</a>
+						</div>
 
 						<!-- Advanced settings (Agent URL + baud rate) — collapsed by default -->
 						<details class="discovery-advanced">
@@ -7580,6 +7873,220 @@
 	}
 
 	/* ── Advanced settings ───────────────────── */
+
+	/* ── Recent plotters (quick reconnect) ── */
+	.recent-plotters {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		padding: 10px 12px;
+		border: 1px solid var(--border-subtle);
+		border-radius: var(--radius-md);
+		background: var(--bg-surface-2);
+	}
+	.recent-plotters__header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
+	}
+	.recent-plotters__title {
+		font-size: 0.8839rem;
+		font-weight: 600;
+		color: var(--text-secondary);
+	}
+	.recent-plotters__empty {
+		margin: 0;
+		font-size: 0.8375rem;
+		color: var(--text-muted);
+	}
+	.recent-plotters__all {
+		align-self: flex-start;
+		font-size: 0.8375rem;
+		color: var(--color-accent, #7c3aed);
+		text-decoration: none;
+	}
+	.recent-plotters__all:hover { text-decoration: underline; }
+
+	.recent-toggle {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 0.8375rem;
+		color: var(--text-secondary);
+		cursor: pointer;
+		user-select: none;
+	}
+	.recent-toggle input {
+		position: absolute;
+		opacity: 0;
+		width: 1px;
+		height: 1px;
+	}
+	.recent-toggle__track {
+		position: relative;
+		width: 28px;
+		height: 16px;
+		border-radius: 999px;
+		background: var(--text-disabled);
+		transition: background 0.2s ease;
+		flex-shrink: 0;
+	}
+	.recent-toggle__thumb {
+		position: absolute;
+		top: 2px;
+		left: 2px;
+		width: 12px;
+		height: 12px;
+		border-radius: 50%;
+		background: #fff;
+		transition: transform 0.2s ease;
+	}
+	.recent-toggle input:checked + .recent-toggle__track {
+		background: var(--color-accent, #7c3aed);
+	}
+	.recent-toggle input:checked + .recent-toggle__track .recent-toggle__thumb {
+		transform: translateX(12px);
+	}
+	.recent-toggle input:focus-visible + .recent-toggle__track {
+		outline: 2px solid var(--color-accent, #7c3aed);
+		outline-offset: 2px;
+	}
+
+	.reconnect-status {
+		display: flex;
+		align-items: flex-start;
+		gap: 8px;
+		padding: 8px 10px;
+		border-radius: var(--radius-sm, 6px);
+		border: 1px solid color-mix(in srgb, var(--color-warning, #f59e0b) 35%, transparent);
+		background: color-mix(in srgb, var(--color-warning, #f59e0b) 10%, transparent);
+		flex-wrap: wrap;
+	}
+	.reconnect-status--failed {
+		border-color: color-mix(in srgb, var(--color-danger, #ef4444) 40%, transparent);
+		background: color-mix(in srgb, var(--color-danger, #ef4444) 10%, transparent);
+	}
+	.reconnect-status__dot {
+		width: 8px;
+		height: 8px;
+		margin-top: 5px;
+		border-radius: 50%;
+		background: var(--color-warning, #f59e0b);
+		animation: dot-pulse 2s ease-in-out infinite;
+		flex-shrink: 0;
+	}
+	.reconnect-status--failed .reconnect-status__dot {
+		background: var(--color-danger, #ef4444);
+		animation: none;
+	}
+	.reconnect-status__body {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		flex: 1;
+		min-width: 140px;
+	}
+	.reconnect-status__title {
+		font-size: 0.8839rem;
+		color: var(--text-primary);
+	}
+	.reconnect-status__sub {
+		font-size: 0.8rem;
+		color: var(--text-muted);
+	}
+	.reconnect-status__actions {
+		display: flex;
+		gap: 6px;
+	}
+
+	.recent-list {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+	.recent-row {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 6px 0;
+		border-top: 1px solid var(--border-subtle);
+	}
+	.recent-row:first-child { border-top: none; }
+	.recent-dot {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		flex-shrink: 0;
+		background: var(--text-disabled, #6b7280);
+	}
+	.recent-dot--connected { background: var(--color-success, #22c55e); }
+	.recent-dot--available { background: var(--color-warning, #f59e0b); }
+	.recent-dot--network { background: var(--text-brand); }
+	.recent-row__info {
+		display: flex;
+		flex-direction: column;
+		min-width: 0;
+		flex: 1;
+	}
+	.recent-row__name {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 0.8839rem;
+		font-weight: 600;
+		color: var(--text-primary);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.recent-row__meta {
+		font-size: 0.8rem;
+		color: var(--text-muted);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.recent-row__state {
+		font-size: 0.8rem;
+		font-weight: 600;
+		color: var(--color-success, #22c55e);
+	}
+	.recent-auto-chip {
+		font-size: 0.7rem;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		padding: 1px 5px;
+		border-radius: 4px;
+		color: var(--color-accent, #7c3aed);
+		background: color-mix(in srgb, var(--color-accent, #7c3aed) 15%, transparent);
+	}
+	.recent-btn {
+		flex-shrink: 0;
+		padding: 4px 10px;
+		font-size: 0.8375rem;
+		font-weight: 600;
+		border-radius: var(--radius-sm, 6px);
+		border: 1px solid var(--border-strong);
+		background: transparent;
+		color: var(--text-secondary);
+		cursor: pointer;
+	}
+	.recent-btn:hover:not(:disabled) { background: var(--interactive-hover); }
+	.recent-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+	.recent-btn--primary {
+		background: var(--color-accent, #7c3aed);
+		border-color: var(--color-accent, #7c3aed);
+		color: #fff;
+	}
+	.recent-btn--primary:hover:not(:disabled) {
+		background: color-mix(in srgb, var(--color-accent, #7c3aed) 85%, #000);
+	}
+	.recent-btn--ghost { border-color: transparent; }
 
 	.discovery-advanced {
 		border: 1px solid var(--border-subtle);
