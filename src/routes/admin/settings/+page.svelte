@@ -25,7 +25,6 @@
 
 	let platform = $state({
 		appName:      "OmniPlot",
-		supportEmail: "support@omniplot.app",
 		docsUrl:      "https://docs.omniplot.app",
 	});
 
@@ -173,10 +172,6 @@
 					<div class="form-field">
 						<label class="field-label" for="app-name">App name</label>
 						<input id="app-name" class="field-input" type="text" bind:value={platform.appName} />
-					</div>
-					<div class="form-field">
-						<label class="field-label" for="support-email">Support email</label>
-						<input id="support-email" class="field-input" type="email" bind:value={platform.supportEmail} />
 					</div>
 					<div class="form-field">
 						<label class="field-label" for="docs-url">Docs URL</label>

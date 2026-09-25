@@ -7,7 +7,7 @@
   import ThemeToggle from '$lib/components/ui/ThemeToggle.svelte';
   import Badge from '$lib/components/ui/Badge.svelte';
   import { ADMIN_NAV } from '$lib/config';
-  import { userStore, shopStore } from '$lib/stores';
+  import { userStore, shopStore, supportStore } from '$lib/stores';
   import { signOutUser } from '$lib/firebase/auth';
 
   interface Props { children: Snippet; }
@@ -35,8 +35,26 @@
     'tag':              'M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82zM7 7h.01',
     'flag':             'M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1zM4 22v-7',
     'mail':             'M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2zM22 6l-10 7L2 6',
+    'message':          'M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z',
     'settings':         'M12 15a3 3 0 100-6 3 3 0 000 6zM19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z',
   };
+
+  // ─── Support badge ────────────────────────────
+  // Tickets where staff owes the next move (new, or the customer replied).
+  $effect(() => {
+    if (!userStore.isAdmin) return;
+    return supportStore.watch('admin');
+  });
+
+  function navBadge(href: string): { count: number; urgent: boolean; label: string } | null {
+    if (href !== '/admin/support' || !supportStore.admin.needsReply) return null;
+    const { needsReply, urgent } = supportStore.admin;
+    return {
+      count: needsReply,
+      urgent: urgent > 0,
+      label: `${needsReply} ticket${needsReply === 1 ? '' : 's'} need${needsReply === 1 ? 's' : ''} a reply${urgent ? ` (${urgent} urgent)` : ''}`,
+    };
+  }
 
   // ─── Avatar dropdown ──────────────────────────
   let menuOpen  = $state(false);
@@ -118,17 +136,28 @@
 
     <nav class="admin-nav" aria-label="Admin navigation">
       {#each ADMIN_NAV as item}
+        {@const badge = navBadge(item.href)}
         <a
           href={item.href}
           class="admin-nav-item"
           class:active={currentPath === item.href || (item.href !== '/admin' && currentPath.startsWith(item.href))}
           aria-current={currentPath === item.href ? 'page' : undefined}
-          title={!showLabels ? item.label : undefined}
+          title={!showLabels ? (badge?.label ?? item.label) : badge?.label}
         >
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d={NAV_ICONS[item.icon] ?? ''} />
-          </svg>
-          {#if showLabels}{item.label}{/if}
+          <span class="admin-nav-item__icon">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d={NAV_ICONS[item.icon] ?? ''} />
+            </svg>
+            {#if badge && !showLabels}
+              <span class="admin-nav-dot" class:admin-nav-dot--urgent={badge.urgent} aria-hidden="true"></span>
+            {/if}
+          </span>
+          {#if showLabels}
+            <span class="admin-nav-item__label">{item.label}</span>
+            {#if badge}
+              <span class="admin-nav-count" class:admin-nav-count--urgent={badge.urgent} aria-label={badge.label}>{badge.count}</span>
+            {/if}
+          {/if}
         </a>
       {/each}
     </nav>
@@ -341,6 +370,34 @@
     text-decoration: none;
     transition: background 0.12s, color 0.12s;
   }
+
+  .admin-nav-item__icon  { position: relative; display: flex; flex-shrink: 0; }
+  .admin-nav-item__label { flex: 1; min-width: 0; }
+
+  .admin-nav-count {
+    min-width: 18px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    font-size: 0.6875rem;
+    font-weight: 700;
+    font-family: var(--font-mono);
+    text-align: center;
+    background: var(--color-warning, #f59e0b);
+    color: #000;
+  }
+  .admin-nav-count--urgent { background: var(--color-danger); color: #fff; }
+
+  .admin-nav-dot {
+    position: absolute;
+    top: -3px;
+    right: -4px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--color-warning, #f59e0b);
+    box-shadow: 0 0 0 2px var(--bg-surface);
+  }
+  .admin-nav-dot--urgent { background: var(--color-danger); }
 
   .admin-nav-item:hover  { background: var(--interactive-hover); color: var(--text-primary); }
   .admin-nav-item.active { background: var(--bg-surface-3); color: var(--text-primary); }

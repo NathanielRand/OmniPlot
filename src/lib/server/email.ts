@@ -2,6 +2,9 @@
 // OmniPlot — TRANSACTIONAL EMAIL SERVICE
 // ─────────────────────────────────────────────
 import { RESEND_API_KEY } from '$env/static/private';
+import { getPlanSettings } from '$lib/server/plans';
+import { cutAllowanceText } from '$lib/plans';
+import { STAFF_EMAIL } from '$lib/server/staff';
 
 const FROM    = 'OmniPlot <noreply@omniplot.app>';
 const APP_URL = 'https://www.omniplot.app';
@@ -21,6 +24,15 @@ export function fmtDate(d: Date): string {
 
 export function firstName(displayName: string): string {
 	return displayName?.trim().split(' ')[0] || 'there';
+}
+
+export function escapeHtml(s: string): string {
+	return s
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;')
+		.replace(/"/g, '&quot;')
+		.replace(/'/g, '&#39;');
 }
 
 // ─── HTML Helpers (table-safe, inline styles only) ────────────────────────────
@@ -247,7 +259,11 @@ function base(previewText: string, content: string): string {
 
 // ─── Core Send ────────────────────────────────
 
-export async function sendEmail(to: string, subject: string, html: string): Promise<void> {
+export async function sendEmail(
+	to: string | string[],
+	subject: string,
+	html: string,
+): Promise<void> {
 	if (!RESEND_API_KEY) {
 		console.warn('[email] RESEND_API_KEY not set — skipping email to', to);
 		return;
@@ -327,7 +343,7 @@ ${infoBox([
 ${cta('Go to Studio', `${APP_URL}/studio`)}
 <tr>
   <td style="font-family:'Instrument Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;color:#6a7288;padding-top:16px;padding-bottom:32px;">
-    Questions? Reply to this email or visit <a href="${APP_URL}/support" style="color:#6a7288;text-decoration:underline;">omniplot.app/support</a>
+    Questions? <a href="${APP_URL}/support" style="color:#6a7288;text-decoration:underline;">Chat with support</a> anytime.
   </td>
 </tr>`;
 
@@ -362,7 +378,7 @@ ${infoBox([
 ${invoicePdfUrl ? cta('Download invoice PDF', invoicePdfUrl) : ''}
 <tr>
   <td style="font-family:'Instrument Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;color:#6a7288;padding-top:16px;padding-bottom:32px;">
-    Need help with billing? Contact us at <a href="mailto:support@omniplot.app" style="color:#6a7288;text-decoration:underline;">support@omniplot.app</a>
+    Need help with billing? <a href="${APP_URL}/support" style="color:#6a7288;text-decoration:underline;">Chat with support</a> — we reply within one business day.
   </td>
 </tr>`;
 
@@ -419,7 +435,7 @@ ${infoBox([
 	['Amount refunded',   formatted],
 	['Expected arrival',  '5–10 business days'],
 ])}
-${bodyText('If you have questions, contact us at <a href="mailto:support@omniplot.app" style="color:#a0a8bc;text-decoration:underline;">support@omniplot.app</a>')}
+${bodyText(`Questions? <a href="${APP_URL}/support" style="color:#a0a8bc;text-decoration:underline;">Chat with support</a> — we reply within one business day.`)}
 <tr><td style="height:16px;"></td></tr>`;
 
 	await sendEmail(
@@ -440,6 +456,11 @@ export async function sendMonthlyReportEmail(
 	tier: string,
 ): Promise<void> {
 	const name    = firstName(displayName);
+	// Admin-set allowance for their tier (Admin → Products), not a hardcoded claim.
+	const plans   = await getPlanSettings();
+	const allowance = tier === 'free' || tier === 'lite' || tier === 'pro'
+		? cutAllowanceText(plans[tier]).replace(/^Unlimited/, 'unlimited')
+		: 'unlimited cuts';
 	const content = `
 ${heading(`Your ${monthLabel} summary, ${name}`)}
 ${subtext(`Here's what you accomplished this month on OmniPlot.`)}
@@ -448,7 +469,7 @@ ${statBlock([
 	{ label: 'Patterns saved',   value: savedCount.toString() },
 ])}
 ${divider()}
-${bodyText(`Keep up the great work. Your ${tier} plan gives you unlimited cuts — use it.`)}
+${bodyText(`Keep up the great work. Your ${escapeHtml(tier)} plan includes ${allowance} — use it.`)}
 ${cta('View Studio', `${APP_URL}/studio`)}
 <tr><td style="height:32px;"></td></tr>`;
 
@@ -456,5 +477,210 @@ ${cta('View Studio', `${APP_URL}/studio`)}
 		to,
 		`Your ${monthLabel} usage report — OmniPlot`,
 		base(`You made ${cutCount} cuts in ${monthLabel}.`, content),
+	);
+}
+
+// ─── Support Ticket Emails ────────────────────
+// Customer-facing ones carry the full reply text (a guest may have no other
+// way to read it) plus a link back to the thread. Conversations stay in the
+// in-app tickets — these are notifications only, and say so.
+
+const NO_EMAIL_REPLIES = "Please reply on your ticket rather than to this email — replies here aren't seen by our team.";
+
+function quoteBlock(text: string): string {
+	return `
+<tr>
+  <td style="padding-bottom:20px;">
+    <table border="0" cellpadding="0" cellspacing="0" width="100%" role="presentation">
+      <tr>
+        <td width="3" bgcolor="#2a3144" style="background-color:#2a3144;border-radius:2px 0 0 2px;">&nbsp;</td>
+        <td style="background-color:#141820;padding:14px 16px;border-radius:0 6px 6px 0;font-family:'Instrument Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;color:#d4d8e2;line-height:1.6;">
+          ${escapeHtml(text).replace(/\n/g, '<br/>')}
+        </td>
+      </tr>
+    </table>
+  </td>
+</tr>`;
+}
+
+function smallPrint(html: string): string {
+	return `
+<tr>
+  <td style="font-family:'Instrument Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;color:#6a7288;padding-top:16px;padding-bottom:32px;line-height:1.6;">
+    ${html}
+  </td>
+</tr>`;
+}
+
+export interface SupportEmailTicket {
+	ref: string;
+	subject: string;
+	name: string;
+	email: string;
+	topicLabel: string;
+	link: string;
+}
+
+export async function sendTicketReceivedEmail(
+	t: SupportEmailTicket,
+	suggestions: { title: string; body: string; href: string }[],
+): Promise<void> {
+	const tips = suggestions.length
+		? `${divider()}${bodyText('<strong style="color:#f0f2f7;">While you wait, these often help:</strong>')}
+<tr>
+  <td style="padding-bottom:20px;">
+    <table border="0" cellpadding="0" cellspacing="0" width="100%" role="presentation">
+      ${suggestions.map((s) => `
+      <tr>
+        <td style="font-family:'Instrument Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;color:#a0a8bc;padding:6px 0;line-height:1.6;">
+          &bull;&nbsp; <a href="${APP_URL}${s.href}" style="color:#f0f2f7;font-weight:600;">${escapeHtml(s.title)}</a> — ${escapeHtml(s.body)}
+        </td>
+      </tr>`).join('')}
+    </table>
+  </td>
+</tr>`
+		: '';
+
+	const content = `
+${heading('We got your message')}
+${subtext(`Hi ${escapeHtml(firstName(t.name))}, thanks for reaching out. Our team typically replies within one business day — we'll email you as soon as we do.`)}
+${infoBox([
+	['Ticket',  t.ref],
+	['Subject', escapeHtml(t.subject)],
+	['Topic',   escapeHtml(t.topicLabel)],
+])}
+${cta('View your ticket', t.link)}
+<tr><td style="height:24px;"></td></tr>
+${tips}
+${smallPrint(`You can add more details anytime from the ticket page.<br/>${NO_EMAIL_REPLIES}`)}`;
+
+	await sendEmail(
+		t.email,
+		`[${t.ref}] We got your message: ${t.subject}`,
+		base("We've received your support request.", content)
+	);
+}
+
+export async function sendTicketReplyEmail(
+	t: SupportEmailTicket,
+	replyBody: string,
+	status: string,
+): Promise<void> {
+	const footer =
+		status === 'resolved'
+			? "We've marked this ticket resolved. If it's not quite sorted, just reply on the ticket and it will reopen automatically."
+			: status === 'awaiting_customer'
+				? "We need a reply from you to keep going — respond on the ticket page when you're ready."
+				: "No need to reply — we'll update you here as soon as there's news.";
+
+	const content = `
+${heading('New reply from OmniPlot Support')}
+${subtext(`Hi ${escapeHtml(firstName(t.name))}, we replied to <strong style="color:#f0f2f7;">${escapeHtml(t.subject)}</strong>:`)}
+${quoteBlock(replyBody)}
+${status === 'resolved' ? alertBox('Marked resolved', 'success') : ''}
+${cta(status === 'resolved' ? 'View ticket' : 'View &amp; reply', t.link)}
+${smallPrint(`${footer}<br/>${NO_EMAIL_REPLIES}<br/>Ticket ${t.ref}`)}`;
+
+	await sendEmail(
+		t.email,
+		`[${t.ref}] Re: ${t.subject}`,
+		base('We replied to your support request.', content)
+	);
+}
+
+/** Status-only changes the customer should hear about (resolved/closed —
+ *  in-progress flips would just be noise). `auto` = closed by the cron. */
+export async function sendTicketStatusEmail(t: SupportEmailTicket, status: 'resolved' | 'closed', auto = false): Promise<void> {
+	const name = escapeHtml(firstName(t.name));
+	const subj = `<strong style="color:#f0f2f7;">${escapeHtml(t.subject)}</strong>`;
+	const content = `
+${alertBox(status === 'resolved' ? 'Your ticket was marked resolved.' : 'Your ticket was closed.', status === 'resolved' ? 'success' : 'warning')}
+${heading(status === 'resolved' ? 'All sorted?' : 'Ticket closed')}
+${subtext(
+	auto
+		? `Hi ${name}, we haven't heard back on ${subj} in a week, so we've marked it resolved.`
+		: `Hi ${name}, ${subj} has been marked ${status}.`,
+)}
+${cta('View ticket', t.link)}
+${smallPrint(
+	status === 'resolved'
+		? `Still need help? Reply on the ticket and it reopens automatically.<br/>${NO_EMAIL_REPLIES}<br/>Ticket ${t.ref}`
+		: `Need more help? <a href="${APP_URL}/support" style="color:#6a7288;text-decoration:underline;">Chat with support</a>.`,
+)}`;
+
+	await sendEmail(
+		t.email,
+		`[${t.ref}] ${status === 'resolved' ? 'Resolved' : 'Closed'}: ${t.subject}`,
+		base(status === 'resolved' ? 'Your support ticket was resolved.' : 'Your support ticket was closed.', content)
+	);
+}
+
+export async function sendTicketNudgeEmail(t: SupportEmailTicket): Promise<void> {
+	const content = `
+${heading('Still need a hand?')}
+${subtext(`Hi ${escapeHtml(firstName(t.name))}, we're waiting on a reply from you on <strong style="color:#f0f2f7;">${escapeHtml(t.subject)}</strong>.`)}
+${cta('Reply to ticket', t.link)}
+${smallPrint(`If it's already sorted, you can mark it resolved from the ticket page — otherwise we'll resolve it automatically in a few days.<br/>${NO_EMAIL_REPLIES}<br/>Ticket ${t.ref}`)}`;
+
+	await sendEmail(
+		t.email,
+		`[${t.ref}] Waiting on your reply: ${t.subject}`,
+		base("We're waiting on your reply.", content)
+	);
+}
+
+// ─── Support: staff notifications ─────────────
+
+export async function sendAdminTicketEmail(
+	t: SupportEmailTicket & { priority: string; tags: string[]; tier: string | null },
+	kind: 'new' | 'reply' | 'reopened',
+	body: string,
+	adminLink: string,
+): Promise<void> {
+	const title = { new: 'New support ticket', reply: 'Customer replied', reopened: 'Ticket reopened' }[kind];
+	const content = `
+${t.priority !== 'normal' ? alertBox(`${t.priority.toUpperCase()} priority${t.tags.length ? ` · ${escapeHtml(t.tags.join(', '))}` : ''}`, t.priority === 'urgent' ? 'danger' : 'warning') : ''}
+${heading(title)}
+${infoBox([
+	['From',    `${escapeHtml(t.name || '—')} &lt;${escapeHtml(t.email)}&gt;`],
+	['Plan',    escapeHtml(t.tier ?? 'guest')],
+	['Topic',   escapeHtml(t.topicLabel)],
+	['Subject', escapeHtml(t.subject)],
+])}
+${quoteBlock(body.slice(0, 1500))}
+${cta('Open in admin', adminLink)}
+${smallPrint(`Ticket ${t.ref}`)}`;
+
+	await sendEmail(
+		STAFF_EMAIL,
+		`[${t.ref}]${t.priority !== 'normal' ? ` [${t.priority.toUpperCase()}]` : ''} ${title}: ${t.subject}`,
+		base(`${title} from ${t.name || t.email}`, content)
+	);
+}
+
+export async function sendAdminDigestEmail(
+	items: { ref: string; subject: string; name: string; priority: string; waitingHours: number; link: string }[],
+): Promise<void> {
+	const rows = items
+		.map((i) => `
+    <tr>
+      <td style="font-family:'Instrument Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;color:#a0a8bc;padding:8px 0;border-top:1px solid #1c2130;line-height:1.5;">
+        <a href="${i.link}" style="color:#f0f2f7;font-weight:600;">${escapeHtml(i.subject)}</a><br/>
+        ${escapeHtml(i.name)} · ${i.ref} · waiting ${i.waitingHours >= 48 ? `${Math.round(i.waitingHours / 24)} days` : `${i.waitingHours}h`}${i.priority !== 'normal' ? ` · <span style="color:#ffb547;">${i.priority}</span>` : ''}
+      </td>
+    </tr>`)
+		.join('');
+
+	const content = `
+${heading(`${items.length} ticket${items.length === 1 ? '' : 's'} waiting on a reply`)}
+${subtext('These have gone past the one-business-day response we promise customers.')}
+<tr><td style="padding-bottom:20px;"><table border="0" cellpadding="0" cellspacing="0" width="100%" role="presentation">${rows}</table></td></tr>
+${cta('Open support inbox', `${APP_URL}/admin/support?view=needs_reply`)}
+<tr><td style="height:32px;"></td></tr>`;
+
+	await sendEmail(
+		STAFF_EMAIL,
+		`[OmniPlot] ${items.length} support ticket${items.length === 1 ? '' : 's'} overdue`,
+		base(`${items.length} tickets waiting on a reply`, content),
 	);
 }

@@ -2,6 +2,7 @@
 // OmniPlot — APP CONFIGURATION
 // ─────────────────────────────────────────────
 import type { PricingPlan, MaterialSheet, TintFilm, PlotterConfig, ShopPlan } from "$lib/types";
+import { DEFAULT_PLAN_SETTINGS as PLAN_DEFAULTS } from "$lib/plans";
 
 // ─── Cut Agent version ────────────────────────
 // Single source of truth. Bump here when a new agent binary is deployed.
@@ -26,30 +27,25 @@ export const APP_NAME = "OmniPlot";
 export const APP_TAGLINE =
 	"Professional PPF & window tint cutting software. No install required.";
 export const APP_URL = import.meta.env.VITE_APP_URL ?? "https://omniplot.app";
-export const SUPPORT_EMAIL = "support@omniplot.app";
 
-// ─── Tier limits ──────────────────────────────
-export const TIER_LIMITS = {
-	free: { cutsPerMonth: 10, cutsPerDay: null, seats: 1 },
-	lite: { cutsPerMonth: null, cutsPerDay: 5, seats: 1 },
-	pro:  { cutsPerMonth: null, cutsPerDay: null, seats: 1 },
-} as const;
-
-// ─── Shop plan limits ─────────────────────────
+// ─── Shop plan features ───────────────────────
+// Feature gates only — seat counts, prices and cut allowances are admin-set
+// (Admin → Products) and read live via $lib/plans. Shop plans are always
+// unlimited cuts.
 export const SHOP_PLAN_LIMITS: Record<ShopPlan, {
-	seats: number;
-	cutsPerDay: null;
-	cutsPerMonth: null;
 	customPatterns: boolean;
 	aiAssist: boolean;
 	prioritySupport: boolean;
 }> = {
-	starter: { seats: 3,  cutsPerDay: null, cutsPerMonth: null, customPatterns: false, aiAssist: false, prioritySupport: false },
-	team:    { seats: 10, cutsPerDay: null, cutsPerMonth: null, customPatterns: true,  aiAssist: false, prioritySupport: true  },
-	studio:  { seats: 25, cutsPerDay: null, cutsPerMonth: null, customPatterns: true,  aiAssist: true,  prioritySupport: true  },
+	starter: { customPatterns: false, aiAssist: false, prioritySupport: false },
+	team:    { customPatterns: true,  aiAssist: false, prioritySupport: true  },
+	studio:  { customPatterns: true,  aiAssist: true,  prioritySupport: true  },
 };
 
 // ─── Shop pricing plans ───────────────────────
+// price/yearlyPrice/seats here are only the pre-load defaults (from
+// $lib/plans); pages overlay the live admin-set values. Feature copy uses
+// {{tokens}} (see fillPlanTokens) so numbers never drift from settings.
 export interface ShopPricingPlan {
 	id: ShopPlan;
 	name: string;
@@ -65,12 +61,12 @@ export const SHOP_PRICING_PLANS: ShopPricingPlan[] = [
 	{
 		id: "starter",
 		name: "Starter",
-		price: 149,
-		yearlyPrice: 124,
-		seats: 3,
+		price: PLAN_DEFAULTS.shopPlans.starter.price,
+		yearlyPrice: PLAN_DEFAULTS.shopPlans.starter.yearlyPrice,
+		seats: PLAN_DEFAULTS.shopPlans.starter.seats,
 		description: "One subscription for a small crew.",
 		features: [
-			"3 tech logins",
+			"{{starter.seats}} tech logins",
 			"Unlimited cuts for all seats",
 			"Full pattern library",
 			"HPGL / SVG / DXF export",
@@ -81,12 +77,12 @@ export const SHOP_PRICING_PLANS: ShopPricingPlan[] = [
 	{
 		id: "team",
 		name: "Team",
-		price: 299,
-		yearlyPrice: 249,
-		seats: 10,
+		price: PLAN_DEFAULTS.shopPlans.team.price,
+		yearlyPrice: PLAN_DEFAULTS.shopPlans.team.yearlyPrice,
+		seats: PLAN_DEFAULTS.shopPlans.team.seats,
 		description: "For growing shops with multiple bays.",
 		features: [
-			"10 tech logins",
+			"{{team.seats}} tech logins",
 			"Unlimited cuts for all seats",
 			"Everything in Starter",
 			"Custom pattern uploads",
@@ -98,12 +94,12 @@ export const SHOP_PRICING_PLANS: ShopPricingPlan[] = [
 	{
 		id: "studio",
 		name: "Studio",
-		price: 499,
-		yearlyPrice: 416,
-		seats: 25,
+		price: PLAN_DEFAULTS.shopPlans.studio.price,
+		yearlyPrice: PLAN_DEFAULTS.shopPlans.studio.yearlyPrice,
+		seats: PLAN_DEFAULTS.shopPlans.studio.seats,
 		description: "High-volume shops and franchises.",
 		features: [
-			"25 tech logins",
+			"{{studio.seats}} tech logins",
 			"Unlimited cuts for all seats",
 			"Everything in Team",
 			"AI pattern fit assist",
@@ -114,23 +110,25 @@ export const SHOP_PRICING_PLANS: ShopPricingPlan[] = [
 ];
 
 // ─── Pricing plans ────────────────────────────
+// Same as above: numbers default from $lib/plans and are overlaid live;
+// the first feature line is the cut allowance token.
 export const PRICING_PLANS: PricingPlan[] = [
 	{
 		id: "free",
 		name: "Free",
-		price: 0,
-		yearlyPrice: 0,
+		price: PLAN_DEFAULTS.free.price,
+		yearlyPrice: PLAN_DEFAULTS.free.yearlyPrice,
 		description: "Sample the full pattern library risk-free.",
 		features: [
-			"10 cuts per month",
+			"{{free.Cuts}}",
 			"Platform & community pattern library",
 			"HPGL / SVG export",
 			"Any plotter, any device",
 			"Auto-nesting preview",
 		],
 		limits: {
-			cutsPerDay: null,
-			cutsPerMonth: 10,
+			cutsPerDay: PLAN_DEFAULTS.free.cutsPerDay,
+			cutsPerMonth: PLAN_DEFAULTS.free.cutsPerMonth,
 			seats: 1,
 			customPatterns: false,
 			aiAssist: false,
@@ -141,11 +139,11 @@ export const PRICING_PLANS: PricingPlan[] = [
 	{
 		id: "lite",
 		name: "Lite",
-		price: 29,
-		yearlyPrice: 24,
+		price: PLAN_DEFAULTS.lite.price,
+		yearlyPrice: PLAN_DEFAULTS.lite.yearlyPrice,
 		description: "For installers doing a few jobs a day.",
 		features: [
-			"5 cuts per day",
+			"{{lite.Cuts}}",
 			"Everything in Free",
 			"Auto-nesting optimizer",
 			"Cut history & job log (90 days)",
@@ -153,8 +151,8 @@ export const PRICING_PLANS: PricingPlan[] = [
 			"1 seat",
 		],
 		limits: {
-			cutsPerDay: 5,
-			cutsPerMonth: null,
+			cutsPerDay: PLAN_DEFAULTS.lite.cutsPerDay,
+			cutsPerMonth: PLAN_DEFAULTS.lite.cutsPerMonth,
 			seats: 1,
 			customPatterns: false,
 			aiAssist: false,
@@ -167,11 +165,11 @@ export const PRICING_PLANS: PricingPlan[] = [
 	{
 		id: "pro",
 		name: "Pro",
-		price: 79,
-		yearlyPrice: 66,
+		price: PLAN_DEFAULTS.pro.price,
+		yearlyPrice: PLAN_DEFAULTS.pro.yearlyPrice,
 		description: "For busy shops and professional installers.",
 		features: [
-			"Unlimited cuts",
+			"{{pro.Cuts}}",
 			"Everything in Lite",
 			"AI pattern fit assist",
 			"Custom pattern uploads",
@@ -179,8 +177,8 @@ export const PRICING_PLANS: PricingPlan[] = [
 			"Priority support",
 		],
 		limits: {
-			cutsPerDay: null,
-			cutsPerMonth: null,
+			cutsPerDay: PLAN_DEFAULTS.pro.cutsPerDay,
+			cutsPerMonth: PLAN_DEFAULTS.pro.cutsPerMonth,
 			seats: 1,
 			customPatterns: true,
 			aiAssist: true,
@@ -827,6 +825,7 @@ export const FEATURES = [
 export const ADMIN_NAV = [
 	{ label: "Overview",  href: "/admin",            icon: "layout-dashboard" },
 	{ label: "Users",     href: "/admin/users",       icon: "users" },
+	{ label: "Support",   href: "/admin/support",     icon: "message" },
 	{ label: "Patterns",  href: "/admin/patterns",    icon: "vector-bezier" },
 	{ label: "Insights",  href: "/admin/insights",    icon: "book-open" },
 	{ label: "Plotters",  href: "/admin/plotters",    icon: "printer" },
@@ -884,7 +883,7 @@ export const FAQ_ITEMS = [
 			},
 			{
 				q: "What if my vehicle isn't in the library?",
-				a: "Submit a request from the Library page. Pro and Shop plan users can also upload their own custom SVG patterns directly for vehicles or zones we don't yet cover.",
+				a: "Submit a request from the Library page. {{upload.plans}} and Shop plan users can also upload their own custom SVG patterns directly for vehicles or zones we don't yet cover.",
 			},
 			{
 				q: "Are patterns available for window tint as well as PPF?",
@@ -901,11 +900,11 @@ export const FAQ_ITEMS = [
 		items: [
 			{
 				q: "What is a Shop plan?",
-				a: "Shop plans (Starter, Team, Studio) let multiple technicians share one subscription. Each tech gets their own login. Billing is consolidated under the shop owner's account. Shop plans include unlimited cuts for all seats and start at $149/mo for 3 seats.",
+				a: "Shop plans (Starter, Team, Studio) let multiple technicians share one subscription. Each tech gets their own login. Billing is consolidated under the shop owner's account. Shop plans include unlimited cuts for all seats and start at {{shop.minPrice}}/mo for {{starter.seats}} seats.",
 			},
 			{
 				q: "How do seats work?",
-				a: "Each active member in your shop counts as one seat. Starter supports 3, Team supports 10, and Studio supports 25. You can invite or remove members at any time from Settings → Team. Usage resets at the seat level, not the shop level.",
+				a: "Each active member in your shop counts as one seat. Starter supports {{starter.seats}}, Team supports {{team.seats}}, and Studio supports {{studio.seats}}. You can invite or remove members at any time from Settings → Team. Usage resets at the seat level, not the shop level.",
 			},
 			{
 				q: "How do I invite team members?",
@@ -930,11 +929,11 @@ export const FAQ_ITEMS = [
 			},
 			{
 				q: "What are the individual plans?",
-				a: "Free: 1 cut per 30 days, no credit card required. Lite ($29/mo): 1 cut per day, full export formats. Pro ($79/mo): unlimited cuts, AI pattern assist, custom pattern uploads, priority support. Annual billing saves ~20% on Lite and Pro.",
+				a: "Free: {{free.cuts}}, no credit card required. Lite ({{lite.price}}/mo): {{lite.cuts}}, full export formats. Pro ({{pro.price}}/mo): {{pro.cuts}}, AI pattern assist, custom pattern uploads, priority support. Annual billing saves ~{{yearlySavings}} on Lite and Pro.",
 			},
 			{
 				q: "Is there a free trial?",
-				a: "The Free plan is your trial — use the full pattern library, export files, and cut once per 30 days with no credit card required. Upgrade to Lite or Pro whenever you're ready for more volume.",
+				a: "The Free plan is your trial — use the full pattern library, export files, and get {{free.cuts}} with no credit card required. Upgrade to Lite or Pro whenever you're ready for more volume.",
 			},
 			{
 				q: "How do I manage or cancel my subscription?",
@@ -942,7 +941,7 @@ export const FAQ_ITEMS = [
 			},
 			{
 				q: "Do you offer annual billing?",
-				a: "Yes. Annual billing saves ~20% on all individual and shop plans. Switch to annual at any time from Settings → Billing.",
+				a: "Yes. Annual billing saves ~{{yearlySavings}} on individual and shop plans. Switch to annual at any time from Settings → Billing.",
 			},
 			{
 				q: "How does billing work for shops?",
@@ -1208,7 +1207,7 @@ export const CHANGELOG = [
 			},
 			{
 				type: "feature",
-				text: "Support center page with contact form and categorized FAQ routing.",
+				text: "Support center with in-app support chat (tickets) and categorized FAQ routing.",
 			},
 			{
 				type: "feature",

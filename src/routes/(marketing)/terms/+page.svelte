@@ -1,3 +1,7 @@
+<script lang="ts">
+	import { plansStore } from "$lib/stores";
+</script>
+
 <svelte:head>
 	<title>Terms of Service — OmniPlot</title>
 	<meta name="description" content="OmniPlot Terms of Service. Last updated May 2026." />
@@ -33,8 +37,8 @@
 
 		<section class="legal-section">
 			<h2>3. Subscriptions and Billing</h2>
-			<p><strong>Individual plans.</strong> OmniPlot offers a Free tier (1 cut per 30 days, no credit card required), Lite ($29/mo or $24/mo billed annually), and Pro ($79/mo or $66/mo billed annually). Paid plans provide increased cut limits, additional export formats, and other features as described on the Pricing page.</p>
-			<p><strong>Shop/Team plans.</strong> Shops can subscribe to Starter (3 seats, $149/mo), Team (10 seats, $299/mo), or Studio (25 seats, $499/mo) plans. Annual billing saves approximately 20%. Shop plans cover all seats under one subscription; each seat is a named individual account.</p>
+			<p><strong>Individual plans.</strong> {plansStore.fill("OmniPlot offers a Free tier ({{free.cuts}}, no credit card required), Lite ({{lite.price}}/mo or {{lite.yearlyPrice}}/mo billed annually), and Pro ({{pro.price}}/mo or {{pro.yearlyPrice}}/mo billed annually).")} Paid plans provide increased cut limits, additional export formats, and other features as described on the <a href="/pricing">Pricing page</a>, which reflects current plan allowances and prices.</p>
+			<p><strong>Shop/Team plans.</strong> {plansStore.fill("Shops can subscribe to Starter ({{starter.seats}} seats, {{starter.price}}/mo), Team ({{team.seats}} seats, {{team.price}}/mo), or Studio ({{studio.seats}} seats, {{studio.price}}/mo) plans. Annual billing saves approximately {{yearlySavings}}.")} Shop plans cover all seats under one subscription; each seat is a named individual account.</p>
 			<p><strong>Billing.</strong> All payments are processed by Stripe. By subscribing you authorize Stripe to charge your payment method on a recurring basis. You can update your payment method, change plans, or cancel at any time via Settings → Billing → Manage billing (Stripe Customer Portal).</p>
 			<p><strong>Cancellation.</strong> You may cancel at any time. Access to paid features continues through the end of the current billing period, after which your account reverts to Free. Refunds are not provided for partial billing periods unless required by applicable law.</p>
 			<p><strong>Plan changes.</strong> Upgrades take effect immediately; downgrades take effect at the next renewal. OmniPlot reserves the right to change pricing with 30 days' notice to subscribers.</p>
@@ -103,7 +107,7 @@
 
 		<section class="legal-section">
 			<h2>14. Contact</h2>
-			<p>Questions about these Terms? <a href="/support">Contact us via our support page</a>.</p>
+			<p>Questions about these Terms? <a href="/support?topic=other&subject=Terms%20question">Chat with support</a> — no account needed.</p>
 		</section>
 
 	</div>

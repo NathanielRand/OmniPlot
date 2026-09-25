@@ -2,6 +2,7 @@ import type Stripe from 'stripe';
 import { stripe, connectedAccount } from '$lib/server/stripe';
 import { getAdminDb } from '$lib/server/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
+import { DEFAULT_PLAN_SETTINGS } from '$lib/plans';
 
 export const PAID_TIERS = ['lite', 'pro'] as const;
 export type PaidTier = typeof PAID_TIERS[number];
@@ -42,7 +43,6 @@ export async function tierFromSubscription(sub: Stripe.Subscription): Promise<Pa
 
 export const SHOP_PLANS = ['starter', 'team', 'studio'] as const;
 export type ShopPlanId = typeof SHOP_PLANS[number];
-const DEFAULT_SEATS: Record<ShopPlanId, number> = { starter: 3, team: 10, studio: 25 };
 
 function isShopPlan(p: unknown): p is ShopPlanId {
 	return typeof p === 'string' && (SHOP_PLANS as readonly string[]).includes(p);
@@ -58,7 +58,7 @@ export async function orgPlanFromSubscription(sub: Stripe.Subscription): Promise
 	}
 	if (!plan && isShopPlan(sub.metadata?.plan)) plan = sub.metadata.plan;
 	if (!plan) return null;
-	return { plan, seats: Number(shopPlans[plan]?.seats ?? DEFAULT_SEATS[plan]) };
+	return { plan, seats: Number(shopPlans[plan]?.seats ?? DEFAULT_PLAN_SETTINGS.shopPlans[plan].seats) };
 }
 
 /**

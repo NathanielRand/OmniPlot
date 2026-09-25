@@ -3,7 +3,7 @@
 	import Badge from "$lib/components/ui/Badge.svelte";
 	import Button from "$lib/components/ui/Button.svelte";
 	import PhoneInput from "$lib/components/ui/PhoneInput.svelte";
-	import { toastStore, themeStore, userStore, uiStore } from "$lib/stores";
+	import { toastStore, themeStore, userStore, uiStore, plansStore } from "$lib/stores";
 	import { tooltip } from "$lib/actions/tooltip";
 	import {
 		linkGoogleAccount,
@@ -40,7 +40,7 @@
 	import { signOutUser } from "$lib/firebase/auth";
 	import { goto } from "$app/navigation";
 	import AddCardModal from "$lib/components/ui/AddCardModal.svelte";
-	import { DEFAULT_CUT_LIMITS, cutLimitsFromPlans, type PlanCutLimits } from "$lib/utils";
+	import { cutLimitsFromPlans, type PlanCutLimits } from "$lib/utils";
 	import type { Shop, Organization, Group, GroupMember, ShopMember, ShopInvite, ShopRole, ShopPlan } from "$lib/types";
 
 	let activeTab = $state<
@@ -286,11 +286,12 @@
 	let newGroupOrgWide    = $state(false);
 	let creatingGroup      = $state(false);
 
-	const SHOP_PLAN_LABELS: Record<ShopPlan, string> = {
-		starter: "Starter — 3 seats",
-		team:    "Team — 10 seats",
-		studio:  "Studio — 25 seats",
-	};
+	// Seat counts are admin-set (Admin → Products) — read live.
+	const SHOP_PLAN_LABELS: Record<ShopPlan, string> = $derived({
+		starter: `Starter — ${plansStore.settings.shopPlans.starter.seats} seats`,
+		team:    `Team — ${plansStore.settings.shopPlans.team.seats} seats`,
+		studio:  `Studio — ${plansStore.settings.shopPlans.studio.seats} seats`,
+	});
 	const ROLE_LABELS: Record<ShopRole, string> = {
 		owner:   "Owner",
 		manager: "Manager",
@@ -549,7 +550,7 @@
 	}
 
 	// Live per-tier cut allowances (Admin → Products) for the usage meter.
-	let cutLimits = $state<PlanCutLimits>(DEFAULT_CUT_LIMITS);
+	const cutLimits: PlanCutLimits = $derived(cutLimitsFromPlans(plansStore.settings));
 
 	async function handlePortal(type: "individual" | "org" = "individual") {
 		if (!userStore.user) return;
@@ -623,10 +624,6 @@
 			addCardReturnTo = returnTo ?? "";
 		}
 		currentSessionId = localStorage.getItem("omniplot_session_id") ?? "";
-		fetch("/api/settings/plans")
-			.then((r) => (r.ok ? r.json() : null))
-			.then((plans) => { if (plans) cutLimits = cutLimitsFromPlans(plans); })
-			.catch(() => {});
 		loadShopData();
 		loadUserOrgs();
 		loadLinkedProviders();

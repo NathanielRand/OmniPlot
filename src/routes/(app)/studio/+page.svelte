@@ -22,7 +22,7 @@
 	} from "$lib/utils/hpgl";
 	import { sendToPlotter, sendToPlotterSegmented, sendSettings, connectSerialPort, reconnectSerialPort, disconnectSerialPort, isSerialConnected, queryPlotter, releaseAgentPort, type SerialPortInfo, type CutProgress } from "$lib/utils/plotter-connection";
 	import { logPlotterError, incrementCutUsage } from "$lib/firebase/firestore";
-	import { cutJobStore } from "$lib/stores";
+	import { cutJobStore, plansStore } from "$lib/stores";
 	import type { PlotterDiagnostic } from "$lib/utils/plotter-errors";
 	import PlotterDiagPanel from "$lib/components/ui/PlotterDiagPanel.svelte";
 	import {
@@ -32,7 +32,6 @@
 		uid,
 		formatCutTime,
 		formatEfficiency,
-		DEFAULT_CUT_LIMITS,
 		cutLimitsFromPlans,
 		type PlanCutLimits,
 	} from "$lib/utils";
@@ -1021,9 +1020,9 @@
 	});
 
 	// ─── Metered feature gates ────────────────────
-	// Admin-configurable per-tier allowances (Admin → Products), fetched once
-	// on mount; falls back to DEFAULT_CUT_LIMITS until it lands.
-	let cutLimits = $state<PlanCutLimits>(DEFAULT_CUT_LIMITS);
+	// Admin-configurable per-tier allowances (Admin → Products) from the
+	// shared plansStore; defaults ($lib/plans) until the live values land.
+	const cutLimits: PlanCutLimits = $derived(cutLimitsFromPlans(plansStore.settings));
 
 	// Re-derives whenever user, team subscription, or cutLimits changes.
 	const cutCheck = $derived(
@@ -1817,10 +1816,6 @@
 			canvasStore.setItems(nested);
 		}
 		_mounted = true;
-		fetch("/api/settings/plans")
-			.then((r) => (r.ok ? r.json() : null))
-			.then((plans) => { if (plans) cutLimits = cutLimitsFromPlans(plans); })
-			.catch(() => {});
 		requestAnimationFrame(fitToView);
 		// Restore any interrupted job resume checkpoint
 		if (typeof localStorage !== "undefined") {

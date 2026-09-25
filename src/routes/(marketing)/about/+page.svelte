@@ -143,7 +143,7 @@
 			<a href="/pricing" class="cta-btn cta-btn--secondary">See pricing</a>
 		</div>
 		<p class="about-cta__contact">
-			Questions? <a href="/support" class="about-cta__link">Contact support →</a>
+			Questions? <a href="/support" class="about-cta__link">Chat with support →</a>
 		</p>
 	</section>
 

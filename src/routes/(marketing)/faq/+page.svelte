@@ -1,6 +1,16 @@
 <script lang="ts">
 	import Badge from "$lib/components/ui/Badge.svelte";
 	import { FAQ_ITEMS } from "$lib/config";
+	import { plansStore } from "$lib/stores";
+
+	// Plan limits/prices in answers are {{tokens}} filled from the live
+	// admin-set settings, so they always match what's enforced.
+	const faqItems = $derived(
+		FAQ_ITEMS.map((cat) => ({
+			...cat,
+			items: cat.items.map((item) => ({ q: plansStore.fill(item.q), a: plansStore.fill(item.a) })),
+		})),
+	);
 
 	let openItems = $state<Set<string>>(new Set());
 	let search = $state("");
@@ -13,7 +23,7 @@
 
 	const filtered = $derived(
 		search.trim()
-			? FAQ_ITEMS.map((cat) => ({
+			? faqItems.map((cat) => ({
 					...cat,
 					items: cat.items.filter(
 						(item) =>
@@ -23,7 +33,7 @@
 							item.a.toLowerCase().includes(search.toLowerCase()),
 					),
 				})).filter((cat) => cat.items.length > 0)
-			: FAQ_ITEMS,
+			: faqItems,
 	);
 </script>
 
@@ -42,7 +52,7 @@
 		<p class="faq-sub">
 			Can't find what you're looking for? <a
 				href="/support"
-				class="faq-link">Contact support →</a
+				class="faq-link">Chat with support →</a
 			>
 		</p>
 
@@ -126,7 +136,7 @@
 				<p class="faq-empty__sub">
 					Try a different search or <a
 						href="/support"
-						class="faq-link">contact support</a
+						class="faq-link">chat with support</a
 					>.
 				</p>
 			</div>

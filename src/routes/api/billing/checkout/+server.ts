@@ -122,7 +122,7 @@ export const POST: RequestHandler = async ({ request, url }) => {
 			// sub is on the platform account, invisible to the lookup below, so a
 			// new checkout would double-bill them. Hand off to support instead.
 			if (userSnap.data()?.legacyPlatformBilling) {
-				return json({ error: "Your plan needs a quick manual update — please contact support and we'll switch it for you." }, { status: 409 });
+				return json({ error: "Your plan needs a quick manual update — please chat with support (Account menu → Support tickets) and we'll switch it for you." }, { status: 409 });
 			}
 			customerId = (await getConnectedCustomerId(uid)) ?? undefined;
 

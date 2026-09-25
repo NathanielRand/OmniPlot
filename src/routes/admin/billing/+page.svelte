@@ -175,7 +175,7 @@
 			</div>
 			<div>
 				<h2 class="section-title">Billing health</h2>
-				<p class="section-desc">Env config, Stripe prices, webhook delivery, misrouted checkouts, and subscription ↔ plan sync. Also runs daily; failures alert support@.</p>
+				<p class="section-desc">Env config, Stripe prices, webhook delivery, misrouted checkouts, and subscription ↔ plan sync. Also runs daily; failures alert the staff inbox.</p>
 			</div>
 			<button class="ext-link" style="cursor:pointer" onclick={runHealth} disabled={healthLoading}>
 				{healthLoading ? 'Checking…' : 'Run checks'}

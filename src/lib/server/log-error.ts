@@ -2,9 +2,10 @@ import { createHash } from 'node:crypto';
 import { FieldValue } from 'firebase-admin/firestore';
 import { getAdminDb } from '$lib/server/firebase-admin';
 import { sendEmail } from '$lib/server/email';
+import { STAFF_EMAIL } from '$lib/server/staff';
 
 const RETENTION_MS = 90 * 24 * 60 * 60 * 1000; // 90 days — pair with a Firestore TTL policy on `expiresAt`
-const ALERT_EMAIL = 'support@omniplot.app';
+const ALERT_EMAIL = STAFF_EMAIL;
 const MAX_STACK_CHARS = 2000;
 
 export interface LogServerErrorOptions {

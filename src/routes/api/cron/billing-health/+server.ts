@@ -5,7 +5,7 @@ import { checkBillingHealth } from '$lib/server/billing-health';
 import { logServerError } from '$lib/server/log-error';
 
 // Daily billing self-test (vercel.json cron). Each failing check is written
-// to errorLogs — which alerts support@ — so a misrouted or silently-failing
+// to errorLogs — which alerts the staff inbox — so a misrouted or silently-failing
 // billing setup surfaces within a day instead of weeks.
 export const GET: RequestHandler = async ({ request }) => {
 	if (!CRON_SECRET) return json({ error: 'Cron secret not configured.' }, { status: 500 });

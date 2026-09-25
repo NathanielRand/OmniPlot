@@ -4,7 +4,7 @@
 	import Button from "$lib/components/ui/Button.svelte";
 	import Badge from "$lib/components/ui/Badge.svelte";
 	import PhoneInput from "$lib/components/ui/PhoneInput.svelte";
-	import { toastStore, userStore, uiStore } from "$lib/stores";
+	import { toastStore, userStore, uiStore, plansStore } from "$lib/stores";
 	import {
 		signInWithGoogle,
 		sendMagicLink,
@@ -18,11 +18,12 @@
 	const plan    = $derived(page.url.searchParams.get("plan") ?? "free");
 	const billing = $derived(page.url.searchParams.get("billing") ?? "monthly");
 
-	const PLAN_LABELS: Record<string, string> = {
+	// Prices are admin-set (Admin → Products) — read live.
+	const PLAN_LABELS: Record<string, string> = $derived({
 		free: "Free",
-		lite: "Lite — $29/mo",
-		pro:  "Pro",
-	};
+		lite: plansStore.fill("Lite — {{lite.price}}/mo"),
+		pro:  plansStore.fill("Pro — {{pro.price}}/mo"),
+	});
 
 	// ─── UI state ─────────────────────────────
 	type Tab = "link" | "phone";

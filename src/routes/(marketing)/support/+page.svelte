@@ -1,33 +1,54 @@
 <script lang="ts">
-	const TOPICS = [
-		{ value: "account",   label: "Account & Login" },
-		{ value: "billing",   label: "Billing & Subscription" },
-		{ value: "patterns",  label: "Patterns & Library" },
-		{ value: "technical", label: "Technical Issue" },
-		{ value: "feature",   label: "Feature Request" },
-		{ value: "other",     label: "Other" },
-	];
+	import { untrack } from "svelte";
+	import { page } from "$app/state";
+	import { auth } from "$lib/firebase/client";
+	import { userStore } from "$lib/stores";
+	import { TICKET_TOPICS } from "$lib/support/tickets";
 
-	let topic     = $state("technical");
+	const TOPICS = TICKET_TOPICS;
+	const VALID_TOPICS = new Set<string>(TOPICS.map((t) => t.value));
+
+	// Deep-linkable: /support?topic=billing preselects the topic.
+	const initialTopic = page.url.searchParams.get("topic");
+
+	let topic     = $state(initialTopic && VALID_TOPICS.has(initialTopic) ? initialTopic : "technical");
+	let subject   = $state((page.url.searchParams.get("subject") ?? "").slice(0, 140));
 	let name      = $state("");
 	let email     = $state("");
 	let message   = $state("");
 	let submitting = $state(false);
 	let submitted  = $state(false);
 	let error      = $state<string | null>(null);
+	let result     = $state<{ ref: string; link: string; suggestions: { title: string; body: string; href: string }[] } | null>(null);
+
+	const signedIn = $derived(userStore.isAuth);
+
+	// Signed-in users file against their account email so the ticket shows up
+	// in their in-app Support list (and badges) — prefill instead of asking.
+	// Only re-runs when the signed-in user changes — not as they edit the fields.
+	$effect(() => {
+		const u = userStore.user;
+		if (!u) return;
+		untrack(() => {
+			email = u.email ?? email;
+			if (!name) name = u.displayName ?? "";
+		});
+	});
 
 	async function submit(e: SubmitEvent) {
 		e.preventDefault();
 		error = null;
 		submitting = true;
 		try {
+			const token = await auth.currentUser?.getIdToken().catch(() => null);
 			const res = await fetch("/api/support", {
 				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ topic, name, email, message }),
+				headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+				body: JSON.stringify({ topic, subject, name, email, message, pageUrl: document.referrer || page.url.href }),
 			});
 			const data = await res.json();
 			if (!res.ok) throw new Error(data.error ?? "Submission failed");
+			result = { ref: data.ref, link: data.link, suggestions: data.suggestions ?? [] };
 			submitted = true;
 		} catch (err) {
 			error = err instanceof Error ? err.message : "Something went wrong. Please try again.";
@@ -39,7 +60,7 @@
 
 <svelte:head>
 	<title>Support — OmniPlot</title>
-	<meta name="description" content="Get help with OmniPlot. Contact our support team or browse frequently asked questions." />
+	<meta name="description" content="Get help with OmniPlot. Chat with our support team — no account needed — or browse frequently asked questions." />
 </svelte:head>
 
 <div class="support-page">
@@ -48,7 +69,7 @@
 	<div class="support-header">
 		<p class="support-eyebrow">Support</p>
 		<h1 class="support-title">How can we help?</h1>
-		<p class="support-sub">Browse self-serve resources below or send us a message — we typically respond within one business day.</p>
+		<p class="support-sub">Browse self-serve resources below or chat with our team — no account needed. We typically respond within one business day.</p>
 	</div>
 
 	<!-- Self-serve shortcuts -->
@@ -99,11 +120,17 @@
 		</a>
 	</div>
 
-	<!-- Contact form -->
+	<!-- Support chat (opens a ticket) -->
 	<div class="support-form-wrap">
 		<div class="support-form-header">
-			<h2 class="support-form-title">Send a message</h2>
-			<p class="support-form-sub">Can't find your answer above? We'll get back to you within one business day.</p>
+			<h2 class="support-form-title">Chat with support</h2>
+			<p class="support-form-sub">Can't find your answer above? Start a conversation with our team — no account needed. We reply within one business day and email you when we do, and you can keep chatting from your ticket.</p>
+			{#if signedIn}
+				<a class="support-mytickets" href="/support/tickets">
+					View your support tickets
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+				</a>
+			{/if}
 		</div>
 
 		{#if submitted}
@@ -113,9 +140,23 @@
 						<path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>
 					</svg>
 				</div>
-				<h3 class="support-success__title">Message received</h3>
-				<p class="support-success__body">Thanks for reaching out. We'll reply to <strong>{email}</strong> within one business day.</p>
-				<button class="support-success__reset" onclick={() => { submitted = false; message = ""; }}>
+				<h3 class="support-success__title">Message received{result?.ref ? ` — ${result.ref}` : ""}</h3>
+				<p class="support-success__body">Thanks for reaching out. We'll reply within one business day and email <strong>{email}</strong> when we do.</p>
+				{#if result?.link}
+					<a class="support-success__cta" href={result.link}>View your ticket</a>
+				{/if}
+				{#if result?.suggestions.length}
+					<div class="support-tips">
+						<p class="support-tips__title">While you wait, these often help:</p>
+						{#each result.suggestions as s}
+							<a class="support-tip" href={s.href}>
+								<span class="support-tip__title">{s.title}</span>
+								<span class="support-tip__body">{s.body}</span>
+							</a>
+						{/each}
+					</div>
+				{/if}
+				<button class="support-success__reset" onclick={() => { submitted = false; message = ""; subject = ""; result = null; }}>
 					Send another message
 				</button>
 			</div>
@@ -158,9 +199,23 @@
 							placeholder="you@example.com"
 							autocomplete="email"
 							required
+							readonly={signedIn}
 							bind:value={email}
 						/>
 					</div>
+				</div>
+
+				<!-- Subject -->
+				<div class="form-field">
+					<label class="form-label" for="subject">Subject <span class="form-optional">(optional)</span></label>
+					<input
+						id="subject"
+						class="form-input"
+						type="text"
+						maxlength="140"
+						placeholder="e.g. Graphtec CE7000 not detected in Chrome"
+						bind:value={subject}
+					/>
 				</div>
 
 				<!-- Message -->
@@ -190,7 +245,7 @@
 							</svg>
 							Sending…
 						{:else}
-							Send message
+							Start chat
 						{/if}
 					</button>
 					<p class="form-privacy">
@@ -499,6 +554,65 @@
 		padding: 0;
 		text-decoration: underline;
 		text-underline-offset: 2px;
+	}
+
+	.support-success__cta {
+		margin-top: 8px;
+		padding: 10px 22px;
+		background: var(--color-brand-dim);
+		color: #fff;
+		border-radius: var(--radius-md);
+		font-size: 0.9375rem;
+		font-weight: 600;
+		text-decoration: none;
+		transition: opacity 0.12s;
+	}
+	.support-success__cta:hover { opacity: 0.85; }
+
+	.support-tips {
+		width: 100%;
+		max-width: 440px;
+		margin-top: 16px;
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		text-align: left;
+	}
+	.support-tips__title {
+		font-size: 0.8125rem;
+		color: var(--text-tertiary);
+		margin: 0;
+	}
+	.support-tip {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		padding: 12px 14px;
+		background: var(--bg-surface);
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-md);
+		text-decoration: none;
+		transition: border-color 0.12s;
+	}
+	.support-tip:hover { border-color: var(--color-brand-dim); }
+	.support-tip__title { font-size: 0.875rem; font-weight: 600; color: var(--text-primary); }
+	.support-tip__body  { font-size: 0.8125rem; color: var(--text-secondary); line-height: 1.5; }
+
+	.support-mytickets {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		margin-top: 12px;
+		font-size: 0.875rem;
+		font-weight: 600;
+		color: var(--text-brand);
+		text-decoration: none;
+	}
+	.support-mytickets:hover { text-decoration: underline; }
+
+	.form-input[readonly] {
+		color: var(--text-secondary);
+		background: var(--bg-surface-2);
 	}
 
 	/* ── Responsive ───────────────────────────── */

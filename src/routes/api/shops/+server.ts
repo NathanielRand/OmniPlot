@@ -4,6 +4,7 @@ import { getAdminDb } from "$lib/server/firebase-admin";
 import { requireUid } from "$lib/server/shop-auth";
 import { FieldValue } from "firebase-admin/firestore";
 import type { ShopPlan } from "$lib/types";
+import { getPlanSettings } from "$lib/server/plans";
 
 // POST /api/shops — create a shop + its owning org, atomically.
 export const POST: RequestHandler = async ({ request }) => {
@@ -15,7 +16,7 @@ export const POST: RequestHandler = async ({ request }) => {
 		return new Response(JSON.stringify({ error: "name required" }), { status: 400 });
 	}
 	const shopPlan: ShopPlan = plan === "team" || plan === "studio" ? plan : "starter";
-	const seats = shopPlan === "starter" ? 3 : shopPlan === "team" ? 10 : 25;
+	const seats = (await getPlanSettings()).shopPlans[shopPlan].seats;
 
 	const db = getAdminDb();
 	const orgRef = db.collection("orgs").doc();

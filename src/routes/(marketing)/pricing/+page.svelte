@@ -1,66 +1,34 @@
 <script lang="ts">
-	import { onMount } from "svelte";
 	import Badge from "$lib/components/ui/Badge.svelte";
 	import Button from "$lib/components/ui/Button.svelte";
 	import { PRICING_PLANS, SHOP_PRICING_PLANS, FAQ_ITEMS } from "$lib/config";
-	import { userStore, uiStore } from "$lib/stores";
+	import { cutAllowanceText, fmtPrice } from "$lib/plans";
+	import { userStore, uiStore, plansStore } from "$lib/stores";
 
 	let billing = $state<"monthly" | "yearly">("monthly");
 
 	const CHECK = "M5 13l4 4L19 7";
 
-	// Amounts are admin-editable (Admin → Products → Plan allowances), stored
-	// in Firestore, and fetched live here so the marketing page always shows
-	// what checkout will actually charge. Copy (name/description/features)
-	// stays in the static config — only price/yearlyPrice/seats are overridden.
-	let livePrices = $state<Record<
-		string,
-		{ price: number; yearlyPrice: number; seats?: number; cutsPerMonth?: number | null; cutsPerDay?: number | null; customUpload?: boolean }
-	> | null>(null);
-	onMount(() => {
-		fetch("/api/settings/plans")
-			.then((r) => (r.ok ? r.json() : null))
-			.then((data) => {
-				if (!data) return;
-				livePrices = {
-					free: data.free, lite: data.lite, pro: data.pro,
-					starter: data.shopPlans?.starter, team: data.shopPlans?.team, studio: data.shopPlans?.studio,
-				};
-			})
-			.catch(() => {});
-	});
-
-	// The cuts allowance is always the first line of `features` for free/lite/pro —
-	// rewrite it from the live allowance so admin edits (Admin → Products) show up here.
-	function cutsFeatureLine(live?: { cutsPerMonth?: number | null; cutsPerDay?: number | null }): string | null {
-		if (!live) return null;
-		if (live.cutsPerDay != null) return `${live.cutsPerDay} cuts per day`;
-		if (live.cutsPerMonth != null) return `${live.cutsPerMonth} cuts per month`;
-		return "Unlimited cuts";
-	}
+	// Prices, cut allowances, seats and upload access are admin-set (Admin →
+	// Products → Plan allowances) and read live, so this page always shows
+	// what checkout charges and what the app enforces. Copy (name/description/
+	// features) stays in the static config, with {{tokens}} for any numbers.
+	const live = $derived(plansStore.settings);
 
 	const plans = $derived(
-		PRICING_PLANS.map((p) => {
-			const live = livePrices?.[p.id];
-			if (!live) return p;
-			const cutsLine = cutsFeatureLine(live);
-			const features = cutsLine ? [cutsLine, ...p.features.slice(1)] : p.features;
-			return { ...p, price: live.price, yearlyPrice: live.yearlyPrice, features };
-		}),
+		PRICING_PLANS.map((p) => ({
+			...p,
+			price: live[p.id as "free" | "lite" | "pro"].price,
+			yearlyPrice: live[p.id as "free" | "lite" | "pro"].yearlyPrice,
+			features: p.features.map(plansStore.fill),
+		})),
 	);
-	// Comparison-table cells for the live-configurable allowances; the rest
-	// of the table is static copy. The old hardcoded "1 / day" / "1 / 30 days"
-	// cells contradicted the real 5/day and 10/month limits.
+
 	function cutsCell(t: "free" | "lite" | "pro"): string {
-		const live = livePrices?.[t] ?? PRICING_PLANS.find((p) => p.id === t)!.limits;
-		if (live.cutsPerDay != null) return `${live.cutsPerDay} / day`;
-		if (live.cutsPerMonth != null) return `${live.cutsPerMonth} / 30 days`;
-		return "Unlimited";
+		return cutAllowanceText(live[t], "short");
 	}
 	function uploadCell(t: "free" | "lite" | "pro"): string {
-		const live = livePrices?.[t];
-		const allowed = live?.customUpload ?? PRICING_PLANS.find((p) => p.id === t)!.limits.customPatterns;
-		return allowed ? "✓" : "—";
+		return live[t].customUpload ? "✓" : "—";
 	}
 	const compareRows = $derived([
 		["Cuts", cutsCell("free"), cutsCell("lite"), cutsCell("pro")],
@@ -80,18 +48,19 @@
 	const shopPlans = $derived(
 		SHOP_PRICING_PLANS.map((p) => ({
 			...p,
-			...(livePrices?.[p.id]
-				? { price: livePrices[p.id].price, yearlyPrice: livePrices[p.id].yearlyPrice, seats: livePrices[p.id].seats ?? p.seats }
-				: {}),
+			...live.shopPlans[p.id],
+			features: p.features.map(plansStore.fill),
 		})),
 	);
+
+	const faq = $derived(FAQ_ITEMS[2].items.map((i) => ({ q: plansStore.fill(i.q), a: plansStore.fill(i.a) })));
 </script>
 
 <svelte:head>
 	<title>Pricing — OmniPlot</title>
 	<meta
 		name="description"
-		content="Free, Lite ($29/mo), and Pro ($79/mo) plans. Start free, no credit card required."
+		content="Free, Lite ({fmtPrice(live.lite.price)}/mo), and Pro ({fmtPrice(live.pro.price)}/mo) plans. Start free, no credit card required."
 	/>
 </svelte:head>
 
@@ -115,7 +84,7 @@
 				onclick={() => (billing = "yearly")}
 			>
 				Yearly
-				<Badge variant="success" size="sm">Save 20%</Badge>
+				<Badge variant="success" size="sm">{plansStore.fill("Save {{yearlySavings}}")}</Badge>
 			</button>
 		</div>
 	</div>
@@ -256,8 +225,8 @@
 		</div>
 
 		<p class="team-note">
-			Need more than 25 seats?
-			<a href="/support" class="team-note__link">Contact us for enterprise pricing →</a>
+			Need more than {plansStore.fill("{{shop.maxSeats}}")} seats?
+			<a href="/support?topic=billing&subject=Enterprise%20pricing" class="team-note__link">Chat with us about enterprise pricing →</a>
 		</p>
 	</div>
 
@@ -302,7 +271,7 @@
 	<div class="pricing-faq">
 		<h2 class="compare-title">Common questions</h2>
 		<div class="faq-grid">
-			{#each FAQ_ITEMS[2].items as item}
+			{#each faq as item}
 				<div class="faq-item">
 					<h3 class="faq-q">{item.q}</h3>
 					<p class="faq-a">{item.a}</p>

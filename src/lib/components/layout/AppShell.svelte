@@ -5,7 +5,7 @@
 	import Badge from "$lib/components/ui/Badge.svelte";
 	import EarlyAccessBadge from "$lib/components/ui/EarlyAccessBadge.svelte";
 	import ThemeToggle from "$lib/components/ui/ThemeToggle.svelte";
-	import { uiStore, userStore, shopStore, agentStore, changelogStore } from "$lib/stores";
+	import { uiStore, userStore, shopStore, agentStore, changelogStore, supportStore, plansStore } from "$lib/stores";
 	import { APP_NAV, LATEST_VERSION } from "$lib/config";
 	import { signOutUser } from "$lib/firebase/auth";
 	import { goto } from "$app/navigation";
@@ -64,6 +64,17 @@
 		currentPath;
 		uiStore.closeMobileMenu();
 	});
+
+	// ─── Support badge ────────────────────────
+	// Tickets where support replied or changed status since the user last looked.
+	$effect(() => {
+		if (!user?.uid) return;
+		return supportStore.watch("user");
+	});
+	const supportCount = $derived(supportStore.userAttention);
+	const supportLabel = $derived(
+		supportCount ? `${supportCount} support ticket${supportCount === 1 ? "" : "s"} need${supportCount === 1 ? "s" : ""} your attention` : "Support",
+	);
 
 	function handleMenuBtnClick() {
 		if (typeof window !== "undefined" && window.matchMedia("(max-width: 768px)").matches) {
@@ -147,6 +158,7 @@
 					aria-haspopup="menu"
 					bind:this={avatarBtn}
 					onclick={openMenu}
+					use:tooltip={supportCount ? supportLabel : undefined}
 				>
 					{#if user?.photoURL}
 						<img src={user.photoURL} alt={user.displayName ?? "Avatar"} class="avatar__img" />
@@ -156,6 +168,9 @@
 						</span>
 					{/if}
 				</button>
+				{#if supportCount}
+					<span class="avatar__alert" aria-hidden="true"></span>
+				{/if}
 
 				{#if menuOpen}
 					<div
@@ -229,6 +244,12 @@
 								Admin panel
 							</a>
 						{/if}
+
+						<a href="/support/tickets" role="menuitem" class="user-menu__item" onclick={closeMenu}>
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+							Support tickets
+							{#if supportCount}<span class="user-menu__count" aria-label={supportLabel}>{supportCount}</span>{/if}
+						</a>
 
 						<button
 							role="menuitem"
@@ -407,6 +428,24 @@
 
 			<div class="sidebar__footer">
 				<a
+					href="/support/tickets"
+					class="sidebar__item"
+					class:active={currentPath.startsWith("/support/tickets")}
+					aria-label={supportLabel}
+					use:tooltip={!uiStore.sidebarOpen ? supportLabel : undefined}
+					onclick={uiStore.closeMobileMenu}
+				>
+					<span class="sidebar__icon" aria-hidden="true">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+						{#if supportCount}<span class="sidebar__icon-dot"></span>{/if}
+					</span>
+					<span class="sidebar__label">Support</span>
+					{#if supportCount}
+						<span class="sidebar__count-badge">{supportCount}</span>
+					{/if}
+				</a>
+
+				<a
 					href="/changelog"
 					class="sidebar__item sidebar__item--changelog"
 					class:active={currentPath === "/changelog"}
@@ -425,7 +464,7 @@
 				{#if user && user.tier === "free"}
 					<div class="sidebar__upsell" class:sidebar__upsell--hidden={!uiStore.sidebarOpen}>
 						<p class="sidebar__upsell-text">
-							1 cut / 30 days on Free
+							{plansStore.fill("{{free.Cuts}}")} on Free
 						</p>
 						<button class="sidebar__upsell-btn" onclick={uiStore.openPricing}>
 							Upgrade for more →
@@ -836,6 +875,62 @@
 	.sidebar__icon {
 		flex-shrink: 0;
 		display: flex;
+		position: relative;
+	}
+
+	/* Support "needs your attention" — the count pill shows when expanded,
+	   the icon dot carries the signal when the sidebar is collapsed. */
+	.sidebar__count-badge {
+		flex-shrink: 0;
+		min-width: 18px;
+		padding: 1px 6px;
+		border-radius: 999px;
+		font-size: 0.6875rem;
+		font-weight: 700;
+		font-family: var(--font-mono);
+		text-align: center;
+		background: var(--color-warning, #f59e0b);
+		color: #000;
+		transition: opacity 0.15s;
+	}
+	.sidebar-collapsed .sidebar__count-badge { opacity: 0; pointer-events: none; }
+
+	.sidebar__icon-dot {
+		display: none;
+		position: absolute;
+		top: -2px;
+		right: -3px;
+		width: 7px;
+		height: 7px;
+		border-radius: 50%;
+		background: var(--color-warning, #f59e0b);
+		box-shadow: 0 0 0 2px var(--bg-surface);
+	}
+	.sidebar-collapsed .sidebar__icon-dot { display: block; }
+
+	.avatar__alert {
+		position: absolute;
+		top: -1px;
+		right: -1px;
+		width: 9px;
+		height: 9px;
+		border-radius: 50%;
+		background: var(--color-warning, #f59e0b);
+		box-shadow: 0 0 0 2px var(--bg-surface);
+		pointer-events: none;
+	}
+
+	.user-menu__count {
+		margin-left: auto;
+		min-width: 18px;
+		padding: 0 6px;
+		border-radius: 999px;
+		font-size: 0.6875rem;
+		font-weight: 700;
+		font-family: var(--font-mono);
+		text-align: center;
+		background: var(--color-warning, #f59e0b);
+		color: #000;
 	}
 
 	.sidebar__label {

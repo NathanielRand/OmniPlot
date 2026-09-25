@@ -94,21 +94,23 @@ export function deepClone<T>(obj: T): T {
 
 // ─── Check tier limits ────────────────────────
 import type { UserProfile } from "$lib/types";
+import { DEFAULT_PLAN_SETTINGS } from "$lib/plans";
 
 // Per-tier cut allowances; `null` means unlimited on that window. Defaults
-// mirror DEFAULT_PLANS in `/api/settings/plans` — the live values come from
-// that endpoint (admin-editable in Admin → Products, no deploy needed).
+// come from $lib/plans — the live values come from `/api/settings/plans`
+// (admin-editable in Admin → Products, no deploy needed).
 export type CutAllowance = { cutsPerMonth: number | null; cutsPerDay: number | null };
 export type PlanCutLimits = Record<"free" | "lite" | "pro", CutAllowance>;
 
+const pickCuts = ({ cutsPerMonth, cutsPerDay }: CutAllowance): CutAllowance => ({ cutsPerMonth, cutsPerDay });
 export const DEFAULT_CUT_LIMITS: PlanCutLimits = {
-	free: { cutsPerMonth: 10,   cutsPerDay: null },
-	lite: { cutsPerMonth: null, cutsPerDay: 5 },
-	pro:  { cutsPerMonth: null, cutsPerDay: null },
+	free: pickCuts(DEFAULT_PLAN_SETTINGS.free),
+	lite: pickCuts(DEFAULT_PLAN_SETTINGS.lite),
+	pro:  pickCuts(DEFAULT_PLAN_SETTINGS.pro),
 };
 
 /** Pulls just the cut allowances out of a GET /api/settings/plans response. */
-export function cutLimitsFromPlans(plans: Record<string, Partial<CutAllowance>> | null | undefined): PlanCutLimits {
+export function cutLimitsFromPlans(plans: Partial<Record<keyof PlanCutLimits, Partial<CutAllowance>>> | null | undefined): PlanCutLimits {
 	const pick = (t: keyof PlanCutLimits): CutAllowance => ({
 		cutsPerMonth: plans?.[t]?.cutsPerMonth !== undefined ? plans[t]!.cutsPerMonth ?? null : DEFAULT_CUT_LIMITS[t].cutsPerMonth,
 		cutsPerDay:   plans?.[t]?.cutsPerDay   !== undefined ? plans[t]!.cutsPerDay   ?? null : DEFAULT_CUT_LIMITS[t].cutsPerDay,

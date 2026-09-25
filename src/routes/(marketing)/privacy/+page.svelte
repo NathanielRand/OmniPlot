@@ -96,18 +96,18 @@
 			<ul>
 				<li>Access a copy of the personal data we hold about you</li>
 				<li>Correct inaccurate data (update your display name in Settings → Profile)</li>
-				<li>Request deletion of your account and associated data (Settings → Danger Zone, or email us)</li>
+				<li>Request deletion of your account and associated data (Settings → Danger Zone, or <a href="/support?topic=account&subject=Data%20deletion%20request">chat with support</a>)</li>
 				<li>Object to or restrict certain processing</li>
 				<li>Data portability (export your job files via the studio at any time)</li>
 			</ul>
-			<p>To exercise any of these rights, <a href="/support">contact us via our support page</a>. We will respond within 30 days.</p>
+			<p>To exercise any of these rights, <a href="/support?topic=account&subject=Privacy%20request">chat with support</a> — no account needed. We will respond within 30 days.</p>
 			<p><strong>California residents (CCPA):</strong> OmniPlot does not sell personal information. You have the right to know what data we collect and to request deletion.</p>
 			<p><strong>EEA/UK residents (GDPR):</strong> Our legal basis for processing is performance of a contract (operating the Service you signed up for) and, for analytics, legitimate interest. You may withdraw consent at any time by closing your account.</p>
 		</section>
 
 		<section class="legal-section">
 			<h2>7. Children's Privacy</h2>
-			<p>OmniPlot is not directed at children under 13 (or under 16 in the EEA). We do not knowingly collect personal information from children. If you believe a child has provided us with personal information, contact us and we will delete it.</p>
+			<p>OmniPlot is not directed at children under 13 (or under 16 in the EEA). We do not knowingly collect personal information from children. If you believe a child has provided us with personal information, <a href="/support?topic=account&subject=Privacy%20request">chat with support</a> and we will delete it.</p>
 		</section>
 
 		<section class="legal-section">
@@ -117,7 +117,7 @@
 
 		<section class="legal-section">
 			<h2>9. Contact</h2>
-			<p>Questions about this Privacy Policy or your data? <a href="/support">Contact us via our support page</a>.</p>
+			<p>Questions about this Privacy Policy or your data? <a href="/support?topic=other&subject=Privacy%20question">Chat with support</a> — no account needed.</p>
 		</section>
 
 	</div>

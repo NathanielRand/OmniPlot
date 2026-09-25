@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount, tick } from "svelte";
 	import { goto } from "$app/navigation";
-	import { userStore, shopStore, toastStore, uiStore } from "$lib/stores";
+	import { userStore, shopStore, toastStore, uiStore, plansStore } from "$lib/stores";
 	import { patternStore, RESIDENTIAL_ZONES_LIST, COMMERCIAL_ZONES_LIST, MIRROR_PAIRS, PATTERN_CATEGORIES, zonesForCategory } from "$lib/stores/patternStore.svelte";
 	import { addUserPattern } from "$lib/firebase/firestore";
 	import SvgPathInput from "$lib/components/ui/SvgPathInput.svelte";
@@ -20,23 +20,16 @@
 	// The tier is derived reactively, NOT read once when the fetch resolves —
 	// the user profile often isn't loaded yet at that point, which used to
 	// fall back to "free" and permanently lock paid users out of this page.
-	type UploadPlans = Record<"free" | "lite" | "pro", { customUpload?: boolean }>;
-	let uploadPlans = $state<UploadPlans | null>(null); // null = still loading
-	onMount(() => {
-		fetch("/api/settings/plans")
-			.then((r) => (r.ok ? r.json() : null))
-			.then((plans) => { uploadPlans = plans ?? { free: {}, lite: {}, pro: { customUpload: true } }; })
-			.catch(() => { uploadPlans = { free: {}, lite: {}, pro: { customUpload: true } }; });
-	});
 	const tierAllowsUpload = (t: string | undefined) =>
-		t === "admin" || !!uploadPlans?.[t as keyof UploadPlans]?.customUpload;
+		t === "admin" || !!plansStore.settings[t as "free" | "lite" | "pro"]?.customUpload;
 	// Names of the plans that include uploads, for the lock copy (e.g. "Pro" or "Lite or Pro").
 	const uploadPlanNames = $derived(
-		(["lite", "pro"] as const).filter((t) => uploadPlans?.[t]?.customUpload).map((t) => t === "lite" ? "Lite" : "Pro").join(" or ") || "Pro",
+		(["lite", "pro"] as const).filter((t) => plansStore.settings[t].customUpload).map((t) => t === "lite" ? "Lite" : "Pro").join(" or ") || "Pro",
 	);
+	// Wait for the live config before locking anyone out.
 	const isFreeLocked = $derived(
 		!!userStore.user &&
-		uploadPlans !== null &&
+		plansStore.loaded &&
 		!tierAllowsUpload(userStore.user.tier) &&
 		!shopStore.isActive,
 	);

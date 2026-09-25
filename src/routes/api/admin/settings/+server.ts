@@ -1,6 +1,13 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { getAdminDb, verifyIdToken } from '$lib/server/firebase-admin';
+import { mergePlanSettings } from '$lib/plans';
+import { invalidatePlanSettings } from '$lib/server/plans';
+
+function plansAndShops(data: FirebaseFirestore.DocumentData) {
+	const { shopPlans, ...plans } = mergePlanSettings(data);
+	return { plans, shopPlans };
+}
 
 const SETTINGS_DOC = 'settings/platform';
 
@@ -16,41 +23,15 @@ const DEFAULT_FLAGS = {
 
 const DEFAULT_PLATFORM = {
 	appName:      'OmniPlot',
-	supportEmail: 'support@omniplot.app',
 	docsUrl:      'https://docs.omniplot.app',
 };
 
 // Per-tier allowances — the single source of truth for cut limits, gated
 // features, and billing amounts. Editable from /admin/products; enforced
 // client-side via GET /api/settings/plans (public mirror) and canCut()/
-// upload gating; the Stripe sync (sync_config) mints prices from `price`/
-// `yearlyPrice` here and caches the resulting price IDs back onto each
-// entry so checkout resolves deterministically instead of re-listing Stripe.
-const DEFAULT_PLANS = {
-	free: {
-		cutsPerMonth: 10, cutsPerDay: null as number | null, customUpload: false,
-		price: 0, yearlyPrice: 0,
-		stripePriceId: null as string | null, stripeYearlyPriceId: null as string | null,
-	},
-	lite: {
-		cutsPerMonth: null as number | null, cutsPerDay: 5, customUpload: false,
-		price: 29, yearlyPrice: 24,
-		stripePriceId: null as string | null, stripeYearlyPriceId: null as string | null,
-	},
-	pro: {
-		cutsPerMonth: null as number | null, cutsPerDay: null as number | null, customUpload: true,
-		price: 79, yearlyPrice: 66,
-		stripePriceId: null as string | null, stripeYearlyPriceId: null as string | null,
-	},
-};
-
-// Shop/org plans — no cut limits (unlimited for all seats), but same
-// price/yearlyPrice + cached Stripe price ID shape.
-const DEFAULT_SHOP_PLANS = {
-	starter: { seats: 3,  price: 149, yearlyPrice: 124, stripePriceId: null as string | null, stripeYearlyPriceId: null as string | null },
-	team:    { seats: 10, price: 299, yearlyPrice: 249, stripePriceId: null as string | null, stripeYearlyPriceId: null as string | null },
-	studio:  { seats: 25, price: 499, yearlyPrice: 416, stripePriceId: null as string | null, stripeYearlyPriceId: null as string | null },
-};
+// upload gating, and shown in customer-facing copy via plan tokens; the
+// Stripe sync (sync_config) mints prices from `price`/`yearlyPrice` here and
+// caches the resulting price IDs back onto each entry. Defaults: $lib/plans.
 
 async function assertAdmin(authHeader: string | null): Promise<boolean> {
 	const uid = await verifyIdToken(authHeader);
@@ -83,16 +64,7 @@ export const GET: RequestHandler = async ({ request }) => {
 	return json({
 		flags:    { ...DEFAULT_FLAGS,    ...(data.flags    ?? {}) },
 		platform: { ...DEFAULT_PLATFORM, ...(data.platform ?? {}) },
-		plans: {
-			free: { ...DEFAULT_PLANS.free, ...(data.plans?.free ?? {}) },
-			lite: { ...DEFAULT_PLANS.lite, ...(data.plans?.lite ?? {}) },
-			pro:  { ...DEFAULT_PLANS.pro,  ...(data.plans?.pro  ?? {}) },
-		},
-		shopPlans: {
-			starter: { ...DEFAULT_SHOP_PLANS.starter, ...(data.shopPlans?.starter ?? {}) },
-			team:    { ...DEFAULT_SHOP_PLANS.team,    ...(data.shopPlans?.team    ?? {}) },
-			studio:  { ...DEFAULT_SHOP_PLANS.studio,  ...(data.shopPlans?.studio  ?? {}) },
-		},
+		...plansAndShops(data),
 		admins,
 	});
 };
@@ -111,5 +83,6 @@ export const POST: RequestHandler = async ({ request }) => {
 	if (shopPlans) patch.shopPlans = shopPlans;
 
 	await db.doc(SETTINGS_DOC).set(patch, { merge: true });
+	if (plans || shopPlans) invalidatePlanSettings();
 	return json({ ok: true });
 };

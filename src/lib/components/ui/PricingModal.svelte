@@ -1,6 +1,5 @@
 <script lang="ts">
-	import { onMount } from "svelte";
-	import { uiStore, userStore, toastStore } from "$lib/stores";
+	import { uiStore, userStore, toastStore, plansStore } from "$lib/stores";
 	import { PRICING_PLANS } from "$lib/config";
 	import type { PricingPlan } from "$lib/types";
 	import Button from "$lib/components/ui/Button.svelte";
@@ -10,17 +9,14 @@
 	let billing       = $state<"monthly" | "yearly">("monthly");
 	let checkoutPlan  = $state<string | null>(null); // plan.id being loaded
 
-	// Admin-editable amounts (Admin → Products → Plan allowances), fetched
-	// live so this modal always matches what checkout will actually charge.
-	let livePrices = $state<Record<string, { price: number; yearlyPrice: number }> | null>(null);
-	onMount(() => {
-		fetch("/api/settings/plans")
-			.then((r) => (r.ok ? r.json() : null))
-			.then((data) => { if (data) livePrices = { free: data.free, lite: data.lite, pro: data.pro }; })
-			.catch(() => {});
-	});
+	// Admin-editable amounts and allowances (Admin → Products → Plan
+	// allowances), read live so this modal always matches what checkout
+	// charges and what the app enforces.
 	const plans = $derived(
-		PRICING_PLANS.map((p) => ({ ...p, ...(livePrices?.[p.id] ? { price: livePrices[p.id].price, yearlyPrice: livePrices[p.id].yearlyPrice } : {}) })),
+		PRICING_PLANS.map((p) => {
+			const live = plansStore.settings[p.id as "free" | "lite" | "pro"];
+			return { ...p, price: live.price, yearlyPrice: live.yearlyPrice, features: p.features.map(plansStore.fill) };
+		}),
 	);
 
 	// An existing subscriber's checkout changes the plan on their current
@@ -123,7 +119,7 @@
 						onclick={() => (billing = "yearly")}
 					>
 						Yearly
-						<Badge variant="success" size="sm">Save 20%</Badge>
+						<Badge variant="success" size="sm">{plansStore.fill("Save {{yearlySavings}}")}</Badge>
 					</button>
 				</div>
 			</div>
@@ -223,7 +219,7 @@
 				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
 				Running a shop?
 				<a href="/pricing#team" class="modal__team-link" onclick={uiStore.closePricing}>
-					See team plans from $149/mo →
+					See team plans from {plansStore.fill("{{shop.minPrice}}")}/mo →
 				</a>
 			</div>
 		</div>
