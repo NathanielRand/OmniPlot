@@ -1,8 +1,11 @@
 <script lang="ts">
 	import Badge from "$lib/components/ui/Badge.svelte";
+	import AccountBillingTools from "$lib/components/admin/AccountBillingTools.svelte";
 	import { formatDate, formatRelativeTime } from "$lib/utils";
 	import { auth } from "$lib/firebase/client";
 	import { onMount } from "svelte";
+	import { page } from "$app/state";
+	import { goto } from "$app/navigation";
 	import { toastStore, confirmStore } from "$lib/stores";
 	import { tooltip } from "$lib/actions/tooltip";
 
@@ -126,7 +129,13 @@
 		}
 	}
 
-	onMount(loadUsers);
+	onMount(() => {
+		loadUsers();
+		// Deep link from elsewhere in admin (e.g. a support ticket's "Open
+		// account") — there's no per-user page, so open their drawer here.
+		const uid = page.url.searchParams.get("uid");
+		if (uid) openDetail(uid);
+	});
 
 	// ── Derived ────────────────────────────────────
 	const filtered = $derived(
@@ -184,6 +193,11 @@
 	function closeDetail() {
 		detailUid = null;
 		detail    = null;
+		if (page.url.searchParams.has("uid")) {
+			const url = new URL(page.url);
+			url.searchParams.delete("uid");
+			goto(url, { replaceState: true, noScroll: true, keepFocus: true });
+		}
 	}
 
 	// Generic PATCH helper
@@ -736,6 +750,12 @@
 							</div>
 						{/if}
 					</div>
+				</div>
+
+				<!-- Credits & billing repair -->
+				<div class="drawer-section">
+					<div class="drawer-section__title">Credits &amp; billing repair</div>
+					<AccountBillingTools uid={detail.uid} onchange={() => detailUid && openDetail(detailUid)} />
 				</div>
 
 				<!-- Payment history -->

@@ -41,6 +41,9 @@ export interface TicketMessage {
 export interface Ticket {
 	id: string;
 	uid: string | null;
+	/** How `uid` got set: 'session' = filed while signed in; 'manual' = an
+	 *  admin linked a legacy/guest ticket to the account with the same email. */
+	linkMethod: 'session' | 'manual' | null;
 	email: string;
 	name: string;
 	topic: TicketTopic;

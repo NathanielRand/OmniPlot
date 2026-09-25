@@ -8,13 +8,16 @@ import {
 	deleteTicket,
 	getTicket,
 	listTicketsForUser,
+	linkTicketToAccount,
 	markSeen,
 	updateTriage,
 	TicketError,
 } from '$lib/server/support/store';
 import { notifyAdminReply, notifyStatusChange } from '$lib/server/support/notify';
+import Stripe from 'stripe';
+import { applyCredit, fmtCents, CreditError } from '$lib/server/credits';
 import { cannedById } from '$lib/support/responses';
-import type { Ticket, TicketPriority, TicketStatus } from '$lib/support/tickets';
+import { ticketRef, type Ticket, type TicketPriority, type TicketStatus } from '$lib/support/tickets';
 
 const STATUSES: TicketStatus[] = ['new', 'in_progress', 'awaiting_customer', 'resolved', 'closed'];
 const PRIORITIES: TicketPriority[] = ['normal', 'high', 'urgent'];
@@ -36,9 +39,12 @@ async function customerContext(t: Ticket) {
 		const match = await db.collection('users').where('email', '==', t.email).limit(1).get();
 		uid = match.docs[0]?.id ?? null;
 	}
+	// linked  = the ticket carries the uid (filed signed in, or linked by an admin)
+	// match   = legacy/guest ticket whose email matches an account — linkable
+	const link = { status: t.uid ? 'linked' : uid ? 'match' : 'none', method: t.linkMethod, uid } as const;
 	if (!uid) {
 		const others = await listTicketsForUser(null, t.email || null);
-		return { account: null, related: others.filter((o) => o.id !== t.id).map(slim), reports: [], errors: [] };
+		return { link, account: null, related: others.filter((o) => o.id !== t.id).map(slim), reports: [], errors: [] };
 	}
 
 	const [userSnap, related, reportsSnap, errorsSnap] = await Promise.all([
@@ -51,6 +57,7 @@ async function customerContext(t: Ticket) {
 	const shop = u.shopId ? (await db.doc(`shops/${u.shopId}`).get()).data() : null;
 
 	return {
+		link,
 		account: {
 			uid,
 			displayName: u.displayName ?? '',
@@ -76,6 +83,14 @@ async function customerContext(t: Ticket) {
 			.sort((a, b) => b.lastSeenAt - a.lastSeenAt)
 			.slice(0, 5),
 	};
+}
+
+/** The OmniPlot account behind a ticket — its uid, or a user with the same email. */
+async function accountUid(t: Ticket): Promise<string | null> {
+	if (t.uid) return t.uid;
+	if (!t.email) return null;
+	const match = await getAdminDb().collection('users').where('email', '==', t.email).limit(1).get();
+	return match.docs[0]?.id ?? null;
 }
 
 function slim(t: Ticket) {
@@ -117,11 +132,38 @@ export const POST: RequestHandler = async ({ request, params }) => {
 				if (!body) return json({ error: 'Write a reply before sending.' }, { status: 400 });
 				const canned = cannedById(payload.cannedId);
 				const status: TicketStatus = STATUSES.includes(payload.status) ? payload.status : canned?.setStatus ?? 'awaiting_customer';
-				const updated = await addMessage(
+
+				// Credit trigger: attach the free-month coupon BEFORE the reply goes out,
+				// so a reply promising "next month is on us" never sends if Stripe failed.
+				let creditNote: string | null = null;
+				if (payload.credit?.months || payload.credit?.amountCents) {
+					const uid = await accountUid(ticket);
+					if (!uid) return json({ error: 'No OmniPlot account matches this ticket — a credit needs an account.' }, { status: 400 });
+					try {
+						const credit = await applyCredit({
+							uid,
+							months: payload.credit.months ? Number(payload.credit.months) : undefined,
+							amountCents: payload.credit.amountCents ? Number(payload.credit.amountCents) : undefined,
+							reason: canned?.offerCredit?.reason ?? 'service_issue',
+							note: `Support ticket ${ticketRef(ticket.id)}`,
+							ticketId: ticket.id,
+							admin,
+						});
+						creditNote = `Applied coupon "${credit.label}" (≈${fmtCents(credit.valueCents, credit.currency)}) to their subscription's next invoice.`;
+					} catch (err) {
+						const message = err instanceof CreditError || err instanceof Stripe.errors.StripeError ? err.message : 'Credit failed.';
+						return json({ error: `Reply not sent — ${message}` }, { status: 400 });
+					}
+				}
+
+				let updated = await addMessage(
 					ticket.id,
 					{ from: 'admin', body, authorName: admin.name, authorUid: admin.uid },
-					{ status, addTags: canned?.addTags },
+					{ status, addTags: [...(canned?.addTags ?? []), ...(creditNote ? ['credited'] : [])] },
 				);
+				if (creditNote) {
+					updated = await addMessage(ticket.id, { from: 'admin', body: creditNote, authorName: admin.name, authorUid: admin.uid, internal: true });
+				}
 				await notifyAdminReply(updated, accessKey, body);
 				return json({ ticket: updated });
 			}
@@ -138,6 +180,16 @@ export const POST: RequestHandler = async ({ request, params }) => {
 				if (payload.status === ticket.status) return json({ ticket });
 				const updated = await changeStatus(ticket.id, payload.status, { actor: 'admin' });
 				if (payload.notify !== false) await notifyStatusChange(updated, accessKey);
+				return json({ ticket: updated });
+			}
+
+			// Legacy cover: link a guest/old ticket to the account with the SAME
+			// email. Never to an arbitrary account — the email must match.
+			case 'link': {
+				if (ticket.uid) return json({ error: 'This ticket is already linked to an account.' }, { status: 409 });
+				const uid = await accountUid(ticket);
+				if (!uid) return json({ error: 'No account uses this ticket\'s email.' }, { status: 404 });
+				const updated = await linkTicketToAccount(ticket.id, uid, admin);
 				return json({ ticket: updated });
 			}
 

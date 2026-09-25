@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import Badge from '$lib/components/ui/Badge.svelte';
 	import TicketThread from '$lib/components/support/TicketThread.svelte';
+	import AccountBillingTools, { fmtMoney, type CreditSummary } from '$lib/components/admin/AccountBillingTools.svelte';
 	import { auth } from '$lib/firebase/client';
 	import { confirmStore, supportStore, toastStore } from '$lib/stores';
 	import { sortCanned, type CannedResponse } from '$lib/support/responses';
@@ -19,6 +20,7 @@
 	} from '$lib/support/tickets';
 
 	interface Context {
+		link: { status: 'linked' | 'match' | 'none'; method: 'session' | 'manual' | null; uid: string | null };
 		account: {
 			uid: string; displayName: string; email: string; tier: string; createdAt: number | null;
 			subscriptionStatus: string | null; cancelAtPeriodEnd: boolean; pausedCollection: boolean;
@@ -54,6 +56,18 @@
 	let sendStatus = $state<TicketStatus>('awaiting_customer');
 	let busy = $state(false);
 	let tagInput = $state('');
+	// Free-month trigger (a template's offerCredit) — the coupon is attached before the reply sends.
+	let applyCredit = $state(false);
+	let creditSummary = $state<CreditSummary | null>(null);
+	const creditLabel = $derived.by(() => {
+		const months = canned?.offerCredit?.months ?? 1;
+		const sub = creditSummary?.subscription;
+		if (creditSummary && !sub) return 'No active subscription for a free month';
+		if (sub?.cancelAtPeriodEnd) return 'Subscription set to cancel — no next invoice';
+		return `Apply "${months} month${months === 1 ? '' : 's'} on us" coupon${sub ? ` (≈${fmtMoney(sub.monthValueCents * months, sub.currency)})` : ''} before sending`;
+	});
+	const canCredit = $derived(!!context?.account && !!creditSummary?.subscription && !creditSummary.subscription.cancelAtPeriodEnd);
+	const PLAN_LABEL: Record<string, string> = { free: 'Free', lite: 'Lite', pro: 'Pro' };
 
 	const cannedList = $derived(ticket ? sortCanned(ticket.topic, ticket.tags) : []);
 	const suggestedIds = $derived(
@@ -95,12 +109,16 @@
 	function pickCanned(c: CannedResponse) {
 		mode = 'reply';
 		canned = c;
-		body = c.body(ticket?.name?.trim().split(' ')[0] || 'there');
+		// Prefer the live account tier (it may have just been fixed by a resync).
+		const tier = context?.account?.tier ?? ticket?.tier ?? undefined;
+		body = c.body(ticket?.name?.trim().split(' ')[0] || 'there', { planName: tier ? PLAN_LABEL[tier] : undefined });
 		sendStatus = c.setStatus;
+		applyCredit = !!c.offerCredit && canCredit;
 	}
 
 	function clearCanned() {
 		canned = null;
+		applyCredit = false;
 		sendStatus = 'awaiting_customer';
 	}
 
@@ -126,7 +144,13 @@
 		const ok =
 			mode === 'note'
 				? await act({ action: 'note', body }, 'Note added')
-				: await act({ action: 'reply', body, status: sendStatus, cannedId: canned?.id }, `Reply sent to ${ticket?.email}`);
+				: await act(
+						{
+							action: 'reply', body, status: sendStatus, cannedId: canned?.id,
+							credit: applyCredit ? { months: canned?.offerCredit?.months ?? 1 } : undefined,
+						},
+						applyCredit ? `Credit applied · reply sent to ${ticket?.email}` : `Reply sent to ${ticket?.email}`,
+					);
 		if (ok) {
 			body = '';
 			clearCanned();
@@ -153,6 +177,23 @@
 	async function removeTag(tag: string) {
 		if (!ticket) return;
 		await act({ action: 'triage', tags: ticket.tags.filter((t) => t !== tag) }, 'Tag removed');
+	}
+
+	// Only an account that's actually linked (or an email match about to be)
+	// gets the "open account" deep link — never a guess.
+	const accountHref = $derived(context?.link.uid ? `/admin/users?uid=${encodeURIComponent(context.link.uid)}` : null);
+
+	async function linkAccount() {
+		const a = context?.account;
+		const ok = await confirmStore.ask({
+			title: 'Link this ticket to the account?',
+			message: 'This older ticket was filed without being signed in. It will be attached to the account that uses the same email.',
+			confirmLabel: 'Link account',
+			variant: 'primary',
+			details: a ? [{ label: 'Account', value: `${a.displayName || '—'} · ${a.email}` }] : undefined,
+		});
+		if (!ok) return;
+		if (await act({ action: 'link' }, 'Ticket linked to account')) await load();
 	}
 
 	async function remove() {
@@ -266,6 +307,12 @@
 								{#if canned?.addTags?.length}
 									<span class="trigger__tags">+ {canned.addTags.join(', ')}</span>
 								{/if}
+								{#if canned?.offerCredit}
+									<label class="trigger__credit" class:trigger__credit--off={!canCredit}>
+										<input type="checkbox" bind:checked={applyCredit} disabled={!canCredit} />
+										{context?.account ? creditLabel : 'No account to credit'}
+									</label>
+								{/if}
 								<span class="trigger__hint">Emails {ticket.email}</span>
 							</div>
 						{:else}
@@ -282,11 +329,43 @@
 				<section class="card">
 					<h2 class="card__title">Requester</h2>
 					<dl class="dl">
-						<dt>Name</dt><dd>{ticket.name || '—'}</dd>
-						<dt>Email</dt><dd>{ticket.email}</dd>
+						<dt>Name</dt>
+						<dd>
+							{#if accountHref && context?.link.status === 'linked'}
+								<a href={accountHref}>{ticket.name || context?.account?.displayName || '—'}</a>
+							{:else}
+								{ticket.name || '—'}
+							{/if}
+						</dd>
+						<dt>Email</dt>
+						<dd>
+							{#if accountHref && context?.link.status === 'linked'}
+								<a href={accountHref}>{ticket.email}</a>
+							{:else}
+								{ticket.email}
+							{/if}
+						</dd>
+						<dt>Account</dt>
+						<dd>
+							{#if !context}
+								—
+							{:else if context.link.status === 'linked'}
+								<span class="link-ok">{context.link.method === 'manual' ? 'Linked by staff' : 'Filed while signed in'}</span>
+							{:else if context.link.status === 'match'}
+								<span class="warn">Not linked · matching email</span>
+							{:else}
+								<span class="muted-inline">Guest — no account with this email</span>
+							{/if}
+						</dd>
 						<dt>Plan at filing</dt><dd>{ticket.tier ?? 'guest'}{ticket.shopPlan ? ` · shop ${ticket.shopPlan}` : ''}</dd>
 						{#if ticket.pageUrl}<dt>From page</dt><dd class="truncate" title={ticket.pageUrl}>{ticket.pageUrl}</dd>{/if}
 					</dl>
+					{#if context?.link.status === 'match'}
+						<button class="link-btn" onclick={linkAccount} disabled={busy}>Link to account</button>
+					{/if}
+					{#if accountHref}
+						<div class="links"><a href={accountHref}>Open account →</a></div>
+					{/if}
 				</section>
 
 				<section class="card">
@@ -312,11 +391,18 @@
 							{#if a.stripeCustomerId}<dt>Stripe</dt><dd class="mono">{a.stripeCustomerId}</dd>{/if}
 						</dl>
 						<div class="links">
-							<a href="/admin/users">Users</a>
+							{#if accountHref}<a href={accountHref}>Open account</a>{/if}
 							<a href="/admin/billing">Billing</a>
 						</div>
 					{/if}
 				</section>
+
+				{#if context?.account}
+					<section class="card">
+						<h2 class="card__title">Billing tools</h2>
+						<AccountBillingTools uid={context.account.uid} ticketId={ticket.id} bind:summary={creditSummary} onchange={load} />
+					</section>
+				{/if}
 
 				<section class="card">
 					<h2 class="card__title">Tags</h2>
@@ -443,6 +529,11 @@
 	.trigger label { display: flex; align-items: center; gap: 6px; }
 	.trigger__tags { font-family: var(--font-mono); color: var(--text-secondary); }
 	.trigger__hint { font-size: 0.75rem; color: var(--text-tertiary); }
+	.trigger__credit {
+		display: flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: var(--radius-sm);
+		background: color-mix(in srgb, var(--color-success) 10%, transparent); color: var(--text-success); font-weight: 600;
+	}
+	.trigger__credit--off { background: var(--bg-surface-3); color: var(--text-tertiary); }
 
 	.btn { padding: 8px 16px; border-radius: var(--radius-md); font-size: 0.8125rem; font-weight: 600; font-family: var(--font-body); cursor: pointer; }
 	.btn:disabled { opacity: 0.45; cursor: not-allowed; }
@@ -455,6 +546,16 @@
 	.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	.mono { font-family: var(--font-mono); font-size: 0.75rem; }
 	.warn { color: var(--text-warning); }
+	.link-ok { color: var(--text-success); }
+	.muted-inline { color: var(--text-tertiary); }
+	.dl dd a { color: var(--text-brand); text-decoration: none; }
+	.dl dd a:hover { text-decoration: underline; }
+	.link-btn {
+		margin-top: 12px; padding: 6px 12px; border-radius: var(--radius-md);
+		border: 1px solid var(--color-brand-dim); background: var(--color-brand-muted); color: var(--text-brand);
+		font-size: 0.8125rem; font-weight: 600; font-family: var(--font-body); cursor: pointer;
+	}
+	.link-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 	.muted { margin: 0; font-size: 0.8125rem; color: var(--text-tertiary); }
 
 	.links { display: flex; gap: 12px; margin-top: 12px; font-size: 0.8125rem; }

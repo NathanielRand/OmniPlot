@@ -49,6 +49,7 @@ function normalize(id: string, d: FirebaseFirestore.DocumentData): Ticket {
 	return {
 		id,
 		uid:        d.uid ?? null,
+		linkMethod: d.linkMethod ?? (d.uid ? 'session' : null),
 		email:      d.email ?? '',
 		name:       d.name ?? '',
 		topic:      (d.topic ?? 'other') as TicketTopic,
@@ -170,6 +171,7 @@ export async function createTicket(input: CreateTicketInput): Promise<{ ticket: 
 	const data = {
 		...input,
 		email:      input.email.toLowerCase(),
+		linkMethod: input.uid ? 'session' : null,
 		topicLabel: TOPIC_LABEL[input.topic] ?? input.topic,
 		status:     'new' as TicketStatus,
 		messages:   [],
@@ -276,6 +278,20 @@ export async function changeStatus(
 		closed:            `${who} closed this ticket.`,
 	}[next];
 	return addMessage(id, { from: by.actor === 'user' ? 'user' : 'system', body, authorName: who }, { status: next });
+}
+
+/** Links a legacy/guest ticket to an account. The caller verifies the
+ *  account's email matches the ticket's — tickets filed while signed in are
+ *  linked at submission and never need this. */
+export async function linkTicketToAccount(id: string, uid: string, admin: { uid: string; name: string }): Promise<Ticket> {
+	await col().doc(id).update({ uid, linkMethod: 'manual', linkedBy: admin.name, linkedAt: Date.now() });
+	return addMessage(id, {
+		from: 'admin',
+		body: `Linked this ticket to the matching OmniPlot account (${uid}).`,
+		authorName: admin.name,
+		authorUid: admin.uid,
+		internal: true,
+	});
 }
 
 export async function updateTriage(id: string, data: { priority?: TicketPriority; tags?: string[] }): Promise<void> {

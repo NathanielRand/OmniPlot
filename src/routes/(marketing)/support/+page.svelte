@@ -40,6 +40,11 @@
 		error = null;
 		submitting = true;
 		try {
+			// Always file against the signed-in account when there is one — wait for
+			// Firebase to finish restoring the session so a fast submit on page
+			// load isn't mistaken for a guest. The server attaches the uid from
+			// this token (never from the form), which is what links the ticket.
+			await auth.authStateReady().catch(() => {});
 			const token = await auth.currentUser?.getIdToken().catch(() => null);
 			const res = await fetch("/api/support", {
 				method: "POST",

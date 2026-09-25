@@ -5,6 +5,7 @@
 	import Badge from "$lib/components/ui/Badge.svelte";
 	import EarlyAccessBadge from "$lib/components/ui/EarlyAccessBadge.svelte";
 	import ThemeToggle from "$lib/components/ui/ThemeToggle.svelte";
+	import CreditNoticeBanner from "$lib/components/ui/CreditNoticeBanner.svelte";
 	import { uiStore, userStore, shopStore, agentStore, changelogStore, supportStore, plansStore } from "$lib/stores";
 	import { APP_NAV, LATEST_VERSION } from "$lib/config";
 	import { signOutUser } from "$lib/firebase/auth";
@@ -84,6 +85,8 @@
 		}
 	}
 </script>
+
+<CreditNoticeBanner />
 
 <div class="app-shell" class:sidebar-collapsed={!uiStore.sidebarOpen}>
 	<!-- ─── Top bar ─────────────────────────── -->

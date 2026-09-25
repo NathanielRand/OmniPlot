@@ -684,3 +684,24 @@ ${cta('Open support inbox', `${APP_URL}/admin/support?view=needs_reply`)}
 		base(`${items.length} tickets waiting on a reply`, content),
 	);
 }
+
+// ─── Free Month (Credit) Email ────────────────
+
+/** A free-month / amount-off coupon was applied to their subscription. No
+ *  money moves — their next invoice is simply discounted. */
+export async function sendAccountCreditEmail(
+	to: string,
+	displayName: string,
+	label: string,
+	months: number | null,
+): Promise<void> {
+	const title = months ? (months === 1 ? 'Next month is on us' : `Your next ${months} months are on us`) : 'A discount on us';
+	const content = `
+${alertBox(`${escapeHtml(label)} — applied to your subscription.`, 'success')}
+${heading(title)}
+${subtext(`Hi ${escapeHtml(firstName(displayName))}, we've applied <strong style="color:#f0f2f7;">${escapeHtml(label)}</strong> to your OmniPlot subscription. It comes off your next invoice automatically — there's nothing you need to do, and your plan stays exactly as it is.`)}
+${cta('View billing', `${APP_URL}/settings?tab=billing`)}
+${smallPrint(`Questions? <a href="${APP_URL}/support" style="color:#6a7288;text-decoration:underline;">Chat with support</a>.`)}`;
+
+	await sendEmail(to, `${title} — OmniPlot`, base(`${label} applied to your subscription.`, content));
+}

@@ -41,6 +41,24 @@ describe('runIntake', () => {
 	});
 });
 
+describe('paid-but-still-free tickets', () => {
+	const sample = `I purchased the Lite subscription, and I confirmed in Stripe that my subscription is active and paid. However, when I log into my OmniPlot account, the account still shows "Free Plan" under Settings → Billing.`;
+
+	it('tags the misrouted-billing symptom as high priority billing-sync', () => {
+		const r = runIntake({ ...base, topic: 'billing', subject: 'Lite plan not active', message: sample });
+		expect(r.tags).toContain('billing-sync');
+		expect(r.priority).toBe('high');
+	});
+
+	it('floats the incident + credit template to the top and names their plan', () => {
+		const [first] = sortCanned('billing', ['billing-sync']);
+		expect(first.id).toBe('incident-fixed-credit');
+		expect(first.offerCredit).toEqual({ months: 1, reason: 'service_issue' });
+		expect(first.body('Sam', { planName: 'Lite' })).toContain('your Lite plan is active');
+		expect(first.body('Sam', {})).toContain('your subscription is active');
+	});
+});
+
 describe('suggestionsFor', () => {
 	it('puts tag-specific help first and always ends with the FAQ within three items', () => {
 		const s = suggestionsFor('plotter', ['plotter-connection']);

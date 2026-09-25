@@ -389,10 +389,16 @@
 				headers: token ? { Authorization: `Bearer ${token}` } : {},
 			});
 			if (res.ok) invoices = (await res.json()).invoices ?? [];
+			// Free months from support ("next month is on us") not yet used.
+			const creditRes = await fetch('/api/billing/credit', {
+				headers: token ? { Authorization: `Bearer ${token}` } : {},
+			});
+			if (creditRes.ok) freeMonths = (await creditRes.json()).freeMonths ?? [];
 		} catch { /* non-fatal */ } finally {
 			invoicesLoading = false;
 		}
 	}
+	let freeMonths = $state<string[]>([]);
 
 	function fmtAmount(amount: number, currency: string): string {
 		return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(amount);
@@ -1182,6 +1188,13 @@
 							{PLAN_NAMES[tier] ?? tier}
 						</Badge>
 					</div>
+
+					{#each freeMonths as label}
+						<div class="billing-credit">
+							<span class="billing-credit__amount">{label}</span>
+							<span class="billing-credit__desc">Comes off your next invoice automatically.</span>
+						</div>
+					{/each}
 
 					{#if limit !== null}
 						<div class="billing-plan__usage">
@@ -2413,6 +2426,15 @@
 		color: var(--text-secondary);
 	}
 	.billing-plan__desc--warn { color: var(--color-warning); }
+
+	.billing-credit {
+		display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px;
+		margin-top: 12px; padding: 10px 12px; border-radius: var(--radius-md);
+		background: color-mix(in srgb, var(--color-success) 8%, transparent);
+		border: 1px solid color-mix(in srgb, var(--color-success) 30%, transparent);
+	}
+	.billing-credit__amount { font-size: 0.875rem; font-weight: 600; color: var(--text-success); }
+	.billing-credit__desc { font-size: 0.8125rem; color: var(--text-secondary); }
 
 	.billing-plan__actions {
 		display: flex;

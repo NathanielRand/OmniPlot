@@ -23,6 +23,12 @@ const RULES: Rule[] = [
 		priority: 'urgent',
 	},
 	{
+		// "Paid but still Free" — the Sep 2026 misrouted-billing symptom.
+		tag: 'billing-sync',
+		pattern: /(paid|purchased|subscribed|bought|upgraded|active|charged).{0,120}(still|shows?|showing|says|stuck|only).{0,30}free|free plan.{0,80}(paid|purchased|subscribed|charged|active)|(plan|subscription|lite|pro).{0,40}(not|isn'?t|never|didn'?t).{0,15}(activ|show|updat|appl)/is,
+		priority: 'high',
+	},
+	{
 		tag: 'access',
 		pattern: /(can'?t|cannot|unable to|won'?t let me) (log ?in|sign ?in|access|get in)|locked out|magic link|login link|sms code|verification code/i,
 		priority: 'high',
@@ -100,6 +106,11 @@ export function runIntake(input: {
 export interface Suggestion { title: string; body: string; href: string }
 
 const BY_TAG: Record<string, Suggestion> = {
+	'billing-sync': {
+		title: 'Check your plan',
+		body:  "If you just paid, refresh Settings → Billing — activation can take a minute. We'll check your account either way.",
+		href:  '/settings?tab=billing',
+	},
 	'access': {
 		title: 'Get a fresh sign-in link',
 		body:  'OmniPlot is passwordless — request a new email link or SMS code, and check spam if it doesn\'t arrive.',

@@ -22,7 +22,17 @@ export interface CannedResponse {
 	/** Status the ticket moves to when sent. */
 	setStatus: TicketStatus;
 	addTags?: string[];
-	body: (name: string) => string;
+	/** Trigger: pre-ticks "apply free month" in the composer. A single-use
+	 *  coupon is attached to their subscription (server-side) before the reply
+	 *  goes out, so the email never promises a free month that failed. */
+	offerCredit?: { months: number; reason: 'service_issue' | 'billing_error' | 'goodwill' };
+	body: (name: string, ctx: ReplyContext) => string;
+}
+
+/** Account facts a template can mention — filled from the ticket sidebar. */
+export interface ReplyContext {
+	/** "Lite", "Pro", … — undefined when unknown. */
+	planName?: string;
 }
 
 const SIGN = '\n\n— OmniPlot Support';
@@ -95,6 +105,27 @@ export const CANNED_RESPONSES: CannedResponse[] = [
 		setStatus: 'resolved',
 		body: (n) =>
 			`Hi ${n},\n\nYou've reached your plan's cut allowance — the current limits for each plan are listed at https://www.omniplot.app/pricing, and Pro and Shop plans are unlimited. Allowances reset automatically, and you can upgrade anytime from Settings → Billing to keep cutting right away.\n\nMarking this resolved — reply if anything looks off with your count.${SIGN}`,
+	},
+	{
+		id: 'incident-fixed-credit',
+		label: 'Our bug, fixed + month on us',
+		topics: ['billing', 'account'],
+		tags: ['billing-sync', 'billing-dispute'],
+		setStatus: 'resolved',
+		addTags: ['system-incident', 'credited'],
+		offerCredit: { months: 1, reason: 'service_issue' },
+		body: (n, ctx) =>
+			`Hi ${n},
+
+Thank you for your patience, and we're sorry for the trouble. A system-wide issue on our side kept some paid subscriptions from activating in OmniPlot after checkout — your account was one of those affected.
+
+That's now fixed: your ${ctx.planName ? `${ctx.planName} plan is` : 'subscription is'} active, and you'll see it under Settings → Billing (refresh the page if it's still open).
+
+We've also reviewed your payments. If you were charged more than once, the duplicate charge is being refunded to your original payment method — refunds usually take 5–10 business days to appear.
+
+Because this one was on us, your next month is free: we've applied a "1 month on us" discount to your subscription, and it comes off your next invoice automatically. There's nothing you need to do, and your plan stays exactly as it is.
+
+Thanks for sticking with OmniPlot — reply here if anything still looks off.${SIGN}`,
 	},
 	{
 		id: 'billing-fixed',
