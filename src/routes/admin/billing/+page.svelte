@@ -1,11 +1,10 @@
 <script lang="ts">
-	import type { PageData } from './$types';
 	import Badge from '$lib/components/ui/Badge.svelte';
 	import { auth } from '$lib/firebase/client';
 	import { onMount } from 'svelte';
 
-	interface Props { data: PageData; }
-	let { data }: Props = $props();
+	// Stripe dashboard links — comes from the authed billing API.
+	let stripeAccountId = $state('');
 
 	// ─── Types ─────────────────────────────────────
 	interface FirebaseUsage {
@@ -80,6 +79,7 @@
 			firebaseUsage = d.firebaseUsage;
 			stripeBalance  = d.stripeBalance;
 			recentFees     = d.recentFees ?? [];
+			stripeAccountId = d.stripeAccountId ?? '';
 			revenue        = d.revenue ?? null;
 			recentTransactions = d.recentTransactions ?? [];
 		} catch (e) {
@@ -127,20 +127,13 @@
 
 	onMount(() => { load(); runHealth(); });
 
-	// Firebase free-tier limits for reference
-	const FIREBASE_LIMITS = {
-		authUsers:    { free: '10,000 MAU',  paid: '$0.0055 / MAU after' },
-		firestoreDoc: { free: '1M reads/day', paid: '$0.06 / 100k reads' },
-		storage:      { free: '5 GB',         paid: '$0.026 / GB' },
-		functions:    { free: '2M calls/mo',  paid: '$0.40 / 1M calls' },
-	};
-
-	// Known fixed platform costs
-	const OTHER_COSTS = $derived([
-		{ service: 'Vercel',          category: 'Hosting',      estimate: 'Pro $20/mo',   link: 'https://vercel.com/dashboard' },
-		{ service: 'Google Domains',  category: 'Domain',       estimate: '~$12/yr',      link: null },
-		{ service: 'Firebase Blaze',  category: 'Backend',      estimate: 'Pay-as-you-go', link: 'https://console.firebase.google.com' },
-		{ service: 'Stripe Connect',  category: 'Payments',     estimate: '2.9% + 30¢',   link: `https://dashboard.stripe.com/${data.stripeConnectedAccountId}` },
+	// Reference only — how each service bills, with links to the provider's
+	// own pricing and dashboard. Deliberately no hardcoded prices: they drift.
+	const PLATFORM_SERVICES = $derived([
+		{ service: 'Vercel',   category: 'Hosting + API routes',  billing: 'Plan + usage',       pricing: 'https://vercel.com/pricing',                    link: 'https://vercel.com/dashboard' },
+		{ service: 'Firebase', category: 'Auth + Firestore',      billing: 'Blaze, pay-as-you-go', pricing: 'https://firebase.google.com/pricing',          link: 'https://console.firebase.google.com' },
+		{ service: 'Stripe',   category: 'Payments (Connect)',    billing: 'Per transaction',    pricing: 'https://stripe.com/pricing',                    link: stripeAccountId ? `https://dashboard.stripe.com/${stripeAccountId}` : 'https://dashboard.stripe.com' },
+		{ service: 'Resend',   category: 'Transactional email',   billing: 'Plan by volume',     pricing: 'https://resend.com/pricing',                    link: 'https://resend.com/overview' },
 	]);
 </script>
 
@@ -206,8 +199,8 @@
 				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 19h20L12 2z"/><path d="M12 9v4"/><circle cx="12" cy="17" r="1" fill="currentColor" stroke="none"/></svg>
 			</div>
 			<div>
-				<h2 class="section-title">Firebase / Google Cloud</h2>
-				<p class="section-desc">Auth, Firestore, Storage, and Cloud Functions usage on the Blaze pay-as-you-go plan.</p>
+				<h2 class="section-title">Firebase</h2>
+				<p class="section-desc">Live document counts from Firestore. OmniPlot uses Firebase for Auth and Firestore only — API routes run on Vercel.</p>
 			</div>
 			<a href="https://console.firebase.google.com" target="_blank" rel="noopener noreferrer" class="ext-link">
 				Firebase Console
@@ -216,27 +209,21 @@
 		</div>
 
 		<div class="usage-grid">
-			<!-- Auth -->
 			<div class="usage-card">
 				<div class="usage-card__header">
-					<span class="usage-card__label">Authentication</span>
-					<Badge variant="default" size="sm">MAU</Badge>
+					<span class="usage-card__label">Accounts</span>
+					<Badge variant="default" size="sm">users</Badge>
 				</div>
 				{#if loading}
 					<div class="skel" style="width:60px;height:26px;margin:6px 0 4px"></div>
 				{:else}
 					<div class="usage-card__value">{fmtNum(firebaseUsage?.authUsers ?? null)}</div>
 				{/if}
-				<div class="usage-card__limit">
-					Free: {FIREBASE_LIMITS.authUsers.free}
-					<span class="usage-card__paid">{FIREBASE_LIMITS.authUsers.paid}</span>
-				</div>
+				<div class="usage-card__limit">Every account with a profile — total, not monthly active.</div>
 			</div>
-
-			<!-- Firestore documents -->
 			<div class="usage-card">
 				<div class="usage-card__header">
-					<span class="usage-card__label">Firestore — Jobs</span>
+					<span class="usage-card__label">Cut jobs</span>
 					<Badge variant="default" size="sm">docs</Badge>
 				</div>
 				{#if loading}
@@ -244,15 +231,11 @@
 				{:else}
 					<div class="usage-card__value">{fmtNum(firebaseUsage?.firestoreJobs ?? null)}</div>
 				{/if}
-				<div class="usage-card__limit">
-					Free reads: {FIREBASE_LIMITS.firestoreDoc.free}
-					<span class="usage-card__paid">{FIREBASE_LIMITS.firestoreDoc.paid}</span>
-				</div>
+				<div class="usage-card__limit">Every job ever recorded.</div>
 			</div>
-
 			<div class="usage-card">
 				<div class="usage-card__header">
-					<span class="usage-card__label">Firestore — Shops</span>
+					<span class="usage-card__label">Shops</span>
 					<Badge variant="default" size="sm">docs</Badge>
 				</div>
 				{#if loading}
@@ -260,12 +243,11 @@
 				{:else}
 					<div class="usage-card__value">{fmtNum(firebaseUsage?.firestoreShops ?? null)}</div>
 				{/if}
-				<div class="usage-card__limit">Teams billed independently via org-level plans.</div>
+				<div class="usage-card__limit">Teams are billed independently via org-level plans.</div>
 			</div>
-
 			<div class="usage-card">
 				<div class="usage-card__header">
-					<span class="usage-card__label">Firestore — Patterns</span>
+					<span class="usage-card__label">Catalog patterns</span>
 					<Badge variant="default" size="sm">docs</Badge>
 				</div>
 				{#if loading}
@@ -273,39 +255,14 @@
 				{:else}
 					<div class="usage-card__value">{fmtNum(firebaseUsage?.firestorePatterns ?? null)}</div>
 				{/if}
-				<div class="usage-card__limit">Pattern SVGs also stored in Cloud Storage.</div>
-			</div>
-
-			<div class="usage-card usage-card--note">
-				<div class="usage-card__header">
-					<span class="usage-card__label">Cloud Storage</span>
-					<Badge variant="default" size="sm">GCS</Badge>
-				</div>
-				<div class="usage-card__value usage-card__value--sm">Pattern SVGs</div>
-				<div class="usage-card__limit">
-					Free: {FIREBASE_LIMITS.storage.free}
-					<span class="usage-card__paid">{FIREBASE_LIMITS.storage.paid}</span>
-				</div>
-			</div>
-
-			<div class="usage-card usage-card--note">
-				<div class="usage-card__header">
-					<span class="usage-card__label">Cloud Functions</span>
-					<Badge variant="default" size="sm">serverless</Badge>
-				</div>
-				<div class="usage-card__value usage-card__value--sm">Webhooks + API</div>
-				<div class="usage-card__limit">
-					Free: {FIREBASE_LIMITS.functions.free}
-					<span class="usage-card__paid">{FIREBASE_LIMITS.functions.paid}</span>
-				</div>
+				<div class="usage-card__limit">Public pattern catalog. Pattern outlines are stored inside these docs.</div>
 			</div>
 		</div>
 
 		<div class="gcp-billing-note">
 			<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-			Exact costs require the
+			Document counts are a rough proxy for storage, not a bill. Actual Firebase charges are in the
 			<a href="https://console.cloud.google.com/billing" target="_blank" rel="noopener noreferrer">Google Cloud Billing Console</a>.
-			Document counts shown above are proxies for read/write volume.
 		</div>
 	</div>
 
@@ -403,7 +360,7 @@
 				<h2 class="section-title">Stripe</h2>
 				<p class="section-desc">Connected account balance and recent transaction fees charged by Stripe.</p>
 			</div>
-			<a href="https://dashboard.stripe.com/{data.stripeConnectedAccountId}" target="_blank" rel="noopener noreferrer" class="ext-link">
+			<a href="https://dashboard.stripe.com/{stripeAccountId}" target="_blank" rel="noopener noreferrer" class="ext-link">
 				Stripe Dashboard
 				<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3"/></svg>
 			</a>
@@ -493,8 +450,8 @@
 				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
 			</div>
 			<div>
-				<h2 class="section-title">Other platform costs</h2>
-				<p class="section-desc">Fixed and recurring third-party services billed directly to OmniPlot.</p>
+				<h2 class="section-title">Platform services</h2>
+				<p class="section-desc">Reference only — the services OmniPlot is billed by and how each one charges. See each provider for actual amounts.</p>
 			</div>
 		</div>
 
@@ -504,16 +461,16 @@
 					<tr>
 						<th>Service</th>
 						<th>Category</th>
-						<th>Estimated cost</th>
+						<th>Billed as</th>
 						<th></th>
 					</tr>
 				</thead>
 				<tbody>
-					{#each OTHER_COSTS as row}
+					{#each PLATFORM_SERVICES as row}
 						<tr>
 							<td class="td-service">{row.service}</td>
 							<td><span class="category-chip">{row.category}</span></td>
-							<td class="td-mono">{row.estimate}</td>
+							<td>{row.billing} · <a href={row.pricing} target="_blank" rel="noopener noreferrer" class="pricing-link">pricing ↗</a></td>
 							<td class="td-link">
 								{#if row.link}
 									<a href={row.link} target="_blank" rel="noopener noreferrer" class="ext-link ext-link--sm">
@@ -610,13 +567,10 @@
 		background: var(--bg-surface); padding: 14px 16px;
 		display: flex; flex-direction: column; gap: 2px;
 	}
-	.usage-card--note { opacity: 0.8; }
 	.usage-card__header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
 	.usage-card__label  { font-size: 0.75rem; font-weight: 500; color: var(--text-secondary); font-family: var(--font-mono); }
 	.usage-card__value  { font-family: var(--font-display); font-size: 1.625rem; font-weight: 800; letter-spacing: -0.03em; color: var(--text-primary); line-height: 1.1; }
-	.usage-card__value--sm { font-size: 1rem; font-weight: 600; font-family: var(--font-body); letter-spacing: 0; color: var(--text-secondary); }
 	.usage-card__limit  { font-size: 0.6875rem; color: var(--text-tertiary); line-height: 1.5; margin-top: 4px; }
-	.usage-card__paid   { display: block; color: var(--text-tertiary); opacity: 0.7; }
 
 	.health-summary {
 		font-size: 0.8125rem; font-weight: 600; color: var(--color-success, #16a34a); margin-bottom: 8px;
@@ -691,6 +645,8 @@
 
 	/* Other costs table */
 	.costs-table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
+	.pricing-link { color: var(--text-brand); text-decoration: none; }
+	.pricing-link:hover { text-decoration: underline; }
 	.costs-table thead { background: var(--bg-surface-2); }
 	.costs-table th {
 		padding: 8px 16px; text-align: left; font-size: 0.625rem; font-weight: 600;

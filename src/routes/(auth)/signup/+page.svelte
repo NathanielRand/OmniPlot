@@ -4,7 +4,7 @@
 	import Button from "$lib/components/ui/Button.svelte";
 	import Badge from "$lib/components/ui/Badge.svelte";
 	import PhoneInput from "$lib/components/ui/PhoneInput.svelte";
-	import { toastStore, userStore, uiStore, plansStore } from "$lib/stores";
+	import { toastStore, userStore, uiStore, plansStore, platformStore } from "$lib/stores";
 	import {
 		signInWithGoogle,
 		sendMagicLink,
@@ -150,6 +150,10 @@
 			</Badge>
 		{/if}
 	</div>
+	<!-- Admin → Settings → Open registration. firestore.rules enforces it too. -->
+	{#if platformStore.loaded && !platformStore.flags.openRegistration}
+	<p class="auth-sub">New sign-ups are closed right now. If you already have an account, you can still sign in.</p>
+	{:else}
 	<p class="auth-sub">Start cutting for free. No credit card required.</p>
 
 	<!-- Name (shared across all methods) -->
@@ -271,6 +275,7 @@
 
 		<!-- Invisible reCAPTCHA mount point -->
 		<div bind:this={recaptchaEl} aria-hidden="true"></div>
+	{/if}
 	{/if}
 
 	<p class="auth-switch">

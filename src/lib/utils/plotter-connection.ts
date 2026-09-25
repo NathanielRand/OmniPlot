@@ -17,6 +17,7 @@
 import type { PlotterConfig, CanvasState } from "$lib/types";
 import { classifyError, type PlotterDiagnostic } from "./plotter-errors";
 import { generateHpglSegments, patternDelayMs } from "./hpgl";
+import { platformStore } from "$lib/stores/platformStore.svelte";
 
 export type SendResult = { ok: true } | { ok: false; diagnostic: PlotterDiagnostic };
 
@@ -45,6 +46,16 @@ function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
 
 // Sends the HPGL abort sequence and marks the result as user-cancelled.
 // Called from all three segmented send paths when the AbortSignal fires.
+// Admin → Settings → Cut Agent. Checked at the send path so an older saved
+// plotter config can't route around a hidden UI option.
+const AGENT_DISABLED: PlotterDiagnostic = {
+    code:     "UNKNOWN",
+    title:    "Cut Agent is turned off",
+    message:  "Sending through the Cut Agent is currently disabled.",
+    steps:    ["Switch this plotter to USB Direct or Network in Plotter settings, or use Download to save a PLT file."],
+    escalate: false,
+};
+
 async function _abortedResult(config: PlotterConfig, completedCount: number): Promise<SegmentedResult> {
     await sendToPlotter(ABORT_HPGL, config).catch(() => {});
     return {
@@ -71,6 +82,9 @@ export async function sendToPlotterSegmented(
     signal?: AbortSignal,
 ): Promise<SegmentedResult> {
     if (signal?.aborted) return _abortedResult(config, 0);
+    if (config.connection === "cut-agent" && !platformStore.flags.cutAgent) {
+        return { ok: false, completedCount: 0, diagnostic: AGENT_DISABLED };
+    }
 
     // Flush any leftover state from a previous or interrupted job before starting.
     // Best-effort: don't block the new job if the plotter isn't responding yet.
@@ -264,6 +278,9 @@ export async function sendToPlotter(
     hpgl: string,
     config: PlotterConfig,
 ): Promise<SendResult> {
+    if (config.connection === "cut-agent" && !platformStore.flags.cutAgent) {
+        return { ok: false, diagnostic: AGENT_DISABLED };
+    }
     switch (config.connection) {
         case "usb-serial": return sendViaSerial(hpgl, config);
         case "network":    return sendViaNetwork(hpgl, config);

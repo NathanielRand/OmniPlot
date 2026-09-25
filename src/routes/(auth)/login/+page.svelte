@@ -16,11 +16,24 @@
 	let tab        = $state<Tab>("link");
 	let loading    = $state(false);
 
-	// Show a banner when redirected here after a session kick
-	const kicked = $derived(
-		typeof window !== "undefined" &&
-		new URLSearchParams(window.location.search).get("reason") === "kicked",
+	// Banner explaining why we landed here after a forced sign-out
+	const REASON_MESSAGES: Record<string, string> = {
+		kicked:    "You were signed out because your account was opened on another device.",
+		suspended: "This account has been suspended. Contact support if you think this is a mistake.",
+		closed:    "New sign-ups are closed right now. Existing accounts can still sign in.",
+	};
+	const reasonMessage = $derived(
+		typeof window !== "undefined"
+			? REASON_MESSAGES[new URLSearchParams(window.location.search).get("reason") ?? ""] ?? null
+			: null,
 	);
+
+	// A suspended account is disabled in Firebase Auth, so sign-in fails here
+	// before the app ever sees the profile.
+	function authErrorMessage(err: unknown, fallback: string): string {
+		if ((err as { code?: string }).code === "auth/user-disabled") return REASON_MESSAGES.suspended;
+		return err instanceof Error ? err.message : fallback;
+	}
 
 	// Magic link
 	let email      = $state("");
@@ -46,7 +59,7 @@
 			await signInWithGoogle();
 			// redirect handled by $effect above
 		} catch (err: unknown) {
-			const msg = err instanceof Error ? err.message : "Google sign-in failed.";
+			const msg = authErrorMessage(err, "Google sign-in failed.");
 			if (!msg.includes("popup-closed")) toastStore.error("Google sign-in failed", msg);
 		} finally {
 			loading = false;
@@ -106,8 +119,12 @@
 		try {
 			await confirmationResult.confirm(otp);
 			// redirect handled by $effect above
-		} catch {
-			toastStore.error("Invalid code", "Please check the code and try again.");
+		} catch (err: unknown) {
+			if ((err as { code?: string }).code === "auth/user-disabled") {
+				toastStore.error("Account suspended", REASON_MESSAGES.suspended);
+			} else {
+				toastStore.error("Invalid code", "Please check the code and try again.");
+			}
 		} finally {
 			loading = false;
 		}
@@ -117,10 +134,10 @@
 <svelte:head><title>Sign In — OmniPlot</title></svelte:head>
 
 <div class="auth-form">
-	{#if kicked}
+	{#if reasonMessage}
 		<div class="kicked-banner" role="alert">
 			<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
-			You were signed out because your account was opened on another device.
+			{reasonMessage}
 		</div>
 	{/if}
 	<h1 class="auth-title">Welcome back</h1>

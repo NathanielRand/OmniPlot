@@ -446,6 +446,12 @@ function createPatternStore() {
 	let requests  = $state<PatternRequest[]>(INITIAL_REQUESTS);
 	let loading   = $state(false);
 	let firestoreReady = false;
+	// True while the catalog is the hardcoded seed rather than Firestore —
+	// either the collections are empty or the subscription failed. Admin
+	// catalog edits are blocked in that state: the first write would make
+	// Firestore non-empty and swap the whole seed out for that one doc.
+	let usingSeed = $state(true);
+	let catalogError = $state(false);
 
 	// ─ Internal: rebuild pattern map from flat Firestore array ─
 	function mapPatterns(flat: Pattern[]): Record<string, Pattern[]> {
@@ -506,10 +512,12 @@ function createPatternStore() {
 		const unsubV = subscribeVehicles(
 			(entries) => {
 				if (entries.length > 0) vehicles = entries;
+				usingSeed = entries.length === 0;
+				catalogError = false;
 				vReady = true;
 				checkReady();
 			},
-			() => { vReady = true; checkReady(); }, // keep seed on error
+			() => { usingSeed = true; catalogError = true; vReady = true; checkReady(); }, // keep seed on error
 		);
 
 		const unsubP = subscribePatterns(
@@ -533,12 +541,17 @@ function createPatternStore() {
 		return () => { unsubV(); unsubP(); unsubR(); firestoreReady = false; };
 	}
 
-	async function seedFirestore(): Promise<void> {
+	// Create-only: writes seed docs that don't exist yet and leaves existing
+	// ones untouched, so it never reverts admin edits. A seed doc an admin
+	// deleted counts as missing and would come back — the admin UI says so.
+	async function seedFirestore(): Promise<{ created: number; skipped: number } | null> {
 		try {
-			await batchSeedData(INITIAL_VEHICLES, SEED_PATTERNS, INITIAL_REQUESTS);
-			toastStore.success("Seeded", "All vehicles, patterns, and requests written to Firestore");
+			const result = await batchSeedData(INITIAL_VEHICLES, SEED_PATTERNS, INITIAL_REQUESTS);
+			toastStore.success("Catalog seeded", `${result.created} docs created, ${result.skipped} already existed and were left alone.`);
+			return result;
 		} catch (e) {
 			toastStore.error("Seed failed", String(e));
+			return null;
 		}
 	}
 
@@ -568,6 +581,9 @@ function createPatternStore() {
 
 	function deleteVehicle(id: string) {
 		vehicles = vehicles.filter((v) => v.id !== id);
+		// Its patterns go too — otherwise their docs stay in Firestore pointing
+		// at a subject that no longer exists.
+		for (const p of patterns[id] ?? []) syncPatternDelete(p.id);
 		const next = { ...patterns };
 		delete next[id];
 		patterns = next;
@@ -642,6 +658,8 @@ function createPatternStore() {
 		get vehicles() { return vehicles; },
 		get requests() { return requests; },
 		get loading() { return loading; },
+		get usingSeed() { return usingSeed; },
+		get catalogError() { return catalogError; },
 		getPatterns,
 		hasPatterns,
 		init,

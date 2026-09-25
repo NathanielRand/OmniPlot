@@ -1,11 +1,8 @@
 <script lang="ts">
-	import type { PageData } from './$types';
 	import Badge from '$lib/components/ui/Badge.svelte';
 	import { auth } from '$lib/firebase/client';
 	import { onMount } from 'svelte';
 
-	interface Props { data: PageData; }
-	let { data }: Props = $props();
 
 	// ─── Types (mirror /api/admin/revenue) ─────────
 	interface Month {
@@ -24,6 +21,7 @@
 	}
 	interface Totals { gross: number; refunds: number; disputes: number; fees: number; net: number; charges: number; }
 	interface Revenue {
+		stripeAccountId: string;
 		currency: string;
 		generatedAt: number;
 		connected: Totals & { payouts: number };
@@ -156,7 +154,7 @@
 			</p>
 		</div>
 		<div class="header-actions">
-			<a href="https://dashboard.stripe.com/{data.stripeConnectedAccountId}/balance" target="_blank" rel="noopener noreferrer" class="ext-link">
+			<a href="https://dashboard.stripe.com/{rev?.stripeAccountId ?? ''}/balance" target="_blank" rel="noopener noreferrer" class="ext-link">
 				Stripe balance
 				<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3"/></svg>
 			</a>
@@ -377,7 +375,7 @@
 						{#each rev.subscriptions as s (s.id)}
 							<tr>
 								<td class="mono">
-									<a class="row-link" href="https://dashboard.stripe.com/{data.stripeConnectedAccountId}/subscriptions/{s.id}" target="_blank" rel="noopener noreferrer">{s.email ?? s.id}</a>
+									<a class="row-link" href="https://dashboard.stripe.com/{rev?.stripeAccountId ?? ''}/subscriptions/{s.id}" target="_blank" rel="noopener noreferrer">{s.email ?? s.id}</a>
 								</td>
 								<td>
 									<Badge variant={s.plan === 'pro' ? 'pro' : s.plan === 'lite' ? 'lite' : 'brand'} size="sm">{s.plan}</Badge>

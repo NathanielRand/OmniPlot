@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { stripe, connectedAccount } from '$lib/server/stripe';
+import { STRIPE_CONNECTED_ACCOUNT_ID } from '$env/static/private';
 import { getAdminDb, verifyIdToken } from '$lib/server/firebase-admin';
 
 async function assertAdmin(authHeader: string | null): Promise<boolean> {
@@ -98,7 +99,8 @@ export const GET: RequestHandler = async ({ request }) => {
 				revenue.totalSucceeded += t.amount ?? 0;
 				revenue.byCurrency[t.currency] = (revenue.byCurrency[t.currency] ?? 0) + (t.amount ?? 0);
 			}
-			if (t.status === 'refunded')  revenue.totalRefunded += t.amountRefunded ?? 0;
+			// Partial refunds leave the charge `succeeded` — count them too.
+			revenue.totalRefunded += t.amountRefunded ?? 0;
 			if (t.status === 'disputed')  revenue.totalDisputed += t.disputeAmount  ?? 0;
 			if (!t.uid) revenue.unattributed++;
 		}
@@ -121,5 +123,5 @@ export const GET: RequestHandler = async ({ request }) => {
 		// transactions collection may not exist yet (before first webhook delivery / sync)
 	}
 
-	return json({ firebaseUsage, stripeBalance, recentFees, revenue, recentTransactions });
+	return json({ firebaseUsage, stripeBalance, recentFees, revenue, recentTransactions, stripeAccountId: STRIPE_CONNECTED_ACCOUNT_ID });
 };

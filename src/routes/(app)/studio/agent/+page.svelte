@@ -4,7 +4,7 @@
 
 <script lang="ts">
 	import { onMount } from "svelte";
-	import { plotterStore, agentStore } from "$lib/stores";
+	import { plotterStore, agentStore, platformStore } from "$lib/stores";
 	import { CURRENT_AGENT_VERSION } from "$lib/config";
 	import { tooltip } from "$lib/actions/tooltip";
 
@@ -58,6 +58,7 @@
 	let statusError = $state(false);
 
 	async function pollStatus() {
+		if (!platformStore.flags.cutAgent) { status = null; statusError = true; agentStore.setOffline(); return; }
 		try {
 			const res = await fetch(`${agentUrl}/api/status`, { signal: AbortSignal.timeout(3000) });
 			if (!res.ok) throw new Error();
@@ -272,6 +273,13 @@
 </script>
 
 <div class="agent-page">
+
+	<!-- ── Disabled by an admin (Settings → Cut Agent) ── -->
+	{#if !platformStore.flags.cutAgent}
+		<div class="agent-disabled" role="status">
+			The Cut Agent is turned off right now. Use USB Direct, Network, or Download from your plotter settings to cut.
+		</div>
+	{/if}
 
 	<!-- ── Update banner ─────────────────────────── -->
 	{#if agentStore.needsUpdate}
@@ -1733,6 +1741,15 @@
 		background: rgba(245, 158, 11, 0.15);
 		color: #f59e0b;
 		border: 1px solid rgba(245, 158, 11, 0.35);
+	}
+
+	.agent-disabled {
+		padding: 12px 14px;
+		border-radius: var(--radius-md);
+		border: 1px solid color-mix(in srgb, var(--color-warning, #f59e0b) 40%, transparent);
+		background: color-mix(in srgb, var(--color-warning, #f59e0b) 8%, transparent);
+		color: var(--text-primary);
+		font-size: 0.875rem;
 	}
 
 	/* ── Already-running / delete-old notices ──── */

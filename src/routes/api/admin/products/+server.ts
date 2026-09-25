@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types';
 import { stripe, connectedAccount } from '$lib/server/stripe';
 import { getAdminDb, verifyIdToken } from '$lib/server/firebase-admin';
 import { PRICING_PLANS, SHOP_PRICING_PLANS } from '$lib/config';
+import { STRIPE_CONNECTED_ACCOUNT_ID } from '$env/static/private';
 
 const SETTINGS_DOC = 'settings/platform';
 
@@ -65,6 +66,7 @@ export const GET: RequestHandler = async ({ request }) => {
 
 		return json({
 			products,
+			stripeAccountId: STRIPE_CONNECTED_ACCOUNT_ID,
 			summary: {
 				activeProducts:   productsRes.data.filter(p => p.active).length,
 				activePrices:     pricesRes.data.filter(p => p.active).length,

@@ -13,6 +13,9 @@ export interface UserProfile {
 	photoURL: string | null;
 	phone: string | null;
 	tier: UserTier;
+	// Admin-owned (Admin → Users). A suspended account is signed out and
+	// blocked by firestore.rules and every authenticated API route.
+	status: "active" | "suspended";
 	createdAt: Date;
 	updatedAt: Date;
 

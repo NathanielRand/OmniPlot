@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { getAdminDb, verifyIdToken } from '$lib/server/firebase-admin';
+import { getAdminAuth, getAdminDb, verifyIdToken } from '$lib/server/firebase-admin';
 import { recomputeOrgMember } from '$lib/server/recompute-org-member';
 import { FieldValue } from 'firebase-admin/firestore';
 
@@ -40,7 +40,8 @@ export const GET: RequestHandler = async ({ request, url }) => {
 			shopRole:     d.shopRole     ?? null,
 			cutsTotal:    d.usage?.cutCount ?? 0,
 			createdAt:    d.createdAt?.toDate?.()?.toISOString()   ?? null,
-			lastActiveAt: d.updatedAt?.toDate?.()?.toISOString()   ?? null,
+			// lastActiveAt is stamped per browser session; older accounts fall back to updatedAt
+			lastActiveAt: (d.lastActiveAt ?? d.updatedAt)?.toDate?.()?.toISOString() ?? null,
 		};
 	});
 
@@ -71,7 +72,15 @@ export const PATCH: RequestHandler = async ({ request }) => {
 		// comp — flagged so the billing health reconciliation doesn't report it.
 		patch.compedTier = tier === 'lite' || tier === 'pro';
 	}
-	if (status)       patch.status          = status;
+	if (status) {
+		if (!['active', 'suspended'].includes(status)) {
+			return new Response(JSON.stringify({ error: 'Invalid status' }), { status: 400 });
+		}
+		if (status === 'suspended' && uid === adminUid) {
+			return new Response(JSON.stringify({ error: "You can't suspend your own account" }), { status: 400 });
+		}
+		patch.status = status;
+	}
 	if (clearSession) patch.activeSessionId = null;
 
 	if (removeShop) {
@@ -92,6 +101,20 @@ export const PATCH: RequestHandler = async ({ request }) => {
 	}
 
 	await db.doc(`users/${uid}`).update(patch);
+
+	// Suspension is enforced at three layers: Firestore rules read `status`,
+	// the disabled Auth account can't sign in or refresh, and revoking tokens
+	// makes verifyIdToken (checkRevoked) reject the ones already issued.
+	if (status) {
+		const adminAuth = getAdminAuth();
+		try {
+			await adminAuth.updateUser(uid, { disabled: status === 'suspended' });
+			if (status === 'suspended') await adminAuth.revokeRefreshTokens(uid);
+		} catch (err) {
+			// A Firestore-only profile with no Auth record still gets the rules block.
+			if ((err as { code?: string }).code !== 'auth/user-not-found') throw err;
+		}
+	}
 
 	return json({ ok: true });
 };

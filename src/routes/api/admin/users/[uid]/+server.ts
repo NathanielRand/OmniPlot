@@ -120,7 +120,7 @@ export const GET: RequestHandler = async ({ request, params }) => {
 			defaultPlotter: d.preferences?.defaultPlotter ?? null,
 		},
 		createdAt:    d.createdAt?.toDate?.()?.toISOString()  ?? null,
-		lastActiveAt: d.updatedAt?.toDate?.()?.toISOString()  ?? null,
+		lastActiveAt: (d.lastActiveAt ?? d.updatedAt)?.toDate?.()?.toISOString() ?? null,
 		shop,
 		recentJobs,
 		recentTransactions,

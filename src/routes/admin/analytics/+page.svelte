@@ -6,41 +6,17 @@
 
 	type Range = "7d" | "30d" | "90d" | "ytd";
 
-	let range   = $state<Range>("30d");
-	let loading = $state(true);
-	let error   = $state<string | null>(null);
-
-	let stats = $state<{
-		users: {
-			total: number;
-			byTier: Record<string, number>;
-			activeToday: number;
-			shopMemberCount: number;
-		};
-		shops: {
-			total: number;
-			byShopPlan: Record<string, number>;
-		};
-		jobs: {
-			today: number;
-			recent: { id: string; userLabel: string; vehicleName: string; status: string; pieces: number; createdAt: string | null }[];
-		};
-	} | null>(null);
-
-	onMount(async () => {
-		try {
-			const token = await auth.currentUser?.getIdToken();
-			const res   = await fetch("/api/admin/stats", {
-				headers: token ? { Authorization: `Bearer ${token}` } : {},
-			});
-			if (!res.ok) throw new Error("Failed to load analytics");
-			stats = await res.json();
-		} catch (e) {
-			error = e instanceof Error ? e.message : "Could not load data";
-		} finally {
-			loading = false;
-		}
-	});
+	// Mirrors GET /api/admin/analytics
+	interface Analytics {
+		range: Range;
+		start: string;
+		users: { total: number; byTier: Record<string, number>; shopMembers: number; newUsers: number; activeUsers: number };
+		shops: { total: number; byShopPlan: Record<string, number> };
+		jobs: { total: number; pieces: number; failed: number; cutters: number };
+		series: { date: string; signups: number; jobs: number; pieces: number }[];
+		topSubjects: { label: string; jobs: number; pieces: number }[];
+		recentJobs: { id: string; user: string; subject: string; status: string; pieces: number; createdAt: string | null }[];
+	}
 
 	const RANGE_LABELS: Record<Range, string> = {
 		"7d":  "Last 7 days",
@@ -49,74 +25,102 @@
 		"ytd": "Year to date",
 	};
 
-	// Tier distribution — all individual user tiers
-	const USER_TIER_COLORS: Record<string, string> = {
-		free:    'var(--text-tertiary)',
-		lite:    '#a78bfa',
-		pro:     '#60a5ff',
-		admin:   '#f59e0b',
-		other:   '#94a3b8',
-	};
-	const USER_TIER_ORDER = ['free', 'lite', 'pro', 'admin', 'other'];
+	let range   = $state<Range>("30d");
+	let loading = $state(true);
+	let error   = $state<string | null>(null);
+	let stats   = $state<Analytics | null>(null);
 
-	// Shop plan rows
-	const SHOP_PLAN_COLORS: Record<string, string> = {
-		starter: '#34d399',
-		team:    '#06b6d4',
-		studio:  '#f472b6',
-		other:   '#94a3b8',
-	};
-	const SHOP_PLAN_ORDER = ['starter', 'team', 'studio', 'other'];
-	const SHOP_PLAN_LABELS: Record<string, string> = {
-		starter: 'Starter',
-		team:    'Team',
-		studio:  'Studio',
-		other:   'Other',
-	};
+	// MRR comes from the revenue endpoint, which is reconciled against Stripe.
+	// It's slower (walks the Stripe ledger), so it loads on its own.
+	let mrr        = $state<number | null>(null);
+	let mrrLoading = $state(true);
+	let mrrError   = $state(false);
+	let subscribers = $state<number | null>(null);
 
-	const userTierRows = $derived(() => {
-		if (!stats) return [];
-		const bt = stats.users.byTier;
-		// include any tier present in data, ordered by USER_TIER_ORDER then remainder
-		const keys = [...new Set([...USER_TIER_ORDER, ...Object.keys(bt)])].filter(k => (bt[k] ?? 0) > 0);
-		return keys.map(k => ({
-			label: k.charAt(0).toUpperCase() + k.slice(1),
-			count: bt[k] ?? 0,
-			color: USER_TIER_COLORS[k] ?? '#94a3b8',
-		}));
-	});
-
-	const shopPlanRows = $derived(() => {
-		if (!stats) return [];
-		const bp = stats.shops.byShopPlan;
-		const keys = [...new Set([...SHOP_PLAN_ORDER, ...Object.keys(bp)])].filter(k => (bp[k] ?? 0) > 0);
-		return keys.map(k => ({
-			label: SHOP_PLAN_LABELS[k] ?? k,
-			count: bp[k] ?? 0,
-			color: SHOP_PLAN_COLORS[k] ?? '#94a3b8',
-		}));
-	});
-
-	const totalUsers = $derived(stats?.users.total ?? 0);
-	const totalShops = $derived(stats?.shops.total ?? 0);
-
-	function userPct(count: number): number {
-		return totalUsers ? Math.round((count / totalUsers) * 100) : 0;
-	}
-	function shopPct(count: number): number {
-		return totalShops ? Math.round((count / totalShops) * 100) : 0;
+	async function authHeaders(): Promise<Record<string, string>> {
+		const token = await auth.currentUser?.getIdToken();
+		return token ? { Authorization: `Bearer ${token}` } : {};
 	}
 
-	// Donut combines all rows — users + shops — normalised to 100
-	const donutRows = $derived([...userTierRows(), ...shopPlanRows()]);
-	const donutTotal = $derived(donutRows.reduce((s, r) => s + r.count, 0));
-	const donutSegments = $derived(donutRows.map((t, i) => {
-		const pct    = donutTotal ? Math.round((t.count / donutTotal) * 100) : 0;
-		const offset = 25 - donutRows.slice(0, i).reduce((s, r) => s + (donutTotal ? Math.round((r.count / donutTotal) * 100) : 0), 0);
-		return { ...t, pct, offset };
-	}));
+	let requestSeq = 0;
+	async function load(r: Range) {
+		const seq = ++requestSeq;
+		loading = true;
+		error   = null;
+		try {
+			const res = await fetch(`/api/admin/analytics?range=${r}`, { headers: await authHeaders() });
+			if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? "Failed to load analytics");
+			const data = await res.json();
+			if (seq === requestSeq) stats = data; // ignore a slower, older range
+		} catch (e) {
+			if (seq === requestSeq) error = e instanceof Error ? e.message : "Could not load data";
+		} finally {
+			if (seq === requestSeq) loading = false;
+		}
+	}
 
-	const hasJobs = $derived((stats?.jobs.recent.length ?? 0) > 0);
+	async function loadMrr() {
+		mrrLoading = true;
+		mrrError   = false;
+		try {
+			const res = await fetch("/api/admin/revenue", { headers: await authHeaders() });
+			if (!res.ok) throw new Error();
+			const rev = await res.json();
+			mrr = rev.mrr ?? null;
+			subscribers = rev.activeSubscribers ?? null;
+		} catch {
+			mrrError = true;
+		} finally {
+			mrrLoading = false;
+		}
+	}
+
+	onMount(() => { loadMrr(); });
+	$effect(() => { load(range); });
+
+	function setRange(r: Range) { range = r; }
+
+	const fmtUsd = (cents: number) =>
+		new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(cents / 100);
+	const fmtDay = (iso: string) =>
+		new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+
+	// ── Daily charts ──
+	// Weeks instead of days past ~45 buckets, so bars stay readable.
+	const buckets = $derived.by(() => {
+		const s = stats?.series ?? [];
+		if (s.length <= 45) return s.map((d) => ({ ...d, label: fmtDay(d.date) }));
+		const out: { date: string; label: string; signups: number; jobs: number; pieces: number }[] = [];
+		for (let i = 0; i < s.length; i += 7) {
+			const wk = s.slice(i, i + 7);
+			out.push({
+				date: wk[0].date,
+				label: `Week of ${fmtDay(wk[0].date)}`,
+				signups: wk.reduce((a, d) => a + d.signups, 0),
+				jobs: wk.reduce((a, d) => a + d.jobs, 0),
+				pieces: wk.reduce((a, d) => a + d.pieces, 0),
+			});
+		}
+		return out;
+	});
+	const perWeek  = $derived((stats?.series.length ?? 0) > 45);
+	const maxJobs    = $derived(Math.max(1, ...buckets.map((b) => b.jobs)));
+	const maxSignups = $derived(Math.max(1, ...buckets.map((b) => b.signups)));
+
+	// ── Breakdown rows ──
+	const TIER_ORDER = ["free", "lite", "pro", "admin"];
+	const tierRows = $derived.by(() => {
+		const bt = stats?.users.byTier ?? {};
+		const keys = [...new Set([...TIER_ORDER, ...Object.keys(bt)])].filter((k) => (bt[k] ?? 0) > 0);
+		return keys.map((k) => ({ label: k.charAt(0).toUpperCase() + k.slice(1), count: bt[k] }));
+	});
+	const shopRows = $derived(
+		Object.entries(stats?.shops.byShopPlan ?? {})
+			.sort((a, b) => b[1] - a[1])
+			.map(([k, count]) => ({ label: k.charAt(0).toUpperCase() + k.slice(1), count })),
+	);
+	const pct = (n: number, total: number) => (total ? Math.round((n / total) * 100) : 0);
+	const maxSubjectJobs = $derived(Math.max(1, ...(stats?.topSubjects ?? []).map((s) => s.jobs)));
 </script>
 
 <svelte:head><title>Analytics — Admin — OmniPlot</title></svelte:head>
@@ -125,245 +129,159 @@
 	<div class="page-header">
 		<div>
 			<h1 class="page-title">Analytics</h1>
-			<p class="page-sub">Usage and growth metrics.</p>
+			<p class="page-sub">Usage and growth. Totals are all-time; everything else follows the range.</p>
 		</div>
 		<div class="range-tabs" role="group" aria-label="Date range">
 			{#each (["7d", "30d", "90d", "ytd"] as Range[]) as r}
-				<button class="range-tab" class:active={range === r} onclick={() => (range = r)}>
+				<button class="range-tab" class:active={range === r} aria-pressed={range === r} onclick={() => setRange(r)}>
 					{RANGE_LABELS[r]}
 				</button>
 			{/each}
 		</div>
 	</div>
 
+	{#if error}
+		<div class="load-error"><p>{error}</p><button class="retry-btn" onclick={() => load(range)}>Retry</button></div>
+	{/if}
+
 	<!-- KPI row -->
-	{#if loading}
-		<div class="kpi-row">
+	<div class="kpi-row">
+		{#if loading && !stats}
 			{#each { length: 4 } as _}
-				<div class="kpi-card kpi-card--skeleton">
+				<div class="kpi-card">
 					<div class="skel skel--label"></div>
 					<div class="skel skel--value"></div>
 					<div class="skel skel--sub"></div>
 				</div>
 			{/each}
-		</div>
-	{:else if error}
-		<div class="load-error"><p>{error}</p><button class="retry-btn" onclick={() => location.reload()}>Retry</button></div>
-	{:else if stats}
-		<div class="kpi-row">
-			{#each [
-				{ label: "Total users",   value: stats.users.total.toLocaleString(),       note: "all accounts" },
-				{ label: "Active today",  value: stats.users.activeToday.toLocaleString(), note: "updated in 24h" },
-				{ label: "Cuts today",    value: stats.jobs.today.toLocaleString(),         note: "jobs processed" },
-				{ label: "MRR",           value: "—",                                       note: "via Stripe Dashboard" },
-			] as kpi}
-				<div class="kpi-card">
-					<div class="kpi-label">{kpi.label}</div>
-					<div class="kpi-value">{kpi.value}</div>
-					<div class="kpi-note">{kpi.note}</div>
-				</div>
-			{/each}
-		</div>
-	{/if}
-
-	<!-- Chart + tier breakdown -->
-	<div class="chart-row">
-		<!-- Jobs chart -->
-		<div class="admin-panel chart-panel">
-			<div class="admin-panel__header">
-				<h2 class="admin-panel__title">Cut jobs — {RANGE_LABELS[range]}</h2>
-				{#if hasJobs}
-					<span class="chart-note">{stats?.jobs.recent.length ?? 0} recent jobs</span>
-				{/if}
+		{:else if stats}
+			<div class="kpi-card">
+				<div class="kpi-label">Users</div>
+				<div class="kpi-value">{stats.users.total.toLocaleString()}</div>
+				<div class="kpi-note">+{stats.users.newUsers.toLocaleString()} new · {RANGE_LABELS[range].toLowerCase()}</div>
 			</div>
-			<div class="chart-body">
-				{#if loading}
-					<div class="chart-skeleton">
-						<div class="skel" style="width:100%;height:80px;border-radius:8px;"></div>
-					</div>
-				{:else if !hasJobs}
-					<div class="chart-empty">
-						<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-						<p>No cut jobs recorded yet</p>
-						<span>Job history will appear here once users start cutting.</span>
-					</div>
+			<div class="kpi-card">
+				<div class="kpi-label">Active users</div>
+				<div class="kpi-value">{stats.users.activeUsers.toLocaleString()}</div>
+				<div class="kpi-note">signed in · {RANGE_LABELS[range].toLowerCase()}</div>
+			</div>
+			<div class="kpi-card">
+				<div class="kpi-label">Cut jobs</div>
+				<div class="kpi-value">{stats.jobs.total.toLocaleString()}</div>
+				<div class="kpi-note">{stats.jobs.pieces.toLocaleString()} pieces · {stats.jobs.cutters} {stats.jobs.cutters === 1 ? "user" : "users"}</div>
+			</div>
+			<div class="kpi-card">
+				<div class="kpi-label">MRR</div>
+				{#if mrrLoading}
+					<div class="skel skel--value"></div>
+					<div class="skel skel--sub"></div>
+				{:else if mrrError || mrr === null}
+					<div class="kpi-value kpi-value--dim">—</div>
+					<div class="kpi-note">Couldn't reach Stripe · <a href="/admin/revenue">Revenue</a></div>
 				{:else}
-					<div class="chart-note-banner">
-						Historical time-series data is recorded as jobs are created. The chart will populate over time.
-					</div>
-					<div class="recent-bar-chart">
-						{#each (stats?.jobs.recent ?? []).slice(0, 10).reverse() as j, i}
-							<div class="bar-col" use:tooltip={`${j.vehicleName} — ${j.status}`}>
-								<div
-									class="bar"
-									class:bar--error={j.status === "error"}
-									style="height: {20 + (i * 6)}%"
-								></div>
-							</div>
-						{/each}
-					</div>
-					<div class="chart-labels">
-						<span>Oldest</span>
-						<span>Most recent</span>
-					</div>
+					<div class="kpi-value">{fmtUsd(mrr)}</div>
+					<div class="kpi-note">{subscribers ?? 0} paying · <a href="/admin/revenue">details</a></div>
 				{/if}
 			</div>
-		</div>
-
-		<!-- Tier distribution -->
-		<div class="admin-panel tier-panel">
-			<div class="admin-panel__header">
-				<h2 class="admin-panel__title">Tier distribution</h2>
-				{#if stats}
-					<span class="chart-note">{stats.users.total.toLocaleString()} users · {stats.shops.total.toLocaleString()} shops</span>
-				{/if}
-			</div>
-			<div class="tier-body">
-				{#if loading}
-					{#each { length: 6 } as _}
-						<div class="tier-row">
-							<div class="skel" style="width:44px;height:12px"></div>
-							<div class="skel" style="flex:1;height:6px;border-radius:3px"></div>
-							<div class="skel" style="width:28px;height:10px"></div>
-							<div class="skel" style="width:28px;height:10px"></div>
-						</div>
-					{/each}
-				{:else if !totalUsers && !totalShops}
-					<div class="chart-empty" style="padding:24px 0">
-						<p>No users yet</p>
-					</div>
-				{:else}
-					<!-- Individual users -->
-					{#if totalUsers > 0}
-						<div class="tier-group-label">Individual</div>
-						{#each userTierRows() as t}
-							<div class="tier-row">
-								<div class="tier-label">{t.label}</div>
-								<div class="tier-bar-wrap">
-									<div class="tier-bar" style="width:{userPct(t.count)}%;background:{t.color};opacity:0.75"></div>
-								</div>
-								<div class="tier-count" style="color:{t.color}">{t.count}</div>
-								<div class="tier-pct">{userPct(t.count)}%</div>
-							</div>
-						{/each}
-						{#if stats && (stats.users.shopMemberCount ?? 0) > 0}
-							<div class="tier-row">
-								<div class="tier-label" style="color:#34d399">Shop</div>
-								<div class="tier-bar-wrap">
-									<div class="tier-bar" style="width:{userPct(stats.users.shopMemberCount)}%;background:#34d399;opacity:0.75"></div>
-								</div>
-								<div class="tier-count" style="color:#34d399">{stats.users.shopMemberCount}</div>
-								<div class="tier-pct">{userPct(stats.users.shopMemberCount)}%</div>
-							</div>
-						{/if}
-					{/if}
-
-					<!-- Shop / team plans -->
-					{#if totalShops > 0}
-						<div class="tier-group-label tier-group-label--spaced">Shop plans</div>
-						{#each shopPlanRows() as t}
-							<div class="tier-row">
-								<div class="tier-label">{t.label}</div>
-								<div class="tier-bar-wrap">
-									<div class="tier-bar" style="width:{shopPct(t.count)}%;background:{t.color};opacity:0.75"></div>
-								</div>
-								<div class="tier-count" style="color:{t.color}">{t.count}</div>
-								<div class="tier-pct">{shopPct(t.count)}%</div>
-							</div>
-						{/each}
-					{/if}
-
-					<!-- Donut — all segments combined -->
-					{#if donutTotal > 0}
-						<div class="tier-donut" aria-hidden="true">
-							<svg viewBox="0 0 36 36" width="90" height="90">
-								<circle cx="18" cy="18" r="15.9" fill="transparent" stroke="var(--bg-surface-3)" stroke-width="3.2"/>
-								{#each donutSegments as seg}
-									<circle
-										cx="18" cy="18" r="15.9" fill="transparent"
-										stroke={seg.color} stroke-width="3.2" stroke-opacity="0.75"
-										stroke-dasharray="{seg.pct} {100 - seg.pct}"
-										stroke-dashoffset={seg.offset}
-										stroke-linecap="round"
-									/>
-								{/each}
-							</svg>
-						</div>
-					{/if}
-				{/if}
-			</div>
-		</div>
+		{/if}
 	</div>
 
-	<!-- Bottom row: top vehicles + recent jobs -->
+	<!-- Daily charts -->
+	<div class="chart-row">
+		{#each [
+			{ title: "Cut jobs", key: "jobs" as const, max: maxJobs, empty: "No cut jobs in this range" },
+			{ title: "Sign-ups", key: "signups" as const, max: maxSignups, empty: "No sign-ups in this range" },
+		] as chart (chart.key)}
+			<div class="admin-panel">
+				<div class="admin-panel__header">
+					<h2 class="admin-panel__title">{chart.title} {perWeek ? "per week" : "per day"}</h2>
+					{#if stats}<span class="chart-note">{RANGE_LABELS[range]}</span>{/if}
+				</div>
+				<div class="chart-body" class:chart-body--stale={loading && !!stats}>
+					{#if !stats}
+						<div class="skel" style="width:100%;height:140px;border-radius:8px;"></div>
+					{:else if buckets.every((b) => b[chart.key] === 0)}
+						<div class="chart-empty"><p>{chart.empty}</p></div>
+					{:else}
+						<div class="bars" role="img" aria-label="{chart.title} {perWeek ? 'per week' : 'per day'}, {RANGE_LABELS[range]}">
+							<span class="bars__max">{chart.max}</span>
+							{#each buckets as b (b.date)}
+								<div class="bars__col" use:tooltip={`${b.label}: ${b[chart.key]} ${chart.key === "jobs" ? `job${b[chart.key] === 1 ? "" : "s"} · ${b.pieces} pcs` : `sign-up${b[chart.key] === 1 ? "" : "s"}`}`}>
+									<div class="bars__bar" style="height: {(b[chart.key] / chart.max) * 100}%"></div>
+								</div>
+							{/each}
+						</div>
+						<div class="chart-labels">
+							<span>{buckets[0]?.label.replace("Week of ", "")}</span>
+							<span>{buckets[buckets.length - 1]?.label.replace("Week of ", "")}</span>
+						</div>
+					{/if}
+				</div>
+			</div>
+		{/each}
+	</div>
+
+	<!-- Breakdown + top subjects -->
 	<div class="bottom-row">
-		<!-- Top subjects (needs aggregate query — shows empty state until data exists) -->
+		<div class="admin-panel">
+			<div class="admin-panel__header">
+				<h2 class="admin-panel__title">Plans</h2>
+				{#if stats}<span class="chart-note">all-time</span>{/if}
+			</div>
+			<div class="tier-body">
+				{#if !stats}
+					{#each { length: 4 } as _}<div class="skel" style="width:100%;height:12px"></div>{/each}
+				{:else}
+					<div class="tier-group-label">Accounts · {stats.users.total}</div>
+					{#each tierRows as t (t.label)}
+						<div class="tier-row">
+							<div class="tier-label">{t.label}</div>
+							<div class="tier-bar-wrap"><div class="tier-bar" style="width:{pct(t.count, stats.users.total)}%"></div></div>
+							<div class="tier-count">{t.count}</div>
+							<div class="tier-pct">{pct(t.count, stats.users.total)}%</div>
+						</div>
+					{/each}
+					<div class="tier-foot">{stats.users.shopMembers} of these belong to a shop.</div>
+
+					<div class="tier-group-label tier-group-label--spaced">Shops · {stats.shops.total}</div>
+					{#each shopRows as t (t.label)}
+						<div class="tier-row">
+							<div class="tier-label">{t.label}</div>
+							<div class="tier-bar-wrap"><div class="tier-bar" style="width:{pct(t.count, stats.shops.total)}%"></div></div>
+							<div class="tier-count">{t.count}</div>
+							<div class="tier-pct">{pct(t.count, stats.shops.total)}%</div>
+						</div>
+					{:else}
+						<div class="tier-foot">No shops yet.</div>
+					{/each}
+				{/if}
+			</div>
+		</div>
+
 		<div class="admin-panel">
 			<div class="admin-panel__header">
 				<h2 class="admin-panel__title">Top subjects</h2>
-				<span class="chart-note">by cut count</span>
+				<span class="chart-note">by cut jobs</span>
 			</div>
-			{#if loading}
-				<div style="padding:12px 16px;display:flex;flex-direction:column;gap:14px;">
-					{#each { length: 5 } as _}
-						<div style="display:flex;gap:10px;align-items:center;">
-							<div class="skel" style="width:14px;height:10px"></div>
-							<div class="skel" style="flex:1;height:10px;border-radius:4px"></div>
-							<div class="skel" style="width:30px;height:10px"></div>
-						</div>
-					{/each}
-				</div>
-			{:else if !hasJobs}
-				<div class="panel-empty">
-					<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-					<p>No jobs recorded yet</p>
-					<span>Top subjects appear once users start cutting.</span>
-				</div>
-			{:else}
-				<div class="panel-empty">
-					<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M12 20v-6M6 20V10M18 20V4"/></svg>
-					<p>Aggregate ranking coming soon</p>
-					<span>Requires a background aggregation job.</span>
-				</div>
-			{/if}
-		</div>
-
-		<!-- Recent jobs — live -->
-		<div class="admin-panel">
-			<div class="admin-panel__header">
-				<h2 class="admin-panel__title">Recent cut jobs</h2>
-			</div>
-			{#if loading}
-				<div style="padding:8px 0;">
-					{#each { length: 5 } as _}
-						<div style="padding:10px 14px;border-top:1px solid var(--border-subtle);display:flex;gap:10px;">
-							<div class="skel" style="flex:1;height:10px"></div>
-							<div class="skel" style="width:60px;height:10px"></div>
-						</div>
-					{/each}
-				</div>
-			{:else if !hasJobs}
-				<div class="panel-empty">
-					<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M14.5 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V7.5L14.5 2z"/></svg>
-					<p>No cut jobs yet</p>
-				</div>
+			{#if !stats}
+				<div class="tier-body">{#each { length: 5 } as _}<div class="skel" style="width:100%;height:12px"></div>{/each}</div>
+			{:else if stats.topSubjects.length === 0}
+				<div class="panel-empty"><p>No cut jobs in this range</p></div>
 			{:else}
 				<div class="table-scroll">
-					<table class="mini-table" aria-label="Recent cut jobs">
-						<thead>
-							<tr><th>User</th><th>Subject</th><th>Pcs</th><th>Status</th></tr>
-						</thead>
+					<table class="mini-table" aria-label="Top subjects by cut jobs">
+						<thead><tr><th>Subject</th><th>Jobs</th><th>Pcs</th></tr></thead>
 						<tbody>
-							{#each (stats?.jobs.recent ?? []) as j}
+							{#each stats.topSubjects as s (s.label)}
 								<tr>
-									<td class="td-user">{j.userLabel}</td>
-									<td class="td-vehicle">{j.vehicleName}</td>
-									<td class="td-mono">{j.pieces}</td>
 									<td>
-										<Badge variant={j.status === "complete" || j.status === "completed" ? "success" : j.status === "error" ? "danger" : "default"} size="sm" dot>
-											{j.status}
-										</Badge>
+										<div class="subject-cell">
+											<span class="td-vehicle">{s.label}</span>
+											<span class="subject-bar" style="width:{(s.jobs / maxSubjectJobs) * 100}%" aria-hidden="true"></span>
+										</div>
 									</td>
+									<td class="td-mono">{s.jobs}</td>
+									<td class="td-mono">{s.pieces}</td>
 								</tr>
 							{/each}
 						</tbody>
@@ -371,6 +289,40 @@
 				</div>
 			{/if}
 		</div>
+	</div>
+
+	<!-- Recent jobs -->
+	<div class="admin-panel">
+		<div class="admin-panel__header">
+			<h2 class="admin-panel__title">Recent cut jobs</h2>
+			{#if stats}<span class="chart-note">{stats.jobs.failed} failed · {RANGE_LABELS[range].toLowerCase()}</span>{/if}
+		</div>
+		{#if !stats}
+			<div class="tier-body">{#each { length: 5 } as _}<div class="skel" style="width:100%;height:12px"></div>{/each}</div>
+		{:else if stats.recentJobs.length === 0}
+			<div class="panel-empty"><p>No cut jobs in this range</p></div>
+		{:else}
+			<div class="table-scroll">
+				<table class="mini-table" aria-label="Recent cut jobs">
+					<thead><tr><th>When</th><th>User</th><th>Subject</th><th>Pcs</th><th>Status</th></tr></thead>
+					<tbody>
+						{#each stats.recentJobs as j (j.id)}
+							<tr>
+								<td class="td-mono">{j.createdAt ? new Date(j.createdAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—"}</td>
+								<td class="td-user">{j.user}</td>
+								<td class="td-vehicle">{j.subject}</td>
+								<td class="td-mono">{j.pieces}</td>
+								<td>
+									<Badge variant={j.status === "complete" || j.status === "completed" ? "success" : j.status === "error" || j.status === "failed" ? "danger" : "default"} size="sm" dot>
+										{j.status}
+									</Badge>
+								</td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
+		{/if}
 	</div>
 </div>
 
@@ -408,11 +360,12 @@
 		display: flex; flex-direction: column; gap: 4px; transition: border-color 0.15s;
 	}
 	.kpi-card:hover { border-color: var(--border-default); }
-	.kpi-card--skeleton { pointer-events: none; }
-
-	.kpi-label { font-size: 0.6875rem; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.08em; font-family: var(--font-mono); }
+	.kpi-label { font-size: 0.6875rem; font-weight: 600; font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-tertiary); }
 	.kpi-value { font-family: var(--font-display); font-size: 1.625rem; font-weight: 800; letter-spacing: -0.03em; color: var(--text-primary); line-height: 1.1; }
+	.kpi-value--dim { color: var(--text-tertiary); }
 	.kpi-note  { font-size: 0.75rem; color: var(--text-tertiary); }
+	.kpi-note a { color: var(--text-brand); text-decoration: none; }
+	.kpi-note a:hover { text-decoration: underline; }
 
 	/* Skeleton */
 	@keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
@@ -429,69 +382,70 @@
 	.retry-btn  { margin-top: 8px; padding: 6px 14px; font-size: 0.8125rem; background: var(--bg-surface-2); border: 1px solid var(--border-default); border-radius: var(--radius-md); color: var(--text-secondary); cursor: pointer; }
 	.retry-btn:hover { background: var(--bg-surface-3); }
 
-	/* Chart row */
-	.chart-row { display: grid; grid-template-columns: 1fr 320px; gap: 16px; }
+	/* Panels */
+	.chart-row  { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+	.bottom-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 	.admin-panel { background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-xl); overflow: hidden; }
-	.admin-panel__header { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid var(--border-subtle); }
+	.admin-panel__header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 14px 16px; border-bottom: 1px solid var(--border-subtle); }
 	.admin-panel__title  { font-size: 0.9375rem; font-weight: 600; }
 	.chart-note          { font-size: 0.75rem; font-family: var(--font-mono); color: var(--text-tertiary); }
 
-	.chart-body { padding: 16px; }
-	.chart-skeleton { padding: 4px 0; }
-	.chart-note-banner {
-		background: var(--bg-surface-2); border: 1px solid var(--border-subtle);
-		border-radius: var(--radius-md); padding: 8px 12px; margin-bottom: 12px;
-		font-size: 0.75rem; color: var(--text-tertiary); line-height: 1.5;
-	}
+	.chart-body { padding: 16px; transition: opacity 0.15s; }
+	.chart-body--stale { opacity: 0.5; }
 
-	/* Mini bar chart from recent jobs */
-	.recent-bar-chart {
-		height: 60px; display: flex; align-items: flex-end; gap: 3px; margin-bottom: 8px;
+	/* Bar chart — single series, one hue, bars anchored to the baseline */
+	.bars {
+		position: relative;
+		height: 140px;
+		display: flex;
+		align-items: flex-end;
+		gap: 2px;
+		padding-top: 14px;
+		border-bottom: 1px solid var(--border-default);
 	}
-	.bar-col { flex: 1; display: flex; align-items: flex-end; }
-	.bar {
-		width: 100%; background: var(--color-brand-dim); opacity: 0.6;
-		border-radius: 3px 3px 0 0; transition: opacity 0.12s; min-height: 4px;
+	.bars__max {
+		position: absolute; top: 0; left: 0;
+		font-size: 0.625rem; font-family: var(--font-mono); color: var(--text-tertiary);
 	}
-	.bar:hover  { opacity: 0.9; }
-	.bar--error { background: var(--color-danger); }
+	.bars__col {
+		flex: 1; min-width: 0; height: 100%;
+		display: flex; align-items: flex-end;
+		cursor: default;
+	}
+	.bars__bar {
+		width: 100%;
+		background: var(--text-brand);
+		border-radius: 4px 4px 0 0;
+		transition: opacity 0.12s;
+	}
+	.bars__col:hover .bars__bar { opacity: 0.75; }
+	.bars__col:hover { background: var(--interactive-hover); border-radius: 4px 4px 0 0; }
 
-	.chart-labels { display: flex; justify-content: space-between; font-size: 0.625rem; font-family: var(--font-mono); color: var(--text-tertiary); }
+	.chart-labels { display: flex; justify-content: space-between; margin-top: 6px; font-size: 0.625rem; font-family: var(--font-mono); color: var(--text-tertiary); }
 
-	/* Chart empty */
-	.chart-empty {
+	.chart-empty, .panel-empty {
 		display: flex; flex-direction: column; align-items: center; gap: 6px;
 		padding: 32px 16px; color: var(--text-tertiary); text-align: center;
 	}
-	.chart-empty p    { margin: 0; font-size: 0.875rem; font-weight: 500; color: var(--text-secondary); }
-	.chart-empty span { font-size: 0.8125rem; }
+	.chart-empty p, .panel-empty p { margin: 0; font-size: 0.875rem; font-weight: 500; color: var(--text-secondary); }
 
-	/* Tier panel */
-	.tier-body { padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 10px; align-items: center; }
+	/* Plans breakdown */
+	.tier-body { padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 10px; }
 	.tier-group-label {
 		width: 100%; font-size: 0.625rem; font-weight: 600; font-family: var(--font-mono);
 		text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-tertiary);
 		padding-bottom: 2px; border-bottom: 1px solid var(--border-subtle);
 	}
 	.tier-group-label--spaced { margin-top: 6px; }
-	.tier-row  { display: grid; grid-template-columns: 44px 1fr 36px 34px; align-items: center; gap: 8px; width: 100%; }
+	.tier-row  { display: grid; grid-template-columns: 56px 1fr 36px 34px; align-items: center; gap: 8px; width: 100%; }
 	.tier-label { font-size: 0.8125rem; font-weight: 500; color: var(--text-secondary); }
 	.tier-bar-wrap { height: 6px; background: var(--bg-surface-3); border-radius: 3px; overflow: hidden; }
-	.tier-bar   { height: 100%; border-radius: 3px; transition: width 0.4s var(--ease-smooth); }
-	.tier-count { font-family: var(--font-mono); font-size: 0.75rem; text-align: right; }
+	.tier-bar   { height: 100%; border-radius: 3px; background: var(--text-brand); transition: width 0.4s var(--ease-smooth); }
+	.tier-count { font-family: var(--font-mono); font-size: 0.75rem; text-align: right; color: var(--text-primary); }
 	.tier-pct   { font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-tertiary); text-align: right; }
-	.tier-donut { margin-top: 6px; }
+	.tier-foot  { font-size: 0.75rem; color: var(--text-tertiary); }
 
-	/* Bottom row */
-	.bottom-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-	.panel-empty {
-		display: flex; flex-direction: column; align-items: center; gap: 6px;
-		padding: 32px 16px; color: var(--text-tertiary); text-align: center;
-	}
-	.panel-empty p    { margin: 0; font-size: 0.875rem; font-weight: 500; color: var(--text-secondary); }
-	.panel-empty span { font-size: 0.8125rem; }
-
-	/* Mini table */
+	/* Tables */
 	.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 	.mini-table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
 	.mini-table thead { background: var(--bg-surface-2); }
@@ -503,17 +457,20 @@
 	.mini-table tbody tr { border-top: 1px solid var(--border-subtle); transition: background 0.1s; }
 	.mini-table tbody tr:hover { background: var(--interactive-hover); }
 	.mini-table td { padding: 9px 14px; vertical-align: middle; }
-	.td-user    { font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-secondary); }
+	.td-user    { font-size: 0.8125rem; color: var(--text-secondary); white-space: nowrap; }
 	.td-vehicle { font-size: 0.8125rem; color: var(--text-secondary); white-space: nowrap; }
-	.td-mono    { font-family: var(--font-mono); font-size: 0.8125rem; }
+	.td-mono    { font-family: var(--font-mono); font-size: 0.8125rem; white-space: nowrap; }
 
-	@media (max-width: 1100px) { .chart-row { grid-template-columns: 1fr; } .bottom-row { grid-template-columns: 1fr; } }
+	.subject-cell { display: flex; flex-direction: column; gap: 4px; min-width: 140px; }
+	.subject-bar  { display: block; height: 4px; border-radius: 2px; background: var(--text-brand); opacity: 0.7; }
+
+	@media (max-width: 1000px) { .chart-row, .bottom-row { grid-template-columns: 1fr; } }
 	@media (max-width: 900px)  { .kpi-row { grid-template-columns: repeat(2, 1fr); } }
 	@media (max-width: 480px) {
 		.analytics-page { padding: 16px; }
 		.kpi-row { grid-template-columns: 1fr; }
 		.range-tabs { flex-wrap: wrap; }
 		.range-tab { flex: 1 1 40%; text-align: center; }
-		.tier-row { grid-template-columns: 40px 1fr 30px 30px; gap: 6px; }
+		.tier-row { grid-template-columns: 48px 1fr 30px 30px; gap: 6px; }
 	}
 </style>

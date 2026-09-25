@@ -7,6 +7,7 @@
 	import PricingModal from "$lib/components/ui/PricingModal.svelte";
 	import ReportModal from "$lib/components/ui/ReportModal.svelte";
 	import UpdateBanner from "$lib/components/ui/UpdateBanner.svelte";
+	import MaintenanceBanner from "$lib/components/ui/MaintenanceBanner.svelte";
 	import ConfirmModal from "$lib/components/ui/ConfirmModal.svelte";
 	import ChangelogModal from "$lib/components/ui/ChangelogModal.svelte";
 	import TooltipHost from "$lib/components/ui/TooltipHost.svelte";
@@ -79,5 +80,6 @@
 <PricingModal />
 <ReportModal />
 <UpdateBanner />
+<MaintenanceBanner />
 <ConfirmModal />
 <TooltipHost />

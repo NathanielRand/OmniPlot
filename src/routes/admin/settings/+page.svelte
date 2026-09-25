@@ -1,58 +1,40 @@
 <script lang="ts">
-	import type { PageData } from './$types';
 	import Badge from "$lib/components/ui/Badge.svelte";
-	import Button from "$lib/components/ui/Button.svelte";
 	import { auth } from "$lib/firebase/client";
 	import { onMount } from "svelte";
-	import { toastStore } from "$lib/stores";
-
-	interface Props { data: PageData; }
-	let { data }: Props = $props();
+	import { toastStore, platformStore } from "$lib/stores";
+	import { PLATFORM_FLAGS, DEFAULT_PLATFORM_FLAGS, type PlatformFlag, type PlatformFlags } from "$lib/platform";
 
 	// ── State ──────────────────────────────────────
 	let loading = $state(true);
 	let error   = $state<string | null>(null);
 
-	let flags = $state<Record<string, { label: string; desc: string; on: boolean }>>({
-		aiAssist:         { label: "AI Assist",         desc: "Pattern suggestions and smart nesting.", on: true  },
-		commandPalette:   { label: "Command palette",   desc: "Keyboard-driven command search (⌘K).", on: true  },
-		exportDXF:        { label: "DXF export",        desc: "Export cut files as DXF format.", on: false },
-		exportPDF:        { label: "PDF export",        desc: "Export cut sheets as PDF.", on: true  },
-		cutAgent:         { label: "Cut Agent",         desc: "Direct USB/network plotter connection.", on: false },
-		openRegistration: { label: "Open registration", desc: "Allow new users to sign up.", on: true  },
-		maintenanceMode:  { label: "Maintenance mode",  desc: "Show maintenance banner to all users.", on: false },
-	});
-
-	let platform = $state({
-		appName:      "OmniPlot",
-		docsUrl:      "https://docs.omniplot.app",
-	});
-
+	let flags = $state<PlatformFlags>({ ...DEFAULT_PLATFORM_FLAGS });
+	let stripeAccount = $state<{ id: string; name: string | null; email: string | null } | null>(null);
 	let admins = $state<{ uid: string; displayName: string; email: string; createdAt: string | null }[]>([]);
 
-	let platformSaving = $state(false);
-	let flagSaving     = $state<string | null>(null); // key of flag being saved
-	let dangerConfirm  = $state("");
-	const DANGER_PHRASE = "delete all data";
+	let flagSaving = $state<PlatformFlag | null>(null);
+
+	// Built features first; unbuilt ones stay listed as a roadmap reminder.
+	const FLAG_KEYS = (Object.keys(PLATFORM_FLAGS) as PlatformFlag[])
+		.sort((a, b) => Number(PLATFORM_FLAGS[b].built) - Number(PLATFORM_FLAGS[a].built));
+
+	async function authHeader(): Promise<Record<string, string>> {
+		const token = await auth.currentUser?.getIdToken();
+		return token ? { Authorization: `Bearer ${token}` } : {};
+	}
 
 	// ── Load settings ──────────────────────────────
 	async function loadSettings() {
 		loading = true;
 		error   = null;
 		try {
-			const token = await auth.currentUser?.getIdToken();
-			const res   = await fetch("/api/admin/settings", {
-				headers: token ? { Authorization: `Bearer ${token}` } : {},
-			});
+			const res = await fetch("/api/admin/settings", { headers: await authHeader() });
 			if (!res.ok) throw new Error("Failed to load settings");
 			const data = await res.json();
-
-			// Merge loaded values into flags (preserving labels/descs)
-			for (const [key, val] of Object.entries(data.flags as Record<string, boolean>)) {
-				if (key in flags) flags[key].on = val;
-			}
-			platform = { ...platform, ...data.platform };
-			admins   = data.admins ?? [];
+			flags         = data.flags;
+			stripeAccount = data.stripeAccount ?? null;
+			admins        = data.admins ?? [];
 		} catch (e) {
 			error = e instanceof Error ? e.message : "Could not load settings";
 		} finally {
@@ -63,44 +45,23 @@
 	onMount(loadSettings);
 
 	// ── Toggle a feature flag ──────────────────────
-	async function toggleFlag(key: string) {
-		const newVal = !flags[key].on;
-		flags[key].on = newVal; // optimistic
-		flagSaving    = key;
+	async function toggleFlag(key: PlatformFlag) {
+		const next = { ...flags, [key]: !flags[key] };
+		flags      = next; // optimistic
+		flagSaving = key;
 		try {
-			const token = await auth.currentUser?.getIdToken();
-			const flagPatch: Record<string, boolean> = {};
-			for (const [k, f] of Object.entries(flags)) flagPatch[k] = f.on;
 			const res = await fetch("/api/admin/settings", {
 				method:  "POST",
-				headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-				body:    JSON.stringify({ flags: flagPatch }),
+				headers: { "Content-Type": "application/json", ...(await authHeader()) },
+				body:    JSON.stringify({ flags: next }),
 			});
 			if (!res.ok) throw new Error("Save failed");
+			platformStore.load(true); // this tab reflects it right away (e.g. the maintenance banner)
 		} catch {
-			flags[key].on = !newVal; // revert
+			flags = { ...next, [key]: !next[key] }; // revert
 			toastStore.error("Save failed", "Could not update feature flag");
 		} finally {
 			flagSaving = null;
-		}
-	}
-
-	// ── Save platform settings ─────────────────────
-	async function savePlatform() {
-		platformSaving = true;
-		try {
-			const token = await auth.currentUser?.getIdToken();
-			const res   = await fetch("/api/admin/settings", {
-				method:  "POST",
-				headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-				body:    JSON.stringify({ platform }),
-			});
-			if (!res.ok) throw new Error("Save failed");
-			toastStore.success("Settings saved", "Platform configuration updated.");
-		} catch {
-			toastStore.error("Save failed", "Could not update platform settings");
-		} finally {
-			platformSaving = false;
 		}
 	}
 </script>
@@ -129,68 +90,32 @@
 			<Badge variant="info" size="sm">Saved to Firestore immediately</Badge>
 		</div>
 		<div class="flags-list">
-			{#each Object.entries(flags) as [key, flag]}
-				<div class="flag-row">
+			{#each FLAG_KEYS as key (key)}
+				{@const flag = PLATFORM_FLAGS[key]}
+				<div class="flag-row" class:flag-row--unbuilt={!flag.built}>
 					<div class="flag-info">
-						<div class="flag-label">{flag.label}</div>
+						<div class="flag-label">
+							{flag.label}
+							{#if !flag.built}<Badge variant="default" size="sm">Not built yet</Badge>{/if}
+						</div>
 						<div class="flag-desc">{flag.desc}</div>
 					</div>
 					<button
 						class="toggle"
-						class:toggle--on={flag.on}
+						class:toggle--on={flags[key]}
 						class:toggle--saving={flagSaving === key}
 						role="switch"
-						aria-checked={flag.on}
+						aria-checked={flags[key]}
 						aria-label="Toggle {flag.label}"
 						onclick={() => toggleFlag(key)}
-						disabled={loading || flagSaving !== null}
+						disabled={!flag.built || loading || flagSaving !== null}
 					>
 						<span class="toggle__thumb"></span>
 					</button>
 				</div>
 			{/each}
 		</div>
-	</div>
-
-	<!-- Platform settings -->
-	<div class="section">
-		<div class="section-header">
-			<h2 class="section-title">Platform</h2>
-		</div>
-		<div class="form-body">
-			{#if loading}
-				<div style="display:flex;flex-direction:column;gap:10px;">
-					{#each { length: 5 } as _}
-						<div style="display:flex;flex-direction:column;gap:4px;">
-							<div class="skel" style="width:100px;height:10px;"></div>
-							<div class="skel" style="width:100%;height:34px;border-radius:6px;"></div>
-						</div>
-					{/each}
-				</div>
-			{:else}
-				<div class="form-grid">
-					<div class="form-field">
-						<label class="field-label" for="app-name">App name</label>
-						<input id="app-name" class="field-input" type="text" bind:value={platform.appName} />
-					</div>
-					<div class="form-field">
-						<label class="field-label" for="docs-url">Docs URL</label>
-						<input id="docs-url" class="field-input" type="url" bind:value={platform.docsUrl} />
-					</div>
-				</div>
-				<p style="margin-top:8px;font-size:0.8125rem;color:var(--text-tertiary);">Cut limits and plan features (free/lite/pro) now live on <a href="/admin/products" style="color:var(--text-brand);">Products → Plan allowances</a>.</p>
-				<div class="form-footer">
-					<Button variant="primary" size="sm" onclick={savePlatform} disabled={platformSaving}>
-						{#if platformSaving}
-							<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true" style="animation:spin 0.9s linear infinite"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
-							Saving…
-						{:else}
-							Save changes
-						{/if}
-					</Button>
-				</div>
-			{/if}
-		</div>
+		<p class="flags-note">Cut limits and plan features (free/lite/pro) live on <a href="/admin/products">Products → Plan allowances</a>.</p>
 	</div>
 
 	<!-- Stripe (read-only reference — configured via .env) -->
@@ -206,25 +131,32 @@
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2"/><path d="M1 10h22"/></svg>
 				</div>
 				<div class="stripe-account-details">
-					{#if data.stripeAccountName}
-						<span class="stripe-account-name">{data.stripeAccountName}</span>
+					{#if stripeAccount?.name}
+						<span class="stripe-account-name">{stripeAccount.name}</span>
 					{:else}
-						<span class="stripe-account-name stripe-account-name--unknown">Account name unavailable</span>
+						<span class="stripe-account-name stripe-account-name--unknown">{loading ? "Loading…" : "Account name unavailable"}</span>
 					{/if}
 					<div class="stripe-account-meta">
-						{#if data.stripeAccountEmail}
-							<span class="stripe-account-email">{data.stripeAccountEmail}</span>
+						{#if stripeAccount?.email}
+							<span class="stripe-account-email">{stripeAccount.email}</span>
 							<span class="stripe-account-sep" aria-hidden="true">·</span>
 						{/if}
-						<code class="stripe-account-id">{data.stripeConnectedAccountId}</code>
+						<code class="stripe-account-id">{stripeAccount?.id ?? "—"}</code>
 					</div>
 				</div>
-				<Badge variant="success" size="sm" dot={true}>Connected</Badge>
+				{#if !loading}
+					{#if stripeAccount?.name || stripeAccount?.email}
+						<Badge variant="success" size="sm" dot={true}>Connected</Badge>
+					{:else}
+						<Badge variant="danger" size="sm" dot={true}>Unreachable</Badge>
+					{/if}
+				{/if}
 			</div>
 
 			<p class="info-text">
-				Stripe keys and price IDs are set in your <code>.env</code> file and are not editable here.
-				To update them, modify the environment variables and redeploy.
+				Stripe keys are set in your <code>.env</code> file and are not editable here —
+				change the environment variables and redeploy. Price IDs are managed from
+				<a href="/admin/products">Products</a>.
 			</p>
 			<div class="env-list">
 				{#each [
@@ -239,7 +171,7 @@
 					</div>
 				{/each}
 			</div>
-			<a href="https://dashboard.stripe.com/{data.stripeConnectedAccountId}" target="_blank" rel="noopener noreferrer" class="stripe-link">
+			<a href="https://dashboard.stripe.com/{stripeAccount?.id ?? ''}" target="_blank" rel="noopener noreferrer" class="stripe-link">
 				Open Stripe Dashboard ↗
 			</a>
 		</div>
@@ -269,7 +201,7 @@
 			<div class="table-scroll">
 				<table class="data-table" aria-label="Admin users">
 					<thead>
-						<tr><th>User</th><th>Email</th><th>Admin since</th></tr>
+						<tr><th>User</th><th>Email</th><th>Joined</th></tr>
 					</thead>
 					<tbody>
 						{#each admins as a}
@@ -288,35 +220,6 @@
 				</table>
 			</div>
 		{/if}
-	</div>
-
-	<!-- Danger zone -->
-	<div class="section section--danger">
-		<div class="section-header">
-			<h2 class="section-title section-title--danger">Danger zone</h2>
-			<Badge variant="danger" size="sm">Irreversible</Badge>
-		</div>
-		<div class="danger-body">
-			<div class="danger-action danger-action--destructive">
-				<div class="danger-info">
-					<div class="danger-label">Wipe all user data</div>
-					<div class="danger-desc">
-						Permanently delete all users, jobs, and patterns from Firestore. This cannot be undone.
-						Type <code>{DANGER_PHRASE}</code> to confirm.
-					</div>
-					<input
-						class="danger-confirm-input"
-						type="text"
-						placeholder="Type the phrase to enable…"
-						bind:value={dangerConfirm}
-						aria-label="Confirm data wipe"
-					/>
-				</div>
-				<Button variant="danger" size="sm" disabled={dangerConfirm !== DANGER_PHRASE}>
-					Wipe all data
-				</Button>
-			</div>
-		</div>
 	</div>
 </div>
 
@@ -350,13 +253,11 @@
 
 	/* Sections */
 	.section { background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-xl); overflow: hidden; }
-	.section--danger { border-color: rgba(255,77,109,0.25); }
 	.section-header {
 		display: flex; align-items: center; justify-content: space-between;
 		padding: 14px 16px; border-bottom: 1px solid var(--border-subtle); gap: 8px;
 	}
 	.section-title        { font-size: 0.9375rem; font-weight: 600; }
-	.section-title--danger { color: var(--color-danger); }
 	.section-note         { font-size: 0.8125rem; color: var(--text-tertiary); margin: 0; }
 	.table-scroll          { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
@@ -368,7 +269,11 @@
 	}
 	.flag-row:first-child { border-top: none; }
 	.flag-row:hover { background: var(--interactive-hover); }
-	.flag-label { font-size: 0.875rem; font-weight: 500; color: var(--text-primary); margin-bottom: 2px; }
+	.flag-label { font-size: 0.875rem; font-weight: 500; color: var(--text-primary); margin-bottom: 2px; display: flex; align-items: center; gap: 8px; }
+	.flag-row--unbuilt .flag-label,
+	.flag-row--unbuilt .flag-desc { opacity: 0.6; }
+	.flags-note { margin: 0; padding: 10px 16px 14px; font-size: 0.8125rem; color: var(--text-tertiary); border-top: 1px solid var(--border-subtle); }
+	.flags-note a { color: var(--text-brand); }
 	.flag-desc  { font-size: 0.8125rem; color: var(--text-tertiary); }
 
 	/* Toggle */
@@ -388,20 +293,6 @@
 		box-shadow: 0 1px 3px rgba(0,0,0,0.2);
 	}
 	.toggle--on .toggle__thumb { transform: translateX(16px); }
-
-	/* Platform form */
-	.form-body { padding: 16px; display: flex; flex-direction: column; gap: 16px; }
-	.form-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
-	.form-field { display: flex; flex-direction: column; gap: 6px; }
-	.field-label { font-size: 0.8125rem; font-weight: 500; color: var(--text-secondary); }
-	.field-input {
-		padding: 8px 10px; background: var(--bg-base); border: 1px solid var(--border-default);
-		border-radius: var(--radius-md); font-size: 0.875rem; font-family: var(--font-body);
-		color: var(--text-primary); outline: none; transition: border-color 0.12s;
-	}
-	.field-input:focus { border-color: var(--color-brand-dim); }
-	.field-input--sm   { max-width: 120px; }
-	.form-footer { display: flex; justify-content: flex-end; padding-top: 4px; }
 
 	/* Stripe info */
 	.info-body { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
@@ -477,33 +368,7 @@
 		background-size: 200% 100%; animation: shimmer 1.5s infinite; border-radius: 4px;
 	}
 
-	/* Danger zone */
-	.danger-body { padding: 4px 0; }
-	.danger-action {
-		display: flex; align-items: flex-start; justify-content: space-between;
-		gap: 16px; padding: 16px; border-top: 1px solid var(--border-subtle);
-	}
-	.danger-action:first-child { border-top: none; }
-	.danger-action--destructive { background: rgba(255,77,109,0.03); }
-	.danger-label { font-size: 0.875rem; font-weight: 500; color: var(--text-primary); margin-bottom: 3px; }
-	.danger-desc  { font-size: 0.8125rem; color: var(--text-tertiary); max-width: 520px; line-height: 1.5; }
-	.danger-desc code {
-		font-family: var(--font-mono); font-size: 0.8125rem;
-		background: var(--bg-surface-3); padding: 1px 5px; border-radius: 3px; color: var(--color-danger);
-	}
-	.danger-confirm-input {
-		margin-top: 10px; padding: 7px 10px; width: 280px; max-width: 100%;
-		box-sizing: border-box;
-		background: var(--bg-base); border: 1px solid rgba(255,77,109,0.3);
-		border-radius: var(--radius-md); font-size: 0.8125rem; font-family: var(--font-mono);
-		color: var(--text-primary); outline: none; transition: border-color 0.12s; display: block;
-	}
-	.danger-confirm-input:focus { border-color: var(--color-danger); }
-	.danger-confirm-input::placeholder { color: var(--text-tertiary); }
-
 	@media (max-width: 700px) {
-		.form-grid { grid-template-columns: 1fr; }
-		.danger-action { flex-direction: column; }
 		.section-header { flex-wrap: wrap; }
 	}
 	@media (max-width: 480px) {

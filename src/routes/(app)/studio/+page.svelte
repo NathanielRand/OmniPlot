@@ -22,7 +22,7 @@
 	} from "$lib/utils/hpgl";
 	import { sendToPlotter, sendToPlotterSegmented, sendSettings, connectSerialPort, reconnectSerialPort, disconnectSerialPort, isSerialConnected, queryPlotter, releaseAgentPort, type SerialPortInfo, type CutProgress } from "$lib/utils/plotter-connection";
 	import { logPlotterError, incrementCutUsage } from "$lib/firebase/firestore";
-	import { cutJobStore, plansStore } from "$lib/stores";
+	import { cutJobStore, plansStore, platformStore } from "$lib/stores";
 	import type { PlotterDiagnostic } from "$lib/utils/plotter-errors";
 	import PlotterDiagPanel from "$lib/components/ui/PlotterDiagPanel.svelte";
 	import {
@@ -1073,9 +1073,13 @@
 		const now = Date.now();
 		const next: DiscoveredDevice[] = [];
 
-		// 1. Probe agent + enumerate its USB ports
+		// 1. Probe agent + enumerate its USB ports (skipped when an admin has
+		// turned the Cut Agent off — Settings → Cut Agent)
 		const base = (plotterStore.config.agentUrl ?? "http://localhost:7878").replace(/\/$/, "");
-		try {
+		if (!platformStore.flags.cutAgent) {
+			agentProbeStatus = "offline";
+			agentStore.setOffline();
+		} else try {
 			const r = await fetch(`${base}/api/status`, { signal: AbortSignal.timeout(2500) });
 			if (r.ok) {
 				agentProbeStatus = "online";
@@ -1672,6 +1676,7 @@
 			toastStore.warning("Nothing to export", "Add patterns first.");
 			return;
 		}
+		if (format === "dxf" && !platformStore.flags.exportDXF) return;
 		if (format === "dxf" && isFree) {
 			toastStore.info("Lite plan required", "DXF export is available on Lite and above.");
 			uiStore.openPricing();
@@ -2575,16 +2580,19 @@
 					<div class="export-option__desc">For FlexiSIGN, Inkscape, Illustrator.</div>
 				</div>
 			</button>
-			<button class="export-option" class:export-option--locked={dxfLocked} onclick={() => requestExport("dxf")}>
-				<div class="export-option__icon">DXF</div>
-				<div class="export-option__body">
-					<div class="export-option__title">
-						DXF file
-						{#if dxfLocked}<span class="export-lock-badge">Lite+</span>{/if}
+			<!-- Admin → Settings → DXF export -->
+			{#if platformStore.flags.exportDXF}
+				<button class="export-option" class:export-option--locked={dxfLocked} onclick={() => requestExport("dxf")}>
+					<div class="export-option__icon">DXF</div>
+					<div class="export-option__body">
+						<div class="export-option__title">
+							DXF file
+							{#if dxfLocked}<span class="export-lock-badge">Lite+</span>{/if}
+						</div>
+						<div class="export-option__desc">For AutoCAD-compatible tools and CNC software.</div>
 					</div>
-					<div class="export-option__desc">For AutoCAD-compatible tools and CNC software.</div>
-				</div>
-			</button>
+				</button>
+			{/if}
 		</div>
 	{/if}
 

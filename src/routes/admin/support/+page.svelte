@@ -46,7 +46,7 @@
 				v.match(t) &&
 				(!q ||
 					t.subject.toLowerCase().includes(q) ||
-					t.email.includes(q) ||
+					t.email.toLowerCase().includes(q) ||
 					t.name.toLowerCase().includes(q) ||
 					ticketRef(t.id).toLowerCase().includes(q.replace(/^#?/, '#')) ||
 					t.tags.some((tag) => tag.includes(q))),

@@ -19,7 +19,7 @@
 		getAdjustmentRequests,
 		resolveAdjustmentRequest,
 	} from "$lib/firebase/firestore";
-	import { toastStore } from "$lib/stores";
+	import { toastStore, confirmStore } from "$lib/stores";
 	import { auth } from "$lib/firebase/client";
 	import { tooltip } from "$lib/actions/tooltip";
 	import type { PatternCategory, PatternCoverage, PatternZone, UserPattern, UserPatternStatus, PatternAdjustmentRequest } from "$lib/types";
@@ -48,6 +48,24 @@
 	function userLabel(uid: string): string {
 		const u = usersById[uid];
 		return u?.displayName || u?.email || `${uid.slice(0, 10)}…`;
+	}
+
+	// ─── Catalog source ───────────────────────────
+	// While the catalog is still the hardcoded seed, the first write would make
+	// Firestore the source with only that one doc in it — every other subject
+	// would vanish from the library. So edits wait until the seed is in Firestore.
+	const catalogLocked = $derived(patternStore.usingSeed);
+	let seeding = $state(false);
+
+	async function seedCatalog() {
+		const ok = await confirmStore.ask({
+			title: "Copy the built-in catalog into Firestore?",
+			message: "Creates the subjects and patterns that aren't in Firestore yet. Nothing that already exists is changed. After this, the catalog is edited here and lives in Firestore.",
+			confirmLabel: "Seed catalog",
+		});
+		if (!ok) return;
+		seeding = true;
+		try { await patternStore.seedFirestore(); } finally { seeding = false; }
 	}
 
 	// ─── Vehicles filter state ────────────────────
@@ -125,7 +143,7 @@
 	}
 
 	async function approveSubmission() {
-		if (!reviewTarget) return;
+		if (!reviewTarget || catalogLocked) return;
 		reviewWorking = true;
 		try {
 			const sub = { ...reviewTarget, ...reviewEdits };
@@ -515,16 +533,31 @@ onMount(() => {
 			<p class="page-sub">Manage subject templates, community submissions, and adjustment requests.</p>
 		</div>
 		<div class="page-header__actions">
-			<Button variant="ghost" size="sm" onclick={async () => { await patternStore.seedFirestore(); }} title="Write seed data to Firestore">
+			{#if catalogLocked}
+			<Button variant="ghost" size="sm" onclick={seedCatalog} disabled={seeding} title="Create the built-in catalog in Firestore (create-only)">
 				<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7v10c0 2.2 3.6 4 8 4s8-1.8 8-4V7"/><ellipse cx="12" cy="7" rx="8" ry="3"/><path d="M4 12c0 2.2 3.6 4 8 4s8-1.8 8-4"/></svg>
-				Seed Firestore
+				{seeding ? "Seeding…" : "Seed catalog"}
 			</Button>
-			<Button variant="primary" size="sm" onclick={() => (showAddModal = true)}>
+			{/if}
+			<Button variant="primary" size="sm" onclick={() => (showAddModal = true)} disabled={catalogLocked}>
 				<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
 				Add subject
 			</Button>
 		</div>
 	</div>
+
+	{#if catalogLocked && !patternStore.loading}
+		<div class="catalog-banner" role="status">
+			{#if patternStore.catalogError}
+				<strong>Couldn't load the catalog from Firestore.</strong>
+				You're seeing the built-in catalog instead, and editing is paused until it loads. Refresh to try again.
+			{:else}
+				<strong>The catalog isn't in Firestore yet.</strong>
+				Subjects and patterns below are the built-in catalog that ships with the app, so editing and approving
+				submissions are paused. Use <em>Seed catalog</em> to copy it into Firestore — after that it's fully editable here.
+			{/if}
+		</div>
+	{/if}
 
 	<!-- Summary cards -->
 	<div class="summary-row">
@@ -813,10 +846,10 @@ onMount(() => {
 							<td class="td-date">{v.updatedAt}</td>
 							<td class="td-actions">
 								<div class="row-actions">
-									<button class="row-btn" use:tooltip={"Edit patterns"} aria-label="Edit patterns" onclick={() => openEditPanel(v)}>
+									<button class="row-btn" use:tooltip={"Edit patterns"} aria-label="Edit patterns" onclick={() => openEditPanel(v)} disabled={catalogLocked}>
 										<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
 									</button>
-									<button class="row-btn" use:tooltip={"Edit vehicle details"} aria-label="Edit vehicle details" onclick={() => openEditVehicle(v)}>
+									<button class="row-btn" use:tooltip={"Edit vehicle details"} aria-label="Edit vehicle details" onclick={() => openEditVehicle(v)} disabled={catalogLocked}>
 										<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
 									</button>
 									{#if pendingDeleteVehicleId === v.id}
@@ -837,6 +870,7 @@ onMount(() => {
 										<button
 											class="row-btn row-btn--danger"
 											onclick={() => (pendingDeleteVehicleId = v.id)}
+											disabled={catalogLocked}
 											use:tooltip={"Delete vehicle"}
 											aria-label="Delete {subjectName(v)}"
 										><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></button>
@@ -1058,7 +1092,7 @@ onMount(() => {
 			<button class="btn-reject" disabled={reviewWorking} onclick={rejectSubmission}>
 				{reviewWorking ? "Working…" : "Reject"}
 			</button>
-			<button class="btn-approve" disabled={reviewWorking} onclick={approveSubmission}>
+			<button class="btn-approve" disabled={reviewWorking || catalogLocked} onclick={approveSubmission} title={catalogLocked ? "Seed the catalog into Firestore first" : undefined}>
 				{reviewWorking ? "Working…" : "Approve & Publish"}
 			</button>
 		</div>
@@ -1586,6 +1620,19 @@ onMount(() => {
 	}
 	.btn-approve:hover:not(:disabled) { filter: brightness(1.1); }
 	.btn-approve:disabled { opacity: 0.5; cursor: not-allowed; }
+
+	.catalog-banner {
+		margin-bottom: 20px;
+		padding: 12px 14px;
+		border-radius: var(--radius-md);
+		border: 1px solid color-mix(in srgb, var(--color-warning, #f59e0b) 40%, transparent);
+		background: color-mix(in srgb, var(--color-warning, #f59e0b) 8%, transparent);
+		font-size: 0.8125rem;
+		line-height: 1.5;
+		color: var(--text-secondary);
+	}
+	.catalog-banner strong { color: var(--text-primary); }
+	.row-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 
 	.btn-reject {
 		padding: 8px 16px; font-size: 0.875rem; font-weight: 600; font-family: var(--font-body);

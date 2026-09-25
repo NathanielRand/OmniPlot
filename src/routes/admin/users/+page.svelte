@@ -6,7 +6,7 @@
 	import { onMount } from "svelte";
 	import { page } from "$app/state";
 	import { goto } from "$app/navigation";
-	import { toastStore, confirmStore } from "$lib/stores";
+	import { toastStore, confirmStore, userStore } from "$lib/stores";
 	import { tooltip } from "$lib/actions/tooltip";
 
 	type Tier       = "free" | "lite" | "pro" | "admin";
@@ -241,6 +241,7 @@
 		const verb = next === "suspended" ? "Suspend" : "Reactivate";
 		const ok = await confirmStore.ask({
 			title: `${verb} ${detail.displayName || detail.email}'s account?`,
+			message: next === "suspended" ? "They'll be signed out and blocked from signing back in." : undefined,
 			variant: next === "suspended" ? "danger" : "primary",
 			confirmLabel: verb,
 		});
@@ -396,6 +397,7 @@
 		const verb = next === "suspended" ? "Suspend" : "Reactivate";
 		const ok = await confirmStore.ask({
 			title: `${verb} ${user.displayName || user.email}'s account?`,
+			message: next === "suspended" ? "They'll be signed out and blocked from signing back in." : undefined,
 			variant: next === "suspended" ? "danger" : "primary",
 			confirmLabel: verb,
 		});
@@ -408,6 +410,62 @@
 		} catch {
 			toastStore.error("Action failed", "Could not update user status");
 		}
+	}
+
+	// ── Bulk actions ───────────────────────────────
+	let bulkWorking = $state(false);
+	const selectedUsers = $derived(users.filter((u) => selectedIds.has(u.uid)));
+
+	async function bulkSetStatus(next: Status) {
+		// Never suspend yourself — the API refuses it anyway.
+		const targets = selectedUsers.filter((u) => u.status !== next && !(next === "suspended" && u.uid === userStore.user?.uid));
+		if (!targets.length) {
+			toastStore.info("Nothing to change", `Every selected user is already ${next}.`);
+			return;
+		}
+		const verb = next === "suspended" ? "Suspend" : "Reactivate";
+		const ok = await confirmStore.ask({
+			title: `${verb} ${targets.length} user${targets.length === 1 ? "" : "s"}?`,
+			message: next === "suspended" ? "They'll be signed out and blocked from signing back in." : undefined,
+			variant: next === "suspended" ? "danger" : "primary",
+			confirmLabel: verb,
+		});
+		if (!ok) return;
+		bulkWorking = true;
+		let done = 0;
+		const failed: string[] = [];
+		for (const u of targets) {
+			try {
+				await patchUser(u.uid, { status: next });
+				users = users.map((x) => x.uid === u.uid ? { ...x, status: next } : x);
+				if (detail?.uid === u.uid) detail = { ...detail!, status: next };
+				done++;
+			} catch {
+				failed.push(u.email || u.uid);
+			}
+		}
+		bulkWorking = false;
+		if (done) toastStore.success(`${done} user${done === 1 ? "" : "s"} ${next === "suspended" ? "suspended" : "reactivated"}`);
+		if (failed.length) toastStore.error(`${failed.length} failed`, failed.slice(0, 3).join(", "));
+	}
+
+	function csvCell(v: unknown): string {
+		const s = v == null ? "" : String(v);
+		return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+	}
+
+	function exportSelectedCsv() {
+		const header = ["uid", "name", "email", "phone", "tier", "status", "shop", "shop_role", "cuts", "joined", "last_active"];
+		const rows = selectedUsers.map((u) => [
+			u.uid, u.displayName, u.email, u.phone, u.tier, u.status, u.shopName, u.shopRole,
+			u.cutsTotal, u.createdAt, u.lastActiveAt,
+		].map(csvCell).join(","));
+		const blob = new Blob([[header.join(","), ...rows].join("\n")], { type: "text/csv" });
+		const a = document.createElement("a");
+		a.href = URL.createObjectURL(blob);
+		a.download = `omniplot-users-${new Date().toISOString().slice(0, 10)}.csv`;
+		a.click();
+		URL.revokeObjectURL(a.href);
 	}
 
 	const TIERS: Tier[] = ["free", "lite", "pro", "admin"];
@@ -935,7 +993,12 @@
 		{#if selectedIds.size > 0}
 			<div class="bulk-bar">
 				<span>{selectedIds.size} selected</span>
-				<button class="bulk-btn" onclick={() => (selectedIds = new Set())}>Clear</button>
+				<button class="bulk-btn" onclick={exportSelectedCsv} disabled={bulkWorking}>Export CSV</button>
+				<button class="bulk-btn" onclick={() => bulkSetStatus("active")} disabled={bulkWorking}>Reactivate</button>
+				<button class="bulk-btn bulk-btn--danger" onclick={() => bulkSetStatus("suspended")} disabled={bulkWorking}>
+					{bulkWorking ? "Working…" : "Suspend"}
+				</button>
+				<button class="bulk-btn" onclick={() => (selectedIds = new Set())} disabled={bulkWorking}>Clear</button>
 			</div>
 		{/if}
 	</div>
@@ -1118,13 +1181,15 @@
 	.search-input:focus { border-color: var(--color-brand-dim); }
 	.search-input::placeholder { color: var(--text-tertiary); }
 
-	.bulk-bar { display: flex; align-items: center; gap: 8px; font-size: 0.8125rem; color: var(--text-secondary); }
+	.bulk-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 0.8125rem; color: var(--text-secondary); }
 	.bulk-btn {
 		padding: 5px 10px; font-size: 0.75rem; font-weight: 500; font-family: var(--font-body);
 		background: var(--bg-surface-2); border: 1px solid var(--border-default);
 		border-radius: var(--radius-md); color: var(--text-secondary); cursor: pointer; transition: all 0.12s;
 	}
-	.bulk-btn:hover { background: var(--bg-surface-3); }
+	.bulk-btn:hover:not(:disabled) { background: var(--bg-surface-3); }
+	.bulk-btn:disabled { opacity: 0.5; cursor: default; }
+	.bulk-btn--danger { color: var(--color-danger); border-color: color-mix(in srgb, var(--color-danger) 35%, transparent); }
 
 	/* ── Skeleton ──────────────────────────────── */
 	@keyframes shimmer {

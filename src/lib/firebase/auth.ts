@@ -28,7 +28,7 @@ import {
 	subscribeToUser,
 	writeSessionId,
 } from "./firestore";
-import { userStore } from "$lib/stores";
+import { userStore, platformStore } from "$lib/stores";
 
 // ─── Constants ────────────────────────────────
 const EMAIL_KEY    = "omniplot_signin_email";
@@ -49,6 +49,22 @@ function getOrCreateSessionId(): string {
 		localStorage.setItem(SESSION_KEY, id);
 	}
 	return id;
+}
+
+// Ends the session and lands on /login with a banner explaining why.
+// SvelteKit's goto isn't available here, so location.replace does the redirect.
+type SignOutReason = "kicked" | "suspended" | "closed";
+function forceSignOut(reason: SignOutReason): void {
+	localSessionId = null;
+	localStorage.removeItem(SESSION_KEY);
+	sessionStorage.removeItem('omniplot_session_logged');
+	unsubProfile?.();
+	unsubProfile = null;
+	userStore.set(null);
+	signOut(auth).catch(() => {});
+	if (typeof window !== "undefined") {
+		window.location.replace(`/login?reason=${reason}`);
+	}
 }
 
 // ─── Session listener ─────────────────────────
@@ -75,7 +91,23 @@ export function initAuth(): () => void {
 
 		// Ensure Firestore profile exists for this user
 		const existing = await getUserProfile(firebaseUser.uid);
+		if (existing?.status === "suspended") {
+			forceSignOut("suspended");
+			return;
+		}
 		if (!existing) {
+			// Registration closed (Admin → Settings): firestore.rules would refuse
+			// the profile anyway, so remove the Auth account the sign-in just
+			// created instead of leaving a half-made user behind.
+			await platformStore.load();
+			if (!platformStore.flags.openRegistration) {
+				// Only an account this sign-in just made — never an older one
+				// that merely lacks a profile doc.
+				const created = Date.parse(firebaseUser.metadata.creationTime ?? "");
+				if (Date.now() - created < 10 * 60_000) await firebaseUser.delete().catch(() => {});
+				forceSignOut("closed");
+				return;
+			}
 			await createUserProfile(firebaseUser.uid, {
 				email:       firebaseUser.email ?? "",
 				displayName: firebaseUser.displayName ?? "",
@@ -119,24 +151,19 @@ export function initAuth(): () => void {
 				return;
 			}
 
+			// Suspended by an admin while signed in
+			if (profile.status === "suspended") {
+				forceSignOut("suspended");
+				return;
+			}
+
 			// Another device wrote a different sessionId → we've been kicked
 			if (
 				profile.activeSessionId &&
 				localSessionId &&
 				profile.activeSessionId !== localSessionId
 			) {
-				localSessionId = null;
-				localStorage.removeItem(SESSION_KEY);
-				sessionStorage.removeItem('omniplot_session_logged');
-				unsubProfile?.();
-				unsubProfile = null;
-				userStore.set(null);
-				signOut(auth).catch(() => {});
-				// Redirect to login with reason — SvelteKit goto isn't available here,
-				// so we use location.replace which works in any context
-				if (typeof window !== "undefined") {
-					window.location.replace("/login?reason=kicked");
-				}
+				forceSignOut("kicked");
 				return;
 			}
 

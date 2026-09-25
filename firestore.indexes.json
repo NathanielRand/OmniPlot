@@ -32,6 +32,14 @@
         { "fieldPath": "status",  "order": "ASCENDING"  },
         { "fieldPath": "created", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "jobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId",    "order": "ASCENDING"  },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

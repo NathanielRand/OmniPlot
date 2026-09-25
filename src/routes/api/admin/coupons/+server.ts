@@ -17,12 +17,25 @@ export const GET: RequestHandler = async ({ request }) => {
 		return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403 });
 	}
 
-	const codes = await stripe.promotionCodes.list(
-		{ limit: 100, expand: ['data.coupon'] },
-		connectedAccount,
-	);
+	try {
+		// The coupon lives under `promotion` on this API version — there is no
+		// top-level `coupon` to expand. Flattened back onto `coupon` for the page.
+		const codes = await stripe.promotionCodes.list(
+			{ limit: 100, expand: ['data.promotion.coupon'] },
+			connectedAccount,
+		);
 
-	return json({ codes: codes.data });
+		return json({
+			codes: codes.data.map((c) => ({
+				...c,
+				coupon: typeof c.promotion.coupon === 'object' ? c.promotion.coupon : null,
+			})),
+		});
+	} catch (err) {
+		const message = err instanceof Stripe.errors.StripeError ? err.message : 'Could not load promotion codes.';
+		console.error('[admin/coupons GET]', err);
+		return json({ error: message }, { status: 500 });
+	}
 };
 
 // ── POST — create coupon + promotion code ─────────────────────────────────
@@ -57,19 +70,26 @@ export const POST: RequestHandler = async ({ request }) => {
 	// Use the code as the coupon name so it's identifiable in the Stripe dashboard
 	if (code) couponParams.name = code.trim().toUpperCase();
 
-	const coupon = await stripe.coupons.create(couponParams, connectedAccount);
+	try {
+		const coupon = await stripe.coupons.create(couponParams, connectedAccount);
 
-	// `coupon` moved under `promotion` in newer API versions — a promotion
-	// code now references a typed `Promotion` (currently only `type: 'coupon'`
-	// exists) rather than taking a bare coupon id.
-	const promoParams: Stripe.PromotionCodeCreateParams = { promotion: { type: 'coupon', coupon: coupon.id } };
-	if (code)             promoParams.code             = code.trim().toUpperCase();
-	if (maxRedemptions)   promoParams.max_redemptions  = Number(maxRedemptions);
-	if (expiresAt)        promoParams.expires_at       = Math.floor(new Date(expiresAt).getTime() / 1000);
+		// `coupon` moved under `promotion` in newer API versions — a promotion
+		// code now references a typed `Promotion` (currently only `type: 'coupon'`
+		// exists) rather than taking a bare coupon id.
+		const promoParams: Stripe.PromotionCodeCreateParams = { promotion: { type: 'coupon', coupon: coupon.id } };
+		if (code)             promoParams.code             = code.trim().toUpperCase();
+		if (maxRedemptions)   promoParams.max_redemptions  = Number(maxRedemptions);
+		if (expiresAt)        promoParams.expires_at       = Math.floor(new Date(expiresAt).getTime() / 1000);
 
-	const promoCode = await stripe.promotionCodes.create(promoParams, connectedAccount);
+		const promoCode = await stripe.promotionCodes.create(promoParams, connectedAccount);
 
-	return json({ code: { ...promoCode, coupon } });
+		return json({ code: { ...promoCode, coupon } });
+	} catch (err) {
+		// e.g. a duplicate code — surface Stripe's message instead of a bare 500.
+		if (err instanceof Stripe.errors.StripeError) return json({ error: err.message }, { status: err.statusCode ?? 400 });
+		console.error('[admin/coupons POST]', err);
+		return json({ error: 'Could not create promotion code.' }, { status: 500 });
+	}
 };
 
 // ── PATCH — deactivate a promotion code ───────────────────────────────────
@@ -81,6 +101,12 @@ export const PATCH: RequestHandler = async ({ request }) => {
 	const { id } = await request.json();
 	if (!id) return new Response(JSON.stringify({ error: 'Missing id' }), { status: 400 });
 
-	const updated = await stripe.promotionCodes.update(id, { active: false }, connectedAccount);
-	return json({ code: updated });
+	try {
+		const updated = await stripe.promotionCodes.update(id, { active: false }, connectedAccount);
+		return json({ code: updated });
+	} catch (err) {
+		if (err instanceof Stripe.errors.StripeError) return json({ error: err.message }, { status: err.statusCode ?? 400 });
+		console.error('[admin/coupons PATCH]', err);
+		return json({ error: 'Could not deactivate promotion code.' }, { status: 500 });
+	}
 };

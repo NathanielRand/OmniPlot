@@ -113,6 +113,10 @@ export const POST: RequestHandler = async ({ request }) => {
 			createdAt: FieldValue.serverTimestamp(),
 		});
 
+		// Real activity signal for Admin → Users ("Last active"); `updatedAt`
+		// also moves on admin edits and billing writes, so it can't serve.
+		await db.doc(`users/${uid}`).set({ lastActiveAt: FieldValue.serverTimestamp() }, { merge: true });
+
 		// Keep only the 20 most recent sessions
 		const all = await db
 			.collection(`users/${uid}/sessions`)

@@ -5,7 +5,7 @@
 <script lang="ts">
 	import { onMount, onDestroy } from "svelte";
 	import Button from "$lib/components/ui/Button.svelte";
-	import { userStore, toastStore, plotterStore, agentStore, cutJobStore } from "$lib/stores";
+	import { userStore, toastStore, plotterStore, agentStore, cutJobStore, platformStore } from "$lib/stores";
 	import { PLOTTER_PRESETS } from "$lib/config";
 	import { tooltip } from "$lib/actions/tooltip";
 	import {
@@ -58,7 +58,7 @@
 	let form = $state({
 		name:       "",
 		presetName: PLOTTER_PRESETS[0].name,
-		connection: "cut-agent" as PlotterConnection,
+		connection: (platformStore.flags.cutAgent ? "cut-agent" : "usb-serial") as PlotterConnection,
 		ipAddress:  "",
 		port:       9100,
 		serialPort: "",
@@ -90,6 +90,7 @@
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
 
 	async function pollAgent() {
+		if (!platformStore.flags.cutAgent) { agentStore.setOffline(); return; }
 		try {
 			const res = await fetch(`${agentUrl}/api/status`, { signal: AbortSignal.timeout(3000) });
 			if (res.ok) {
@@ -248,7 +249,7 @@
 	}
 
 	function resetForm() {
-		form = { name: "", presetName: PLOTTER_PRESETS[0].name, connection: "cut-agent",
+		form = { name: "", presetName: PLOTTER_PRESETS[0].name, connection: platformStore.flags.cutAgent ? "cut-agent" : "usb-serial",
 			ipAddress: "", port: 9100, serialPort: "", baudRate: 9600, agentUrl: "http://localhost:7878",
 			vendorId: undefined, productId: undefined };
 		networkDevices = [];
@@ -820,7 +821,7 @@
 			<div class="field">
 				<label class="field-label" for="p-conn">Connection type</label>
 				<select id="p-conn" class="field-select" bind:value={form.connection}>
-					<option value="cut-agent">Cut Agent (recommended)</option>
+					{#if platformStore.flags.cutAgent}<option value="cut-agent">Cut Agent (recommended)</option>{/if}
 					<option value="usb-serial">USB Serial (Web Serial API)</option>
 					<option value="network">Network TCP/IP</option>
 					<option value="download">Download PLT file</option>

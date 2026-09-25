@@ -6,7 +6,7 @@
 	import EarlyAccessBadge from "$lib/components/ui/EarlyAccessBadge.svelte";
 	import ThemeToggle from "$lib/components/ui/ThemeToggle.svelte";
 	import CreditNoticeBanner from "$lib/components/ui/CreditNoticeBanner.svelte";
-	import { uiStore, userStore, shopStore, agentStore, changelogStore, supportStore, plansStore } from "$lib/stores";
+	import { uiStore, userStore, shopStore, agentStore, changelogStore, supportStore, plansStore, platformStore } from "$lib/stores";
 	import { APP_NAV, LATEST_VERSION } from "$lib/config";
 	import { signOutUser } from "$lib/firebase/auth";
 	import { goto } from "$app/navigation";
@@ -18,6 +18,8 @@
 	let { children }: Props = $props();
 
 	const currentPath = $derived(page.url.pathname);
+	// Admin → Settings → Cut Agent hides the Agent page from the nav.
+	const navItems = $derived(APP_NAV.filter((i) => i.href !== "/studio/agent" || platformStore.flags.cutAgent));
 	const user = $derived(userStore.user);
 
 	const tierVariant = $derived(() => {
@@ -118,7 +120,7 @@
 		</div>
 
 		<nav class="topbar__nav" aria-label="Main navigation">
-			{#each APP_NAV as item}
+			{#each navItems as item}
 				<a
 					href={item.href}
 					class="topbar__nav-item"
@@ -314,7 +316,7 @@
 			</button>
 
 			<nav class="sidebar__nav">
-				{#each APP_NAV as item}
+				{#each navItems as item}
 					<a
 						href={item.href}
 						class="sidebar__item"

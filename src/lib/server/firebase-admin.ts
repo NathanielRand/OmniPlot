@@ -22,7 +22,10 @@ export function getAdminAuth() {
 export async function verifyIdToken(authHeader: string | null): Promise<string | null> {
 	if (!authHeader?.startsWith('Bearer ')) return null;
 	try {
-		const decoded = await getAdminAuth().verifyIdToken(authHeader.slice(7));
+		// checkRevoked: a suspended account is disabled and its tokens revoked
+		// (see PATCH /api/admin/users), so its still-unexpired ID tokens must
+		// stop working immediately rather than for up to an hour.
+		const decoded = await getAdminAuth().verifyIdToken(authHeader.slice(7), true);
 		return decoded.uid;
 	} catch {
 		return null;

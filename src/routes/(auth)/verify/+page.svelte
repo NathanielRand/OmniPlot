@@ -27,7 +27,9 @@
 			}
 		} catch (err: unknown) {
 			status = "error";
-			errorMsg = err instanceof Error ? err.message : "Sign-in failed.";
+			errorMsg = (err as { code?: string }).code === "auth/user-disabled"
+				? "This account has been suspended. Contact support if you think this is a mistake."
+				: err instanceof Error ? err.message : "Sign-in failed.";
 			toastStore.error(wasLinkMode ? "Couldn't link email" : "Sign-in failed", errorMsg);
 		}
 	});

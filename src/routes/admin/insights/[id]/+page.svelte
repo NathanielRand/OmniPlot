@@ -142,8 +142,12 @@
 				});
 				if (!res.ok) throw new Error(await res.text());
 				const { id: newId } = await res.json();
+				// onMount won't re-run for the new URL (same component), so seed the
+				// loaded-post state here — later saves read publishedAt/status from it.
+				const now = new Date();
+				existingPost = { ...data, id: newId, viewCount: 0, createdAt: now, updatedAt: now };
 				toastStore.success(publish ? 'Post published' : 'Draft saved');
-				goto(`/admin/insights/${newId}`);
+				goto(`/admin/insights/${newId}`, { replaceState: true });
 			} else {
 				const res = await fetch(`/api/admin/insights/${postId}`, {
 					method: 'PATCH',
@@ -311,9 +315,13 @@
 				<div class="sidebar-card">
 					<h3 class="sidebar-card__title">Publish</h3>
 					<div class="sidebar-card__actions">
-						<Button variant="secondary" size="sm" onclick={() => save(false)} disabled={saving}>
-							{saving ? 'Saving…' : 'Save draft'}
-						</Button>
+						<!-- On a published post "Save draft" would silently unpublish it;
+						     "Move to draft" below is the explicit version of that. -->
+						{#if !isPublished}
+							<Button variant="secondary" size="sm" onclick={() => save(false)} disabled={saving}>
+								{saving ? 'Saving…' : 'Save draft'}
+							</Button>
+						{/if}
 						<Button variant="primary" size="sm" onclick={() => save(true)} disabled={saving}>
 							{saving ? 'Saving…' : isPublished ? 'Update' : 'Publish'}
 						</Button>

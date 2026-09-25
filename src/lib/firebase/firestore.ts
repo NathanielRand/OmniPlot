@@ -108,6 +108,7 @@ export function toUserProfile(id: string, data: DocumentData): UserProfile {
 		photoURL: data.photoURL ?? null,
 		phone: data.phone ?? null,
 		tier: data.tier ?? "free",
+		status: data.status === "suspended" ? "suspended" : "active",
 		createdAt: fromTimestamp(data.createdAt),
 		updatedAt: fromTimestamp(data.updatedAt),
 		usage: {
@@ -749,14 +750,26 @@ export async function updateRequestDoc(
 	await updateDoc(doc(db, Collections.REQUESTS, id), patch);
 }
 
-// ─── Admin: seed all data to Firestore ────────
-// Chunks writes into batches of 400 to stay under the 500-op Firestore limit.
+// ─── Admin: seed the catalog into Firestore ───
+// Create-only — docs that already exist are skipped, never overwritten, so
+// running it again can't revert admin edits. Chunks writes into batches of
+// 400 to stay under the 500-op Firestore limit.
 export async function batchSeedData(
 	vehicles: VehicleEntry[],
 	patternsMap: Record<string, Pattern[]>,
 	requests: PatternRequest[],
-): Promise<void> {
+): Promise<{ created: number; skipped: number }> {
 	const allPatterns = Object.values(patternsMap).flat();
+	const [vSnap, pSnap, rSnap] = await Promise.all([
+		getDocs(collection(db, Collections.VEHICLES)),
+		getDocs(collection(db, Collections.PATTERNS)),
+		getDocs(collection(db, Collections.REQUESTS)),
+	]);
+	const existing = new Set([
+		...vSnap.docs.map((d) => d.ref.path),
+		...pSnap.docs.map((d) => d.ref.path),
+		...rSnap.docs.map((d) => d.ref.path),
+	]);
 
 	type WriteOp = { ref: ReturnType<typeof doc>; data: Record<string, unknown> };
 	const ops: WriteOp[] = [
@@ -814,14 +827,17 @@ export async function batchSeedData(
 		})),
 	];
 
+	const toCreate = ops.filter((op) => !existing.has(op.ref.path));
+
 	// Chunk into batches of 400
-	for (let i = 0; i < ops.length; i += 400) {
+	for (let i = 0; i < toCreate.length; i += 400) {
 		const batch = writeBatch(db);
-		for (const op of ops.slice(i, i + 400)) {
-			batch.set(op.ref, op.data, { merge: true });
+		for (const op of toCreate.slice(i, i + 400)) {
+			batch.set(op.ref, op.data);
 		}
 		await batch.commit();
 	}
+	return { created: toCreate.length, skipped: ops.length - toCreate.length };
 }
 
 // ─── Org converters ────────────────────────────

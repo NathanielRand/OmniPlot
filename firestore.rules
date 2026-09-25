@@ -3,12 +3,31 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // ─── Helpers ──────────────────────────────────────────────────────────
-    function signedIn() {
+    function authed() {
       return request.auth != null;
     }
 
     function uid() {
       return request.auth.uid;
+    }
+
+    function userPath() {
+      return /databases/$(database)/documents/users/$(request.auth.uid);
+    }
+
+    // Suspended accounts (Admin → Users) lose all access. A missing profile
+    // counts as not suspended so first sign-in can still create one.
+    function signedIn() {
+      return authed()
+        && (!exists(userPath()) || get(userPath()).data.get('status', 'active') != 'suspended');
+    }
+
+    // Admin → Settings → "Open registration". New profiles can't be created
+    // while it's off; existing accounts are unaffected.
+    function registrationOpen() {
+      let settings = /databases/$(database)/documents/settings/platform;
+      return !exists(settings)
+        || get(settings).data.get('flags', {}).get('openRegistration', true) != false;
     }
 
     // Reads the calling user's own doc to check tier — safe, no recursion
@@ -29,14 +48,20 @@ service cloud.firestore {
     // (Stripe webhook, billing routes, admin panel API) may change them.
     // Previously any user could set their own tier — including 'admin',
     // which isAdmin() above trusts.
+    // `status` is admin-owned too, or a suspended user could reactivate
+    // themselves. Reading their own doc stays open while suspended — that's
+    // how the app learns to sign them out.
     match /users/{userId} {
-      allow read, delete: if signedIn() && uid() == userId;
-      allow create: if signedIn() && uid() == userId
+      allow read:   if authed() && uid() == userId;
+      allow delete: if signedIn() && uid() == userId;
+      allow create: if authed() && uid() == userId
+                    && registrationOpen()
+                    && request.resource.data.get('status', 'active') == 'active'
                     && request.resource.data.get('tier', 'free') == 'free'
                     && request.resource.data.get('subscription', {}).get('status', null) == null
                     && request.resource.data.get('subscription', {}).get('stripeSubscriptionId', null) == null;
       allow update: if signedIn() && uid() == userId
-                    && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['tier', 'subscription']);
+                    && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['tier', 'subscription', 'status']);
     }
 
     // ─── Vehicles (public catalog) ────────────────────────────────────────

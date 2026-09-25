@@ -34,7 +34,8 @@ export const GET: RequestHandler = async ({ request, url }) => {
 		return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403 });
 	}
 	const limit = Math.min(parseInt(url.searchParams.get('limit') ?? '200'), 500);
-	const snap = await getAdminDb().collection('errorLogs').limit(limit).get();
+	// Ordered before the limit so the newest logs are the ones kept.
+	const snap = await getAdminDb().collection('errorLogs').orderBy('lastSeenAt', 'desc').limit(limit).get();
 	const reports = snap.docs
 		.map((d) => serializeReport(d.id, d.data()))
 		.sort((a, b) => new Date(b.lastSeenAt).getTime() - new Date(a.lastSeenAt).getTime());

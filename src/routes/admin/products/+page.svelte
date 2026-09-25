@@ -1,5 +1,4 @@
 <script lang="ts">
-	import type { PageData } from './$types';
 	import Badge from '$lib/components/ui/Badge.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import { auth } from '$lib/firebase/client';
@@ -7,8 +6,8 @@
 	import { toastStore } from '$lib/stores';
 	import { tooltip } from '$lib/actions/tooltip';
 
-	interface Props { data: PageData; }
-	let { data }: Props = $props();
+	// Stripe dashboard link — comes from the authed products API.
+	let stripeAccountId = $state('');
 
 	// ─── Types ─────────────────────────────────────
 	interface PriceData {
@@ -137,6 +136,7 @@
 			const data = await res.json();
 			products = data.products;
 			summary  = data.summary;
+			stripeAccountId = data.stripeAccountId ?? '';
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Could not load billing data';
 		} finally {
@@ -285,7 +285,7 @@
 			<p class="page-sub">Stripe products, prices, and subscription plans.</p>
 		</div>
 		<div class="header-actions">
-			<a href="https://dashboard.stripe.com/{data.stripeConnectedAccountId}/products" target="_blank" rel="noopener noreferrer" class="stripe-link">
+			<a href="https://dashboard.stripe.com/{stripeAccountId}/products" target="_blank" rel="noopener noreferrer" class="stripe-link">
 				<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3"/></svg>
 				Stripe Dashboard
 			</a>

@@ -4,6 +4,7 @@ import type { RequestHandler } from './$types';
 import { stripe, connectedAccount } from '$lib/server/stripe';
 import { getAdminDb, verifyIdToken } from '$lib/server/firebase-admin';
 import { tierFromSubscription, orgPlanFromSubscription } from '$lib/server/stripe-ledger';
+import { STRIPE_CONNECTED_ACCOUNT_ID } from '$env/static/private';
 
 // Revenue is read straight from Stripe on every load — NOT from the Firestore
 // `transactions` mirror, which only fills when the webhook delivers and so
@@ -303,6 +304,7 @@ export const GET: RequestHandler = async ({ request }) => {
 	subscriptions.sort((a, b) => b.mrr - a.mrr || b.created - a.created);
 
 	return json({
+		stripeAccountId: STRIPE_CONNECTED_ACCOUNT_ID,
 		currency: CURRENCY,
 		generatedAt: Math.floor(Date.now() / 1000),
 		connected,

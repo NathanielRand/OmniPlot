@@ -60,6 +60,9 @@ export const PATCH: RequestHandler = async ({ request }) => {
 
 		const { id, status } = await request.json();
 		if (!id || !status) return json({ error: 'id and status required' }, { status: 400 });
+		if (!['open', 'in_progress', 'resolved', 'closed'].includes(status)) {
+			return json({ error: 'Invalid status' }, { status: 400 });
+		}
 
 		await getAdminDb().doc(`reports/${id}`).update({
 			status,
