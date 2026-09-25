@@ -230,6 +230,27 @@
 		return ticks;
 	});
 
+	// ─── Ruler ticks down the roll's length ───────
+	// Same spacing (and step toggle) as the width ruler, measured from the
+	// start of the job (top) along the print direction.
+	const lengthMajorTicks = $derived.by(() => {
+		const step = canvasStore.state.rulerStepInches || 5;
+		const ticks: number[] = [];
+		for (let t = 0; t <= displaySheetLength + 0.001; t += step) ticks.push(Math.round(t * 100) / 100);
+		return ticks;
+	});
+	const lengthMinorTicks = $derived.by(() => {
+		const step = canvasStore.state.rulerStepInches || 5;
+		const minorStep = RULER_MINOR_STEP[step] ?? 1;
+		const majorSet = new Set(lengthMajorTicks);
+		const ticks: number[] = [];
+		for (let t = 0; t <= displaySheetLength + 0.001; t += minorStep) {
+			const r = Math.round(t * 100) / 100;
+			if (!majorSet.has(r)) ticks.push(r);
+		}
+		return ticks;
+	});
+
 	// ─── Merged roll label (name, length, width, used) ────
 	// Material names in config bake the width/length into the string itself
 	// (e.g. "Tint Roll 20\" × 100ft"), which duplicated the width/used figures
@@ -267,6 +288,10 @@
 		};
 	}
 
+	// Horizontal canvas-content padding: 96px left gutter (length ruler +
+	// "Prints this way") + 48px right gutter. Keep in sync with .canvas-content.
+	const CANVAS_PAD_X = 144;
+
 	// ─── Auto-fit zoom on roll-width change (user-toggleable) ─────
 	// On by default. Fits by WIDTH only — not min(width, height) like the
 	// "Fit to view" toolbar action — so the roll's fixed left gutter
@@ -299,7 +324,7 @@
 		// the MEASUREMENT used to compute the zoom value needs to be
 		// scrollbar-aware; what triggers a re-measure does not.
 		const viewW = canvasEl.clientWidth;
-		const PAD = 96; // 48px canvas-content padding × 2 — the left gutter, mirrored on the right
+		const PAD = CANVAS_PAD_X; // left gutter (length ruler + print direction) + right gutter
 		const rollPxW = displaySheetWidth * 48;
 		if (viewW > PAD && rollPxW > 0) {
 			canvasStore.setZoom(Math.max(3, Math.min(100, ((viewW - PAD) / rollPxW) * 100)));
@@ -621,10 +646,13 @@
 
 	function onCanvasMouseMove(e: MouseEvent) {
 		if (!canvasEl) return;
-		const rect = canvasEl.getBoundingClientRect();
-		const scale = canvasStore.zoom / 100;
-		cursorX = Math.max(0, (e.clientX - rect.left + canvasEl.scrollLeft - 48) / scale / 48);
-		cursorY = Math.max(0, (e.clientY - rect.top + canvasEl.scrollTop - 48) / scale / 48);
+		// Measured from the roll itself (its top-left = 0", 0" on both rulers),
+		// so gutters/headers around it never skew the readout.
+		const frame = canvasEl.querySelector(".roll-frame")?.getBoundingClientRect();
+		if (!frame) return;
+		const pxPerInch = 48 * canvasStore.zoom / 100;
+		cursorX = Math.max(0, (e.clientX - frame.left) / pxPerInch);
+		cursorY = Math.max(0, (e.clientY - frame.top) / pxPerInch);
 	}
 
 	function onCanvasClick(e: MouseEvent) {
@@ -1870,12 +1898,12 @@
 		// canvasViewportEl has no such padding and matches the true visible box.
 		const viewW = canvasEl.clientWidth;
 		const viewH = canvasViewportEl.clientHeight;
-		const PAD = 96; // 48px canvas-content padding × 2
+		const PAD_Y = 96; // 48px canvas-content padding top + bottom
 		const rollPxW = displaySheetWidth * 48;
 		const rollPxH = displaySheetLength * 48;
-		if (viewH > PAD && viewW > PAD && rollPxH > 0 && rollPxW > 0) {
-			const zoomH = ((viewH - PAD) / rollPxH) * 100;
-			const zoomW = ((viewW - PAD) / rollPxW) * 100;
+		if (viewH > PAD_Y && viewW > CANVAS_PAD_X && rollPxH > 0 && rollPxW > 0) {
+			const zoomH = ((viewH - PAD_Y) / rollPxH) * 100;
+			const zoomW = ((viewW - CANVAS_PAD_X) / rollPxW) * 100;
 			canvasStore.setZoom(Math.max(3, Math.min(100, Math.min(zoomH, zoomW))));
 		}
 		canvasEl.scrollLeft = 0;
@@ -2881,6 +2909,29 @@
 					<div class="print-direction" aria-hidden="true">
 						<span class="print-direction__text">Prints this way</span>
 						<svg class="print-direction__arrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M6 13l6 6 6-6"/></svg>
+					</div>
+
+					<!-- Length ruler (left side): roll length used, measured down the print
+					     direction from the start of the job, same ticks/step as the top
+					     ruler. Ends at the exact length consumed. -->
+					<div class="ruler-v" aria-hidden="true">
+						{#each lengthMinorTicks as t (t)}
+							<div class="ruler-v__tick" style="top: {t * 48 * canvasStore.zoom / 100}px">
+								<span class="ruler-v__mark ruler-v__mark--minor"></span>
+							</div>
+						{/each}
+						{#each lengthMajorTicks as t (t)}
+							<div class="ruler-v__tick" style="top: {t * 48 * canvasStore.zoom / 100}px">
+								<span class="ruler-v__mark"></span>
+								<span class="ruler__num">{t}"</span>
+							</div>
+						{/each}
+						{#if usedLengthFt > 0}
+							<div class="ruler-v__end-line" style="top: {displaySheetLength * 48 * canvasStore.zoom / 100}px"></div>
+							<div class="ruler-v__end" style="top: {displaySheetLength * 48 * canvasStore.zoom / 100}px">
+								{displaySheetLength.toFixed(2)}" · {usedLengthFt.toFixed(2)} ft used
+							</div>
+						{/if}
 					</div>
 
 					<!-- Material sheet: laid out in its own natural frame (length along X,
@@ -5004,7 +5055,8 @@
 	.canvas-content {
 		position: relative;
 		display: inline-block;
-		padding: 48px;
+		/* Wider left gutter holds the length ruler + "Prints this way" (CANVAS_PAD_X). */
+		padding: 48px 48px 48px 96px;
 	}
 
 	/* Visual footprint after the 90° rotation: width = roll width, height = length used */
@@ -5087,6 +5139,57 @@
 		color: var(--text-tertiary, var(--text-secondary));
 		white-space: nowrap;
 	}
+	/* Length ruler down the LEFT side of the roll — the top ruler turned 90°:
+	   same baseline, same tick lengths, same labels, measuring edge against
+	   the roll. Its 0" meets the top ruler's 0" at the roll's top-left corner. */
+	.ruler-v {
+		position: absolute;
+		top: 0;
+		bottom: 0;
+		right: calc(100% + 6px); /* same 6px gap the top ruler keeps above the roll */
+		width: 40px;
+		border-right: 1px solid var(--border-default);
+		pointer-events: none;
+	}
+	.ruler-v__tick {
+		position: absolute;
+		right: 0;
+		display: flex;
+		flex-direction: row-reverse;
+		align-items: center;
+		transform: translateY(-50%);
+	}
+	.ruler-v__mark {
+		width: 6px;
+		height: 1px;
+		background: var(--border-default);
+		margin-left: 2px;
+	}
+	.ruler-v__mark--minor {
+		width: 3px;
+		margin-left: 0;
+		background: var(--border-subtle);
+	}
+	/* End of the roll used: a brand-colored line across the ruler, with the
+	   exact length written just below the end. */
+	.ruler-v__end-line {
+		position: absolute;
+		right: 0;
+		width: 100%;
+		height: 2px;
+		background: var(--text-brand);
+		transform: translateY(-50%);
+	}
+	.ruler-v__end {
+		position: absolute;
+		left: 0; /* runs rightward under the roll's end — the left gutter is too narrow */
+		margin-top: 4px;
+		font-family: var(--font-mono);
+		font-size: 0.62rem;
+		font-weight: 600;
+		color: var(--text-brand);
+		white-space: nowrap;
+	}
 	.ruler__unit-toggle {
 		display: flex;
 		gap: 2px;
@@ -5114,7 +5217,7 @@
 		position: absolute;
 		top: 0;
 		bottom: 0;
-		left: -34px;
+		left: -80px; /* left of the length ruler (which spans -46px..-6px) */
 		width: 22px;
 		display: flex;
 		flex-direction: column;
