@@ -10,6 +10,7 @@
 	import { tooltip } from "$lib/actions/tooltip";
 	import type { PatternCategory, PatternZone, PatternCoverage } from "$lib/types";
 	import type { VehicleEntry } from "$lib/stores/patternStore.svelte";
+	import { fitPattern } from "$lib/actions/fitPattern";
 
 	type BodyStyle = NonNullable<VehicleEntry["bodyStyle"]>;
 
@@ -119,16 +120,19 @@
 	let errors = $state<Record<string, string>>({});
 
 	// ─── Derived ──────────────────────────────────
-	const allMakes = $derived(
-		[...new Set(patternStore.vehicles.map(v => v.make ?? ""))].sort(),
+	// Make/model suggestions: published vehicle subjects only — never blank,
+	// never a residential/commercial "make".
+	const catalogVehicles = $derived(
+		patternStore.vehicles.filter((v) => v.status === "published" && (v.projectType ?? "vehicle") === "vehicle" && v.make),
 	);
+	const allMakes = $derived([...new Set(catalogVehicles.map((v) => v.make!))].sort());
 
 	const makeModels = $derived(
 		vehicle.make.trim()
 			? [...new Set(
-				patternStore.vehicles
-					.filter(v => (v.make ?? "").toLowerCase() === vehicle.make.trim().toLowerCase())
-					.map(v => v.model ?? ""),
+				catalogVehicles
+					.filter((v) => v.make!.toLowerCase() === vehicle.make.trim().toLowerCase() && v.model)
+					.map((v) => v.model!),
 			)].sort()
 			: [],
 	);
@@ -1088,7 +1092,7 @@
 
 									<div class="field" class:field--error={!!slotErrs.svgPath}>
 										<span class="field__label">Pattern Importer</span>
-										<SvgPathInput bind:value={slot.svgPath}/>
+										<SvgPathInput bind:value={slot.svgPath} widthInches={slot.widthInches} heightInches={slot.heightInches}/>
 										{#if slotErrs.svgPath}<span class="field__error">{slotErrs.svgPath}</span>{/if}
 									</div>
 								</div>
@@ -1115,7 +1119,7 @@
 								<div class="multi-slot" class:multi-slot--skip={slot.skip}>
 									<div class="multi-slot__preview" aria-hidden="true">
 										<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet">
-											<path d={slot.svgPath} fill="rgba(0,229,255,0.07)" stroke="var(--color-brand)" stroke-width="2" stroke-linecap="round"/>
+											<path d={slot.svgPath} use:fitPattern={{ w: slot.widthInches, h: slot.heightInches, d: slot.svgPath }} fill="rgba(0,229,255,0.07)" stroke="var(--color-brand)" stroke-width="2" stroke-linecap="round"/>
 										</svg>
 									</div>
 									<div class="multi-slot__fields">
@@ -1197,6 +1201,8 @@
 							<SvgPathInput
 								id="svgPath"
 								bind:value={pattern.svgPath}
+								widthInches={pattern.widthInches}
+								heightInches={pattern.heightInches}
 								error={!!errors.svgPath}
 								showMirror={hasMirrorPair}
 								mirrorOrigLabel={mirrorZoneLabels?.orig}

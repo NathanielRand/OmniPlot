@@ -9,6 +9,7 @@ import type {
 	PatternCategory,
 	PatternCoverage,
 	PatternZone,
+	ProjectType,
 	VehicleEntry,
 	PatternRequest,
 	PatternStatus,
@@ -619,13 +620,17 @@ function createPatternStore() {
 		syncPatternDelete(id);
 	}
 
-	function addRequest(r: { make: string; model: string; year: number; notes: string }): PatternRequest {
+	/** Vehicle requests carry make/model/year; property and custom requests
+	 *  carry a title (in `model`) and no year. */
+	function addRequest(r: { projectType?: ProjectType; make: string; model: string; year: number; notes: string }): PatternRequest {
+		const projectType = r.projectType ?? "vehicle";
 		const req: PatternRequest = {
 			id: uid("req_"),
-			vehicle: `${r.year} ${r.make} ${r.model}`,
+			vehicle: projectType === "vehicle" ? `${r.year} ${r.make} ${r.model}` : r.model,
+			projectType,
 			make: r.make,
 			model: r.model,
-			year: r.year,
+			year: projectType === "vehicle" ? r.year : 0,
 			notes: r.notes,
 			votes: 1,
 			status: "queued",
@@ -879,4 +884,27 @@ export function zonesForCategory(category: PatternCategory): Array<{ value: Patt
 		case "window-tint": return TINT_ZONES_LIST;
 		default: return CUSTOM_ZONES_LIST;
 	}
+}
+
+/** Zones valid for a subject: residential/commercial/custom subjects have
+ *  their own lists regardless of category; vehicles go by category. */
+export function zonesFor(category: PatternCategory, projectType?: ProjectType): Array<{ value: PatternZone; label: string }> {
+	switch (projectType ?? "vehicle") {
+		case "residential": return RESIDENTIAL_ZONES_LIST;
+		case "commercial":  return COMMERCIAL_ZONES_LIST;
+		case "custom":      return CUSTOM_ZONES_LIST;
+		default:            return zonesForCategory(category);
+	}
+}
+
+/** Human label for any zone. Looks in the subject's own list first, then
+ *  every list, so a residential zone never shows as its raw id. */
+export function zoneLabel(zone: PatternZone, category: PatternCategory, projectType?: ProjectType, customLabel?: string): string {
+	if (zone === "custom") return customLabel?.trim() || "Custom";
+	const lists = [zonesFor(category, projectType), PPF_ZONES_LIST, TINT_ZONES_LIST, RESIDENTIAL_ZONES_LIST, COMMERCIAL_ZONES_LIST, CUSTOM_ZONES_LIST];
+	for (const list of lists) {
+		const hit = list.find((z) => z.value === zone);
+		if (hit) return hit.label;
+	}
+	return String(zone).replace(/^(res|com)-/, "").replace(/-/g, " ").replace(/^./, (c) => c.toUpperCase());
 }

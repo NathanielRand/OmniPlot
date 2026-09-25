@@ -1,16 +1,16 @@
 <script lang="ts">
-	import { page } from "$app/stores";
+	import { page } from "$app/state";
 	import { goto } from "$app/navigation";
-	import { onMount } from "svelte";
 	import { userStore, toastStore } from "$lib/stores";
-	import { patternStore, MIRROR_PAIRS, PATTERN_CATEGORIES, zonesForCategory } from "$lib/stores/patternStore.svelte";
+	import { patternStore, MIRROR_PAIRS, PATTERN_CATEGORIES, zonesFor } from "$lib/stores/patternStore.svelte";
 	import { getUserPatternById, updateUserPattern, deleteUserPattern } from "$lib/firebase/firestore";
 	import SvgPathInput from "$lib/components/ui/SvgPathInput.svelte";
 	import VehicleCombobox from "$lib/components/ui/VehicleCombobox.svelte";
 	import { tooltip } from "$lib/actions/tooltip";
-	import type { PatternCategory, PatternZone, PatternCoverage, UserPattern } from "$lib/types";
+	import type { PatternCategory, PatternZone, PatternCoverage, ProjectType, UserPattern } from "$lib/types";
 
 	type BodyStyle = UserPattern["bodyStyle"];
+	const MINE = "/library?tab=mine";
 
 	// ─── Load ─────────────────────────────────────
 	let loading  = $state(true);
@@ -18,16 +18,22 @@
 	let original = $state<UserPattern | null>(null);
 
 	// ─── Form state (mirrors upload form fields) ──
+	let projectType = $state<ProjectType>("vehicle");
 	let vehicle = $state({
 		make:      "",
 		models:    [] as string[],
 		years:     [] as string[],
 		bodyStyle: "sedan" as BodyStyle,
 	});
+	// Residential/commercial: label + address. Custom: project name.
+	let propertyLabel = $state("");
+	let address       = $state("");
+	let customName    = $state("");
 
 	let pattern = $state({
 		category:     "ppf" as PatternCategory,
 		zones:        [] as PatternZone[],
+		customZoneLabels: [] as string[], // parallel to zones; used where zones[i] === "custom"
 		coverage:     "full" as PatternCoverage,
 		widthInches:  0,
 		heightInches: 0,
@@ -37,37 +43,54 @@
 
 	let modelInput = $state("");
 	let yearInput  = $state("");
+	let pendingCustomLabel = $state("");
+	let addingCustom = $state(false);
 	let errors   = $state<Record<string, string>>({});
 	let saving   = $state(false);
 	let deleting = $state(false);
 	let showDeleteConfirm = $state(false);
 
-	const allMakes = $derived(
-		[...new Set(patternStore.vehicles.map(v => v.make ?? ""))].sort(),
+	// Make/model suggestions: published vehicle subjects only — never blank,
+	// never a residential "make".
+	const catalogVehicles = $derived(
+		patternStore.vehicles.filter((v) => v.status === "published" && (v.projectType ?? "vehicle") === "vehicle" && v.make),
 	);
-
+	const allMakes = $derived([...new Set(catalogVehicles.map((v) => v.make!))].sort());
 	const makeModels = $derived(
 		vehicle.make.trim()
 			? [...new Set(
-				patternStore.vehicles
-					.filter(v => (v.make ?? "").toLowerCase() === vehicle.make.trim().toLowerCase())
-					.map(v => v.model ?? ""),
+				catalogVehicles
+					.filter((v) => v.make!.toLowerCase() === vehicle.make.trim().toLowerCase() && v.model)
+					.map((v) => v.model!),
 			)].sort()
 			: [],
 	);
 
-	const zoneList = $derived(zonesForCategory(pattern.category));
+	const zoneList = $derived(zonesFor(pattern.category, projectType));
+
+	// A vehicle's zone list depends on the category; drop zones the new list
+	// doesn't have (custom zones always stay).
+	$effect(() => {
+		const valid = new Set(zoneList.map((z) => z.value));
+		if (pattern.zones.some((z) => z !== "custom" && !valid.has(z))) {
+			const keep = pattern.zones
+				.map((z, i) => ({ z, l: pattern.customZoneLabels[i] ?? "" }))
+				.filter(({ z }) => z === "custom" || valid.has(z));
+			pattern.zones = keep.map((k) => k.z);
+			pattern.customZoneLabels = keep.map((k) => k.l);
+		}
+	});
 
 	$effect(() => {
 		if (pattern.category === "window-tint") pattern.coverage = "full";
 	});
 
 	const availableZones = $derived(
-		zoneList.filter(z => !pattern.zones.includes(z.value)),
+		zoneList.filter((z) => z.value === "custom" || !pattern.zones.includes(z.value)),
 	);
 
 	const hasMirrorPair = $derived(
-		pattern.zones.some(z => {
+		pattern.zones.some((z) => {
 			const m = MIRROR_PAIRS[z];
 			return m !== undefined && pattern.zones.includes(m);
 		}),
@@ -84,40 +107,71 @@
 	})());
 
 	// ─── Zone helpers ─────────────────────────────
-	function addZone(z: PatternZone) {
-		if (!pattern.zones.includes(z)) pattern.zones = [...pattern.zones, z];
+	function addZone(z: PatternZone, label = "") {
+		if (z !== "custom" && pattern.zones.includes(z)) return;
+		pattern.zones = [...pattern.zones, z];
+		pattern.customZoneLabels = [...pattern.customZoneLabels, z === "custom" ? label : ""];
 	}
-	function removeZone(z: PatternZone) {
-		pattern.zones = pattern.zones.filter(z2 => z2 !== z);
+	function removeZoneAt(i: number) {
+		pattern.zones = pattern.zones.filter((_, idx) => idx !== i);
+		pattern.customZoneLabels = pattern.customZoneLabels.filter((_, idx) => idx !== i);
 	}
 	function onZoneAdd(e: Event) {
-		const val = (e.target as HTMLSelectElement).value as PatternZone;
-		if (val) { addZone(val); (e.target as HTMLSelectElement).value = ""; }
+		const el = e.target as HTMLSelectElement;
+		const val = el.value as PatternZone;
+		el.value = "";
+		if (!val) return;
+		if (val === "custom") { addingCustom = true; pendingCustomLabel = ""; return; }
+		addZone(val);
 	}
-	function zoneLabel(z: PatternZone): string {
-		return zoneList.find(zl => zl.value === z)?.label ?? z;
+	function commitCustomZone() {
+		const label = pendingCustomLabel.trim();
+		if (!label) return;
+		addZone("custom", label);
+		addingCustom = false;
+		pendingCustomLabel = "";
+	}
+	function zoneLabel(z: PatternZone, i?: number): string {
+		if (z === "custom") return (i !== undefined ? pattern.customZoneLabels[i]?.trim() : "") || "Custom";
+		return zoneList.find((zl) => zl.value === z)?.label ?? z;
 	}
 	function mirrorOf(z: PatternZone): PatternZone | undefined {
 		return MIRROR_PAIRS[z];
 	}
 
-	onMount(async () => {
-		if (!userStore.user) { goto("/library"); return; }
-		const id = $page.params.id ?? "";
+	// ─── Load once auth has resolved ──────────────
+	// (Redirecting before auth finished bounced every refresh of this page.)
+	let started = false;
+	$effect(() => {
+		if (userStore.loading || started) return;
+		started = true;
+		load();
+	});
+
+	async function load() {
+		if (!userStore.user) { goto("/login"); return; }
+		const id = page.params.id ?? "";
 		if (!id) { notFound = true; loading = false; return; }
 		try {
 			const p = await getUserPatternById(id);
-			if (!p) { notFound = true; loading = false; return; }
-			// Only the owner can edit; published patterns are locked
-			if (p.ownerId !== userStore.user.uid || p.isPublished) {
-				goto("/library?tab=mine");
+			if (!p || p.ownerId !== userStore.user.uid) { notFound = true; return; }
+			// Published patterns are locked — changes go through a request.
+			if (p.isPublished) {
+				toastStore.info("This pattern is in the community library", "Request changes from My patterns instead.");
+				goto(MINE);
 				return;
 			}
-			original = p;
-			vehicle  = { make: p.make, models: p.models, years: p.years, bodyStyle: p.bodyStyle };
+			original    = p;
+			projectType = p.projectType ?? "vehicle";
+			vehicle     = { make: p.make, models: [...p.models], years: [...p.years], bodyStyle: p.bodyStyle };
+			const isProperty = projectType === "residential" || projectType === "commercial";
+			propertyLabel = p.propertyLabel ?? (isProperty ? p.models[0] ?? "" : "");
+			address       = p.address ?? "";
+			customName    = p.patternName ?? (projectType === "custom" ? p.models[0] ?? "" : "");
 			pattern  = {
 				category:     p.category,
-				zones:        p.zones,
+				zones:        [...p.zones],
+				customZoneLabels: p.zones.map((_, i) => p.customZoneLabels?.[i] ?? ""),
 				coverage:     p.coverage,
 				widthInches:  p.widthInches,
 				heightInches: p.heightInches,
@@ -129,18 +183,18 @@
 		} finally {
 			loading = false;
 		}
-	});
+	}
 
 	// ─── Year helpers ─────────────────────────────
 	function parseYear(s: string): string | null {
-		s = s.trim().replace(/[–—]/g, '-');
+		s = s.trim().replace(/[–—]/g, "-");
 		const maxY = new Date().getFullYear() + 2;
 		if (/^\d{4}$/.test(s)) {
 			const y = +s;
 			return y >= 1950 && y <= maxY ? s : null;
 		}
 		if (/^\d{4}-\d{4}$/.test(s)) {
-			const [a, b] = s.split('-').map(Number);
+			const [a, b] = s.split("-").map(Number);
 			return a >= 1950 && b <= maxY && a < b ? s : null;
 		}
 		return null;
@@ -160,9 +214,15 @@
 	// ─── Validation ───────────────────────────────
 	function validate(): boolean {
 		const e: Record<string, string> = {};
-		if (!vehicle.make.trim())    e.make   = "Make is required";
-		if (!vehicle.models.length)  e.models = "Add at least one model";
-		if (!vehicle.years.length)   e.years  = "Add at least one year or range";
+		if (projectType === "vehicle") {
+			if (!vehicle.make.trim())    e.make   = "Make is required";
+			if (!vehicle.models.length)  e.models = "Add at least one model";
+			if (!vehicle.years.length)   e.years  = "Add at least one year or range";
+		} else if (projectType === "custom") {
+			if (!customName.trim()) e.customName = "Give the project a name";
+		} else if (!propertyLabel.trim() && !address.trim()) {
+			e.propertyLabel = "Add a label or an address";
+		}
 		if (!pattern.zones.length)   e.zones  = "Select at least one zone";
 		if (!pattern.widthInches  || pattern.widthInches  <= 0) e.width  = "Enter a positive width";
 		if (!pattern.heightInches || pattern.heightInches <= 0) e.height = "Enter a positive height";
@@ -171,20 +231,35 @@
 		return Object.keys(e).length === 0;
 	}
 
+	/** Subject fields, shaped exactly like the upload form writes them. */
+	function identity(): Partial<UserPattern> {
+		if (projectType === "vehicle") {
+			return { make: vehicle.make.trim(), models: vehicle.models, years: vehicle.years, bodyStyle: vehicle.bodyStyle };
+		}
+		if (projectType === "custom") {
+			return { make: "Custom", models: [customName.trim()], years: [], patternName: customName.trim() };
+		}
+		return {
+			make: projectType === "residential" ? "Residential" : "Commercial",
+			models: [propertyLabel.trim() || address.trim()],
+			years: [],
+			address: address.trim() || undefined,
+			propertyLabel: propertyLabel.trim() || undefined,
+		};
+	}
+
 	// ─── Save ─────────────────────────────────────
 	async function handleSave(e: SubmitEvent) {
 		e.preventDefault();
 		if (!validate() || !original) return;
 		saving = true;
 		try {
-			const name = pattern.zones.map(z => zoneLabel(z)).join(" + ");
+			const name = pattern.zones.map((z, i) => zoneLabel(z, i)).join(" + ");
 			await updateUserPattern(original.id, {
-				make:         vehicle.make.trim(),
-				models:       vehicle.models,
-				years:        vehicle.years,
-				bodyStyle:    vehicle.bodyStyle,
+				...identity(),
 				category:     pattern.category,
 				zones:        pattern.zones,
+				customZoneLabels: pattern.zones.includes("custom") ? pattern.customZoneLabels : undefined,
 				name,
 				coverage:     pattern.coverage,
 				widthInches:  pattern.widthInches,
@@ -193,7 +268,7 @@
 				notes:        pattern.notes.trim() || undefined,
 			});
 			toastStore.success("Pattern saved", `${name} has been updated.`);
-			goto("/library?tab=mine");
+			goto(MINE);
 		} catch (err) {
 			console.error("[edit/handleSave]", err);
 			toastStore.error("Save failed", "Could not save changes. Please try again.");
@@ -209,7 +284,7 @@
 		try {
 			await deleteUserPattern(original.id);
 			toastStore.success("Pattern deleted", `${original.name} has been removed.`);
-			goto("/library?tab=mine");
+			goto(MINE);
 		} catch {
 			toastStore.error("Delete failed", "Could not delete pattern. Please try again.");
 		} finally {
@@ -234,20 +309,20 @@
 	{:else if notFound}
 		<div class="not-found">
 			<p>Pattern not found or you don't have permission to edit it.</p>
-			<a href="/library?tab=mine" class="btn btn--ghost">Back to My Patterns</a>
+			<a href={MINE} class="btn btn--ghost">Back to My Patterns</a>
 		</div>
 
 	{:else}
 
 		<!-- Header -->
 		<div class="edit-header">
-			<a href="/library?tab=mine" class="back-link">
+			<a href={MINE} class="back-link">
 				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
-				My Patterns
+				My patterns
 			</a>
 			<h1 class="edit-title">Edit Pattern</h1>
 			{#if original?.status === "pending"}
-				<span class="status-chip status-chip--pending">Review Pending — edits will restart the review</span>
+				<span class="status-chip status-chip--pending">In review — the reviewer will see your changes</span>
 			{/if}
 		</div>
 
@@ -255,12 +330,32 @@
 		<div class="form-wrap">
 			<form class="edit-form" onsubmit={handleSave} novalidate>
 
-			<!-- Vehicle -->
+			<!-- Subject -->
 				<section class="form-section">
 					<h2 class="section-title">
 						<span class="section-num">1</span>
-						Vehicle
+						{projectType === "vehicle" ? "Vehicle" : projectType === "custom" ? "Project" : projectType === "residential" ? "Residential property" : "Commercial property"}
 					</h2>
+
+					{#if projectType === "custom"}
+					<div class="field" class:field--error={!!errors.customName}>
+						<label class="field__label" for="customName">Project name</label>
+						<input id="customName" class="field__input" type="text" bind:value={customName} placeholder="Apparel HTV kit"/>
+						{#if errors.customName}<span class="field__error">{errors.customName}</span>{/if}
+					</div>
+					{:else if projectType !== "vehicle"}
+					<div class="field-row field-row--2">
+						<div class="field" class:field--error={!!errors.propertyLabel}>
+							<label class="field__label" for="propertyLabel">Label</label>
+							<input id="propertyLabel" class="field__input" type="text" bind:value={propertyLabel} placeholder={projectType === "residential" ? "Smith Residence" : "Main St Storefront"}/>
+							{#if errors.propertyLabel}<span class="field__error">{errors.propertyLabel}</span>{/if}
+						</div>
+						<div class="field">
+							<label class="field__label" for="address">Address <span class="field__hint">Optional</span></label>
+							<input id="address" class="field__input" type="text" bind:value={address} placeholder="123 Main St"/>
+						</div>
+					</div>
+					{:else}
 
 					<div class="field-row field-row--2">
 						<div class="field" class:field--error={!!errors.years}>
@@ -323,6 +418,7 @@
 							<option value="hatchback">Hatchback</option>
 						</select>
 					</div>
+					{/if}
 				</section>
 
 				<!-- Pattern Details -->
@@ -357,16 +453,29 @@
 					<div class="field" class:field--error={!!errors.zones}>
 						<span class="field__label">Zones</span>
 						<div class="multitag" class:multitag--error={!!errors.zones}>
-							{#each pattern.zones as z (z)}
+							{#each pattern.zones as z, i (`${z}-${i}`)}
 								{@const mirror = mirrorOf(z)}
 								<span class="chip">
-									<span class="chip__label">{zoneLabel(z)}</span>
+									<span class="chip__label">{zoneLabel(z, i)}</span>
 									{#if mirror && !pattern.zones.includes(mirror)}
 										<button type="button" class="chip__mirror" use:tooltip={`Also add ${zoneLabel(mirror)}`} onclick={() => addZone(mirror)}>↔</button>
 									{/if}
-									<button type="button" class="chip__remove" aria-label="Remove {zoneLabel(z)}" onclick={() => removeZone(z)}>×</button>
+									<button type="button" class="chip__remove" aria-label="Remove {zoneLabel(z, i)}" onclick={() => removeZoneAt(i)}>×</button>
 								</span>
 							{/each}
+							{#if addingCustom}
+								<span class="custom-zone-entry">
+									<input
+										class="year-input"
+										type="text"
+										placeholder="Name this zone…"
+										aria-label="Custom zone name"
+										bind:value={pendingCustomLabel}
+										onkeydown={(e) => { if (e.key === "Enter") { e.preventDefault(); commitCustomZone(); } else if (e.key === "Escape") { addingCustom = false; } }}
+									/>
+									<button type="button" class="chip__mirror" onclick={commitCustomZone} disabled={!pendingCustomLabel.trim()}>Add</button>
+								</span>
+							{/if}
 							{#if availableZones.length}
 								<select class="zone-add-select" onchange={onZoneAdd} aria-label="Add zone">
 									<option value="">+ Add zone</option>
@@ -407,7 +516,7 @@
 
 					<div class="field" class:field--error={errors.svgPath}>
 						<label class="field__label" for="svgPath">Pattern Importer</label>
-						<SvgPathInput id="svgPath" bind:value={pattern.svgPath} error={!!errors.svgPath} showMirror={hasMirrorPair} mirrorOrigLabel={mirrorZoneLabels?.orig} mirrorFlipLabel={mirrorZoneLabels?.flip}/>
+						<SvgPathInput id="svgPath" bind:value={pattern.svgPath} widthInches={pattern.widthInches} heightInches={pattern.heightInches} error={!!errors.svgPath} showMirror={hasMirrorPair} mirrorOrigLabel={mirrorZoneLabels?.orig} mirrorFlipLabel={mirrorZoneLabels?.flip}/>
 						{#if errors.svgPath}<span class="field__error">{errors.svgPath}</span>{/if}
 					</div>
 
@@ -433,7 +542,7 @@
 						Delete
 					</button>
 					<div class="actions-spacer"></div>
-					<a href="/library?tab=mine" class="btn btn--ghost">Cancel</a>
+					<a href={MINE} class="btn btn--ghost">Cancel</a>
 					<button type="submit" class="btn btn--primary" disabled={saving}>
 						{#if saving}
 							<span class="spinner spinner--sm" aria-hidden="true"></span>

@@ -453,6 +453,7 @@ export function toPatternRequest(id: string, data: DocumentData): PatternRequest
 	return {
 		id,
 		vehicle: data.vehicle ?? "",
+		projectType: data.projectType ?? "vehicle",
 		make: data.make ?? "",
 		model: data.model ?? "",
 		year: data.year ?? 0,
@@ -523,11 +524,19 @@ export async function setVehicleDoc(v: VehicleEntry): Promise<void> {
 	);
 }
 
+// updateDoc rejects `undefined` — a cleared optional field (a subject's make
+// after switching it to residential, a pattern's notes) becomes deleteField().
+function withDeletes(patch: object): Record<string, unknown> {
+	const out: Record<string, unknown> = {};
+	for (const [k, v] of Object.entries(patch)) out[k] = v === undefined ? deleteField() : v;
+	return out;
+}
+
 export async function updateVehicleDoc(
 	id: string,
 	patch: Partial<VehicleEntry>,
 ): Promise<void> {
-	await updateDoc(doc(db, Collections.VEHICLES, id), patch);
+	await updateDoc(doc(db, Collections.VEHICLES, id), withDeletes(patch));
 }
 
 export async function deleteVehicleDoc(id: string): Promise<void> {
@@ -568,7 +577,7 @@ export async function updatePatternDoc(
 	patch: Partial<Pattern>,
 ): Promise<void> {
 	await updateDoc(doc(db, Collections.PATTERNS, id), {
-		...patch,
+		...withDeletes(patch),
 		updatedAt: serverTimestamp(),
 	});
 }
@@ -586,6 +595,13 @@ function toUserPattern(id: string, data: DocumentData): UserPattern {
 		isPublished:       data.isPublished       ?? false,
 		status:            data.status            ?? "private",
 		adminNotes:        data.adminNotes,
+		rejectionReason:   data.rejectionReason || undefined,
+		// Without these, every residential/commercial/custom upload read back
+		// as a vehicle pattern everywhere it was shown.
+		projectType:       data.projectType ?? "vehicle",
+		patternName:       data.patternName  || undefined,
+		address:           data.address      || undefined,
+		propertyLabel:     data.propertyLabel || undefined,
 		vehicleId:         data.vehicleId,
 		make:              data.make                                          ?? "",
 		models:            Array.isArray(data.models) ? data.models
@@ -650,7 +666,8 @@ export async function updateUserPattern(
 	patch: Partial<Pick<UserPattern,
 		| "submitToCommunity" | "name" | "notes" | "svgPath"
 		| "widthInches" | "heightInches" | "coverage"
-		| "category" | "zones" | "make" | "models" | "years" | "bodyStyle"
+		| "category" | "zones" | "customZoneLabels" | "make" | "models" | "years" | "bodyStyle"
+		| "projectType" | "patternName" | "address" | "propertyLabel"
 	>>,
 ): Promise<void> {
 	const update: Record<string, unknown> = { ...patch, updatedAt: serverTimestamp() };
@@ -674,7 +691,7 @@ export async function adminUpdateUserPattern(
 	patch: Partial<UserPattern>,
 ): Promise<void> {
 	await updateDoc(doc(db, Collections.USER_PATTERNS, id), {
-		...patch,
+		...withDeletes(patch),
 		updatedAt: serverTimestamp(),
 	});
 }
@@ -740,6 +757,7 @@ export async function setRequestDoc(r: PatternRequest): Promise<void> {
 		status: r.status,
 		requestedAt: r.requestedAt,
 		...(r.requestedBy ? { requestedBy: r.requestedBy } : {}),
+		projectType: r.projectType ?? "vehicle",
 	});
 }
 

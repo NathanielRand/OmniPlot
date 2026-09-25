@@ -61,6 +61,7 @@
 	import { getVehicleName } from "$lib/stores/patternStore.svelte";
 	import { tooltip } from "$lib/actions/tooltip";
 	import type { CanvasItem, PlotterConfig } from "$lib/types";
+	import { fitPattern } from "$lib/actions/fitPattern";
 
 	// ─── Guided tour ─────────────────────────────
 	const TOUR_STEPS: TourStep[] = [
@@ -1944,7 +1945,7 @@
 		>
 			<div class="pattern-card__thumb" style="border-color: {item.color}20">
 				<svg width="44" height="30" viewBox="0 0 100 90" aria-hidden="true">
-					<path d={item.pattern.svgPath} fill="none" stroke={item.color} stroke-width="2" />
+					<path d={item.pattern.svgPath} use:fitPattern={{ w: item.width, h: item.height, d: item.pattern.svgPath, mirror: item.flippedH }} fill="none" stroke={item.color} stroke-width="2" />
 				</svg>
 			</div>
 			<div class="pattern-card__info">

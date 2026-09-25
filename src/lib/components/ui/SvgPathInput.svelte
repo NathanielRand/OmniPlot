@@ -14,8 +14,13 @@
 		onMultiExtract?: (paths: string[]) => void;
 		autoExtract?: boolean; // auto-fire onMultiExtract when multiple subpaths detected
 		onVectorizingChange?: (v: boolean) => void; // parent can lock its form actions
+		/** Real size from the form. When both are set the preview shows the
+		 *  true proportions the cutter will produce (it stretches the path's
+		 *  bounding box to exactly this size); otherwise the path's own. */
+		widthInches?: number;
+		heightInches?: number;
 	}
-	let { value = $bindable(""), id = "svgPath", error = false, showMirror = false, mirrorOrigLabel, mirrorFlipLabel, onMultiExtract, autoExtract = false, onVectorizingChange }: Props = $props();
+	let { value = $bindable(""), id = "svgPath", error = false, showMirror = false, mirrorOrigLabel, mirrorFlipLabel, onMultiExtract, autoExtract = false, onVectorizingChange, widthInches, heightInches }: Props = $props();
 
 	// ─── Resolution rating (shared by the Input / Output info bars) ─────────
 	interface ImgDims { w: number; h: number }
@@ -592,11 +597,47 @@
 	// stroke never clips at the edge. Uses a hidden off-DOM SVG so the browser's
 	// geometry engine handles all path types correctly.
 	let previewViewBox = $state("0 0 100 100");
+	let pathBox = $state<{ x: number; y: number; w: number; h: number } | null>(null);
+
+	// Vertical stretch that turns the path's own proportions into the real
+	// widthInches × heightInches ones — the same mapping the cutter applies.
+	// Width is kept, height is scaled about the box's top edge.
+	const ratioK = $derived.by(() => {
+		if (!pathBox || !(widthInches! > 0) || !(heightInches! > 0)) return 1;
+		return (heightInches! / widthInches!) / (pathBox.h / pathBox.w);
+	});
+	const ratioTransform = $derived(pathBox && ratioK !== 1 ? `matrix(1 0 0 ${ratioK} 0 ${pathBox.y * (1 - ratioK)})` : undefined);
+	// The outline stroke must stay non-scaling under that stretch (a vertical
+	// scale would thicken/thin its horizontal edges), which makes stroke-width
+	// pixels. To keep the same 1.1-unit weight it always had, convert units →
+	// px from each preview's rendered size.
+	let mainSvgEl   = $state<SVGSVGElement | null>(null);
+	let mirrorSvgEl = $state<SVGSVGElement | null>(null);
+	let mainSize    = $state({ w: 0, h: 0 });
+	let mirrorSize  = $state({ w: 0, h: 0 });
+	function observeSize(el: SVGSVGElement | null, set: (s: { w: number; h: number }) => void) {
+		if (!el || typeof ResizeObserver === "undefined") return;
+		const ro = new ResizeObserver(() => { const r = el.getBoundingClientRect(); set({ w: r.width, h: r.height }); });
+		ro.observe(el);
+		return () => ro.disconnect();
+	}
+	$effect(() => observeSize(mainSvgEl, (v) => (mainSize = v)));
+	$effect(() => observeSize(mirrorSvgEl, (v) => (mirrorSize = v)));
+	function unitsToPx(units: number, size: { w: number; h: number }): number {
+		const [, , vw, vh] = previewViewBox.split(" ").map(Number);
+		if (!size.w || !size.h || !vw || !vh) return units;
+		return units * Math.min(size.w / vw, size.h / vh);
+	}
+
+	// Horizontal flip about the shape's own centre, for the mirror panel.
+	const flipTransform = $derived(pathBox ? `matrix(-1 0 0 1 ${2 * pathBox.x + pathBox.w} 0)` : "matrix(-1 0 0 1 100 0)");
 
 	$effect(() => {
 		const path = previewPath;
+		const k = ratioK;
 		if (!path || typeof document === 'undefined') {
 			previewViewBox = "0 0 100 100";
+			pathBox = null;
 			return;
 		}
 		try {
@@ -609,11 +650,16 @@
 			document.body.appendChild(svg);
 			let bbox: SVGRect;
 			try { bbox = el.getBBox(); } finally { document.body.removeChild(svg); }
-			if (!bbox.width || !bbox.height) { previewViewBox = "0 0 100 100"; return; }
+			if (!bbox.width || !bbox.height) { previewViewBox = "0 0 100 100"; pathBox = null; return; }
+			if (!pathBox || pathBox.x !== bbox.x || pathBox.y !== bbox.y || pathBox.w !== bbox.width || pathBox.h !== bbox.height) {
+				pathBox = { x: bbox.x, y: bbox.y, w: bbox.width, h: bbox.height };
+			}
 			const buf = 4;
-			previewViewBox = `${bbox.x - buf} ${bbox.y - buf} ${bbox.width + buf * 2} ${bbox.height + buf * 2}`;
+			const h = bbox.height * k;
+			previewViewBox = `${bbox.x - buf} ${bbox.y - buf} ${bbox.width + buf * 2} ${h + buf * 2}`;
 		} catch {
 			previewViewBox = "0 0 100 100";
+			pathBox = null;
 		}
 	});
 
@@ -1338,7 +1384,7 @@
 			</div>
 			<div class="spi__mirror-panels">
 				<div class="spi__mirror-panel">
-					<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" class="spi__pview-svg" aria-label="Original path orientation">
+					<svg bind:this={mirrorSvgEl} viewBox={previewViewBox} preserveAspectRatio="xMidYMid meet" class="spi__pview-svg" aria-label="Original path orientation">
 						<defs>
 							<pattern id="spi-grid-l" width="10" height="10" patternUnits="userSpaceOnUse">
 								<path d="M 10 0 L 0 0 0 10" fill="none" stroke="var(--border-default)" stroke-width="0.3" opacity="0.5"/>
@@ -1350,15 +1396,15 @@
 								<path d={previewPath} fill="none" stroke="#fff" stroke-width="10" stroke-linejoin="round" stroke-linecap="round" filter="url(#spi-fade-blur-l)"/>
 							</mask>
 						</defs>
-						<rect x="0" y="0" width="100" height="100" fill="url(#spi-grid-l)"/>
-						<path d={previewPath} fill="var(--color-brand)" opacity="1" mask="url(#spi-fade-mask-l)"/>
-						<path d={previewPath} fill="none" stroke="var(--color-brand)" stroke-width="1.1" stroke-linecap="round"/>
+						<rect x="-9999" y="-9999" width="19998" height="19998" fill="url(#spi-grid-l)"/>
+						<path d={previewPath} transform={ratioTransform} fill="var(--color-brand)" opacity="1" mask="url(#spi-fade-mask-l)"/>
+						<path d={previewPath} transform={ratioTransform} fill="none" stroke="var(--color-brand)" stroke-width={unitsToPx(1.1, mirrorSize)} stroke-linecap="round" vector-effect="non-scaling-stroke"/>
 					</svg>
 					<span class="spi__mirror-lbl">{mirrorOrigLabel ?? "As uploaded"}</span>
 				</div>
 				<div class="spi__mirror-divider" aria-hidden="true"></div>
 				<div class="spi__mirror-panel">
-					<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" class="spi__pview-svg" aria-label="Mirrored path orientation">
+					<svg viewBox={previewViewBox} preserveAspectRatio="xMidYMid meet" class="spi__pview-svg" aria-label="Mirrored path orientation">
 						<defs>
 							<pattern id="spi-grid-r" width="10" height="10" patternUnits="userSpaceOnUse">
 								<path d="M 10 0 L 0 0 0 10" fill="none" stroke="var(--border-default)" stroke-width="0.3" opacity="0.5"/>
@@ -1367,12 +1413,15 @@
 								<feGaussianBlur stdDeviation="2"/>
 							</filter>
 							<mask id="spi-fade-mask-r" maskUnits="userSpaceOnUse" x="-9999" y="-9999" width="19998" height="19998">
-								<path d={previewPath} transform="matrix(-1 0 0 1 100 0)" fill="none" stroke="#fff" stroke-width="10" stroke-linejoin="round" stroke-linecap="round" filter="url(#spi-fade-blur-r)"/>
+								<!-- Mask content is drawn in the referencing path's own (already transformed) space -->
+								<path d={previewPath} fill="none" stroke="#fff" stroke-width="10" stroke-linejoin="round" stroke-linecap="round" filter="url(#spi-fade-blur-r)"/>
 							</mask>
 						</defs>
-						<rect x="0" y="0" width="100" height="100" fill="url(#spi-grid-r)"/>
-						<path d={previewPath} transform="matrix(-1 0 0 1 100 0)" fill="var(--color-brand)" opacity="1" mask="url(#spi-fade-mask-r)"/>
-						<path d={previewPath} transform="matrix(-1 0 0 1 100 0)" fill="none" stroke="var(--color-brand)" stroke-width="1.1" stroke-linecap="round"/>
+						<rect x="-9999" y="-9999" width="19998" height="19998" fill="url(#spi-grid-r)"/>
+						<g transform={ratioTransform}>
+							<path d={previewPath} transform={flipTransform} fill="var(--color-brand)" opacity="1" mask="url(#spi-fade-mask-r)"/>
+							<path d={previewPath} transform={flipTransform} fill="none" stroke="var(--color-brand)" stroke-width={unitsToPx(1.1, mirrorSize)} stroke-linecap="round" vector-effect="non-scaling-stroke"/>
+						</g>
 					</svg>
 					<span class="spi__mirror-lbl">{mirrorFlipLabel ?? "Mirrored"}</span>
 				</div>
@@ -1392,6 +1441,7 @@
 				</button>
 			</div>
 			<svg
+				bind:this={mainSvgEl}
 				class="spi__pview-svg"
 				viewBox={zoomedViewBox}
 				preserveAspectRatio="xMidYMid meet"
@@ -1415,8 +1465,8 @@
 					</mask>
 				</defs>
 				<rect x="-9999" y="-9999" width="19998" height="19998" fill="url(#spi-grid)"/>
-				<path d={previewPath} fill="var(--color-brand)" opacity="1" mask="url(#spi-fade-mask)"/>
-				<path d={previewPath} fill="none" stroke="var(--color-brand)" stroke-width={1.1 / zoom} stroke-linecap="round"/>
+				<path d={previewPath} transform={ratioTransform} fill="var(--color-brand)" opacity="1" mask="url(#spi-fade-mask)"/>
+				<path d={previewPath} transform={ratioTransform} fill="none" stroke="var(--color-brand)" stroke-width={ratioTransform ? unitsToPx(1.1, mainSize) : 1.1 / zoom} stroke-linecap="round" vector-effect={ratioTransform ? "non-scaling-stroke" : undefined}/>
 			</svg>
 		{:else}
 			<div class="spi__pview-empty">

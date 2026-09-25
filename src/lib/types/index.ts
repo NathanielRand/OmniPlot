@@ -516,7 +516,9 @@ export interface VehicleEntry {
 
 export interface PatternRequest {
 	id: string;
+	/** Display title — "2024 Toyota GR86", or the property/project name. */
 	vehicle: string;
+	projectType?: ProjectType; // absent on older (vehicle-only) requests
 	make: string;
 	model: string;
 	year: number;
@@ -562,7 +564,8 @@ export interface UserPattern {
 	submitToCommunity: boolean; // user wants this reviewed for public library
 	isPublished: boolean;       // admin approved — visible in public library
 	status: UserPatternStatus;
-	adminNotes?: string;
+	adminNotes?: string;       // internal — never shown to the submitter
+	rejectionReason?: string;  // shown to the submitter when status === "rejected"
 	// Project type — what kind of surface this pattern was measured from
 	projectType?: ProjectType; // defaults to "vehicle" when absent
 	patternName?: string;      // "custom" projects: free-text project name
