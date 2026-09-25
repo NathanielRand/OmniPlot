@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, tick } from "svelte";
+	import { onMount, tick, untrack } from "svelte";
 	import { goto } from "$app/navigation";
 	import { userStore, shopStore, toastStore, uiStore, plansStore } from "$lib/stores";
 	import { patternStore, RESIDENTIAL_ZONES_LIST, COMMERCIAL_ZONES_LIST, MIRROR_PAIRS, PATTERN_CATEGORIES, zonesForCategory } from "$lib/stores/patternStore.svelte";
@@ -11,6 +11,7 @@
 	import type { PatternCategory, PatternZone, PatternCoverage } from "$lib/types";
 	import type { VehicleEntry } from "$lib/stores/patternStore.svelte";
 	import { fitPattern } from "$lib/actions/fitPattern";
+	import { deriveHeight, deriveWidth, relinkSize, applyFileSize, sizeError } from "$lib/utils/patternSize";
 
 	type BodyStyle = NonNullable<VehicleEntry["bodyStyle"]>;
 
@@ -226,9 +227,8 @@
 			const e: Record<string, string> = {};
 			if (!slot.zone)                                    e.zone    = "Select a zone";
 			else if (slot.zone === "custom" && !slot.customZoneLabel.trim()) e.zone = "Name this custom zone";
-			if (!slot.widthInches  || slot.widthInches  <= 0) e.width   = "Enter a positive width";
-			if (!slot.heightInches || slot.heightInches <= 0) e.height  = "Enter a positive height";
 			if (!slot.svgPath.trim())                          e.svgPath = "Import a pattern first";
+			else { const se = sizeError(slot, slot.svgPath); if (se) e.width = se; }
 			if (Object.keys(e).length) errs[i] = e;
 		});
 		indivErrors = errs;
@@ -264,6 +264,17 @@
 		else if (e.key === "Backspace" && yearInput === "" && vehicle.years.length)
 			vehicle.years = vehicle.years.slice(0, -1);
 	}
+
+	// PRECISION: a pattern's W × H always keeps its outline's exact
+	// proportions. Whenever an outline changes, re-derive the size from it.
+	$effect(() => {
+		void pattern.svgPath;
+		untrack(() => relinkSize(pattern, pattern.svgPath));
+	});
+	$effect(() => {
+		for (const s of individualSlots) void s.svgPath;
+		untrack(() => individualSlots.forEach((s) => relinkSize(s, s.svgPath)));
+	});
 
 	// ─── Multi-pattern extraction ─────────────────
 	function handleMultiExtract(paths: string[]) {
@@ -306,9 +317,8 @@
 			if (!propertyAddress.trim()) e.propertyAddress = "Address is required";
 		}
 		if (!pattern.zones.length)   e.zones  = "Select at least one zone";
-		if (!pattern.widthInches  || pattern.widthInches  <= 0) e.width  = "Enter a positive width";
-		if (!pattern.heightInches || pattern.heightInches <= 0) e.height = "Enter a positive height";
 		if (!pattern.svgPath.trim()) e.svgPath = "SVG path data is required";
+		else { const se = sizeError(pattern, pattern.svgPath); if (se) e.width = se; }
 		errors = e;
 		return Object.keys(e).length === 0;
 	}
@@ -327,8 +337,7 @@
 			const e: Record<string, string> = {};
 			if (!slot.zone) e.zone = "Select a zone";
 			else if (slot.zone === "custom" && !slot.customZoneLabel.trim()) e.zone = "Name this custom zone";
-			if (!slot.widthInches  || slot.widthInches  <= 0) e.width  = "Enter a positive width";
-			if (!slot.heightInches || slot.heightInches <= 0) e.height = "Enter a positive height";
+			{ const se = sizeError(slot, slot.svgPath); if (se) e.width = se; }
 			if (Object.keys(e).length) errs[i] = e;
 		});
 		multiErrors = errs;
@@ -1006,15 +1015,16 @@
 									Width (inches)
 									<InfoTip text="The bounding box of the flattened pattern, not the vehicle or panel — measure the actual traced shape." />
 								</label>
-								<input id="width" class="field__input" type="number" min="0.1" step="0.1" bind:value={pattern.widthInches} placeholder="60.5"/>
+								<input id="width" class="field__input" type="number" min="0" step="any" bind:value={pattern.widthInches} oninput={() => deriveHeight(pattern, pattern.svgPath)} placeholder="60.5"/>
 								{#if errors.width}<span class="field__error">{errors.width}</span>{/if}
 							</div>
 							<div class="field" class:field--error={errors.height}>
 								<label class="field__label" for="height">Height (inches)</label>
-								<input id="height" class="field__input" type="number" min="0.1" step="0.1" bind:value={pattern.heightInches} placeholder="48.0"/>
+								<input id="height" class="field__input" type="number" min="0" step="any" bind:value={pattern.heightInches} oninput={() => deriveWidth(pattern, pattern.svgPath)} placeholder="48.0"/>
 								{#if errors.height}<span class="field__error">{errors.height}</span>{/if}
 							</div>
 						</div>
+						<p class="field__hint">Enter the width <em>or</em> the height — the other is calculated from the outline so the pattern keeps its exact proportions.</p>
 					{/if}
 				</section>
 
@@ -1079,12 +1089,12 @@
 									<div class="field-row field-row--2">
 										<div class="field" class:field--error={!!slotErrs.width}>
 											<label class="field__label" for="indiv-width-{i}">Width (inches)</label>
-											<input id="indiv-width-{i}" class="field__input" type="number" min="0.1" step="0.1" bind:value={slot.widthInches} placeholder="60.5" aria-label="Width for zone {i + 1}"/>
+											<input id="indiv-width-{i}" class="field__input" type="number" min="0" step="any" bind:value={slot.widthInches} oninput={() => deriveHeight(slot, slot.svgPath)} placeholder="60.5" aria-label="Width for zone {i + 1}"/>
 											{#if slotErrs.width}<span class="field__error">{slotErrs.width}</span>{/if}
 										</div>
 										<div class="field" class:field--error={!!slotErrs.height}>
 											<label class="field__label" for="indiv-height-{i}">Height (inches)</label>
-											<input id="indiv-height-{i}" class="field__input" type="number" min="0.1" step="0.1" bind:value={slot.heightInches} placeholder="48.0" aria-label="Height for zone {i + 1}"/>
+											<input id="indiv-height-{i}" class="field__input" type="number" min="0" step="any" bind:value={slot.heightInches} oninput={() => deriveWidth(slot, slot.svgPath)} placeholder="48.0" aria-label="Height for zone {i + 1}"/>
 											{#if slotErrs.height}<span class="field__error">{slotErrs.height}</span>{/if}
 										</div>
 									</div>
@@ -1092,7 +1102,7 @@
 
 									<div class="field" class:field--error={!!slotErrs.svgPath}>
 										<span class="field__label">Pattern Importer</span>
-										<SvgPathInput bind:value={slot.svgPath} widthInches={slot.widthInches} heightInches={slot.heightInches}/>
+										<SvgPathInput bind:value={slot.svgPath} widthInches={slot.widthInches} heightInches={slot.heightInches} onFileSize={(sz) => tick().then(() => applyFileSize(slot, slot.svgPath, sz))}/>
 										{#if slotErrs.svgPath}<span class="field__error">{slotErrs.svgPath}</span>{/if}
 									</div>
 								</div>
@@ -1150,12 +1160,12 @@
 											<div class="multi-slot__dims">
 												<div class:field--error={!!slotErrs.width}>
 													<label class="multi-slot__label" for="multi-width-{i}">Width (in)</label>
-													<input id="multi-width-{i}" type="number" class="multi-slot__input" class:multi-slot__input--err={!!slotErrs.width} min="0.1" step="0.1" bind:value={slot.widthInches} placeholder="0.0" aria-label="Width for pattern {i + 1}"/>
+													<input id="multi-width-{i}" type="number" class="multi-slot__input" class:multi-slot__input--err={!!slotErrs.width} min="0" step="any" bind:value={slot.widthInches} oninput={() => deriveHeight(slot, slot.svgPath)} placeholder="0.0" aria-label="Width for pattern {i + 1}"/>
 													{#if slotErrs.width}<span class="multi-slot__err">{slotErrs.width}</span>{/if}
 												</div>
 												<div class:field--error={!!slotErrs.height}>
 													<label class="multi-slot__label" for="multi-height-{i}">Height (in)</label>
-													<input id="multi-height-{i}" type="number" class="multi-slot__input" class:multi-slot__input--err={!!slotErrs.height} min="0.1" step="0.1" bind:value={slot.heightInches} placeholder="0.0" aria-label="Height for pattern {i + 1}"/>
+													<input id="multi-height-{i}" type="number" class="multi-slot__input" class:multi-slot__input--err={!!slotErrs.height} min="0" step="any" bind:value={slot.heightInches} oninput={() => deriveWidth(slot, slot.svgPath)} placeholder="0.0" aria-label="Height for pattern {i + 1}"/>
 													{#if slotErrs.height}<span class="multi-slot__err">{slotErrs.height}</span>{/if}
 												</div>
 											</div>
@@ -1203,6 +1213,7 @@
 								bind:value={pattern.svgPath}
 								widthInches={pattern.widthInches}
 								heightInches={pattern.heightInches}
+								onFileSize={(sz) => tick().then(() => applyFileSize(pattern, pattern.svgPath, sz))}
 								error={!!errors.svgPath}
 								showMirror={hasMirrorPair}
 								mirrorOrigLabel={mirrorZoneLabels?.orig}

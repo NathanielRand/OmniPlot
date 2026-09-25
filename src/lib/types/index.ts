@@ -356,6 +356,11 @@ export interface CanvasState {
 	snapToGrid: boolean;
 	gridSizeInches: number;
 	bufferInches: number; // minimum clearance nesting keeps between pieces; negative = intentional overlap
+	/** Length of the FULL job along the roll, when `items` is only part of it
+	 *  (resuming an interrupted cut). Plotter orientation mirroring (flipH)
+	 *  reflects about this length so resumed pieces land exactly where the
+	 *  original job placed them. Omitted = computed from `items`. */
+	jobLengthInches?: number;
 }
 
 // ─── Cut Jobs ─────────────────────────────────
@@ -448,7 +453,10 @@ export interface PlotterConfig {
 	maxMediaWidthMm: number;    // hardware max cutting width (from preset)
 	originX: number;
 	originY: number;
+	/** Plotter orientation calibration (set from the orientation test cut):
+	 *  mirror the cut along the roll length (x) so it matches the canvas. */
 	flipH: boolean;
+	/** Mirror the cut across the roll width (y) so it matches the canvas. */
 	flipV: boolean;
 
 	// Network/serial config

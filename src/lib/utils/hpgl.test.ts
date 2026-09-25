@@ -73,8 +73,13 @@ describe('calcEfficiency', () => {
 		expect(calcEfficiency([item], sheet)).toBeLessThanOrEqual(1);
 	});
 	it('larger items produce higher efficiency than smaller ones in same used length', () => {
-		const big = makeItem({ id: 'big', width: 10, height: 5, x: 0 });
-		const small = makeItem({ id: 'small', width: 10, height: 1, x: 0 });
+		// Size lives on the pattern; item.width/height is only its placed bbox.
+		const sized = (id: string, w: number, h: number) => {
+			const base = makeItem();
+			return makeItem({ id, width: w, height: h, x: 0, pattern: { ...base.pattern, widthInches: w, heightInches: h } });
+		};
+		const big = sized('big', 10, 5);
+		const small = sized('small', 10, 1);
 		expect(calcEfficiency([big], sheet)).toBeGreaterThan(calcEfficiency([small], sheet));
 	});
 });
@@ -121,10 +126,11 @@ describe('generateSvg', () => {
 		const svg = generateSvg(makeState([oob]));
 		expect(svg).not.toContain('<path');
 	});
-	it('contains dimensions in mm', () => {
+	it('declares its exact physical size in inches', () => {
 		const svg = generateSvg(makeState());
-		expect(svg).toMatch(/width="[\d.]+mm"/);
-		expect(svg).toMatch(/height="[\d.]+mm"/);
+		expect(svg).toContain('width="2in"');
+		expect(svg).toContain('height="60in"');
+		expect(svg).toContain('viewBox="0 0 192 5760"'); // exactly 96 units per inch
 	});
 	it('contains pattern name in comment', () => {
 		const svg = generateSvg(makeState());
@@ -137,7 +143,8 @@ describe('generateSvg', () => {
 });
 
 // ─── generateHpgl ─────────────────────────────
-// DOM is unavailable in node env → sampleSvgPath falls back to rectPoints.
+// Geometry is exact and DOM-free (pathGeometry.ts); fidelity (cut == canvas)
+// is covered in pattern-fidelity.test.ts.
 
 describe('generateHpgl', () => {
 	it('contains HPGL initialization sequence', () => {

@@ -2,6 +2,10 @@
 	import { traceImageData } from '$lib/utils/trace';
 	import { smoothBezierJunctions } from '$lib/utils/bezier-smooth';
 	import { tooltip } from '$lib/actions/tooltip';
+	import {
+		parsePath, pathBBox, transformSegs, normalizeOutline, splitSubpathSegs, serializePath,
+		flattenSegs, splitIntoPieces, rectSegs, ellipseSegs, polySegs, type Seg, type Mat,
+	} from '$lib/utils/pathGeometry';
 
 	// ─── Props ────────────────────────────────────
 	interface Props {
@@ -19,8 +23,12 @@
 		 *  bounding box to exactly this size); otherwise the path's own. */
 		widthInches?: number;
 		heightInches?: number;
+		/** Called after an SVG file is imported: the shape's real size when the
+		 *  file declares absolute units (in/mm/cm/pt/pc), otherwise null. Never
+		 *  called for traced images/PDFs (their size is unknown). */
+		onFileSize?: (size: { widthInches: number; heightInches: number } | null) => void;
 	}
-	let { value = $bindable(""), id = "svgPath", error = false, showMirror = false, mirrorOrigLabel, mirrorFlipLabel, onMultiExtract, autoExtract = false, onVectorizingChange, widthInches, heightInches }: Props = $props();
+	let { value = $bindable(""), id = "svgPath", error = false, showMirror = false, mirrorOrigLabel, mirrorFlipLabel, onMultiExtract, autoExtract = false, onVectorizingChange, widthInches, heightInches, onFileSize }: Props = $props();
 
 	// ─── Resolution rating (shared by the Input / Output info bars) ─────────
 	interface ImgDims { w: number; h: number }
@@ -70,7 +78,7 @@
 		if (!pastedSvgText.trim()) return;
 		pasteErr = "";
 		try {
-			value = processSvgText(pastedSvgText);
+			value = importSvgFile(pastedSvgText);
 		} catch (err) {
 			pasteErr = err instanceof Error ? err.message : "Could not extract path data.";
 		}
@@ -309,9 +317,10 @@
 	// Lossless SVG extraction (Vectorize's SVG branch, Path Data upload) can pull
 	// in nested contours from the source file — e.g. a "ribbon" shape whose outer
 	// boundary and inner hole are both traced, producing a visible double line.
-	// By default we auto-keep a single contour (the outer one) per extracted file;
-	// users can flip to "inner" or manage each detected layer individually.
-	let layerAutoKeep    = $state(true);
+	// PRECISION: by default EVERY contour in the file is kept — the upload is
+	// reproduced exactly as drawn (holes, multi-part art, everything). Only an
+	// explicit user choice ("outer"/"inner"/manual) may drop a contour.
+	let layerAutoKeep    = $state(false);
 	let layerPreference  = $state<"outer" | "inner">("outer");
 	let layerManualMode  = $state(false);
 	let detectedLayers   = $state<{ d: string; area: number }[]>([]);
@@ -319,31 +328,20 @@
 	let layerManageOpen  = $state(false);
 
 	// Splits an already-normalized (0-100) multi-subpath d string into its
-	// individual M…Z contours, each with its signed shoelace area (sampling
-	// M/L/C endpoints — sufficient to rank contours by size/nesting).
+	// individual contours (exact parser — correct for relative commands),
+	// each with its signed area (from the exact flattening).
 	function splitLayers(d: string): { d: string; area: number }[] {
-		const segs = d.match(/M[^Mm]*/gi)?.map(s => s.trim()).filter(Boolean) ?? [d];
-		return segs.map(seg => ({ d: seg, area: approxSignedAreaClient(seg) }));
-	}
-
-	function approxSignedAreaClient(subpathD: string): number {
-		const pts: [number, number][] = [];
-		const re = /([MCLZz])([-\d.\s,e]+)?/gi;
-		let m: RegExpExecArray | null;
-		while ((m = re.exec(subpathD)) !== null) {
-			const type = m[1].toUpperCase();
-			const args = m[2] ? m[2].trim().split(/[\s,]+/).filter(Boolean).map(Number) : [];
-			if (type === 'M' && args.length >= 2) pts.push([args[0], args[1]]);
-			else if (type === 'L' && args.length >= 2) pts.push([args[0], args[1]]);
-			else if (type === 'C' && args.length >= 6) pts.push([args[4], args[5]]);
-		}
-		if (pts.length < 3) return 0;
-		let area = 0;
-		for (let i = 0; i < pts.length; i++) {
-			const j = (i + 1) % pts.length;
-			area += pts[i][0] * pts[j][1] - pts[j][0] * pts[i][1];
-		}
-		return area / 2;
+		let subs: Seg[][];
+		try { subs = splitSubpathSegs(parsePath(d)); } catch { return [{ d, area: 0 }]; }
+		return subs.map((seg) => {
+			const pts = flattenSegs(seg, 0.01)[0]?.points ?? [];
+			let area = 0;
+			for (let i = 0; i < pts.length; i++) {
+				const j = (i + 1) % pts.length;
+				area += pts[i].x * pts[j].y - pts[j].x * pts[i].y;
+			}
+			return { d: serializePath(seg), area: area / 2 };
+		});
 	}
 
 	// Recomputes `value` from the currently-selected layers.
@@ -641,15 +639,8 @@
 			return;
 		}
 		try {
-			const ns  = "http://www.w3.org/2000/svg";
-			const svg = document.createElementNS(ns, "svg") as SVGSVGElement;
-			svg.style.cssText = "position:absolute;visibility:hidden;width:0;height:0;";
-			const el = document.createElementNS(ns, "path") as SVGPathElement;
-			el.setAttribute("d", path);
-			svg.appendChild(el);
-			document.body.appendChild(svg);
-			let bbox: SVGRect;
-			try { bbox = el.getBBox(); } finally { document.body.removeChild(svg); }
+			// Same analytic bbox the cutter uses (pathGeometry) — not getBBox().
+			const bbox = pathBBox(parsePath(path));
 			if (!bbox.width || !bbox.height) { previewViewBox = "0 0 100 100"; pathBox = null; return; }
 			if (!pathBox || pathBox.x !== bbox.x || pathBox.y !== bbox.y || pathBox.w !== bbox.width || pathBox.h !== bbox.height) {
 				pathBox = { x: bbox.x, y: bbox.y, w: bbox.width, h: bbox.height };
@@ -749,47 +740,145 @@
 	const subpathCount = $derived(
 		previewPath ? (previewPath.match(/[Mm]/g)?.length ?? 0) : 0
 	);
+	// Physical pieces (an outer contour together with its holes) — what a
+	// split actually produces. A shape with a hole is ONE piece.
+	const pieceCount = $derived.by(() => {
+		if (subpathCount <= 1) return subpathCount;
+		try { return splitIntoPieces(previewPath).length; } catch { return subpathCount; }
+	});
 
 	// When autoExtract is set, fire onMultiExtract immediately instead of
 	// waiting for the user to click the "Split" button in the warning banner.
 	$effect(() => {
-		if (autoExtract && onMultiExtract && subpathCount > 1 && previewPath) {
+		if (autoExtract && onMultiExtract && pieceCount > 1 && previewPath) {
 			onMultiExtract(extractSubpaths(previewPath));
 		}
 	});
 
 	// ─── Shared SVG processing ───────────────────
-	// Used by both the SVG file upload and the vectorize (image → SVG) paths.
-	// Finds the longest <path> in the SVG text, resolves the full ancestor CTM
-	// (catches Y-flips from tools like Illustrator), then normalises to 0–100.
-	function processSvgText(svgText: string): string {
+	// ⚠ PRECISION: an uploaded SVG is reproduced EXACTLY. Every rendered shape
+	// in the file (path, rect, circle, ellipse, line, polyline, polygon) is
+	// converted to exact path geometry with its full placement transform
+	// (groups, nested <svg>, viewBox, Y-flips, rotation, skew) and kept —
+	// nothing is dropped, rounded, smoothed or simplified. Content we cannot
+	// reproduce exactly (text, embedded images, <use>, HTML) is REJECTED with
+	// a clear message rather than silently left out. The combined outline is
+	// stored in the 0–100 box by one uniform scale (a pure similarity).
+	const SKIP_CONTAINERS = "defs, clipPath, mask, symbol, marker, pattern, linearGradient, radialGradient, filter, metadata, title, desc, style";
+	const UNSUPPORTED: Record<string, string> = {
+		text: "text (convert text to outlines first)",
+		image: "embedded images",
+		use: "<use> references (expand/ungroup them first)",
+		foreignObject: "embedded HTML",
+	};
+
+	function isRendered(el: Element, root: Element): boolean {
+		for (let n: Element | null = el; n && n !== root.parentElement; n = n.parentElement) {
+			if (getComputedStyle(n).display === "none") return false;
+		}
+		return getComputedStyle(el).visibility === "visible";
+	}
+
+	function elementSegs(el: Element): Seg[] {
+		switch (el.localName) {
+			case "path": { const d = el.getAttribute("d"); return d ? parsePath(d) : []; }
+			case "rect": {
+				const r = el as SVGRectElement;
+				const hasRx = el.hasAttribute("rx"), hasRy = el.hasAttribute("ry");
+				let rx = hasRx ? r.rx.baseVal.value : 0, ry = hasRy ? r.ry.baseVal.value : 0;
+				if (hasRx && !hasRy) ry = rx;
+				if (hasRy && !hasRx) rx = ry;
+				const w = r.width.baseVal.value, h = r.height.baseVal.value;
+				return w > 0 && h > 0 ? rectSegs(r.x.baseVal.value, r.y.baseVal.value, w, h, rx, ry) : [];
+			}
+			case "circle": {
+				const c = el as SVGCircleElement;
+				const rr = c.r.baseVal.value;
+				return rr > 0 ? ellipseSegs(c.cx.baseVal.value, c.cy.baseVal.value, rr, rr) : [];
+			}
+			case "ellipse": {
+				const e = el as SVGEllipseElement;
+				const rx = e.rx.baseVal.value, ry = e.ry.baseVal.value;
+				return rx > 0 && ry > 0 ? ellipseSegs(e.cx.baseVal.value, e.cy.baseVal.value, rx, ry) : [];
+			}
+			case "line": {
+				const l = el as SVGLineElement;
+				return polySegs([{ x: l.x1.baseVal.value, y: l.y1.baseVal.value }, { x: l.x2.baseVal.value, y: l.y2.baseVal.value }], false);
+			}
+			case "polyline": case "polygon": {
+				const pts = Array.from((el as SVGPolygonElement).points, (p) => ({ x: p.x, y: p.y }));
+				return polySegs(pts, el.localName === "polygon");
+			}
+		}
+		return [];
+	}
+
+	/** Import an SVG file exactly. Returns the normalized outline and, when the
+	 *  file declares absolute units, the shape's real size in inches. */
+	function importSvgExact(svgText: string): { d: string; size: { widthInches: number; heightInches: number } | null } {
 		const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
-		if (doc.querySelector("parseerror")) throw new Error("Invalid SVG.");
-
-		const paths = Array.from(doc.querySelectorAll("path"));
-		if (paths.length === 0) throw new Error("No <path> elements found.");
-
-		let mainIdx = 0;
-		for (let i = 1; i < paths.length; i++) {
-			if ((paths[i].getAttribute("d")?.length ?? 0) > (paths[mainIdx].getAttribute("d")?.length ?? 0))
-				mainIdx = i;
+		if (doc.querySelector("parsererror") || doc.documentElement.localName !== "svg") throw new Error("Invalid SVG file.");
+		const root = doc.documentElement;
+		// Never execute anything from the file.
+		root.querySelectorAll("script").forEach((n) => n.remove());
+		for (const el of [root, ...Array.from(root.querySelectorAll("*"))]) {
+			for (const attr of Array.from(el.attributes)) if (/^on/i.test(attr.name)) el.removeAttribute(attr.name);
 		}
-		const d = paths[mainIdx].getAttribute("d");
-		if (!d) throw new Error("Path element has no d attribute.");
 
-		const container = document.createElement("div");
-		container.style.cssText = "position:absolute;visibility:hidden;pointer-events:none;width:0;height:0;overflow:hidden;";
-		container.innerHTML = svgText;
-		document.body.appendChild(container);
-		let ctm: DOMMatrix | null = null;
+		// Render in an isolated, off-screen shadow root so the browser resolves
+		// every transform/unit exactly, without page CSS leaking in or out.
+		const host = document.createElement("div");
+		host.style.cssText = "position:fixed;left:-100000px;top:0;width:4000px;height:4000px;pointer-events:none;opacity:0;";
+		document.body.appendChild(host);
 		try {
-			const livePath = container.querySelectorAll("path")[mainIdx] as SVGPathElement | undefined;
-			ctm = livePath?.getCTM() ?? null;
-		} finally {
-			document.body.removeChild(container);
-		}
+			const shadow = host.attachShadow({ mode: "open" });
+			const live = document.importNode(root, true) as unknown as SVGSVGElement;
+			shadow.appendChild(live);
 
-		return processDetectedLayers(normalizeSvgPath(d, 3, ctm));
+			const rendered = (el: Element) => !el.closest(SKIP_CONTAINERS) && isRendered(el, live);
+			const bad = new Set<string>();
+			live.querySelectorAll(Object.keys(UNSUPPORTED).join(",")).forEach((el) => {
+				if (rendered(el)) bad.add(UNSUPPORTED[el.localName] ?? el.localName);
+			});
+			if (bad.size) throw new Error(`This SVG contains ${[...bad].join(", ")}, which can't be cut exactly. Fix that in your design tool and re-upload.`);
+
+			const all: Seg[] = [];
+			live.querySelectorAll("path, rect, circle, ellipse, line, polyline, polygon").forEach((el) => {
+				if (!rendered(el)) return;
+				const segs = elementSegs(el);
+				if (!segs.length) return;
+				const ctm = (el as SVGGraphicsElement).getScreenCTM();
+				if (!ctm) throw new Error("Could not resolve the position of a shape in this SVG.");
+				const m: Mat = { a: ctm.a, b: ctm.b, c: ctm.c, d: ctm.d, e: ctm.e, f: ctm.f };
+				all.push(...transformSegs(segs, m));
+			});
+			if (!all.length) throw new Error("No shapes found in this SVG.");
+
+			// Real size: only when the file's width AND height use absolute units.
+			// Screen coordinates are CSS px, and 1in = 96 CSS px by definition.
+			const unit = (v: string | null) => /^\s*[\d.]+(?:e[-+]?\d+)?\s*(in|mm|cm|pt|pc|q)\s*$/i.exec(v ?? "")?.[1];
+			let size: { widthInches: number; heightInches: number } | null = null;
+			if (unit(root.getAttribute("width")) && unit(root.getAttribute("height"))) {
+				const b = pathBBox(all);
+				size = { widthInches: b.width / 96, heightInches: b.height / 96 };
+			}
+			return { d: normalizeOutline(all), size };
+		} finally {
+			host.remove();
+		}
+	}
+
+	// Traced images (potrace output) and multi-crop results: exact import of
+	// the generated SVG, no size reporting (a traced image has no real size).
+	function processSvgText(svgText: string): string {
+		return processDetectedLayers(importSvgExact(svgText).d);
+	}
+
+	// A user's own SVG file: exact import + report its declared real size.
+	function importSvgFile(svgText: string): string {
+		const { d, size } = importSvgExact(svgText);
+		onFileSize?.(size);
+		return processDetectedLayers(d);
 	}
 
 	// ─── Vectorize (SVG or any raster image → normalized path) ──
@@ -815,8 +904,8 @@
 
 		try {
 			if (!isRaster) {
-				// SVG: lossless direct path extraction — no rasterisation at all.
-				value = processSvgText(await file.text());
+				// SVG: exact direct extraction — no rasterisation at all.
+				value = importSvgFile(await file.text());
 			} else if (isMulti) {
 				// Multi-pattern raster: detect blobs server-side (fast), crop client-side,
 				// then trace each crop in parallel via /api/vectorize (one invocation per shape).
@@ -989,163 +1078,19 @@
 			return;
 		}
 		try {
-			value = processSvgText(await file.text());
+			value = importSvgFile(await file.text());
 		} catch (err) {
 			pasteErr = err instanceof Error ? err.message : "Could not extract path data.";
 		}
 	}
 
-	// Normalises an SVG path d-string to the 0-100 coordinate space used by the
-	// nesting engine, using uniform (aspect-ratio preserving) scaling so that an
-	// oval stays an oval. Uses the browser's getBBox() for exact geometry.
-	// ctm: accumulated transform from path local coords → SVG viewport (from getCTM()).
-	// Applying it first corrects Y-axis flips and other ancestor transforms before
-	// the bbox-based normalisation is computed.
-	function normalizeSvgPath(d: string, margin = 3, ctm: DOMMatrix | null = null): string {
-		const svgNs = "http://www.w3.org/2000/svg";
-
-		// Apply CTM to get path in visual (SVG viewport) coordinate space.
-		const isIdentity = !ctm || (ctm.a === 1 && ctm.b === 0 && ctm.c === 0 && ctm.d === 1 && ctm.e === 0 && ctm.f === 0);
-		const dVis = isIdentity ? d : transformPathCoords(d, { a: ctm!.a, b: ctm!.b, c: ctm!.c, d: ctm!.d, e: ctm!.e, f: ctm!.f });
-
-		// Compute bbox of the visually-correct path.
-		const svg = document.createElementNS(svgNs, "svg") as SVGSVGElement;
-		svg.style.cssText = "position:absolute;visibility:hidden;width:0;height:0;";
-		const pathEl = document.createElementNS(svgNs, "path") as SVGPathElement;
-		pathEl.setAttribute("d", dVis);
-		svg.appendChild(pathEl);
-		document.body.appendChild(svg);
-		let bbox: SVGRect;
-		try {
-			bbox = pathEl.getBBox();
-		} finally {
-			document.body.removeChild(svg);
-		}
-		if (!bbox.width || !bbox.height) throw new Error("Path has no drawable extent.");
-
-		const size  = 100 - margin * 2;
-		const scale = size / Math.max(bbox.width, bbox.height);
-		const tx    = margin + (size - bbox.width  * scale) / 2 - bbox.x * scale;
-		const ty    = margin + (size - bbox.height * scale) / 2 - bbox.y * scale;
-
-		return transformPathCoords(dVis, { a: scale, b: 0, c: 0, d: scale, e: tx, f: ty });
-	}
-
-	// ─── Affine matrix type ───────────────────────
-	// Matches SVGMatrix / DOMMatrix: x' = a·x + c·y + e,  y' = b·x + d·y + f
-	type Mat = { a: number; b: number; c: number; d: number; e: number; f: number };
-
-	// Applies a 2-D affine matrix to every coordinate in an SVG path string.
-	// Handles all SVG path commands (M L H V C S Q T A Z and lowercase relatives).
-	// Arc sweep flags are inverted when the matrix is reflective (det < 0, e.g. Y-flip).
-	// H/V commands assume no shear (b=0, c=0); this holds for all scale/flip/translate
-	// matrices used in practice. Radii are scaled by the per-axis scale factor.
-	function transformPathCoords(d: string, mat: Mat): string {
-		const r  = (n: number) => Math.round(n * 100) / 100;
-		// Absolute point: full affine
-		const ta = (x: number, y: number) =>
-			`${r(mat.a * x + mat.c * y + mat.e)},${r(mat.b * x + mat.d * y + mat.f)}`;
-		// Relative delta: linear part only (no translation)
-		const tr = (x: number, y: number) =>
-			`${r(mat.a * x + mat.c * y)},${r(mat.b * x + mat.d * y)}`;
-		// H/h: x-only (assumes c=0 / no shear)
-		const ah = (x: number) => r(mat.a * x + mat.e);
-		const rh = (x: number) => r(mat.a * x);
-		// V/v: y-only (assumes b=0 / no shear)
-		const av = (y: number) => r(mat.d * y + mat.f);
-		const rv = (y: number) => r(mat.d * y);
-		// Arc radii: scale by per-axis magnitudes
-		const scX = Math.sqrt(mat.a * mat.a + mat.b * mat.b);
-		const scY = Math.sqrt(mat.c * mat.c + mat.d * mat.d);
-		const ra  = (rx: number, ry: number) => `${r(scX * Math.abs(rx))},${r(scY * Math.abs(ry))}`;
-		// Sweep flag inverts when the matrix is reflective (det < 0 → Y-flip, etc.)
-		const flipSweep = mat.a * mat.d - mat.b * mat.c < 0;
-
-		const re = /([MmLlHhVvCcSsQqTtAaZz])|([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)/g;
-		const tokens: string[] = [];
-		let tok: RegExpExecArray | null;
-		while ((tok = re.exec(d)) !== null) tokens.push(tok[0]);
-
-		let out = "";
-		let i = 0;
-		while (i < tokens.length) {
-			const cmd = tokens[i++];
-			if (!/^[MmLlHhVvCcSsQqTtAaZz]$/.test(cmd)) continue;
-
-			const nums: number[] = [];
-			while (i < tokens.length && !/^[MmLlHhVvCcSsQqTtAaZz]$/.test(tokens[i]))
-				nums.push(parseFloat(tokens[i++]));
-
-			switch (cmd) {
-				case 'M': case 'L': case 'T':
-					out += cmd;
-					for (let j = 0; j < nums.length; j += 2) out += ` ${ta(nums[j], nums[j+1])}`;
-					break;
-				case 'm': case 'l': case 't':
-					out += cmd;
-					for (let j = 0; j < nums.length; j += 2) out += ` ${tr(nums[j], nums[j+1])}`;
-					break;
-				case 'H': out += cmd; for (const x of nums) out += ` ${ah(x)}`; break;
-				case 'h': out += cmd; for (const x of nums) out += ` ${rh(x)}`; break;
-				case 'V': out += cmd; for (const y of nums) out += ` ${av(y)}`; break;
-				case 'v': out += cmd; for (const y of nums) out += ` ${rv(y)}`; break;
-				case 'C':
-					out += cmd;
-					for (let j = 0; j < nums.length; j += 6)
-						out += ` ${ta(nums[j], nums[j+1])} ${ta(nums[j+2], nums[j+3])} ${ta(nums[j+4], nums[j+5])}`;
-					break;
-				case 'c':
-					out += cmd;
-					for (let j = 0; j < nums.length; j += 6)
-						out += ` ${tr(nums[j], nums[j+1])} ${tr(nums[j+2], nums[j+3])} ${tr(nums[j+4], nums[j+5])}`;
-					break;
-				case 'S': case 'Q':
-					out += cmd;
-					for (let j = 0; j < nums.length; j += 4)
-						out += ` ${ta(nums[j], nums[j+1])} ${ta(nums[j+2], nums[j+3])}`;
-					break;
-				case 's': case 'q':
-					out += cmd;
-					for (let j = 0; j < nums.length; j += 4)
-						out += ` ${tr(nums[j], nums[j+1])} ${tr(nums[j+2], nums[j+3])}`;
-					break;
-				case 'A':
-					out += cmd;
-					for (let j = 0; j < nums.length; j += 7) {
-						const sw = flipSweep ? 1 - nums[j+4] : nums[j+4];
-						out += ` ${ra(nums[j], nums[j+1])} ${nums[j+2]} ${nums[j+3]},${sw} ${ta(nums[j+5], nums[j+6])}`;
-					}
-					break;
-				case 'a':
-					out += cmd;
-					for (let j = 0; j < nums.length; j += 7) {
-						const sw = flipSweep ? 1 - nums[j+4] : nums[j+4];
-						out += ` ${ra(nums[j], nums[j+1])} ${nums[j+2]} ${nums[j+3]},${sw} ${tr(nums[j+5], nums[j+6])}`;
-					}
-					break;
-				case 'Z': case 'z': out += cmd; break;
-			}
-			out += ' ';
-		}
-		return out.trim();
-	}
-
-	// ─── Subpath extraction for multi-pattern mode ──
-	// Splits a combined potrace path (multiple M…Z segments) into individually
-	// normalized 0-100 paths — one per contour. Degenerate or zero-extent
-	// contours are silently dropped. Only call this client-side (uses getBBox).
+	// ─── Split a combined outline into separate patterns ──
+	// Explicit user action ("Split into N patterns") or the combined-file
+	// importer. Contours are grouped into physical pieces — an outer contour
+	// keeps every hole inside it — and each piece is stored exactly (uniform
+	// scale only). Nothing is dropped.
 	function extractSubpaths(fullPath: string): string[] {
-		const segs = fullPath.match(/M[^Mm]*/gi)?.map(s => s.trim()).filter(Boolean) ?? [fullPath];
-		const result: string[] = [];
-		for (const seg of segs) {
-			try {
-				const closed = /[Zz]\s*$/.test(seg) ? seg : seg + ' Z';
-				result.push(normalizeSvgPath(closed));
-			} catch {
-				// degenerate path — skip
-			}
-		}
-		return result;
+		return splitIntoPieces(fullPath).map((piece) => normalizeOutline(parsePath(piece)));
 	}
 
 	// ─── Image trace ─────────────────────────────
@@ -1770,9 +1715,9 @@
 			<button type="button" class="spi__extract-btn spi__extract-btn--outer" onclick={quickKeepOuter}>
 				Keep outermost layer
 			</button>
-			{#if onMultiExtract}
+			{#if onMultiExtract && pieceCount > 1}
 				<button type="button" class="spi__extract-btn" onclick={() => onMultiExtract!(extractSubpaths(value))}>
-					Split into {subpathCount} patterns →
+					Split into {pieceCount} patterns →
 				</button>
 			{/if}
 		</div>

@@ -594,6 +594,37 @@ function _presetStorageKey(name: string) {
 	return `omniplot-preset:${name}`;
 }
 
+// ─── Cut orientation calibration (per plotter model) ───
+// ⚠ PRECISION: flipH/flipV mirror the plotter output so the physical cut
+// matches the studio canvas exactly. They are set once per plotter from the
+// orientation test cut and remembered for that plotter model — never
+// guessed, never reset silently.
+function _orientStorageKey(name: string) {
+	return `omniplot-orient:${name}`;
+}
+function _saveOrientation(name: string, o: { flipH: boolean; flipV: boolean }, verified = false) {
+	if (typeof localStorage === "undefined") return;
+	localStorage.setItem(_orientStorageKey(name), JSON.stringify({ flipH: o.flipH, flipV: o.flipV, verified }));
+}
+/** True once the orientation test cut confirmed this plotter model cuts exactly what the canvas shows. */
+export function isOrientationVerified(name: string): boolean {
+	if (typeof localStorage === "undefined") return false;
+	try { return JSON.parse(localStorage.getItem(_orientStorageKey(name)) ?? "{}").verified === true; } catch { return false; }
+}
+/** Save the orientation for a plotter model; `verified` only when a test cut matched the canvas. */
+export function saveOrientation(name: string, o: { flipH: boolean; flipV: boolean }, verified: boolean) {
+	_saveOrientation(name, o, verified);
+}
+function _loadOrientation(name: string): { flipH: boolean; flipV: boolean } {
+	if (typeof localStorage === "undefined") return { flipH: false, flipV: false };
+	try {
+		const raw = JSON.parse(localStorage.getItem(_orientStorageKey(name)) ?? "{}");
+		return { flipH: raw.flipH === true, flipV: raw.flipV === true };
+	} catch {
+		return { flipH: false, flipV: false };
+	}
+}
+
 // Per-connection-type settings — restored when switching back to a connection type.
 const CONNECTION_PERSIST: Partial<Record<string, Array<keyof PlotterConfig>>> = {
 	"usb-serial": ["baudRate", "vendorId", "productId"],
@@ -659,6 +690,7 @@ function createPlotterStore() {
 	// Restore last-used connection type and its per-type settings
 	const _savedConnType = _loadActiveConnection();
 	const _savedConnSettings = _loadConnSettings(_savedConnType);
+	const _savedOrientation = _loadOrientation(defaultPreset.name!);
 
 	let config = $state<PlotterConfig>({
 		id: "default",
@@ -676,8 +708,8 @@ function createPlotterStore() {
 		maxMediaWidthMm: defaultPreset.maxMediaWidthMm,
 		originX: 0,
 		originY: 0,
-		flipH: false,
-		flipV: false,
+		flipH: _savedOrientation.flipH,
+		flipV: _savedOrientation.flipV,
 		agentUrl: (_savedConnSettings.agentUrl as string | undefined) ?? "http://localhost:7878",
 		baudRate: (_savedConnSettings.baudRate as number | undefined) ?? _savedDefaults.baudRate ?? defaultPreset.baudRate ?? 9600,
 		ipAddress: (_savedConnSettings.ipAddress as string | undefined) ?? "192.168.1.100",
@@ -697,6 +729,8 @@ function createPlotterStore() {
 			if (PRESET_PERSIST_KEYS.some((k) => k in patch)) {
 				_savePresetSettings(config.name, config);
 			}
+			// Any change of orientation needs a fresh test cut to be verified.
+			if ("flipH" in patch || "flipV" in patch) _saveOrientation(config.name, config, false);
 		},
 		applyPreset(preset: Partial<PlotterConfig> & { maxMediaWidthMm?: number; compatNote?: string }) {
 			// Restore any previously saved customisations for this specific preset
@@ -711,6 +745,8 @@ function createPlotterStore() {
 				// Clamp saved values to the preset's plausible range
 				bladeForce: Math.max(10, Math.min(500, saved.bladeForce ?? (preset.bladeForce as number) ?? config.bladeForce)),
 				cuttingSpeed: Math.max(10, Math.min(1200, saved.cuttingSpeed ?? (preset.cuttingSpeed as number) ?? config.cuttingSpeed)),
+				// Orientation is this plotter model's own calibration.
+				..._loadOrientation(preset.name ?? config.name),
 			};
 		},
 		// Saves the current connection's specific settings, then restores the saved

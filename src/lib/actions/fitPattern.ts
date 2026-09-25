@@ -1,16 +1,23 @@
 // ─────────────────────────────────────────────
 // use:fitPattern — true-proportion pattern previews
 // ─────────────────────────────────────────────
-// A pattern's svgPath is only a shape: the cutter stretches its bounding box
-// to exactly widthInches × heightInches (see sampleSvgPathSubpaths in
-// $lib/utils/hpgl.ts). Catalog paths are drawn in a normalised 0–100 box, so
-// drawing the raw path in a fixed viewBox shows the wrong proportions.
+// ⚠ PRECISION MANUFACTURING SOFTWARE — a preview is a promise about the cut.
+// A pattern's svgPath is only a shape: its bounding box maps to exactly
+// widthInches × heightInches (pathToInchSegs in $lib/utils/pathGeometry.ts,
+// the single mapping the canvas, packer and cutter all use). The bbox here
+// comes from that same analytic engine — never the browser's getBBox(),
+// which browsers compute differently for curves. Catalog paths
+// are drawn in a normalised 0–100 box, so drawing the raw path in a fixed
+// viewBox shows the wrong proportions. Keep this in lockstep with that
+// mapping — never let a preview show a shape the blade won't cut.
 //
 // Put this on the <path>: it applies that same stretch into inch space and
 // sets the parent <svg>'s viewBox to the real width × height, so the browser
 // zooms it uniformly to fit whatever box the design gives it (default
 // preserveAspectRatio = xMidYMid meet). Nothing about the surrounding design
 // changes — only the scale.
+
+import { parsePath, pathBBox } from "$lib/utils/pathGeometry";
 
 export interface FitPatternParams {
 	/** Real width in inches. Missing/0 → the path's own proportions. */
@@ -40,9 +47,9 @@ export function fitPattern(node: SVGPathElement, params: FitPatternParams = {}) 
 	function apply(retry = true) {
 		const svg = node.ownerSVGElement;
 		if (!svg) return;
-		let box: DOMRect;
+		let box: { x: number; y: number; width: number; height: number };
 		try {
-			box = node.getBBox(); // ignores the path's own transform — the raw shape
+			box = pathBBox(parsePath(current.d ?? node.getAttribute('d') ?? '')); // the raw shape
 		} catch {
 			return;
 		}

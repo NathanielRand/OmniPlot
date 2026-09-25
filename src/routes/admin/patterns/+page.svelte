@@ -25,6 +25,7 @@
 	import { auth } from "$lib/firebase/client";
 	import { tooltip } from "$lib/actions/tooltip";
 	import { fitPattern } from "$lib/actions/fitPattern";
+	import { deriveHeight, deriveWidth, relinkSize, sizeError } from "$lib/utils/patternSize";
 	import PatternPreview from "$lib/components/ui/PatternPreview.svelte";
 	import type { Pattern, PatternCategory, PatternCoverage, PatternZone, ProjectType, UserPattern, UserPatternStatus, PatternAdjustmentRequest } from "$lib/types";
 
@@ -220,6 +221,9 @@
 
 	async function approveSubmission() {
 		if (!reviewTarget) return;
+		// PRECISION: never publish a pattern whose size doesn't match its outline.
+		const sizeErr = sizeError(reviewEdits, reviewTarget.svgPath);
+		if (sizeErr) { toastStore.error("Can't publish", sizeErr); return; }
 		const ok = await confirmStore.ask({
 			title: `Publish "${reviewEdits.name.trim() || reviewTarget.name}" to the public library?`,
 			message: "Customers will be able to cut it right away. The submitter's copy is locked as approved.",
@@ -391,10 +395,13 @@
 
 	async function saveEditSub() {
 		if (!editSubTarget) return;
+		const sizeErr = sizeError(editSubForm, editSubTarget.svgPath);
+		if (sizeErr) { toastStore.error("Can't save", sizeErr); return; }
 		editSubWorking = true;
 		try {
 			const patch: Partial<UserPattern> = {
 				name:         editSubForm.name.trim() || editSubTarget.name,
+				svgPath:      editSubTarget.svgPath,
 				widthInches:  editSubForm.widthInches,
 				heightInches: editSubForm.heightInches,
 				coverage:     editSubForm.coverage,
@@ -633,10 +640,10 @@
 	function patternFormError(p: { name: string; zone: PatternZone; customZoneLabel: string; widthInches: number; heightInches: number; svgPath: string }): string | null {
 		if (!p.name.trim()) return "Give the pattern a name.";
 		if (p.zone === "custom" && !p.customZoneLabel.trim()) return "Name the custom zone.";
-		if (!(Number(p.widthInches) > 0) || !(Number(p.heightInches) > 0)) return "Width and height must be greater than 0.";
 		// No placeholder shape — a pattern without a real outline would cut garbage.
 		if (!p.svgPath.trim()) return "Paste the pattern's SVG path.";
-		return null;
+		// PRECISION: W × H must have exactly the outline's proportions.
+		return sizeError({ widthInches: Number(p.widthInches), heightInches: Number(p.heightInches) }, p.svgPath.trim());
 	}
 
 	async function handleAddPattern() {
@@ -1710,13 +1717,16 @@ onMount(() => {
 				<div class="form-row">
 					<div class="form-group">
 						<label class="form-label" for="re-w">Width (in)</label>
-						<input id="re-w" type="number" class="form-input form-input--sm" bind:value={reviewEdits.widthInches} min="0.1" step="0.1"/>
+						<input id="re-w" type="number" class="form-input form-input--sm" bind:value={reviewEdits.widthInches} oninput={() => deriveHeight(reviewEdits, reviewTarget?.svgPath)} min="0" step="any"/>
 					</div>
 					<div class="form-group">
 						<label class="form-label" for="re-h">Height (in)</label>
-						<input id="re-h" type="number" class="form-input form-input--sm" bind:value={reviewEdits.heightInches} min="0.1" step="0.1"/>
+						<input id="re-h" type="number" class="form-input form-input--sm" bind:value={reviewEdits.heightInches} oninput={() => deriveWidth(reviewEdits, reviewTarget?.svgPath)} min="0" step="any"/>
 					</div>
 				</div>
+				{#if reviewTarget && sizeError(reviewEdits, reviewTarget.svgPath)}
+					<p class="form-error" role="alert">{sizeError(reviewEdits, reviewTarget.svgPath)} It can't be published until this is fixed.</p>
+				{/if}
 
 				<div class="form-group">
 					<label class="form-label" for="re-notes">Notes <span class="form-label__opt">(published with pattern)</span></label>
@@ -1774,13 +1784,16 @@ onMount(() => {
 				<div class="form-row">
 					<div class="form-group">
 						<label class="form-label" for="es-w">Width (in)</label>
-						<input id="es-w" type="number" class="form-input form-input--sm" bind:value={editSubForm.widthInches} min="0.1" step="0.1"/>
+						<input id="es-w" type="number" class="form-input form-input--sm" bind:value={editSubForm.widthInches} oninput={() => deriveHeight(editSubForm, editSubTarget?.svgPath)} min="0" step="any"/>
 					</div>
 					<div class="form-group">
 						<label class="form-label" for="es-h">Height (in)</label>
-						<input id="es-h" type="number" class="form-input form-input--sm" bind:value={editSubForm.heightInches} min="0.1" step="0.1"/>
+						<input id="es-h" type="number" class="form-input form-input--sm" bind:value={editSubForm.heightInches} oninput={() => deriveWidth(editSubForm, editSubTarget?.svgPath)} min="0" step="any"/>
 					</div>
 				</div>
+				{#if editSubTarget && sizeError(editSubForm, editSubTarget.svgPath)}
+					<p class="form-error" role="alert">{sizeError(editSubForm, editSubTarget.svgPath)}</p>
+				{/if}
 
 				<div class="form-row">
 					<div class="form-group">
@@ -1927,11 +1940,11 @@ onMount(() => {
 								<div class="form-group"><label class="form-label" for="ep-czone-{pat.id}">Custom zone name</label><input id="ep-czone-{pat.id}" type="text" class="form-input form-input--sm" bind:value={editPatch.customZoneLabel}/></div>
 							{/if}
 							<div class="form-row">
-								<div class="form-group"><label class="form-label" for="ep-w-{pat.id}">Width (in)</label><input id="ep-w-{pat.id}" type="number" class="form-input form-input--sm" bind:value={editPatch.widthInches} min="0.1" step="0.1"/></div>
-								<div class="form-group"><label class="form-label" for="ep-h-{pat.id}">Height (in)</label><input id="ep-h-{pat.id}" type="number" class="form-input form-input--sm" bind:value={editPatch.heightInches} min="0.1" step="0.1"/></div>
+								<div class="form-group"><label class="form-label" for="ep-w-{pat.id}">Width (in)</label><input id="ep-w-{pat.id}" type="number" class="form-input form-input--sm" bind:value={editPatch.widthInches} oninput={() => deriveHeight(editPatch, editPatch.svgPath)} min="0" step="any"/></div>
+								<div class="form-group"><label class="form-label" for="ep-h-{pat.id}">Height (in)</label><input id="ep-h-{pat.id}" type="number" class="form-input form-input--sm" bind:value={editPatch.heightInches} oninput={() => deriveWidth(editPatch, editPatch.svgPath)} min="0" step="any"/></div>
 								<div class="form-group"><label class="form-label" for="ep-rev-{pat.id}">Revision</label><input id="ep-rev-{pat.id}" type="text" class="form-input form-input--sm" bind:value={editPatch.revision} placeholder="YYYY-MM"/></div>
 							</div>
-							<div class="form-group"><label class="form-label" for="ep-svg-{pat.id}">SVG path</label><textarea id="ep-svg-{pat.id}" class="form-input form-input--sm ep-svg-input" rows="3" spellcheck="false" bind:value={editPatch.svgPath}></textarea></div>
+							<div class="form-group"><label class="form-label" for="ep-svg-{pat.id}">SVG path</label><textarea id="ep-svg-{pat.id}" class="form-input form-input--sm ep-svg-input" rows="3" spellcheck="false" bind:value={editPatch.svgPath} oninput={() => relinkSize(editPatch, editPatch.svgPath)}></textarea></div>
 							<div class="form-group"><label class="form-label" for="ep-svgurl-{pat.id}">SVG URL <span class="form-label__opt">(optional)</span></label><input id="ep-svgurl-{pat.id}" type="text" class="form-input form-input--sm" bind:value={editPatch.svgUrl}/></div>
 							<div class="form-group"><label class="form-label" for="ep-notes-{pat.id}">Notes</label><input id="ep-notes-{pat.id}" type="text" class="form-input form-input--sm" bind:value={editPatch.notes}/></div>
 							<div class="pattern-edit-form__footer">
@@ -1990,10 +2003,11 @@ onMount(() => {
 					{/if}
 					<div class="form-group"><label class="form-label" for="np-name">Pattern Name</label><input id="np-name" type="text" class="form-input form-input--sm" bind:value={newPattern.name} placeholder="e.g. Front Driver Window" required/></div>
 					<div class="form-row">
-						<div class="form-group"><label class="form-label" for="np-width">Width (in)</label><input id="np-width" type="number" class="form-input form-input--sm" bind:value={newPattern.widthInches} min="0.5" step="0.5"/></div>
-						<div class="form-group"><label class="form-label" for="np-height">Height (in)</label><input id="np-height" type="number" class="form-input form-input--sm" bind:value={newPattern.heightInches} min="0.5" step="0.5"/></div>
+						<div class="form-group"><label class="form-label" for="np-width">Width (in)</label><input id="np-width" type="number" class="form-input form-input--sm" bind:value={newPattern.widthInches} oninput={() => deriveHeight(newPattern, newPattern.svgPath)} min="0" step="any"/></div>
+						<div class="form-group"><label class="form-label" for="np-height">Height (in)</label><input id="np-height" type="number" class="form-input form-input--sm" bind:value={newPattern.heightInches} oninput={() => deriveWidth(newPattern, newPattern.svgPath)} min="0" step="any"/></div>
 					</div>
-					<div class="form-group"><label class="form-label" for="np-svg">SVG path</label><textarea id="np-svg" class="form-input form-input--sm ep-svg-input" rows="3" spellcheck="false" bind:value={newPattern.svgPath} placeholder="M 0,0 L 100,0 …"></textarea></div>
+					<div class="form-group"><label class="form-label" for="np-svg">SVG path</label><textarea id="np-svg" class="form-input form-input--sm ep-svg-input" rows="3" spellcheck="false" bind:value={newPattern.svgPath} oninput={() => relinkSize(newPattern, newPattern.svgPath)} placeholder="M 0,0 L 100,0 …"></textarea></div>
+					<p class="form-hint">Enter the width <em>or</em> the height — the other is calculated from the outline so the pattern keeps its exact proportions.</p>
 					{#if newPattern.svgPath.trim()}
 						<div class="ep-edit-preview">
 							<PatternPreview svgPath={newPattern.svgPath} widthInches={Number(newPattern.widthInches)} heightInches={Number(newPattern.heightInches)} label="Preview of the new pattern" />
@@ -2386,6 +2400,8 @@ onMount(() => {
 	.form-row   { display: flex; gap: 10px; }
 	.form-group { display: flex; flex-direction: column; gap: 5px; flex: 1; }
 	.form-label { font-size: 0.75rem; font-weight: 500; color: var(--text-secondary); font-family: var(--font-mono); }
+	.form-hint  { font-size: 0.75rem; color: var(--text-tertiary); margin: 2px 0 0; }
+	.form-error { font-size: 0.75rem; color: var(--color-danger); margin: 2px 0 0; }
 	.form-label__opt { font-weight: 400; color: var(--text-tertiary); }
 	.form-input { padding: 7px 10px; background: var(--bg-base); border: 1px solid var(--border-default); border-radius: var(--radius-md); font-size: 0.8125rem; font-family: var(--font-body); color: var(--text-primary); outline: none; transition: border-color 0.12s; width: 100%; }
 	.form-input:focus { border-color: var(--color-brand-dim); }

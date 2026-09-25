@@ -10,7 +10,7 @@
 		agentStore,
 		confirmStore,
 	} from "$lib/stores";
-	import { bestNest, smartNest, findNextPosition, samplePolygonArea, tightPathAt, trueBBoxAt, wouldOverlapAny, type PlacementResult } from "$lib/utils/nesting";
+	import { bestNest, smartNest, findNextPosition, samplePolygonArea, canvasPathAt, trueBBoxAt, wouldOverlapAny, type PlacementResult } from "$lib/utils/nesting";
 	import {
 		downloadHpgl,
 		downloadSvg,
@@ -19,7 +19,10 @@
 		estimateCutTime,
 		generateHpgl,
 		generateHpglSegments,
+		downloadFile,
 	} from "$lib/utils/hpgl";
+	import { orientationTestHpgl, orientationTestPreview, correctedOrientation } from "$lib/utils/orientationTest";
+	import { isOrientationVerified, saveOrientation } from "$lib/stores";
 	import { sendToPlotter, sendToPlotterSegmented, sendSettings, connectSerialPort, reconnectSerialPort, disconnectSerialPort, isSerialConnected, queryPlotter, releaseAgentPort, type SerialPortInfo, type CutProgress } from "$lib/utils/plotter-connection";
 	import { logPlotterError, incrementCutUsage } from "$lib/firebase/firestore";
 	import { cutJobStore, plansStore, platformStore } from "$lib/stores";
@@ -61,7 +64,7 @@
 	import { getVehicleName } from "$lib/stores/patternStore.svelte";
 	import { tooltip } from "$lib/actions/tooltip";
 	import type { CanvasItem, PlotterConfig } from "$lib/types";
-	import { fitPattern } from "$lib/actions/fitPattern";
+	import { sizeError } from "$lib/utils/patternSize";
 
 	// ─── Guided tour ─────────────────────────────
 	const TOUR_STEPS: TourStep[] = [
@@ -116,6 +119,21 @@
 	const cutCount = $derived(
 		canvasStore.items.filter((i) => !i.outOfBounds).length,
 	);
+	// ⚠ PRECISION MANUFACTURING SOFTWARE ⚠ — what this canvas shows is what
+	// the plotter cuts, on real film, for a real vehicle. Every piece is drawn
+	// from canvasPathAt()/itemFootprintPolygons() in $lib/utils/nesting — the
+	// same geometry the packer reserves and hpgl.ts exports. Never draw a
+	// pattern from its raw svgPath with its own scale/rotate/flip here, never
+	// stretch or letterbox it, and never change a pattern's size or aspect
+	// ratio. Only placement (x/y, rotation, user-requested mirror) may change.
+
+	// Sidebar thumbnail: the canvas outline at true proportions (uniform
+	// "meet" zoom, small pad so the stroke isn't clipped).
+	function thumbViewBox(item: CanvasItem): string {
+		const pad = Math.max(item.width, item.height) * 0.04;
+		return `${-pad} ${-pad} ${item.width + pad * 2} ${item.height + pad * 2}`;
+	}
+
 	// Material utilization = actual polygon area / (roll_width × roll_length_used).
 	// Uses the shoelace formula on sampled SVG path points (cached after first call),
 	// not bounding-box area, so arch/dome shapes don't overstate efficiency.
@@ -125,7 +143,7 @@
 		const usedLength = Math.max(...inBounds.map((i) => i.x + i.width), 0);
 		if (usedLength === 0) return 0;
 		const patternArea = inBounds.reduce(
-			(s, i) => s + samplePolygonArea(i.pattern.svgPath, i.width, i.height),
+			(s, i) => s + samplePolygonArea(i.pattern.svgPath, i.pattern.widthInches, i.pattern.heightInches),
 			0,
 		);
 		return Math.min(1, patternArea / (canvasStore.sheet.widthInches * usedLength));
@@ -751,6 +769,49 @@
 		completedCount: number;
 		totalCount: number;
 		presetName: string;
+		// ⚠ PRECISION: a resume must cut the remaining pieces EXACTLY where the
+		// original job placed them, or they overlap what was already cut. The
+		// checkpoint pins the geometry engine version, a fingerprint of the
+		// exact layout, and the full job length (for orientation mirroring).
+		geometryVersion: number;
+		layoutHash: string;
+		jobLengthInches: number;
+	}
+	// Bump whenever pattern geometry/placement math changes, so checkpoints
+	// saved by an older engine are never resumed.
+	const GEOMETRY_VERSION = 2;
+	function layoutHash(items: CanvasItem[]): string {
+		const sig = JSON.stringify(
+			items
+				.filter((i) => !i.outOfBounds)
+				.map((i) => [i.id, i.x, i.y, i.width, i.height, i.rotation, i.flippedH, i.flippedV, i.pattern.widthInches, i.pattern.heightInches, i.pattern.svgPath])
+				.sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+		);
+		let h = 0x811c9dc5; // FNV-1a
+		for (let k = 0; k < sig.length; k++) { h ^= sig.charCodeAt(k); h = Math.imul(h, 0x01000193); }
+		return (h >>> 0).toString(16) + ":" + sig.length;
+	}
+	function fullJobLength(items: CanvasItem[]): number {
+		const ib = items.filter((i) => !i.outOfBounds);
+		return ib.length ? Math.max(...ib.map((i) => i.x + i.width)) : 0;
+	}
+	function checkpointMeta() {
+		return {
+			geometryVersion: GEOMETRY_VERSION,
+			layoutHash: layoutHash(canvasStore.items),
+			jobLengthInches: fullJobLength(canvasStore.items),
+		};
+	}
+	// ⚠ PRECISION: never cut or export a piece whose saved size doesn't match
+	// its outline — it would come out stretched.
+	function blockIfSizeProblems(items: CanvasItem[]): boolean {
+		const bad = items.filter((i) => sizeError(i.pattern, i.pattern.svgPath));
+		if (!bad.length) return false;
+		toastStore.error(
+			"Can't cut — pattern size mismatch",
+			`${bad.map((i) => i.label ?? i.pattern.name).join(", ")}: saved width × height doesn't match the outline. Remove it and fix it in your library.`,
+		);
+		return true;
 	}
 	let resumeCheckpoint = $state<ResumeCheckpoint | null>(null);
 
@@ -919,6 +980,41 @@
 	async function sendCalCut() {
 		const hpgl = buildCalCut();
 		await sendToPlotter(hpgl, plotterStore.config);
+	}
+
+	// ─── Cut orientation calibration ──────────────
+	// ⚠ PRECISION: until this plotter's orientation is verified with the F
+	// test, nothing guarantees the cut isn't the mirror image of the canvas.
+	const orientPreview = orientationTestPreview();
+	let orientVerified = $state(false);
+	let orientTestCut  = $state(false); // a test was cut with the current settings
+	let orientReads    = $state<boolean | null>(null);
+	let orientSameEdge = $state<boolean | null>(null);
+	$effect(() => {
+		orientVerified = isOrientationVerified(plotterStore.config.name);
+		orientTestCut = false; orientReads = null; orientSameEdge = null;
+	});
+	async function cutOrientationTest() {
+		const hpgl = orientationTestHpgl(plotterStore.config, canvasStore.sheet);
+		if (isConnected) {
+			const result = await sendToPlotter(hpgl, plotterStore.config);
+			if (!result.ok) { toastStore.error("Test cut failed", "The orientation test couldn't be sent to the plotter."); return; }
+		} else {
+			downloadFile(hpgl, "omniplot-orientation-test.plt", "application/octet-stream");
+		}
+		orientTestCut = true; orientReads = null; orientSameEdge = null;
+	}
+	function saveOrientationAnswers() {
+		if (orientReads === null || orientSameEdge === null) return;
+		const current = { flipH: plotterStore.config.flipH, flipV: plotterStore.config.flipV };
+		const next = correctedOrientation(current, orientReads, orientSameEdge);
+		const matched = orientReads && orientSameEdge;
+		plotterStore.update(next);
+		saveOrientation(plotterStore.config.name, next, matched);
+		orientVerified = matched;
+		orientTestCut = false; orientReads = null; orientSameEdge = null;
+		if (matched) toastStore.success("Orientation verified", `${plotterStore.config.name} cuts exactly what the canvas shows.`);
+		else toastStore.warning("Orientation corrected", "Cut the test again to confirm it now matches the canvas.");
 	}
 
 	const isConnected = $derived(
@@ -1387,6 +1483,15 @@
 	async function handleResumeCut() {
 		if (!resumeCheckpoint) return;
 		const checkpoint = resumeCheckpoint;
+		if (checkpoint.geometryVersion !== GEOMETRY_VERSION || checkpoint.layoutHash !== layoutHash(canvasStore.items)) {
+			resumeCheckpoint = null;
+			localStorage.removeItem("omniplot-resume-checkpoint");
+			toastStore.error(
+				"Can't resume this cut",
+				"The layout changed since the cut stopped, so the remaining pieces wouldn't line up with what was already cut. Start a new cut on fresh material.",
+			);
+			return;
+		}
 
 		const remainingItems = canvasStore.items.filter(
 			(i) => checkpoint.remainingItemIds.includes(i.id),
@@ -1404,7 +1509,7 @@
 		let lastCompletedIdx = -1;
 
 		try {
-			const partialState = { ...canvasStore.state, items: remainingItems };
+			const partialState = { ...canvasStore.state, items: remainingItems, jobLengthInches: checkpoint.jobLengthInches };
 			const result = await sendToPlotterSegmented(
 				partialState,
 				plotterStore.config,
@@ -1427,6 +1532,9 @@
 						completedCount: checkpoint.completedCount + done,
 						totalCount: checkpoint.totalCount,
 						presetName: plotterStore.config.name,
+						geometryVersion: checkpoint.geometryVersion,
+						layoutHash: checkpoint.layoutHash,
+						jobLengthInches: checkpoint.jobLengthInches,
 					};
 					localStorage.setItem("omniplot-resume-checkpoint", JSON.stringify(newCheckpoint));
 					resumeCheckpoint = newCheckpoint;
@@ -1446,6 +1554,9 @@
 						completedCount: checkpoint.completedCount + lastCompletedIdx + 1,
 						totalCount: checkpoint.totalCount,
 						presetName: plotterStore.config.name,
+						geometryVersion: checkpoint.geometryVersion,
+						layoutHash: checkpoint.layoutHash,
+						jobLengthInches: checkpoint.jobLengthInches,
 					};
 					localStorage.setItem("omniplot-resume-checkpoint", JSON.stringify(newCheckpoint));
 					resumeCheckpoint = newCheckpoint;
@@ -1480,10 +1591,11 @@
 			toastStore.warning("Nothing in bounds", "All patterns are outside the roll — adjust sheet width.");
 			return;
 		}
+		if (blockIfSizeProblems(inBounds)) return;
 
 		const usedLength = Math.max(...inBounds.map((i) => i.x + i.width));
 		const patternArea = inBounds.reduce(
-			(s, i) => s + samplePolygonArea(i.pattern.svgPath, i.width, i.height),
+			(s, i) => s + samplePolygonArea(i.pattern.svgPath, i.pattern.widthInches, i.pattern.heightInches),
 			0,
 		);
 		const sheetArea = canvasStore.sheet.widthInches * usedLength;
@@ -1536,6 +1648,7 @@
 						completedCount: doneSoFar,
 						totalCount: sortedInBounds.length,
 						presetName: plotterStore.config.name,
+						...checkpointMeta(),
 					};
 					localStorage.setItem("omniplot-resume-checkpoint", JSON.stringify(checkpoint));
 					resumeCheckpoint = checkpoint;
@@ -1553,6 +1666,7 @@
 						completedCount: completedSoFar,
 						totalCount: sortedInBounds.length,
 						presetName: plotterStore.config.name,
+						...checkpointMeta(),
 					};
 					localStorage.setItem("omniplot-resume-checkpoint", JSON.stringify(checkpoint));
 					resumeCheckpoint = checkpoint;
@@ -1699,6 +1813,7 @@
 	// Preconditions (has items, plan gates) are already checked by requestExport
 	// before pendingExportFormat is set, so this just performs the download.
 	function handleExport(format: "hpgl" | "svg" | "dxf") {
+		if (blockIfSizeProblems(canvasStore.items.filter((i) => !i.outOfBounds))) { uiStore.closeExport(); return; }
 		const exportSlug = `omniplot-${new Date().toISOString().slice(0, 10)}`;
 		if (format === "hpgl") {
 			downloadHpgl(canvasStore.state, plotterStore.config, exportSlug);
@@ -1817,19 +1932,44 @@
 		// positions until the user happens to trigger a manual re-nest.
 		// Re-nesting once on load closes that gap so a loaded canvas always
 		// reflects the current engine's guarantees.
-		if (canvasStore.items.length > 0) {
+		//
+		// ⚠ PRECISION: pieces whose saved size doesn't match their outline are
+		// removed (they would cut stretched) and the user is told which.
+		const mismatched = canvasStore.items.filter((i) => sizeError(i.pattern, i.pattern.svgPath));
+		if (mismatched.length) {
+			canvasStore.setItems(canvasStore.items.filter((i) => !mismatched.includes(i)));
+			toastStore.warning(
+				"Removed from canvas",
+				`${mismatched.map((i) => i.label ?? i.pattern.name).join(", ")}: saved size doesn't match the outline. Fix it in your library, then add it again.`,
+			);
+		}
+		// An interrupted cut resumes ONLY against the exact layout it was cut
+		// from — so when one is pending, positions are kept exactly (no
+		// re-nest). If the layout/engine changed, the checkpoint is discarded.
+		let pendingResume: ResumeCheckpoint | null = null;
+		if (typeof localStorage !== "undefined") {
+			const raw = localStorage.getItem("omniplot-resume-checkpoint");
+			if (raw) {
+				try { pendingResume = JSON.parse(raw); } catch { pendingResume = null; }
+				if (!pendingResume || pendingResume.geometryVersion !== GEOMETRY_VERSION || pendingResume.layoutHash !== layoutHash(canvasStore.items)) {
+					localStorage.removeItem("omniplot-resume-checkpoint");
+					if (pendingResume) {
+						toastStore.warning(
+							"Interrupted cut can't be resumed",
+							"The layout or OmniPlot's geometry changed since that cut stopped, so the remaining pieces might not line up with what was already cut. Start a new cut on fresh material.",
+						);
+					}
+					pendingResume = null;
+				}
+			}
+		}
+		resumeCheckpoint = pendingResume;
+		if (canvasStore.items.length > 0 && !pendingResume) {
 			const nested = bestNest(canvasStore.items, transposedSheet(), true, canvasStore.state.bufferInches);
 			canvasStore.setItems(nested);
 		}
 		_mounted = true;
 		requestAnimationFrame(fitToView);
-		// Restore any interrupted job resume checkpoint
-		if (typeof localStorage !== "undefined") {
-			const raw = localStorage.getItem("omniplot-resume-checkpoint");
-			if (raw) {
-				try { resumeCheckpoint = JSON.parse(raw); } catch { localStorage.removeItem("omniplot-resume-checkpoint"); }
-			}
-		}
 		// Early access disclosure gates everything else — show it first, and only
 		// queue the guided tour once it has been acknowledged (or was already).
 		if (typeof localStorage !== "undefined" && !localStorage.getItem("op-early-access-ack")) {
@@ -1944,8 +2084,10 @@
 			}}
 		>
 			<div class="pattern-card__thumb" style="border-color: {item.color}20">
-				<svg width="44" height="30" viewBox="0 0 100 90" aria-hidden="true">
-					<path d={item.pattern.svgPath} use:fitPattern={{ w: item.width, h: item.height, d: item.pattern.svgPath, mirror: item.flippedH }} fill="none" stroke={item.color} stroke-width="2" />
+				<!-- PRECISION: the exact canvas/cut outline (canvasPathAt) at true
+				     proportions — uniform zoom only (default "meet"), never stretched. -->
+				<svg width="44" height="30" viewBox={thumbViewBox(item)} aria-hidden="true">
+					<path d={canvasPathAt(item)} fill-rule="evenodd" fill="none" stroke={item.color} stroke-width="1.5" vector-effect="non-scaling-stroke" />
 				</svg>
 			</div>
 			<div class="pattern-card__info">
@@ -2811,6 +2953,12 @@
 								e.key === "Enter" &&
 								canvasStore.select(item.id)}
 						>
+							<!-- PRECISION: the box above is item.width × item.height at the
+							     same px-per-inch on both axes, so this viewBox maps 1:1 —
+							     "none" never distorts here. canvasPathAt() is the exact cut
+							     outline in this box's y-down coordinates (the box itself is
+							     placed y-up), so the canvas is an un-mirrored view of exactly
+							     what the plotter receives. Never draw item.pattern.svgPath. -->
 							<svg
 								width="100%"
 								height="100%"
@@ -2819,7 +2967,7 @@
 								aria-hidden="true"
 							>
 								<path
-									d={tightPathAt(item)}
+									d={canvasPathAt(item)}
 									fill-rule="evenodd"
 									fill="{item.color}20"
 									stroke={item.color}
@@ -2843,6 +2991,8 @@
 								{#if hasMultipleVehicles}
 									<span class="cut-item__label-sub">{_vname}</span>
 								{/if}
+								<!-- The pattern's own stored size (not the rotated footprint). -->
+								<span class="cut-item__label-dims">{item.pattern.widthInches.toFixed(2)}" × {item.pattern.heightInches.toFixed(2)}"</span>
 							</div>
 							{#if canvasStore.selected.includes(item.id)}
 								<div
@@ -3683,6 +3833,51 @@
 									Send test cut
 								</button>
 							{/if}
+
+							<!-- Cut orientation: F test → flipH / flipV -->
+							<div class="cal-orient">
+								<div class="cal-orient__head">
+									<span class="prop-slider-name">Cut orientation</span>
+									{#if orientVerified}
+										<span class="cal-orient__status cal-orient__status--ok">Verified</span>
+									{:else}
+										<span class="cal-orient__status cal-orient__status--warn">Not verified</span>
+									{/if}
+								</div>
+								<p class="cal-probe-hint">
+									Cut a small letter F on scrap and compare it with this preview (the canvas view: roll width across, printing downward). A mirrored cut is a wasted part — verify each plotter once.
+								</p>
+								<div class="cal-orient__row">
+									<svg class="cal-orient__preview" viewBox={orientPreview.viewBox} aria-label="Preview: the F near the left roll edge at the start of the job">
+										<line x1="0" y1="0" x2="0" y2="4.5" class="cal-orient__edge" />
+										<path d={orientPreview.d} class="cal-orient__f" />
+									</svg>
+									<button class="cal-test-cut-btn" onclick={cutOrientationTest}>
+										{isConnected ? "Cut orientation test" : "Download orientation test (.plt)"}
+									</button>
+								</div>
+								{#if orientTestCut}
+									<div class="cal-orient__q">
+										<span>Does the cut F read correctly (not backwards)?</span>
+										<div class="cal-orient__choices">
+											<button class="cal-probe-btn" class:cal-orient__choice--on={orientReads === true} onclick={() => (orientReads = true)}>Reads correctly</button>
+											<button class="cal-probe-btn" class:cal-orient__choice--on={orientReads === false} onclick={() => (orientReads = false)}>Backwards</button>
+										</div>
+									</div>
+									<div class="cal-orient__q">
+										<span>Held printing-downward like the canvas, is it near the same roll edge as the preview (left)?</span>
+										<div class="cal-orient__choices">
+											<button class="cal-probe-btn" class:cal-orient__choice--on={orientSameEdge === true} onclick={() => (orientSameEdge = true)}>Same edge</button>
+											<button class="cal-probe-btn" class:cal-orient__choice--on={orientSameEdge === false} onclick={() => (orientSameEdge = false)}>Opposite edge</button>
+										</div>
+									</div>
+									<button class="cal-test-cut-btn" disabled={orientReads === null || orientSameEdge === null} onclick={saveOrientationAnswers}>Save orientation</button>
+								{/if}
+								<p class="cal-probe-hint">
+									Mirror along roll length: <strong>{plotterStore.config.flipH ? "On" : "Off"}</strong> ·
+									Mirror across roll width: <strong>{plotterStore.config.flipV ? "On" : "Off"}</strong>
+								</p>
+							</div>
 
 							<!-- Y offset (minor, kept as compact slider) -->
 							<div class="cal-y-row">
@@ -5043,6 +5238,11 @@
 	.cut-item__label-sub {
 		opacity: 0.38 !important;
 		font-size: 8px !important;
+	}
+	.cut-item__label-dims {
+		opacity: 0.5 !important;
+		font-size: 9px !important;
+		font-variant-numeric: tabular-nums;
 	}
 	/* Pattern labels use item.color inline (the same bright per-pattern
 	   accent as the shape's outline) — reads fine on the near-black dark
@@ -6698,6 +6898,18 @@
 		font-size: 0.9207rem; color: rgba(255,100,100,0.9); line-height: 1.4;
 	}
 
+	.cal-orient { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border-subtle); }
+	.cal-orient__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+	.cal-orient__status { font-size: 0.6875rem; font-weight: 600; padding: 1px 6px; border-radius: 999px; }
+	.cal-orient__status--ok { color: var(--color-success); background: color-mix(in srgb, var(--color-success) 12%, transparent); }
+	.cal-orient__status--warn { color: var(--color-warning); background: color-mix(in srgb, var(--color-warning) 14%, transparent); }
+	.cal-orient__row { display: flex; align-items: center; gap: 10px; }
+	.cal-orient__preview { width: 56px; height: 63px; flex-shrink: 0; border: 1px solid var(--border-subtle); border-radius: 4px; background: var(--bg-base); }
+	.cal-orient__edge { stroke: var(--text-tertiary); stroke-width: 0.12; }
+	.cal-orient__f { fill: color-mix(in srgb, var(--color-brand) 18%, transparent); stroke: var(--color-brand); stroke-width: 0.06; }
+	.cal-orient__q { display: flex; flex-direction: column; gap: 4px; font-size: 0.75rem; color: var(--text-secondary); }
+	.cal-orient__choices { display: flex; gap: 6px; }
+	.cal-orient__choice--on { border-color: var(--color-brand) !important; color: var(--text-brand) !important; }
 	.cal-test-cut-btn {
 		display: flex; align-items: center; gap: 5px; margin: 6px 0 2px;
 		padding: 5px 10px; background: transparent; border: 1px dashed var(--border-default);

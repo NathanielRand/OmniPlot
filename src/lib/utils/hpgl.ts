@@ -1,22 +1,33 @@
 // ─────────────────────────────────────────────
-// OmniPlot — EXPORT ENGINE
-// Formats: HPGL/PLT · SVG · DXF R2000
+// ⚠ PRECISION MANUFACTURING SOFTWARE — this file drives the blade. ⚠
+//
+// Everything emitted here is cut into real, expensive film to fit a real
+// vehicle. The only acceptable output is EXACTLY the geometry the operator
+// saw on the studio canvas: same shape, same size, same orientation, same
+// position. To guarantee that, this file does NOT compute any pattern
+// geometry of its own — every exporter takes its points from
+// itemFootprintPolygons() in nesting.ts, the same function the canvas
+// renders and the packer reserves space with. Never add a local
+// scale/rotate/flip step here; see the header of nesting.ts.
+//
+// (A previous version sampled the path into item.width × item.height and
+// then rotated it again. item.width/height are the POST-rotation bbox, so
+// any packer-rotated piece was cut stretched into the swapped box, then
+// rotated a second time — wrong shape, wrong place.)
 //
 // Coordinate model
-//   svgPath  — authored in 0-100 space (viewBox 0 0 100 100)
-//   item.x/y — inches on material sheet
-//   item.width/height — final cut dimensions in inches
+//   item.x/y — inches on material sheet (true bbox top-left)
+//   item.width/height — the placed piece's true bbox AFTER rotation
 //   HPGL     — 1016 plotter units / inch
 //   SVG out  — 96 px / inch; width/height expressed in mm
 //   DXF out  — mm (INSUNITS=4)
 // ─────────────────────────────────────────────
 import type { CanvasItem, CanvasState, PlotterConfig, MaterialSheet } from "$lib/types";
 import { HPGL_UNITS_PER_INCH } from "$lib/config";
-import { samplePolygonArea } from "./nesting";
+import { samplePolygonArea, itemFootprintPolygons } from "./nesting";
 
 const SVG_PX_PER_INCH = 96;
 const MM_PER_INCH = 25.4;
-const PATH_SPACE = 100; // native coordinate range of svgPath data
 
 // ─── Helpers ──────────────────────────────────
 function n(v: number, dec = 3): string {
@@ -29,130 +40,46 @@ function escAttr(s: string): string {
 	return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 }
 
-// ─── Split SVG path d-string into subpaths ───
-// Each M/m command after the first begins a new subpath (a distinct closed or
-// open contour). The cutter must lift its blade between them.
-export function splitSubpaths(d: string): string[] {
-	// Split before every M or m that is preceded by at least one non-whitespace char
-	// (i.e. every M/m except the very first command in the string).
-	return d.split(/(?<=[^\s])(?=[Mm])/).map(s => s.trim()).filter(Boolean);
+// ─── Cut geometry for a placed item ─────────────────────────────────────────
+// PRECISION: one closed loop per subpath, in sheet inches, taken verbatim
+// from itemFootprintPolygons() — the exact outline drawn on the canvas.
+// Each loop is cut separately with a blade lift between them so the blade
+// never drags across the fill between disconnected contours.
+function itemCutLoops(item: CanvasItem): Array<Array<{ x: number; y: number }>> {
+	return itemFootprintPolygons(item).filter((loop) => loop.length > 1);
 }
 
-// ─── Sample SVG path → per-subpath inch-space points ─────────────────────────
-// Returns one array of points per subpath. Each subpath is sampled
-// independently so the blade lift position between them is known.
-// All subpaths are normalised against the FULL path's bounding box so their
-// relative spatial positions are preserved when scaled to inch space.
-function sampleSvgPathSubpaths(
-	pathData: string,
-	widthInches: number,
-	heightInches: number,
-	samplesPerSubpath = 200,
-): Array<Array<{ x: number; y: number }>> {
-	if (typeof document === "undefined") {
-		return [rectPoints(widthInches, heightInches)];
-	}
-	try {
-		const ns  = "http://www.w3.org/2000/svg";
-		const svg = document.createElementNS(ns, "svg") as SVGSVGElement;
-		svg.style.cssText =
-			"position:absolute;top:-9999px;left:-9999px;visibility:hidden;pointer-events:none;";
+type P = { x: number; y: number };
 
-		// Full path — used only to obtain the combined bounding box so that
-		// each subpath's points are normalised against the same origin/scale.
-		const fullEl = document.createElementNS(ns, "path") as SVGPathElement;
-		fullEl.setAttribute("d", pathData);
-		svg.appendChild(fullEl);
-		document.body.appendChild(svg);
-
-		const bbox = fullEl.getBBox();
-		if (bbox.width === 0 || bbox.height === 0) {
-			document.body.removeChild(svg);
-			return [rectPoints(widthInches, heightInches)];
-		}
-
-		const scaleX = widthInches  / bbox.width;
-		const scaleY = heightInches / bbox.height;
-
-		const subpathStrings = splitSubpaths(pathData);
-		const result: Array<Array<{ x: number; y: number }>> = [];
-
-		for (const spData of subpathStrings) {
-			const spEl = document.createElementNS(ns, "path") as SVGPathElement;
-			spEl.setAttribute("d", spData);
-			svg.appendChild(spEl);
-
-			const total = spEl.getTotalLength();
-			if (total > 0) {
-				const pts: Array<{ x: number; y: number }> = [];
-				for (let i = 0; i <= samplesPerSubpath; i++) {
-					const pt = spEl.getPointAtLength((i / samplesPerSubpath) * total);
-					pts.push({
-						x: (pt.x - bbox.x) * scaleX,
-						y: (pt.y - bbox.y) * scaleY,
-					});
-				}
-				result.push(pts);
-			}
-			svg.removeChild(spEl);
-		}
-
-		document.body.removeChild(svg);
-		return result.length > 0 ? result : [rectPoints(widthInches, heightInches)];
-	} catch {
-		return [rectPoints(widthInches, heightInches)];
-	}
+function isClosedLoop(pts: P[]): boolean {
+	const a = pts[0], b = pts[pts.length - 1];
+	return pts.length > 2 && Math.abs(a.x - b.x) < 1e-9 && Math.abs(a.y - b.y) < 1e-9;
 }
 
-// Legacy single-array helper — retained for DXF/nesting callers that do not
-// need subpath-awareness (nesting, efficiency, SVG export).
-function sampleSvgPath(
-	pathData: string,
-	widthInches: number,
-	heightInches: number,
-	samples = 200,
-): Array<{ x: number; y: number }> {
-	const subpaths = sampleSvgPathSubpaths(pathData, widthInches, heightInches, samples);
-	return subpaths.flat();
+// ─── Plotter orientation (calibration) ───────────────────────────────────────
+// ⚠ PRECISION: the sheet model is y-up/right-handed (see nesting.ts). Some
+// plotters map their axes differently, which would cut the job mirrored.
+// flipH/flipV — set once per plotter from the orientation test cut — mirror
+// the OUTPUT so the physical cut matches the canvas exactly. They apply to
+// direct sends and .plt files only (DXF/SVG are opened in other software
+// with its own orientation settings). flipH reflects about the FULL job's
+// length (state.jobLengthInches when resuming a partial job) so pieces never
+// shift; flipV reflects about the roll width.
+function jobLength(state: CanvasState): number {
+	if (state.jobLengthInches !== undefined) return state.jobLengthInches;
+	const ib = state.items.filter((i) => !i.outOfBounds);
+	return ib.length ? Math.max(...ib.map((i) => i.x + i.width)) : 0;
 }
 
-function rectPoints(w: number, h: number): Array<{ x: number; y: number }> {
-	return [
-		{ x: 0, y: 0 }, { x: w, y: 0 }, { x: w, y: h },
-		{ x: 0, y: h  }, { x: 0, y: 0 },
-	];
-}
-
-// ─── Apply item transforms to inch-space points ─────
-// Input points are already in item-inch space (0..item.width, 0..item.height).
-// Outputs sheet-inch space (translated to item.x, item.y).
-function transformPoints(
-	item: CanvasItem,
-	pts: Array<{ x: number; y: number }>,
-): Array<{ x: number; y: number }> {
-	const cx  = item.width  / 2;
-	const cy  = item.height / 2;
-	const rad = (item.rotation * Math.PI) / 180;
-	const cos = Math.cos(rad);
-	const sin = Math.sin(rad);
-
-	return pts.map((p) => {
-		let x = p.x;
-		let y = p.y;
-
-		if (item.flippedH) x = item.width  - x;
-		if (item.flippedV) y = item.height - y;
-
-		if (item.rotation !== 0) {
-			const dx = x - cx;
-			const dy = y - cy;
-			x = cos * dx - sin * dy + cx;
-			y = sin * dx + cos * dy + cy;
-		}
-
-		return { x: x + item.x, y: y + item.y };
+export function orientationMap(state: CanvasState, config: PlotterConfig): (p: P) => P {
+	const L = jobLength(state);
+	const W = state.sheet.widthInches; // roll width (y axis)
+	return (p) => ({
+		x: config.flipH ? L - p.x : p.x,
+		y: config.flipV ? W - p.y : p.y,
 	});
 }
+
 
 // ═══════════════════════════════════════════════
 // HPGL / PLT
@@ -209,13 +136,9 @@ function overcutPoint(
 	return pts[pts.length - 1];
 }
 
-function itemToHpgl(item: CanvasItem, config: PlotterConfig): string {
-	// Sample each subpath independently — this is the critical step that prevents
-	// the blade from dragging across the fill between disconnected contours.
-	const subpaths = sampleSvgPathSubpaths(item.pattern.svgPath, item.width, item.height);
-	const transformedSubpaths = subpaths
-		.map(pts => transformPoints(item, pts))
-		.filter(pts => pts.length > 0);
+function itemToHpgl(item: CanvasItem, config: PlotterConfig, orient: (p: P) => P): string {
+	// PRECISION: exactly the canvas outline — see itemCutLoops().
+	const transformedSubpaths = itemCutLoops(item).map((loop) => loop.map(orient));
 
 	if (transformedSubpaths.length === 0) return "";
 
@@ -238,7 +161,9 @@ function itemToHpgl(item: CanvasItem, config: PlotterConfig): string {
 				lines.push(`PD${rest.map((p) => `${toU(p.x)},${toU(p.y)}`).join(",")};`);
 			}
 			// Overcut: advance the configured distance past the seam to close the cut loop.
-			const oc = overcutPoint(transformed, overcutInches);
+			// Overcut only closes a CLOSED shape — on an open line it would drag
+			// the blade straight from the end back across the material.
+			const oc = isClosedLoop(transformed) ? overcutPoint(transformed, overcutInches) : null;
 			if (oc) {
 				lines.push(`PD${toU(oc.x)},${toU(oc.y)};`);
 			}
@@ -268,6 +193,7 @@ export interface HpglStream {
 export function generateHpglSegments(state: CanvasState, config: PlotterConfig): HpglStream {
     const { items, sheet } = state;
     const forceCmd = forceCommand(config);
+    const orient = orientationMap(state, config);
 
     const preambleLines: string[] = [
         "IN;",
@@ -292,7 +218,7 @@ export function generateHpglSegments(state: CanvasState, config: PlotterConfig):
     const segments: HpglSegment[] = sorted.map((item) => ({
         itemId: item.id,
         label: item.label ?? item.pattern.name,
-        hpgl: itemToHpgl(item, config),
+        hpgl: itemToHpgl(item, config, orient),
     }));
 
     return {
@@ -304,6 +230,7 @@ export function generateHpglSegments(state: CanvasState, config: PlotterConfig):
 
 export function generateHpgl(state: CanvasState, config: PlotterConfig): string {
 	const { items, sheet } = state;
+	const orient = orientationMap(state, config);
 
 	const forceCmd = forceCommand(config);
 	const lines: string[] = [
@@ -334,7 +261,7 @@ export function generateHpgl(state: CanvasState, config: PlotterConfig): string 
 			`; --- ${item.label ?? item.pattern.name} ` +
 			`(${item.width.toFixed(2)}" × ${item.height.toFixed(2)}") ---`,
 		);
-		lines.push(itemToHpgl(item, config));
+		lines.push(itemToHpgl(item, config, orient));
 		lines.push("");
 	}
 
@@ -349,13 +276,11 @@ export function generateHpgl(state: CanvasState, config: PlotterConfig): string 
 // SVG
 // ═══════════════════════════════════════════════
 //
-// Transform chain (SVG applies right-to-left):
-//   transform="translate(tx,ty) rotate(…) [flip] scale(sx,sy)"
-//
-//   innermost (scale): maps 0-100 path space → px
-//   flip:             mirrors in path space before scaling
-//   rotate:           rotates around item centre (already in px)
-//   outermost (translate): moves to sheet position
+// PRECISION: each piece is written as absolute sheet coordinates from
+// itemCutLoops() — no transform attribute. The old transform chain assumed
+// the path filled exactly 0–100 (uploads carry a margin and are centred on
+// the short axis) and applied flip before rotation (the canvas applies it
+// after), so exported files did not match the canvas.
 
 export function generateSvg(state: CanvasState): string {
 	const { items, sheet } = state;
@@ -373,42 +298,28 @@ export function generateSvg(state: CanvasState): string {
 	const usedWidthIn   = Math.max(...inBounds.map((i) => i.x + i.width));
 	const sheetHeightIn = sheet.widthInches; // Y axis = roll width
 
-	const svgW = Math.ceil(usedWidthIn   * PX);
-	const svgH = Math.ceil(sheetHeightIn * PX);
-	const wMm  = (usedWidthIn   * MM_PER_INCH).toFixed(1);
-	const hMm  = (sheetHeightIn * MM_PER_INCH).toFixed(1);
+	// PRECISION: physical size and viewBox are both exact (no rounding), so
+	// 1 viewBox unit is exactly 1/96" on both axes in any SVG reader.
+	const svgW = usedWidthIn   * PX;
+	const svgH = sheetHeightIn * PX;
 
 	const pathEls = inBounds.map((item) => {
-		const sx = (item.width  * PX) / PATH_SPACE; // scale from 0-100 → px
-		const sy = (item.height * PX) / PATH_SPACE;
-		const cx = (item.width  * PX) / 2;           // rotation centre
-		const cy = (item.height * PX) / 2;
-		const tx = item.x * PX;
-		const ty = item.y * PX;
-
-		// Collect transforms outermost→innermost (right-to-left application)
-		const parts: string[] = [];
-		parts.push(`translate(${n(tx)},${n(ty)})`);
-		if (item.rotation) {
-			parts.push(`rotate(${item.rotation},${n(cx)},${n(cy)})`);
-		}
-
-		// Flip in 0-100 path space (innermost, before scale)
-		if (item.flippedH && item.flippedV) {
-			parts.push(`translate(${PATH_SPACE},${PATH_SPACE}) scale(-1,-1)`);
-		} else if (item.flippedH) {
-			parts.push(`translate(${PATH_SPACE},0) scale(-1,1)`);
-		} else if (item.flippedV) {
-			parts.push(`translate(0,${PATH_SPACE}) scale(1,-1)`);
-		}
-
-		parts.push(`scale(${n(sx)},${n(sy)})`);
+		// Model is y-up; SVG is y-down → y_svg = rollWidth − y, so the file shows
+		// the art exactly as uploaded (not mirrored).
+		const d = itemCutLoops(item)
+			.map((loop) => {
+				const [first, ...rest] = loop;
+				const Y = (y: number) => n((sheetHeightIn - y) * PX, 4);
+				return `M ${n(first.x * PX, 4)} ${Y(first.y)} ` +
+					rest.map((p) => `L ${n(p.x * PX, 4)} ${Y(p.y)}`).join(" ") + (isClosedLoop(loop) ? " Z" : "");
+			})
+			.join(" ");
 
 		const label = escXml(item.label ?? item.pattern.name);
-		const dims  = `${item.width.toFixed(2)}"×${item.height.toFixed(2)}"`;
+		const dims  = `${item.pattern.widthInches.toFixed(2)}"×${item.pattern.heightInches.toFixed(2)}"`;
 		return (
 			`  <!-- ${label} ${dims} -->\n` +
-			`  <path d="${escAttr(item.pattern.svgPath)}" transform="${parts.join(" ")}"` +
+			`  <path d="${escAttr(d)}" fill-rule="evenodd"` +
 			` fill="none" stroke="#000000" stroke-width="1" vector-effect="non-scaling-stroke"/>`
 		);
 	}).join("\n");
@@ -418,7 +329,7 @@ export function generateSvg(state: CanvasState): string {
 		`<?xml version="1.0" encoding="UTF-8"?>`,
 		`<!-- OmniPlot SVG | ${sheet.name} | ${usedWidthIn.toFixed(2)}"×${sheetHeightIn.toFixed(2)}" | ${dateStr} -->`,
 		`<svg xmlns="http://www.w3.org/2000/svg"`,
-		`     width="${wMm}mm" height="${hMm}mm"`,
+		`     width="${usedWidthIn}in" height="${sheetHeightIn}in"`,
 		`     viewBox="0 0 ${svgW} ${svgH}">`,
 		`  <!-- ${inBounds.length} pattern(s) | Roll: ${sheet.widthInches}" wide | Used: ${usedWidthIn.toFixed(2)}" -->`,
 		pathEls,
@@ -443,12 +354,10 @@ export function generateDxf(state: CanvasState): string {
 	for (const item of inBounds) {
 		// Each subpath becomes its own LWPOLYLINE so the cutter software knows
 		// not to connect between them (avoids cutting through the fill).
-		const subpaths = sampleSvgPathSubpaths(item.pattern.svgPath, item.width, item.height);
+		// PRECISION: exactly the canvas outline — see itemCutLoops().
 		const label = item.label ?? item.pattern.name;
 
-		for (const pts of subpaths) {
-			const transformed = transformPoints(item, pts);
-			if (transformed.length < 2) continue;
+		for (const transformed of itemCutLoops(item)) {
 
 			entities.push(
 				"0", "LWPOLYLINE",
@@ -550,7 +459,8 @@ export function calcEfficiency(items: CanvasItem[], sheet: MaterialSheet): numbe
 	// Uses the actual cut-path outline, not the bounding box, so curved shapes
 	// (e.g. hood pieces) don't get credited for corner material outside the cut.
 	const usedArea = inBounds.reduce(
-		(sum, i) => sum + samplePolygonArea(i.pattern.svgPath, i.width, i.height),
+		// Pattern dims, not item.width/height (the post-rotation bbox).
+		(sum, i) => sum + samplePolygonArea(i.pattern.svgPath, i.pattern.widthInches, i.pattern.heightInches),
 		0,
 	);
 	return Math.min(1, usedArea / (sheet.widthInches * usedLength));

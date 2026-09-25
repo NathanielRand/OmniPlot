@@ -7,6 +7,8 @@
 	import SvgPathInput from "$lib/components/ui/SvgPathInput.svelte";
 	import VehicleCombobox from "$lib/components/ui/VehicleCombobox.svelte";
 	import { tooltip } from "$lib/actions/tooltip";
+	import { untrack } from "svelte";
+	import { deriveHeight, deriveWidth, relinkSize, applyFileSize, sizeError } from "$lib/utils/patternSize";
 	import type { PatternCategory, PatternZone, PatternCoverage, ProjectType, UserPattern } from "$lib/types";
 
 	type BodyStyle = UserPattern["bodyStyle"];
@@ -178,12 +180,28 @@
 				svgPath:      p.svgPath,
 				notes:        p.notes ?? "",
 			};
+			loadedPath = p.svgPath;
 		} catch {
 			notFound = true;
 		} finally {
 			loading = false;
 		}
 	}
+
+	// PRECISION: W × H always keeps the outline's exact proportions. When a
+	// NEW outline is imported, re-derive the size from it. The loaded pattern
+	// is never silently changed — if its saved size doesn't match its outline
+	// the owner is told (sizeProblem) and re-enters one dimension.
+	let loadedPath = $state<string | null>(null);
+	$effect(() => {
+		const path = pattern.svgPath;
+		untrack(() => {
+			if (loadedPath === null || path === loadedPath) return;
+			loadedPath = path;
+			relinkSize(pattern, path);
+		});
+	});
+	const sizeProblem = $derived(original && pattern.svgPath.trim() ? sizeError(pattern, pattern.svgPath) : null);
 
 	// ─── Year helpers ─────────────────────────────
 	function parseYear(s: string): string | null {
@@ -224,9 +242,8 @@
 			e.propertyLabel = "Add a label or an address";
 		}
 		if (!pattern.zones.length)   e.zones  = "Select at least one zone";
-		if (!pattern.widthInches  || pattern.widthInches  <= 0) e.width  = "Enter a positive width";
-		if (!pattern.heightInches || pattern.heightInches <= 0) e.height = "Enter a positive height";
 		if (!pattern.svgPath.trim()) e.svgPath = "SVG path data is required";
+		else { const se = sizeError(pattern, pattern.svgPath); if (se) e.width = se; }
 		errors = e;
 		return Object.keys(e).length === 0;
 	}
@@ -502,21 +519,26 @@
 					<div class="field-row field-row--2">
 						<div class="field" class:field--error={errors.width}>
 							<label class="field__label" for="width">Width (inches)</label>
-							<input id="width" class="field__input" type="number" min="0.1" step="0.1"
-								bind:value={pattern.widthInches}/>
+							<input id="width" class="field__input" type="number" min="0" step="any"
+								bind:value={pattern.widthInches} oninput={() => deriveHeight(pattern, pattern.svgPath)}/>
 							{#if errors.width}<span class="field__error">{errors.width}</span>{/if}
 						</div>
 						<div class="field" class:field--error={errors.height}>
 							<label class="field__label" for="height">Height (inches)</label>
-							<input id="height" class="field__input" type="number" min="0.1" step="0.1"
-								bind:value={pattern.heightInches}/>
+							<input id="height" class="field__input" type="number" min="0" step="any"
+								bind:value={pattern.heightInches} oninput={() => deriveWidth(pattern, pattern.svgPath)}/>
 							{#if errors.height}<span class="field__error">{errors.height}</span>{/if}
 						</div>
 					</div>
+					{#if sizeProblem && !errors.width}
+						<p class="field__error" role="alert">This pattern's saved size doesn't match its outline, so it can't be added to the canvas. Re-enter the width or the height to fix it.</p>
+					{:else}
+						<p class="field__hint">Enter the width <em>or</em> the height — the other is calculated from the outline so the pattern keeps its exact proportions.</p>
+					{/if}
 
 					<div class="field" class:field--error={errors.svgPath}>
 						<label class="field__label" for="svgPath">Pattern Importer</label>
-						<SvgPathInput id="svgPath" bind:value={pattern.svgPath} widthInches={pattern.widthInches} heightInches={pattern.heightInches} error={!!errors.svgPath} showMirror={hasMirrorPair} mirrorOrigLabel={mirrorZoneLabels?.orig} mirrorFlipLabel={mirrorZoneLabels?.flip}/>
+						<SvgPathInput id="svgPath" bind:value={pattern.svgPath} widthInches={pattern.widthInches} heightInches={pattern.heightInches} onFileSize={(sz) => Promise.resolve().then(() => applyFileSize(pattern, pattern.svgPath, sz))} error={!!errors.svgPath} showMirror={hasMirrorPair} mirrorOrigLabel={mirrorZoneLabels?.orig} mirrorFlipLabel={mirrorZoneLabels?.flip}/>
 						{#if errors.svgPath}<span class="field__error">{errors.svgPath}</span>{/if}
 					</div>
 

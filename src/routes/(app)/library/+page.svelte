@@ -13,6 +13,7 @@
 	import { tooltip } from "$lib/actions/tooltip";
 	import type { CanvasItem, Pattern, PatternCategory, PatternZone, ProjectType, UserPattern } from "$lib/types";
 	import { fitPattern } from "$lib/actions/fitPattern";
+	import { sizeError } from "$lib/utils/patternSize";
 	import { page } from "$app/state";
 	import { goto } from "$app/navigation";
 	import type { VehicleEntry } from "$lib/stores/patternStore.svelte";
@@ -480,7 +481,17 @@
 	}
 
 	// ─── Add store pattern to canvas ─────────────
+	// PRECISION: the pattern goes onto the canvas exactly as stored — same
+	// svgPath, same widthInches × heightInches. The packer may only choose
+	// position and rotation; it never resizes or re-proportions a piece.
 	function addPatternToCanvas(pattern: Pattern, flippedH = false) {
+		// PRECISION: a pattern whose W × H doesn't match its outline would be
+		// cut stretched. It never reaches the canvas until its owner fixes it.
+		const problem = sizeError(pattern, pattern.svgPath);
+		if (problem) {
+			toastStore.error("Can't add this pattern", `${pattern.name}: ${problem} Edit the pattern to fix it.`);
+			return;
+		}
 		const idx = canvasStore.items.length;
 		const newItem: CanvasItem = {
 			id:        uid("item_"),
@@ -798,7 +809,12 @@
 
 				{#if filtered.length === 0}
 					<div class="lib-empty">
-						{#if !typeCounts[projectType]}
+						{#if patternStore.loading}
+							<p class="lib-empty__title">Loading the pattern library…</p>
+						{:else if patternStore.catalogError && !visible.length}
+							<p class="lib-empty__title">Couldn't load the pattern library</p>
+							<p class="lib-empty__sub">Check your connection and reload the page. Your own uploads under "My patterns" are unaffected.</p>
+						{:else if !typeCounts[projectType]}
 							<p class="lib-empty__title">No {typeMeta(projectType).label.toLowerCase()} patterns yet</p>
 							<p class="lib-empty__sub">The community library doesn't have any {typeMeta(projectType).noun} patterns yet. <button class="lib-empty__request" onclick={() => openRequest()}>Request one</button>, or upload your own to use right away.</p>
 						{:else}
@@ -970,7 +986,10 @@
 								<div class="my-pattern-card__badges">
 									<span class="mpbadge" style="--cat-accent: {categoryMeta(p.category).accent}">{categoryShortLabel(p.category)}</span>
 									<span class="mpbadge mpbadge--{st}">{MINE_STATUS_LABEL[st]}</span>
-									<span class="my-pattern-card__size">{p.widthInches}" × {p.heightInches}"</span>
+									<span class="my-pattern-card__size">{p.widthInches.toFixed(2)}" × {p.heightInches.toFixed(2)}"</span>
+									{#if sizeError(p, p.svgPath)}
+										<span class="mpbadge mpbadge--rejected" use:tooltip={"Its saved width × height doesn't match its outline, so it would cut stretched. Edit it and re-enter the width or height."}>Size doesn't match outline</span>
+									{/if}
 									<span class="my-pattern-card__date">Added {p.createdAt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>
 								</div>
 								{#if st === "rejected"}
@@ -987,7 +1006,7 @@
 								{/if}
 							</div>
 							<div class="my-pattern-card__actions">
-								<button class="my-pattern-card__add" onclick={() => addMine(p)} use:tooltip={"Add to canvas"} aria-label="Add {p.name} to canvas">
+								<button class="my-pattern-card__add" onclick={() => addMine(p)} disabled={!!sizeError(p, p.svgPath)} use:tooltip={sizeError(p, p.svgPath) ? "Fix this pattern's size before adding it" : "Add to canvas"} aria-label="Add {p.name} to canvas">
 									<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
 									Add
 								</button>
@@ -2113,7 +2132,8 @@
 		transition: background 0.12s, color 0.12s, border-color 0.12s;
 		white-space: nowrap;
 	}
-	.my-pattern-card__add:hover {
+	.my-pattern-card__add:disabled { opacity: 0.45; cursor: not-allowed; }
+	.my-pattern-card__add:hover:not(:disabled) {
 		background: var(--color-brand);
 		border-color: var(--color-brand);
 		color: #fff;

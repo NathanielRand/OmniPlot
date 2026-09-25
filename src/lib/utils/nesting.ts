@@ -1,4 +1,28 @@
 // ─────────────────────────────────────────────
+// ⚠ PRECISION MANUFACTURING SOFTWARE — READ BEFORE CHANGING ANY GEOMETRY ⚠
+//
+// This drives commercial cutting plotters. Every pattern is a physical part
+// cut from expensive film to fit a real vehicle. A shape that is off by a
+// fraction of an inch, stretched, squashed or mirrored is scrapped material
+// and a failed install. Treat every pattern/canvas decision accordingly:
+//
+//   • A pattern's geometry is NEVER altered — no re-fitting, no aspect
+//     "correction", no letterboxing, no rescaling for display convenience.
+//     The one and only mapping from svgPath to real inches is
+//     patternLoopsInches() below (pathGeometry.pathToInchSegs): the
+//     outline's true bounding box becomes EXACTLY widthInches ×
+//     heightInches, and W × H always has the outline's own proportions
+//     (enforced at save by sizeMatchesOutline). Uploaded art is reproduced
+//     exactly — every corner, angle and curve — at its stated size.
+//   • What the canvas shows IS what the blade cuts. The renderer, the
+//     nesting engine and every exporter (HPGL/DXF/SVG in hpgl.ts) take their
+//     coordinates from itemFootprintPolygons()/tightPathAt(). Never
+//     re-derive rotation, flip or scale somewhere else — two formulas for
+//     "where is this shape" WILL drift apart, and the drift gets cut.
+//   • Placement (position, rotation by the packer or user, mirror when the
+//     user asks for it) is the only thing allowed to change. Size and
+//     proportions are not.
+// ─────────────────────────────────────────────
 // OmniPlot — NESTING ENGINE v2
 //
 // Single geometry model, single collision predicate, one placer.
@@ -45,6 +69,7 @@ import {
 	ensureCCW,
 	polygonsOverlap,
 } from "./polygon";
+import { parsePath, pathBBox, pathToInchSegs, flattenSegs, CUT_TOLERANCE_INCHES } from "./pathGeometry";
 
 // ─── Buffer / edge margin ──────────────────────
 // bufferInches is the user-configurable spacing kept between pieces — it
@@ -64,169 +89,57 @@ const CELL = 0.1;
 const toCells = (inches: number) => inches / CELL;
 
 // ─── Module-level caches (pure geometry — safe to share across calls) ──
-const _sampleCache  = new Map<string, Array<{ x: number; y: number }>>();
 const _bboxCache    = new Map<string, { w: number; h: number }>();
 const _areaCache    = new Map<string, number>();
 const _svgBBoxCache = new Map<string, { x: number; y: number; w: number; h: number }>();
 
-// ─── Point-sampling a pattern's SVG path into inch-space points ──────────
-// A user-uploaded/traced pattern can legitimately contain more than one
-// subpath (multiple "M" commands) — e.g. a compound shape, a stray
-// duplicate segment from a tracing tool, or a piece with a cutout. Walking
-// getTotalLength()/getPointAtLength() across the WHOLE path as one
-// continuous sample would silently draw a bogus straight edge bridging the
-// end of one subpath to the start of the next (M doesn't consume any
-// length, so the sample sequence just jumps) — that fake edge then
-// corrupts every downstream shape check (collision mask, area, bbox).
-// Sampling each subpath through its OWN <path> element (so its own
-// getTotalLength/getPointAtLength never sees the other subpaths) and
-// keeping them as separate loops is the fix; a shared bbox/scale (from the
-// FULL original path) keeps their relative geometry intact.
-function splitSubpaths(svgPath: string): string[] {
-	const parts = svgPath.trim().split(/(?=[Mm])/).map((s) => s.trim()).filter(Boolean);
-	return parts.length ? parts : [svgPath];
-}
-
-const _multiSampleCache = new Map<string, Array<Array<{ x: number; y: number }>>>();
-
-// A polygon built from evenly-spaced samples along a curve is a chord
-// approximation — its boundary sits strictly INSIDE any convex bulge of the
-// true curve (a chord is always shorter than the arc it spans). A fixed
-// sample count is either wasteful on a tiny shape or dangerously coarse on
-// a large one (a big swept windshield edge with only ~80 samples spread
-// across its whole perimeter can leave visible gaps between chords and the
-// true curve — exactly what let two "verified non-colliding" masks still
-// cross when actually rendered). Target a fixed chord length in INCHES
-// instead of a fixed sample count, so resolution scales with the shape's
-// actual size.
-const TARGET_CHORD_INCHES = 0.03;
-const MIN_SAMPLES_PER_LOOP = 40;
-const MAX_SAMPLES_PER_LOOP = 500;
-
-function sampleSubpaths(
+// ─── THE path → inch mapping (single source of truth) ─────────────────
+// PRECISION: a pattern outline's true bounding box maps to EXACTLY
+// widthInches × heightInches (pathToInchSegs in ./pathGeometry). Patterns
+// are only ever saved with W × H in the outline's own proportions (see
+// sizeMatchesOutline), so this is one uniform scale — the uploaded shape at
+// its stated size, unaltered. Never letterbox, fit, or re-derive this.
+//
+// Outlines are then flattened by pathGeometry: every vertex exact (sharp
+// corners are never shaved), curves within CUT_TOLERANCE_INCHES (half a
+// plotter step). No DOM sampling — getPointAtLength() skips vertices.
+export function patternLoopsInches(
 	svgPath: string,
-	nominalW: number,
-	nominalH: number,
+	widthInches: number,
+	heightInches: number,
 ): Array<Array<{ x: number; y: number }>> {
-	const cacheKey = `${nominalW}|${nominalH}|${svgPath}`;
-	if (_multiSampleCache.has(cacheKey)) return _multiSampleCache.get(cacheKey)!;
+	const cacheKey = `${widthInches}|${heightInches}|${svgPath}`;
+	const hit = _loopCache.get(cacheKey);
+	if (hit) return hit;
+	const loops = flattenSegs(pathToInchSegs(svgPath, widthInches, heightInches), CUT_TOLERANCE_INCHES)
+		.map((l) => l.points);
+	if (!loops.length) throw new Error("Pattern outline has no cuttable geometry.");
+	_loopCache.set(cacheKey, loops);
+	return loops;
+}
+const _loopCache = new Map<string, Array<Array<{ x: number; y: number }>>>();
 
-	const fallback = [[
-		{ x: 0, y: 0 }, { x: nominalW, y: 0 }, { x: nominalW, y: nominalH }, { x: 0, y: nominalH },
-	]];
-
-	if (typeof document === "undefined") {
-		_multiSampleCache.set(cacheKey, fallback);
-		return fallback;
-	}
-	try {
-		const ns  = "http://www.w3.org/2000/svg";
-		const svg = document.createElementNS(ns, "svg");
-		document.body.appendChild(svg);
-
-		const fullEl = document.createElementNS(ns, "path") as SVGPathElement;
-		fullEl.setAttribute("d", svgPath);
-		svg.appendChild(fullEl);
-		const bbox = fullEl.getBBox();
-		svg.removeChild(fullEl);
-		// Uniform (fit-to-box) scale — independent X/Y factors would stretch
-		// any non-axis-aligned edge whenever the stored widthInches/heightInches
-		// don't exactly match the traced path's true aspect ratio, distorting
-		// polygon geometry. A single scale plus centering keeps the shape
-		// undistorted and simply fits it within the nominal box.
-		const scale = Math.min(nominalW / (bbox.width || 1), nominalH / (bbox.height || 1));
-		const offsetX = (nominalW - bbox.width * scale) / 2;
-		const offsetY = (nominalH - bbox.height * scale) / 2;
-
-		const loops: Array<Array<{ x: number; y: number }>> = [];
-		for (const sub of splitSubpaths(svgPath)) {
-			const el = document.createElementNS(ns, "path") as SVGPathElement;
-			el.setAttribute("d", sub);
-			svg.appendChild(el);
-			let total = 0;
-			try { total = el.getTotalLength(); } catch { total = 0; }
-			if (total > 0) {
-				const estInchLength = total * scale;
-				const samplesPerLoop = Math.min(
-					MAX_SAMPLES_PER_LOOP,
-					Math.max(MIN_SAMPLES_PER_LOOP, Math.ceil(estInchLength / TARGET_CHORD_INCHES)),
-				);
-				const step = total / samplesPerLoop;
-				const pts: Array<{ x: number; y: number }> = [];
-				for (let i = 0; i <= samplesPerLoop; i++) {
-					const pt = el.getPointAtLength(i * step);
-					pts.push({ x: (pt.x - bbox.x) * scale + offsetX, y: (pt.y - bbox.y) * scale + offsetY });
-				}
-				loops.push(pts);
-			}
-			svg.removeChild(el);
-		}
-		document.body.removeChild(svg);
-
-		const result = loops.length ? loops : fallback;
-		_multiSampleCache.set(cacheKey, result);
-		return result;
-	} catch {
-		_multiSampleCache.set(cacheKey, fallback);
-		return fallback;
-	}
+function sampleSubpaths(svgPath: string, nominalW: number, nominalH: number) {
+	return patternLoopsInches(svgPath, nominalW, nominalH);
 }
 
-// Flat single-loop sampling — only safe for uses that don't care about a
-// bogus bridging edge between subpaths, i.e. plain bbox extent (min/max
-// over points is unaffected by which edges connect them).
-function samplePathInchPoints(
-	svgPath: string,
-	nominalW: number,
-	nominalH: number,
-	samples = 120,
-): Array<{ x: number; y: number }> {
-	const cacheKey = `${nominalW}|${nominalH}|${samples}|${svgPath}`;
-	if (_sampleCache.has(cacheKey)) return _sampleCache.get(cacheKey)!;
-
-	const fallback = [
-		{ x: 0, y: 0 },
-		{ x: nominalW, y: 0 },
-		{ x: nominalW, y: nominalH },
-		{ x: 0, y: nominalH },
-	];
-
-	if (typeof document === "undefined") {
-		_sampleCache.set(cacheKey, fallback);
-		return fallback;
-	}
-	try {
-		const ns  = "http://www.w3.org/2000/svg";
-		const svg = document.createElementNS(ns, "svg");
-		const el  = document.createElementNS(ns, "path") as SVGPathElement;
-		el.setAttribute("d", svgPath);
-		svg.appendChild(el);
-		document.body.appendChild(svg);
-
-		const total  = el.getTotalLength();
-		const step   = total / samples;
-		const bbox   = el.getBBox();
-		// Uniform (fit-to-box) scale — see sampleSubpaths() for why independent
-		// X/Y factors are unsafe.
-		const scale = Math.min(nominalW / (bbox.width || 1), nominalH / (bbox.height || 1));
-		const offsetX = (nominalW - bbox.width * scale) / 2;
-		const offsetY = (nominalH - bbox.height * scale) / 2;
-
-		const pts: Array<{ x: number; y: number }> = [];
-		for (let i = 0; i <= samples; i++) {
-			const pt = el.getPointAtLength(i * step);
-			pts.push({
-				x: (pt.x - bbox.x) * scale + offsetX,
-				y: (pt.y - bbox.y) * scale + offsetY,
-			});
-		}
-		document.body.removeChild(svg);
-		_sampleCache.set(cacheKey, pts);
-		return pts;
-	} catch {
-		_sampleCache.set(cacheKey, fallback);
-		return fallback;
-	}
+// ─── Sheet (model) coordinate system ──────────────────────────────────
+// ⚠ PRECISION: the sheet model uses the PLOTTER's convention — x along the
+// roll length, y across the roll width, y pointing UP (right-handed, like
+// HPGL and DXF). Artwork is drawn in SVG convention (y DOWN), so every
+// pattern enters the model with its y axis converted (y → H − y). Without
+// this the plotter would receive the art mirrored. The studio canvas is an
+// exact rotated view of this model and exporters convert from it (SVG back
+// to y-down), so what is shown, nested and cut is the uploaded art itself —
+// never its mirror image.
+const _modelLoopCache = new Map<string, Array<Array<{ x: number; y: number }>>>();
+function modelLoops(svgPath: string, w: number, h: number): Array<Array<{ x: number; y: number }>> {
+	const key = `${w}|${h}|${svgPath}`;
+	const hit = _modelLoopCache.get(key);
+	if (hit) return hit;
+	const loops = sampleSubpaths(svgPath, w, h).map((loop) => loop.map((p) => ({ x: p.x, y: h - p.y })));
+	_modelLoopCache.set(key, loops);
+	return loops;
 }
 
 function tightBboxAtRotation(
@@ -238,7 +151,7 @@ function tightBboxAtRotation(
 	const cacheKey = `${nominalW}|${nominalH}|${rotDeg}|${svgPath}`;
 	if (_bboxCache.has(cacheKey)) return _bboxCache.get(cacheKey)!;
 
-	const pts = samplePathInchPoints(svgPath, nominalW, nominalH);
+	const pts = modelLoops(svgPath, nominalW, nominalH).flat();
 	const cx  = nominalW / 2;
 	const cy  = nominalH / 2;
 	const rad = (rotDeg * Math.PI) / 180;
@@ -255,12 +168,14 @@ function tightBboxAtRotation(
 		if (ry > maxY) maxY = ry;
 	}
 
-	const result = { w: Math.max(0.1, maxX - minX), h: Math.max(0.1, maxY - minY) };
+	const result = { w: maxX - minX, h: maxY - minY };
 	_bboxCache.set(cacheKey, result);
 	return result;
 }
 
 // ─── Polygon area (shoelace) — used for efficiency % reporting ─────────
+// Pass pattern.widthInches/heightInches — never item.width/height, which
+// is the post-rotation bbox.
 export function samplePolygonArea(
 	svgPath: string,
 	widthInches: number,
@@ -288,28 +203,10 @@ export function getSvgPathBBox(
 	svgPath: string,
 ): { x: number; y: number; w: number; h: number } {
 	if (_svgBBoxCache.has(svgPath)) return _svgBBoxCache.get(svgPath)!;
-
-	const fallback = { x: 0, y: 0, w: 100, h: 100 };
-	if (typeof document === "undefined") {
-		_svgBBoxCache.set(svgPath, fallback);
-		return fallback;
-	}
-	try {
-		const ns  = "http://www.w3.org/2000/svg";
-		const svg = document.createElementNS(ns, "svg");
-		const el  = document.createElementNS(ns, "path") as SVGPathElement;
-		el.setAttribute("d", svgPath);
-		svg.appendChild(el);
-		document.body.appendChild(svg);
-		const b = el.getBBox();
-		document.body.removeChild(svg);
-		const result = { x: b.x, y: b.y, w: b.width, h: b.height };
-		_svgBBoxCache.set(svgPath, result);
-		return result;
-	} catch {
-		_svgBBoxCache.set(svgPath, fallback);
-		return fallback;
-	}
+	const b = pathBBox(parsePath(svgPath));
+	const result = { x: b.x, y: b.y, w: b.width, h: b.height };
+	_svgBBoxCache.set(svgPath, result);
+	return result;
 }
 
 // ─── Multi-loop bounds ─────────────────────────
@@ -335,7 +232,7 @@ function boundsOfLoops(loops: Polygon[]): { minX: number; minY: number; maxX: nu
 // subpath — see sampleSubpaths for why a multi-subpath pattern can't be
 // flattened into a single loop without corrupting its shape.
 export function truePolygonsAt(item: CanvasItem, rotDeg: number): Polygon[] {
-	const loops = sampleSubpaths(
+	const loops = modelLoops(
 		item.pattern.svgPath,
 		item.pattern.widthInches,
 		item.pattern.heightInches,
@@ -355,7 +252,16 @@ export function truePolygonsAt(item: CanvasItem, rotDeg: number): Polygon[] {
 // box that both the renderer and itemFootprintPolygons (once translated by
 // item.x/y) treat as truth. Shared by both so they can never disagree.
 function localFootprintPolygons(item: CanvasItem): Polygon[] {
-	const local = truePolygonsAt(item, item.rotation);
+	return footprintAt(item, item.rotation);
+}
+
+// Footprint at an arbitrary rotation WITH the item's mirror flags — the
+// one shape used for display, collision masks and cutting alike.
+// ⚠ PRECISION: collision masks MUST use this (not truePolygonsAt): a
+// mirrored piece checked with its un-mirrored shape can overlap its
+// neighbours in the actual cut.
+function footprintAt(item: CanvasItem, rotDeg: number): Polygon[] {
+	const local = truePolygonsAt(item, rotDeg);
 	if (!item.flippedH && !item.flippedV) return local;
 	const b = boundsOfLoops(local);
 	const w = b.maxX, h = b.maxY;
@@ -379,14 +285,40 @@ function localFootprintPolygons(item: CanvasItem): Polygon[] {
 // overlapped. A consumer only ever needs to set
 // `viewBox="0 0 {item.width} {item.height}"` with no further rotation or
 // flip transform — both are already baked into these coordinates.
+// An open cut line (not a closed shape) must never be drawn closed.
+function isClosed(loop: Polygon): boolean {
+	const a = loop[0], b = loop[loop.length - 1];
+	return loop.length > 2 && Math.abs(a.x - b.x) < 1e-9 && Math.abs(a.y - b.y) < 1e-9;
+}
+
 export function tightPathAt(item: CanvasItem): string {
 	const loops = localFootprintPolygons(item);
 	return loops
 		.map((loop) => {
 			if (loop.length === 0) return "";
 			const [first, ...rest] = loop;
-			const cmds = rest.map((p) => `L ${p.x.toFixed(3)} ${p.y.toFixed(3)}`).join(" ");
-			return `M ${first.x.toFixed(3)} ${first.y.toFixed(3)} ${cmds} Z`;
+			const cmds = rest.map((p) => `L ${p.x.toFixed(4)} ${p.y.toFixed(4)}`).join(" ");
+			return `M ${first.x.toFixed(4)} ${first.y.toFixed(4)} ${cmds}${isClosed(loop) ? " Z" : ""}`;
+		})
+		.filter(Boolean)
+		.join(" ");
+}
+
+// ─── Screen path for the studio canvas ────────────────────────────────
+// ⚠ PRECISION: the same outline as tightPathAt (model, y UP) expressed in
+// the item box's screen coordinates (CSS/SVG, y DOWN) — y → height − y. The
+// studio positions each box y-up (top = sheetWidth − y − height), so drawing
+// this inside the box makes the canvas an exact, un-mirrored view of the
+// model the plotter receives. Use this for anything drawn in a y-down SVG.
+export function canvasPathAt(item: CanvasItem): string {
+	const loops = localFootprintPolygons(item);
+	const h = boundsOfLoops(loops).maxY;
+	return loops
+		.map((loop) => {
+			if (loop.length === 0) return "";
+			const [first, ...rest] = loop;
+			const cmds = rest.map((p) => `L ${p.x.toFixed(4)} ${(h - p.y).toFixed(4)}`).join(" ");
+			return `M ${first.x.toFixed(4)} ${(h - first.y).toFixed(4)} ${cmds}${isClosed(loop) ? " Z" : ""}`;
 		})
 		.filter(Boolean)
 		.join(" ");
@@ -414,6 +346,9 @@ export function trueBBoxAt(item: CanvasItem, rotDeg: number): { width: number; h
 // Anything that needs to know a placed piece's true occupied space (the
 // renderer, a manual-edit overlap guard) should call this rather than
 // re-deriving its own notion of the transform chain.
+//
+// PRECISION: this is also what the blade cuts — hpgl.ts exports HPGL, DXF
+// and SVG straight from these polygons. Change it and you change the cut.
 export function itemFootprintPolygons(item: CanvasItem): Polygon[] {
 	return localFootprintPolygons(item).map((loop) => translatePolygon(loop, item.x, item.y));
 }
@@ -508,11 +443,13 @@ function getMask(
 	rotDeg: number,
 	bufferInches: number,
 ): { mask: RasterMask; trueW: number; trueH: number } {
-	const key = `${item.pattern.id}|${rotDeg}|${bufferInches.toFixed(3)}`;
+	// Keyed by the exact geometry (outline, size, mirror flags) — never just
+	// the pattern id, which two differently-shaped pieces can share.
+	const key = `${item.pattern.widthInches}|${item.pattern.heightInches}|${item.flippedH ? 1 : 0}${item.flippedV ? 1 : 0}|${rotDeg}|${bufferInches}|${item.pattern.svgPath}`;
 	const cached = _maskCache.get(key);
 	if (cached) return cached;
 
-	const trueLocal = truePolygonsAt(item, rotDeg);
+	const trueLocal = footprintAt(item, rotDeg);
 	const tb = boundsOfLoops(trueLocal);
 	const trueW = tb.maxX, trueH = tb.maxY;
 
@@ -642,6 +579,35 @@ function candidateAnchors(
 	return list;
 }
 
+// ─── Allowed rotations ─────────────────────────────────────────────────
+// Rotation only changes where a piece sits — never its shape or size — so
+// the packer may turn pieces to save roll: every 5° (72 orientations), right
+// angles first so ties keep straight edges square to the roll.
+//
+// Greedy one-piece-at-a-time placement with fine angles can use MORE roll
+// than right angles alone (measured: 20 mixed pieces 278.8" vs 243.7"), so
+// every nest runs BOTH sets and keeps whichever uses the least roll — fine
+// angles are only ever used when they genuinely save material.
+export const ROTATION_STEP_DEG = 5;
+const RIGHT_ANGLES = [0, 90, 180, 270];
+const FINE_ROTATIONS: number[] = (() => {
+	const rest: number[] = [];
+	for (let r = 0; r < 360; r += ROTATION_STEP_DEG) if (!RIGHT_ANGLES.includes(r)) rest.push(r);
+	return [...RIGHT_ANGLES, ...rest];
+})();
+type RotSet = "none" | "right" | "fine";
+// How a single piece's candidate positions are ranked (each trial uses one):
+//   left    — nearest the job start, then nearest the roll edge (bottom-left)
+//   compact — nearest the roll edge, then nearest the job start
+//   reach   — least roll consumed by this piece (its far edge along the
+//             length), then nearest the edge: fills across the roll width
+//             before using more length, and lets a rotation that shortens a
+//             piece's footprint win a tie against a right angle.
+type Scoring = "left" | "compact" | "reach";
+const rotationsFor = (set: RotSet) => (set === "fine" ? FINE_ROTATIONS : set === "right" ? RIGHT_ANGLES : [0]);
+/** Time the instant re-pack may spend exploring fine angles (right angles always run fully). */
+const QUICK_FINE_BUDGET_MS = 400;
+
 // ─── Placing one item against a partially-placed layout ───────────────
 interface PlaceResult {
 	ax: number; ay: number; rot: number;
@@ -653,12 +619,12 @@ function placeOneItem(
 	occupied: OccupiedGeom[],
 	occ: OccGrid,
 	opts: {
-		allowRotation: boolean; bufferInches: number;
+		rotSet: RotSet; bufferInches: number;
 		marginCells: number; rollWidthCells: number; maxLenCells: number;
-		scoring: "left" | "compact"; preferredRot?: number;
+		scoring: Scoring; preferredRot?: number;
 	},
 ): PlaceResult | null {
-	const rotations = opts.allowRotation ? [0, 90, 180, 270] : [0];
+	const rotations = rotationsFor(opts.rotSet);
 	const rotOrder = opts.preferredRot !== undefined
 		? [opts.preferredRot, ...rotations.filter((r) => r !== opts.preferredRot)]
 		: rotations;
@@ -679,7 +645,9 @@ function placeOneItem(
 			if (occ.collides(mask, ax, ay, item.id)) continue;
 			const score = opts.scoring === "compact"
 				? ay * 1e7 + ax
-				: ax * 1e7 + ay;
+				: opts.scoring === "reach"
+					? (ax + mask.maxCol) * 1e7 + ay
+					: ax * 1e7 + ay;
 			if (!best || score < best.score) {
 				best = { ax, ay, rot, trueW, trueH, mask, score };
 			}
@@ -692,11 +660,12 @@ function placeOneItem(
 function packOrder(
 	items: CanvasItem[],
 	sheet: MaterialSheet,
-	allowRotation: boolean,
+	rotSet: RotSet,
 	bufferInches: number,
-	scoring: "left" | "compact",
+	scoring: Scoring,
 	rotHints?: Map<string, number>,
-): CanvasItem[] {
+	deadline?: number,
+): CanvasItem[] | null {
 	const occ = new OccGrid();
 	const marginCells   = Math.round(toCells(edgeMarginFor(bufferInches)));
 	const rollWidthCells = Math.round(toCells(sheet.heightInches));
@@ -707,8 +676,9 @@ function packOrder(
 	let overflowRow = 0;
 
 	for (const item of items) {
+		if (deadline !== undefined && Date.now() > deadline) return null;
 		const best = placeOneItem(item, occupied, occ, {
-			allowRotation, bufferInches, marginCells, rollWidthCells, maxLenCells,
+			rotSet, bufferInches, marginCells, rollWidthCells, maxLenCells,
 			scoring, preferredRot: rotHints?.get(item.id),
 		});
 
@@ -881,16 +851,19 @@ function shuffled<T>(arr: T[], seed: number): T[] {
 
 // ─── Run a batch of orderings, keep the best ──────────────────────────
 function runTrials(
-	orderings: Array<{ order: CanvasItem[]; scoring: "left" | "compact"; hints?: Map<string, number> }>,
+	orderings: Array<{ order: CanvasItem[]; scoring: Scoring; hints?: Map<string, number> }>,
 	sheet: MaterialSheet,
-	allowRotation: boolean,
+	rotSet: RotSet,
 	bufferInches: number,
-	withinBudget?: () => boolean,
+	deadline?: number,
+	start: CanvasItem[] | null = null,
 ): CanvasItem[] {
-	let best: CanvasItem[] | null = null;
+	let best: CanvasItem[] | null = start;
 	for (const { order, scoring, hints } of orderings) {
-		if (best !== null && withinBudget && !withinBudget()) break;
-		const result = packOrder(order, sheet, allowRotation, bufferInches, scoring, hints);
+		if (best !== null && deadline !== undefined && Date.now() >= deadline) break;
+		// Only abandon a trial mid-way when there is already a result to keep.
+		const result = packOrder(order, sheet, rotSet, bufferInches, scoring, hints, best ? deadline : undefined);
+		if (!result) break;
 		if (!best || better(result, best)) best = result;
 	}
 	return best!;
@@ -906,7 +879,7 @@ function runTrials(
 function ruinAndRecreate(
 	current: CanvasItem[],
 	sheet: MaterialSheet,
-	allowRotation: boolean,
+	rotSet: RotSet,
 	bufferInches: number,
 	deadline: number,
 	rotHints?: Map<string, number>,
@@ -944,7 +917,7 @@ function ruinAndRecreate(
 		}
 
 		const reinsertOrder = shuffled(removed, seed + 7919);
-		const scoring: "left" | "compact" = (Math.abs(seed) % 2 === 0) ? "left" : "compact";
+		const scoring: Scoring = (["left", "compact", "reach"] as const)[Math.abs(seed) % 3];
 		const rebuilt: CanvasItem[] = kept.filter((i) => i.outOfBounds ? false : true);
 		// Keep already-placed OOB pieces in the output too (they'll be
 		// re-tried below alongside the ruined set).
@@ -953,7 +926,7 @@ function ruinAndRecreate(
 		let overflowRow = 0;
 		for (const item of [...reinsertOrder, ...stillOob]) {
 			const best = placeOneItem(item, occupied, occ, {
-				allowRotation, bufferInches, marginCells, rollWidthCells, maxLenCells,
+				rotSet, bufferInches, marginCells, rollWidthCells, maxLenCells,
 				scoring, preferredRot: rotHints?.get(item.id),
 			});
 			if (best) {
@@ -1000,9 +973,9 @@ function verifySafety(
 	const maxLength = sheet.widthInches;
 	const margin = edgeMarginFor(bufferInches);
 
-	return items.map((it) => {
+	const bounded = items.map((it) => {
 		if (it.outOfBounds) return it;
-		const loops = truePolygonsAt(it, it.rotation).map((loop) => translatePolygon(loop, it.x, it.y));
+		const loops = itemFootprintPolygons(it);
 		const b = boundsOfLoops(loops);
 		const fits =
 			b.minX >= -0.01 &&
@@ -1017,6 +990,27 @@ function verifySafety(
 			outOfBounds: true,
 		};
 	});
+
+	// ⚠ PRECISION backstop: two pieces that would physically overlap in the
+	// cut are never both cut. The placer should make this impossible; if it
+	// ever happens, the later piece is held off the roll (and logged) rather
+	// than ruining both parts.
+	const placed: Array<{ it: CanvasItem; polys: Polygon[]; b: ReturnType<typeof boundsOfLoops> }> = [];
+	return bounded.map((it) => {
+		if (it.outOfBounds) return it;
+		const polys = itemFootprintPolygons(it);
+		const b = boundsOfLoops(polys);
+		const hit = placed.find((o) =>
+			b.minX < o.b.maxX && o.b.minX < b.maxX && b.minY < o.b.maxY && o.b.minY < b.maxY &&
+			polys.some((pa) => o.polys.some((pb) => polygonsOverlap(pa, pb))),
+		);
+		if (hit) {
+			if (typeof console !== "undefined") console.error("NEST OVERLAP BLOCKED", { a: hit.it.id, b: it.id });
+			return { ...it, x: maxLength + margin, y: margin, outOfBounds: true };
+		}
+		placed.push({ it, polys, b });
+		return it;
+	});
 }
 
 // ─── Shared trial-set builder ──────────────────
@@ -1024,15 +1018,16 @@ function buildOrderings(
 	items: CanvasItem[],
 	hints: Map<string, number> | undefined,
 	sortCount: number,
-): Array<{ order: CanvasItem[]; scoring: "left" | "compact"; hints?: Map<string, number> }> {
+): Array<{ order: CanvasItem[]; scoring: Scoring; hints?: Map<string, number> }> {
 	const pairs = detectComplementaryPairs(items);
 	const sortFns = getSortHeuristics().slice(0, sortCount);
 	const baseOrderings = [
 		...sortFns.map((fn) => [...items].sort(fn)),
 		...buildPairedOrderings(items, pairs),
 	];
-	const orderings: Array<{ order: CanvasItem[]; scoring: "left" | "compact"; hints?: Map<string, number> }> = [];
+	const orderings: Array<{ order: CanvasItem[]; scoring: Scoring; hints?: Map<string, number> }> = [];
 	for (const order of baseOrderings) {
+		orderings.push({ order, scoring: "reach", hints });
 		orderings.push({ order, scoring: "left", hints });
 		orderings.push({ order, scoring: "compact", hints });
 	}
@@ -1081,7 +1076,10 @@ export function bestNest(
 	if (!items.length) return items;
 	const hints = computeGroupRotationHints(items, allowRotation);
 	const orderings = buildOrderings(items, hints, 5);
-	const best = runTrials(orderings, sheet, allowRotation, bufferInches);
+	// Right angles always run in full; fine angles within a time budget, and
+	// only replace the result when they use less roll (see ROTATION_STEP_DEG).
+	let best = runTrials(orderings, sheet, allowRotation ? "right" : "none", bufferInches);
+	if (allowRotation) best = runTrials(orderings, sheet, "fine", bufferInches, Date.now() + QUICK_FINE_BUDGET_MS, best);
 	const result = verifySafety(best, sheet, bufferInches);
 	logAnyOverlaps(result, "bestNest");
 	return result;
@@ -1107,11 +1105,12 @@ export function smartNest(
 		return { items, improvementPct: 0, trialsRun: 0 };
 	}
 
-	const deadline = Date.now() + 3000;
-	const withinBudget = () => Date.now() < deadline;
+	const startMs = Date.now();
+	const BUDGET_MS = 3000;
+	const deadline = startMs + BUDGET_MS;
 
 	// Naive baseline: original order, no optimization, to report the gain against.
-	const baseline = packOrder(items, sheet, allowRotation, bufferInches, "left");
+	const baseline = packOrder(items, sheet, allowRotation ? "right" : "none", bufferInches, "left")!;
 	const baselineLen = usedLength(baseline);
 
 	const hints = computeGroupRotationHints(items, allowRotation);
@@ -1119,12 +1118,17 @@ export function smartNest(
 	const RANDOM_TRIALS = items.length <= 15 ? 40 : items.length <= 30 ? 20 : 10;
 	for (let seed = 0; seed < RANDOM_TRIALS; seed++) {
 		const order = shuffled(items, seed * 7919 + 1);
+		orderings.push({ order, scoring: "reach", hints });
 		orderings.push({ order, scoring: "left", hints });
 		orderings.push({ order, scoring: "compact", hints });
 	}
 
-	let best = runTrials(orderings, sheet, allowRotation, bufferInches, withinBudget);
-	best = ruinAndRecreate(best, sheet, allowRotation, bufferInches, deadline, hints);
+	// Budget: right-angle trials, then fine-angle trials, then ruin-and-
+	// recreate with fine angles — every step keeps a result only if it uses
+	// less roll, so fine angles can never make the nest worse.
+	let best = runTrials(orderings, sheet, allowRotation ? "right" : "none", bufferInches, startMs + BUDGET_MS * 0.35);
+	if (allowRotation) best = runTrials(orderings, sheet, "fine", bufferInches, startMs + BUDGET_MS * 0.7, best);
+	best = ruinAndRecreate(best, sheet, allowRotation ? "fine" : "none", bufferInches, deadline, hints);
 	best = verifySafety(best, sheet, bufferInches);
 	logAnyOverlaps(best, "smartNest");
 
@@ -1142,7 +1146,7 @@ export interface PlacementResult {
 	y: number;
 	width: number;
 	height: number;
-	rotation: number; // 0 | 90 | 180 | 270
+	rotation: number; // degrees, multiple of ROTATION_STEP_DEG
 	outOfBounds: boolean;
 }
 

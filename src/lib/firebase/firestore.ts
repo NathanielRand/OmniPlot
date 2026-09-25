@@ -24,6 +24,7 @@ import {
 	type Unsubscribe,
 } from "firebase/firestore";
 import { db, auth } from "./client";
+import { sizeError } from "$lib/utils/patternSize";
 import type {
 	UserProfile,
 	Vehicle,
@@ -543,8 +544,27 @@ export async function deleteVehicleDoc(id: string): Promise<void> {
 	await deleteDoc(doc(db, Collections.VEHICLES, id));
 }
 
+// ─── Pattern size guard ───────────────────────
+// ⚠ PRECISION: last line of defence before anything is stored. A pattern's
+// outline, width and height are always written together, and W × H must
+// have exactly the outline's proportions (see $lib/utils/patternSize) — a
+// stretched or squashed pattern can never be saved, from any code path.
+function assertExactSize(
+	p: { svgPath?: string; widthInches?: number; heightInches?: number },
+	what: string,
+): void {
+	const touched = p.svgPath !== undefined || p.widthInches !== undefined || p.heightInches !== undefined;
+	if (!touched) return;
+	if (p.svgPath === undefined || p.widthInches === undefined || p.heightInches === undefined) {
+		throw new Error(`${what}: outline, width and height must be saved together.`);
+	}
+	const err = sizeError({ widthInches: p.widthInches, heightInches: p.heightInches }, p.svgPath);
+	if (err) throw new Error(`${what}: ${err}`);
+}
+
 // ─── Pattern CRUD ─────────────────────────────
 export async function setPatternDoc(p: Pattern): Promise<void> {
+	assertExactSize(p, `Pattern "${p.name}"`);
 	await setDoc(
 		doc(db, Collections.PATTERNS, p.id),
 		{
@@ -576,6 +596,7 @@ export async function updatePatternDoc(
 	id: string,
 	patch: Partial<Pattern>,
 ): Promise<void> {
+	assertExactSize(patch, "Pattern update");
 	await updateDoc(doc(db, Collections.PATTERNS, id), {
 		...withDeletes(patch),
 		updatedAt: serverTimestamp(),
@@ -627,6 +648,7 @@ function toUserPattern(id: string, data: DocumentData): UserPattern {
 export async function addUserPattern(
 	data: Omit<UserPattern, "id" | "createdAt" | "updatedAt" | "status" | "isPublished">,
 ): Promise<string> {
+	assertExactSize(data, `Pattern "${data.name}"`);
 	const ref = doc(collection(db, Collections.USER_PATTERNS));
 	const { vehicleId, notes, adminNotes, patternName, address, propertyLabel, ...rest } = data;
 	await setDoc(ref, {
@@ -670,6 +692,7 @@ export async function updateUserPattern(
 		| "projectType" | "patternName" | "address" | "propertyLabel"
 	>>,
 ): Promise<void> {
+	assertExactSize(patch, "Pattern update");
 	const update: Record<string, unknown> = { ...patch, updatedAt: serverTimestamp() };
 	if (patch.submitToCommunity !== undefined) {
 		update.status = patch.submitToCommunity ? "pending" : "private";
@@ -690,6 +713,7 @@ export async function adminUpdateUserPattern(
 	id: string,
 	patch: Partial<UserPattern>,
 ): Promise<void> {
+	assertExactSize(patch, "Submission update");
 	await updateDoc(doc(db, Collections.USER_PATTERNS, id), {
 		...withDeletes(patch),
 		updatedAt: serverTimestamp(),
@@ -778,6 +802,7 @@ export async function batchSeedData(
 	requests: PatternRequest[],
 ): Promise<{ created: number; skipped: number }> {
 	const allPatterns = Object.values(patternsMap).flat();
+	for (const p of allPatterns) assertExactSize(p, `Seed pattern "${p.name}"`);
 	const [vSnap, pSnap, rSnap] = await Promise.all([
 		getDocs(collection(db, Collections.VEHICLES)),
 		getDocs(collection(db, Collections.PATTERNS)),
