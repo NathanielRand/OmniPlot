@@ -980,9 +980,84 @@ export const FAQ_ITEMS = [
 // ─── Changelog ────────────────────────────────
 // Newest first. `LATEST_VERSION` drives the sidebar "what's new" badge —
 // bump it whenever a release entry is added below.
-export const LATEST_VERSION = "1.10.0";
+export const LATEST_VERSION = "1.11.0";
 
 export const CHANGELOG = [
+	{
+		version: "1.11.0",
+		date: "2026-09-25",
+		label: "Exact patterns & precision cutting",
+		changes: [
+			{
+				type: "feature",
+				text: "Exact pattern reproduction — your uploaded shape is now saved, shown, placed and cut exactly as drawn: every corner, angle and curve, at its exact size. Nothing is stretched, rounded off or smoothed.",
+			},
+			{
+				type: "feature",
+				text: "Pattern size lock — enter the width or the height and the other is calculated from the outline, so a pattern can never be saved stretched. Older patterns whose size doesn't match their outline are flagged in My patterns until you re-enter one dimension.",
+			},
+			{
+				type: "feature",
+				text: "Cut orientation test — cut a small letter F on scrap, answer two quick questions, and OmniPlot sets your plotter so the cut always matches the canvas (never mirrored). Find it in the Studio plotter calibration panel.",
+			},
+			{
+				type: "feature",
+				text: "Length ruler down the side of the Studio canvas, with the same 5\"/10\"/20\"/30\" ticks as the width ruler and a marker showing exactly how much roll the job uses. Every piece on the canvas also shows its size.",
+			},
+			{
+				type: "feature",
+				text: "Pattern importer: PDF uploads, an Enhance button to clean up blurry photos before tracing, rotate-left/right for sideways photos, and Save Draft on every step of the upload form.",
+			},
+			{
+				type: "feature",
+				text: "Pattern details in the library — a large true-proportion preview, notes, and \"Add both sides\" to add a driver/passenger pair in one click.",
+			},
+			{
+				type: "feature",
+				text: "Two-way support tickets — reply to our team right inside OmniPlot and get notified when we answer.",
+			},
+			{
+				type: "improvement",
+				text: "Smarter nesting — pieces can turn in 5° steps when that genuinely saves roll (never when it doesn't), mirrored pieces pack correctly, pieces keep clear of the roll edges, and every manual move, rotate or flip is checked so pieces can't overlap. Selected pieces can also be rotated to any exact angle.",
+			},
+			{
+				type: "improvement",
+				text: "SVG imports keep every shape and contour in the file, including holes and multi-part designs. Files containing text or embedded images now explain what to fix instead of silently leaving parts out.",
+			},
+			{
+				type: "improvement",
+				text: "Library accuracy — counts and filters always match what's shown, requests work for residential, commercial and custom projects, and My patterns has status, category and search filters.",
+			},
+			{
+				type: "improvement",
+				text: "Community reference templates are now exact rectangles at their listed sizes.",
+			},
+			{
+				type: "improvement",
+				text: "More materials and plotter presets (sign vinyl, HTV, gasket, stencil, wide-format), a custom roll width, a USB device picker for newly connected plotters, and a Rescan button for the Cut Agent.",
+			},
+			{
+				type: "improvement",
+				text: "Clearer tooltips everywhere, a full mobile and tablet pass, and plan limits and prices that always match your current plan.",
+			},
+			{
+				type: "fix",
+				text: "Fixed cuts that could come out mirrored or distorted — rotated pieces and SVG exports now match the canvas exactly, and overcut no longer extends open cut lines.",
+			},
+			{
+				type: "fix",
+				text: "Resuming an interrupted cut now only continues if the layout is unchanged, so remaining pieces always line up with what was already cut.",
+			},
+			{
+				type: "fix",
+				text: "Fixed the cut buffer resetting on reload, the piece delete button, long rolls not scrolling, zoom getting stuck, and My patterns sometimes not loading.",
+			},
+			{
+				type: "fix",
+				text: "Fixed PDF conversion and the Enhance step failing in production.",
+			},
+		],
+	},
 	{
 		version: "1.10.0",
 		date: "2026-09-04",
