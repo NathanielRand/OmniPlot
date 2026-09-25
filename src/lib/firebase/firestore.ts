@@ -458,6 +458,7 @@ export function toPatternRequest(id: string, data: DocumentData): PatternRequest
 		notes: data.notes ?? "",
 		votes: data.votes ?? 0,
 		status: data.status ?? "queued",
+		requestedBy: data.requestedBy ?? undefined,
 		requestedAt:
 			data.requestedAt instanceof Timestamp
 				? data.requestedAt.toDate().toISOString().split("T")[0]
@@ -515,6 +516,7 @@ export async function setVehicleDoc(v: VehicleEntry): Promise<void> {
 			popular: v.popular ?? false,
 			status: v.status,
 			updatedAt: v.updatedAt,
+			...(v.contributedBy ? { contributedBy: v.contributedBy } : {}),
 		},
 		{ merge: true },
 	);
@@ -736,6 +738,7 @@ export async function setRequestDoc(r: PatternRequest): Promise<void> {
 		votes: r.votes,
 		status: r.status,
 		requestedAt: r.requestedAt,
+		...(r.requestedBy ? { requestedBy: r.requestedBy } : {}),
 	});
 }
 

@@ -20,8 +20,35 @@
 		resolveAdjustmentRequest,
 	} from "$lib/firebase/firestore";
 	import { toastStore } from "$lib/stores";
+	import { auth } from "$lib/firebase/client";
 	import { tooltip } from "$lib/actions/tooltip";
 	import type { PatternCategory, PatternCoverage, PatternZone, UserPattern, UserPatternStatus, PatternAdjustmentRequest } from "$lib/types";
+
+	// ─── Users ────────────────────────────────────
+	// Every section below keys its rows by uid; this resolves them to people.
+	type AdminUserLite = { uid: string; displayName: string; email: string; tier: string };
+	let usersById = $state<Record<string, AdminUserLite>>({});
+
+	async function loadUsers() {
+		try {
+			const token = await auth.currentUser?.getIdToken();
+			const res   = await fetch("/api/admin/users", {
+				headers: token ? { Authorization: `Bearer ${token}` } : {},
+			});
+			if (!res.ok) throw new Error();
+			const data = await res.json();
+			usersById = Object.fromEntries((data.users as AdminUserLite[]).map((u) => [u.uid, u]));
+		} catch { toastStore.error("Load failed", "Could not fetch users."); }
+	}
+
+	// Narrows every section to one person's pattern activity.
+	let filterUser = $state<string | null>(null);
+	const matchesUser = (uid: string | undefined) => !filterUser || uid === filterUser;
+
+	function userLabel(uid: string): string {
+		const u = usersById[uid];
+		return u?.displayName || u?.email || `${uid.slice(0, 10)}…`;
+	}
 
 	// ─── Vehicles filter state ────────────────────
 	let search         = $state("");
@@ -43,7 +70,8 @@
 					`${v.make ?? ""} ${v.model ?? ""} ${v.year ?? ""} ${v.propertyLabel ?? ""} ${v.address ?? ""}`
 						.toLowerCase().includes(q);
 				const ms = filterStatus === "all" || v.status === filterStatus;
-				return mq && ms;
+				const mu = !filterUser || subjectContributors(v.id, v.contributedBy).includes(filterUser);
+				return mq && ms && mu;
 			})
 			.map((v) => {
 				const allPats = patternStore.getPatterns(v.id);
@@ -124,7 +152,8 @@
 								make: sub.make, model: subModel, year: subYear,
 								bodyStyle: sub.bodyStyle, status: "published",
 								tags: [], updatedAt: new Date().toISOString().split("T")[0],
-						  }).id;
+								contributedBy: sub.ownerId || undefined,
+							}).id;
 				} else {
 					const label = sub.propertyLabel || sub.patternName || sub.name;
 					const existing = patternStore.vehicles.find(
@@ -139,7 +168,8 @@
 								address: sub.address,
 								status: "published",
 								tags: [], updatedAt: new Date().toISOString().split("T")[0],
-						  }).id;
+								contributedBy: sub.ownerId || undefined,
+							}).id;
 				}
 			}
 
@@ -159,10 +189,11 @@
 			});
 
 			// Lock the user's copy
-			await adminUpdateUserPattern(reviewTarget.id, { isPublished: true, status: "approved" });
+			// vehicleId ties the submitter to the subject for the Contributors column.
+			await adminUpdateUserPattern(reviewTarget.id, { isPublished: true, status: "approved", vehicleId });
 
 			submissions = submissions.map((s) =>
-				s.id === reviewTarget!.id ? { ...s, isPublished: true, status: "approved" } : s,
+				s.id === reviewTarget!.id ? { ...s, isPublished: true, status: "approved", vehicleId } : s,
 			);
 			toastStore.success("Approved", `${sub.name} is now in the public library.`);
 			reviewTarget = null;
@@ -187,6 +218,18 @@
 	}
 
 	const pendingSubmissions = $derived(submissions.filter((s) => s.status === "pending"));
+	const shownSubmissions   = $derived(submissions.filter((s) => matchesUser(s.ownerId)));
+
+	// Community members behind a catalog subject: whoever's approved
+	// submission created it, plus everyone whose approved pattern links to it.
+	function subjectContributors(vehicleId: string, contributedBy?: string): string[] {
+		const ids = new Set<string>();
+		if (contributedBy) ids.add(contributedBy);
+		for (const s of submissions) {
+			if (s.status === "approved" && s.vehicleId === vehicleId && s.ownerId) ids.add(s.ownerId);
+		}
+		return [...ids];
+	}
 
 	// ─── Delete submission ────────────────────────
 	let pendingDeleteSubId = $state<string | null>(null);
@@ -285,6 +328,20 @@
 	}
 
 	const pendingAdjustments = $derived(adjustments.filter((a) => a.status === "pending"));
+	const shownAdjustments   = $derived(adjustments.filter((a) => matchesUser(a.requestedBy)));
+	const submissionsById    = $derived(Object.fromEntries(submissions.map((s) => [s.id, s])));
+
+	const shownRequests = $derived(patternStore.requests.filter((r) => matchesUser(r.requestedBy)));
+
+	// Everyone with any pattern activity, for the user filter.
+	const activeUsers = $derived.by(() => {
+		const ids = new Set<string>();
+		for (const s of submissions) if (s.ownerId) ids.add(s.ownerId);
+		for (const a of adjustments) if (a.requestedBy) ids.add(a.requestedBy);
+		for (const r of patternStore.requests) if (r.requestedBy) ids.add(r.requestedBy);
+		for (const v of patternStore.vehicles) if (v.contributedBy) ids.add(v.contributedBy);
+		return [...ids].sort((a, b) => userLabel(a).localeCompare(userLabel(b)));
+	});
 
 	// ─── Add Vehicle modal ────────────────────────
 	let showAddModal = $state(false);
@@ -428,10 +485,28 @@
 onMount(() => {
 		loadSubmissions();
 		loadAdjustments();
+		loadUsers();
 	});
 </script>
 
 <svelte:head><title>Patterns — Admin — OmniPlot</title></svelte:head>
+
+{#snippet userCell(uid: string | undefined)}
+	{#if uid}
+		<div class="user-cell">
+			<button
+				class="user-cell__name"
+				onclick={() => (filterUser = uid)}
+				use:tooltip={"Show only this user's pattern activity"}
+			>{userLabel(uid)}</button>
+			{#if usersById[uid]?.displayName && usersById[uid]?.email}
+				<div class="cell-meta">{usersById[uid].email}</div>
+			{/if}
+		</div>
+	{:else}
+		<span class="td-muted" use:tooltip={"Not recorded"}>—</span>
+	{/if}
+{/snippet}
 
 <div class="patterns-page">
 	<div class="page-header">
@@ -467,6 +542,24 @@ onMount(() => {
 		{/each}
 	</div>
 
+	<!-- User filter -->
+	<div class="user-filter">
+		<label class="user-filter__label" for="pf-user">User</label>
+		<select id="pf-user" class="form-input form-input--sm user-filter__select" bind:value={filterUser}>
+			<option value={null}>All users ({activeUsers.length})</option>
+			{#each activeUsers as uid (uid)}
+				<option value={uid}>{userLabel(uid)}{usersById[uid]?.displayName && usersById[uid]?.email ? ` · ${usersById[uid].email}` : ""}</option>
+			{/each}
+		</select>
+		{#if filterUser}
+			<span class="user-filter__summary">
+				{shownSubmissions.length} submissions · {shownAdjustments.length} adjustments · {shownRequests.length} requests · {filteredVehicles.length} subjects
+			</span>
+			<a class="action-btn" href="/admin/users?uid={filterUser}">Open account</a>
+			<button class="action-btn" onclick={() => (filterUser = null)}>Clear</button>
+		{/if}
+	</div>
+
 	<!-- ─── Community Submissions ─── -->
 	<div class="section">
 		<div class="section-header">
@@ -486,6 +579,7 @@ onMount(() => {
 				<thead>
 					<tr>
 						<th>Pattern</th>
+						<th>Submitted by</th>
 						<th>Vehicle</th>
 						<th>Category</th>
 						<th>Dimensions</th>
@@ -496,14 +590,14 @@ onMount(() => {
 				</thead>
 				<tbody>
 					{#if submissionsLoading}
-						<tr><td colspan="7" class="td-loading">
+						<tr><td colspan="8" class="td-loading">
 							<span class="ai-spinner" style="width:14px;height:14px" aria-hidden="true"></span>
 							Loading…
 						</td></tr>
-					{:else if submissions.length === 0}
-						<tr><td colspan="7" class="td-empty">No community submissions yet.</td></tr>
+					{:else if shownSubmissions.length === 0}
+						<tr><td colspan="8" class="td-empty">{filterUser ? "No submissions from this user." : "No community submissions yet."}</td></tr>
 					{:else}
-						{#each submissions as sub (sub.id)}
+						{#each shownSubmissions as sub (sub.id)}
 							<tr class:row-resolved={sub.status !== "pending"}>
 								<td>
 									<div class="pattern-cell">
@@ -518,6 +612,7 @@ onMount(() => {
 										</div>
 									</div>
 								</td>
+								<td>{@render userCell(sub.ownerId)}</td>
 								<td class="td-vehicle">{submissionSubjectLabel(sub)}</td>
 								<td>
 									<span class="cat-badge" style="--cat-accent: {categoryMeta(sub.category).accent}">
@@ -592,7 +687,7 @@ onMount(() => {
 			<table class="data-table" aria-label="Adjustment requests">
 				<thead>
 					<tr>
-						<th>Pattern ID</th>
+						<th>Pattern</th>
 						<th>Requested by</th>
 						<th>Notes</th>
 						<th>Submitted</th>
@@ -606,13 +701,20 @@ onMount(() => {
 							<span class="ai-spinner" style="width:14px;height:14px" aria-hidden="true"></span>
 							Loading…
 						</td></tr>
-					{:else if adjustments.length === 0}
-						<tr><td colspan="6" class="td-empty">No adjustment requests yet.</td></tr>
+					{:else if shownAdjustments.length === 0}
+						<tr><td colspan="6" class="td-empty">{filterUser ? "No adjustment requests from this user." : "No adjustment requests yet."}</td></tr>
 					{:else}
-						{#each adjustments as adj (adj.id)}
+						{#each shownAdjustments as adj (adj.id)}
 							<tr class:row-resolved={adj.status !== "pending"}>
-								<td class="td-mono" style="font-size:0.75rem">{adj.patternId.slice(0, 12)}…</td>
-								<td class="td-mono" style="font-size:0.75rem">{adj.requestedBy.slice(0, 10)}…</td>
+								<td>
+									{#if submissionsById[adj.patternId]}
+										<div class="cell-name">{submissionsById[adj.patternId].name}</div>
+										<div class="cell-meta">{submissionSubjectLabel(submissionsById[adj.patternId])}</div>
+									{:else}
+										<span class="td-mono" style="font-size:0.75rem">{adj.patternId.slice(0, 12)}…</span>
+									{/if}
+								</td>
+								<td>{@render userCell(adj.requestedBy)}</td>
 								<td class="td-notes">{adj.notes}</td>
 								<td class="td-date">{adj.createdAt.toLocaleDateString()}</td>
 								<td>
@@ -672,6 +774,7 @@ onMount(() => {
 				<thead>
 					<tr>
 						<th>Subject</th>
+						<th>Contributors</th>
 						<th>{filterCategory === "both" ? "Patterns" : `${categoryShortLabel(filterCategory)} patterns`}</th>
 						<th>Coverage</th>
 						<th>Status</th>
@@ -689,6 +792,13 @@ onMount(() => {
 									</div>
 									<div class="vehicle-name">{subjectName(v)}</div>
 								</div>
+							</td>
+							<td>
+								{#each subjectContributors(v.id, v.contributedBy) as uid (uid)}
+									{@render userCell(uid)}
+								{:else}
+									<span class="td-muted" use:tooltip={"Added by an admin"}>Catalog</span>
+								{/each}
 							</td>
 							<td class="td-mono">{v.published} / {v.patterns}</td>
 							<td>
@@ -736,7 +846,7 @@ onMount(() => {
 						</tr>
 					{/each}
 					{#if filteredVehicles.length === 0}
-						<tr><td colspan="6" class="td-empty">No vehicles match your search.</td></tr>
+						<tr><td colspan="7" class="td-empty">No subjects match your filters.</td></tr>
 					{/if}
 				</tbody>
 			</table>
@@ -752,18 +862,21 @@ onMount(() => {
 		<div class="table-wrap">
 			<table class="data-table" aria-label="Pattern requests">
 				<thead>
-					<tr><th>Vehicle</th><th>Notes</th><th>Votes</th><th>Requested</th><th>Status</th><th class="th-actions"></th></tr>
+					<tr><th>Vehicle</th><th>Requested by</th><th>Notes</th><th>Votes</th><th>Requested</th><th>Status</th><th class="th-actions"></th></tr>
 				</thead>
 				<tbody>
-					{#each patternStore.requests as r (r.id)}
+					{#each shownRequests as r (r.id)}
 						<tr class:row-done={r.status === "done"}>
 							<td class="td-vehicle">{r.vehicle}</td>
+							<td>{@render userCell(r.requestedBy)}</td>
 							<td class="td-notes">{r.notes || "—"}</td>
 							<td><div class="votes-cell"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8z"/></svg>{r.votes}</div></td>
 							<td class="td-date">{r.requestedAt}</td>
 							<td><Badge variant={r.status === "in-progress" ? "brand" : r.status === "done" ? "success" : "default"} size="sm" dot={r.status === "in-progress"}>{r.status}</Badge></td>
 							<td class="td-actions">{#if r.status !== "done"}<button class="action-btn" onclick={() => patternStore.advanceRequest(r.id)}>{r.status === "queued" ? "Start" : "Mark done"}</button>{/if}</td>
 						</tr>
+					{:else}
+						<tr><td colspan="7" class="td-empty">{filterUser ? "No pattern requests from this user." : "No pattern requests yet."}</td></tr>
 					{/each}
 				</tbody>
 			</table>
@@ -891,6 +1004,10 @@ onMount(() => {
 			<!-- Read-only meta -->
 			<div class="review-meta">
 				<div class="review-meta__row">
+					<span class="review-meta__label">Submitted by</span>
+					<span class="review-meta__val">{@render userCell(reviewTarget.ownerId)}</span>
+				</div>
+				<div class="review-meta__row">
 					<span class="review-meta__label">Category</span>
 					<span class="review-meta__val">{categoryLabel(reviewTarget.category)}</span>
 				</div>
@@ -955,7 +1072,7 @@ onMount(() => {
 	<div class="review-panel" role="dialog" tabindex="-1" aria-label="Edit submission">
 		<div class="review-panel__header">
 			<div>
-				<div class="review-panel__sub">Edit community submission · {editSubTarget.status}</div>
+				<div class="review-panel__sub">Edit community submission · {editSubTarget.status} · by {userLabel(editSubTarget.ownerId)}</div>
 				<h2 class="review-panel__title">{submissionSubjectLabel(editSubTarget)}</h2>
 			</div>
 			<button class="modal__close" onclick={() => (editSubTarget = null)} aria-label="Close">
@@ -1350,6 +1467,21 @@ onMount(() => {
 	.td-vehicle { font-size: 0.875rem; font-weight: 500; color: var(--text-primary); white-space: nowrap; }
 	.td-notes   { font-size: 0.75rem; color: var(--text-tertiary); max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 	.td-empty   { text-align: center; padding: 40px; color: var(--text-tertiary); }
+	.td-muted   { font-size: 0.75rem; color: var(--text-tertiary); }
+
+	.user-cell { display: flex; flex-direction: column; min-width: 0; }
+	.user-cell + .user-cell { margin-top: 4px; }
+	.user-cell__name {
+		all: unset; cursor: pointer; font-size: 0.8125rem; font-weight: 500; color: var(--text-primary);
+		white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px;
+	}
+	.user-cell__name:hover { color: var(--color-brand); text-decoration: underline; }
+	.user-cell__name:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; border-radius: 2px; }
+
+	.user-filter { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; }
+	.user-filter__label { font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.04em; }
+	.user-filter__select { width: auto; min-width: 240px; max-width: 100%; }
+	.user-filter__summary { font-size: 0.75rem; color: var(--text-tertiary); font-family: var(--font-mono); }
 	.td-loading { text-align: center; padding: 28px; color: var(--text-tertiary); display: flex; align-items: center; justify-content: center; gap: 8px; }
 	.td-actions { width: 100px; }
 

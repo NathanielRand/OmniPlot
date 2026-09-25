@@ -28,7 +28,7 @@ import {
 	updateRequestDoc,
 	batchSeedData,
 } from "$lib/firebase/firestore";
-import { toastStore } from "./stores.svelte";
+import { toastStore, userStore } from "./stores.svelte";
 
 export type { PatternStatus, RequestStatus, VehicleEntry, PatternRequest };
 
@@ -614,6 +614,7 @@ function createPatternStore() {
 			votes: 1,
 			status: "queued",
 			requestedAt: new Date().toISOString().split("T")[0],
+			requestedBy: userStore.user?.uid,
 		};
 		requests = [...requests, req];
 		syncRequest(req);

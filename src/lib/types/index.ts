@@ -506,6 +506,9 @@ export interface VehicleEntry {
 	popular?: boolean;
 	status: PatternStatus;
 	updatedAt: string;
+	// uid of the community member whose approved submission created this
+	// subject. Absent for subjects an admin added by hand.
+	contributedBy?: string;
 }
 
 export interface PatternRequest {
@@ -518,6 +521,7 @@ export interface PatternRequest {
 	votes: number;
 	status: RequestStatus;
 	requestedAt: string;
+	requestedBy?: string; // uid; absent on requests made before this was tracked
 }
 
 // ─── Insights / Blog ─────────────────────────

@@ -54,7 +54,10 @@ service cloud.firestore {
     // ─── Pattern requests ─────────────────────────────────────────────────
     match /requests/{requestId} {
       allow read:          if true;          // public — shows vote counts
-      allow create:        if signedIn();
+      // requestedBy is optional (older clients omit it) but can't be spoofed.
+      allow create:        if signedIn()
+                           && (!('requestedBy' in request.resource.data)
+                               || request.resource.data.requestedBy == uid());
       allow update, delete: if isAdmin();
     }
 
