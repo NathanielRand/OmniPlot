@@ -675,8 +675,6 @@ export interface PricingPlan {
 		prioritySupport: boolean;
 		exportFormats: ExportFormat[];
 	};
-	stripePriceId: string;
-	stripeYearlyPriceId: string;
 	popular?: boolean;
 	badge?: string;
 }

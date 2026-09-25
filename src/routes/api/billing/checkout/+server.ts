@@ -3,6 +3,8 @@ import type { RequestHandler } from './$types';
 import Stripe from 'stripe';
 import { stripe, connectedAccount } from '$lib/server/stripe';
 import { getAdminDb, verifyIdToken } from '$lib/server/firebase-admin';
+import { getConnectedCustomerId } from '$lib/server/stripe-customer';
+import { getOrgRole, roleAtLeast } from '$lib/server/org-auth';
 import { checkRateLimit, rateLimitedResponse } from '$lib/server/rate-limit';
 import { logServerError } from '$lib/server/log-error';
 import { PAID_TIERS, syncSubscriptionToFirestore } from '$lib/server/stripe-ledger';
@@ -77,11 +79,52 @@ export const POST: RequestHandler = async ({ request, url }) => {
 		let customerId: string | undefined;
 		if (type === 'org' && orgId) {
 			const orgSnap = await db.doc(`orgs/${orgId}`).get();
-			customerId = orgSnap.data()?.stripeCustomerId ?? undefined;
+			const orgData = orgSnap.data() ?? {};
+			// Same gate as the billing portal — previously any signed-in user
+			// could start (and overwrite the billing of) any org's checkout.
+			const role = await getOrgRole(orgId, uid);
+			if (!role || !roleAtLeast(role, 'owner')) {
+				return json({ error: 'Only the organization owner can change its plan.' }, { status: 403 });
+			}
+			customerId = orgData.stripeCustomerId ?? undefined;
+			if (customerId) {
+				const ok = await stripe.customers.retrieve(customerId, {}, connectedAccount).then((c) => !('deleted' in c && c.deleted)).catch(() => false);
+				if (!ok) customerId = undefined;
+			}
+
+			// Same as individual: an org that already has a live team sub gets
+			// its plan changed in place, never a second concurrent subscription.
+			let existing: Stripe.Subscription | null = null;
+			if (orgData.stripeSubscriptionId) {
+				existing = await stripe.subscriptions.retrieve(orgData.stripeSubscriptionId, {}, connectedAccount).catch(() => null);
+			} else if (customerId) {
+				const list = await stripe.subscriptions.list({ customer: customerId, limit: 10 }, connectedAccount);
+				existing = list.data.find((s) => s.metadata?.orgId === orgId && LIVE_STATUSES.has(s.status)) ?? null;
+			}
+			if (existing && LIVE_STATUSES.has(existing.status)) {
+				const item = existing.items.data[0];
+				if (item?.price.id === priceId) return json({ error: 'Your team is already on this plan.' }, { status: 400 });
+				const updated = await stripe.subscriptions.update(existing.id, {
+					items: [{ id: item.id, price: priceId }],
+					proration_behavior: 'always_invoice',
+					payment_behavior:   'error_if_incomplete',
+					cancel_at_period_end: false,
+					metadata: { ...existing.metadata, uid, type: 'org', orgId, plan },
+				}, connectedAccount);
+				await syncSubscriptionToFirestore(updated);
+				return json({ url: `${url.origin}/settings?tab=team&checkout=success`, updated: true });
+			}
 		} else {
 			const userSnap = await db.doc(`users/${uid}`).get();
 			const subData  = userSnap.data()?.subscription ?? {};
-			customerId = subData.stripeCustomerId ?? undefined;
+
+			// Subscribed during the Sep 2026 misrouted-billing window: their live
+			// sub is on the platform account, invisible to the lookup below, so a
+			// new checkout would double-bill them. Hand off to support instead.
+			if (userSnap.data()?.legacyPlatformBilling) {
+				return json({ error: "Your plan needs a quick manual update — please contact support and we'll switch it for you." }, { status: 409 });
+			}
+			customerId = (await getConnectedCustomerId(uid)) ?? undefined;
 
 			// Already subscribed (e.g. Lite → Pro): change the plan on the
 			// EXISTING subscription. Opening a new Checkout here used to

@@ -40,6 +40,27 @@ export async function tierFromSubscription(sub: Stripe.Subscription): Promise<Pa
 	return isPaidTier(sub.metadata?.tier) ? sub.metadata.tier : null;
 }
 
+export const SHOP_PLANS = ['starter', 'team', 'studio'] as const;
+export type ShopPlanId = typeof SHOP_PLANS[number];
+const DEFAULT_SEATS: Record<ShopPlanId, number> = { starter: 3, team: 10, studio: 25 };
+
+function isShopPlan(p: unknown): p is ShopPlanId {
+	return typeof p === 'string' && (SHOP_PLANS as readonly string[]).includes(p);
+}
+
+/** Team plan + seat count a subscription pays for, derived from its price (same reasoning as tierFromSubscription). */
+export async function orgPlanFromSubscription(sub: Stripe.Subscription): Promise<{ plan: ShopPlanId; seats: number } | null> {
+	const price = sub.items.data[0]?.price;
+	const shopPlans = (await getAdminDb().doc('settings/platform').get()).data()?.shopPlans ?? {};
+	let plan: ShopPlanId | null = isShopPlan(price?.metadata?.plan) ? price.metadata.plan : null;
+	if (!plan && price?.id) {
+		plan = SHOP_PLANS.find((p) => shopPlans[p]?.stripePriceId === price.id || shopPlans[p]?.stripeYearlyPriceId === price.id) ?? null;
+	}
+	if (!plan && isShopPlan(sub.metadata?.plan)) plan = sub.metadata.plan;
+	if (!plan) return null;
+	return { plan, seats: Number(shopPlans[plan]?.seats ?? DEFAULT_SEATS[plan]) };
+}
+
 /**
  * Writes a subscription's status/tier onto the user or org doc it belongs
  * to, keyed by `sub.metadata.uid` — the same logic the webhook's
@@ -101,12 +122,24 @@ export async function syncSubscriptionToFirestore(sub: Stripe.Subscription): Pro
 	}
 
 	if (type === 'org' && orgId) {
+		// Same stale-subscription guard as users: a dead sub that isn't the
+		// org's current one must not mark a paying team as canceled.
+		const orgData = (await db.doc(`orgs/${orgId}`).get()).data() ?? {};
+		const currentSubId: string = orgData.stripeSubscriptionId ?? '';
+		if (currentSubId && currentSubId !== sub.id && !ENTITLED_STATUSES.has(status)) return false;
+
+		// Plan/seats follow the price, so a plan change (in-app or portal)
+		// actually changes the team's plan and seat pool — previously only
+		// checkout ever wrote them.
+		const planInfo = ENTITLED_STATUSES.has(status) ? await orgPlanFromSubscription(sub) : null;
 		await db.doc(`orgs/${orgId}`).set({
-			stripeCustomerId:   typeof sub.customer === 'string' ? sub.customer : sub.customer.id,
-			stripePriceId:      priceId,
-			subscriptionStatus: status,
-			currentPeriodEnd:   periodEnd,
-			updatedAt:          FieldValue.serverTimestamp(),
+			...(planInfo ?? {}),
+			stripeCustomerId:     typeof sub.customer === 'string' ? sub.customer : sub.customer.id,
+			stripeSubscriptionId: sub.id,
+			stripePriceId:        priceId,
+			subscriptionStatus:   status,
+			currentPeriodEnd:     periodEnd,
+			updatedAt:            FieldValue.serverTimestamp(),
 		}, { merge: true });
 	} else {
 		// `.set(..., { merge: true })` does NOT parse dotted string keys as

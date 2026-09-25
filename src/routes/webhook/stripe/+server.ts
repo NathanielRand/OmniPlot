@@ -28,14 +28,20 @@ export const POST: RequestHandler = async ({ request }) => {
 		event = stripe.webhooks.constructEvent(body, sig, STRIPE_WEBHOOK_SECRET);
 	} catch (e) {
 		console.error('[webhook] Signature verification failed:', e);
+		// Persisted, not just console'd: a wrong STRIPE_WEBHOOK_SECRET silently
+		// rejects every event (no tier grants, no ledger) and was invisible
+		// from the admin error log.
+		await logServerError(e, { source: 'webhook', route: 'stripe:signature', severity: 'error' });
 		return new Response('Invalid signature', { status: 400 });
 	}
 
-	// Connect events carry `event.account`. Platform-level events (none of
-	// ours today) omit it. Ignore anything from an account we don't run —
-	// relevant once/if other connected accounts ever exist.
-	if (event.account && event.account !== STRIPE_CONNECTED_ACCOUNT_ID) {
-		return new Response(JSON.stringify({ received: true, skipped: 'foreign account' }), { status: 200 });
+	// Connect events carry `event.account`. This endpoint is registered on
+	// the platform account, which also serves unrelated businesses — so
+	// platform-level events (no `event.account`) are never OmniPlot's and
+	// must not reach the ledger or user docs. Only our connected account's
+	// events are processed.
+	if (event.account !== STRIPE_CONNECTED_ACCOUNT_ID.trim()) {
+		return new Response(JSON.stringify({ received: true, skipped: 'not the OmniPlot account' }), { status: 200 });
 	}
 
 	try {
@@ -199,25 +205,16 @@ async function onCheckoutComplete(session: Stripe.Checkout.Session) {
 	const { uid, type, orgId, tier, plan } = session.metadata ?? {};
 	if (!uid) return;
 
-	const customerId   = session.customer as string;
 	const sub          = await stripe.subscriptions.retrieve(session.subscription as string, {}, connectedAccount);
 	const item         = sub.items.data[0];
-	const priceId      = item?.price.id ?? '';
 	const periodEnd    = item?.current_period_end ? new Date(item.current_period_end * 1000) : null;
 	const unitAmount   = item?.price.unit_amount ?? 0;
 	const currency     = item?.price.currency ?? 'usd';
 
 	if (type === 'org' && orgId) {
-		const seats = plan === 'starter' ? 3 : plan === 'team' ? 10 : plan === 'studio' ? 25 : undefined;
-		await getAdminDb().doc(`orgs/${orgId}`).set({
-			plan:               plan || 'starter',
-			...(seats ? { seats } : {}),
-			stripeCustomerId:   customerId,
-			stripePriceId:      priceId,
-			subscriptionStatus: sub.status,
-			currentPeriodEnd:   periodEnd,
-			updatedAt:          FieldValue.serverTimestamp(),
-		}, { merge: true });
+		// Shared writer — plan/seats derived from the price, real status
+		// (not a hardcoded 'active'), and the sub id stored for later guards.
+		await syncSubscriptionToFirestore({ ...sub, metadata: { ...(session.metadata ?? {}), ...(sub.metadata ?? {}) } });
 
 		// Send upgrade confirmation email to the user who ran checkout (non-fatal).
 		try {
@@ -276,19 +273,9 @@ async function onSubscriptionUpdated(sub: Stripe.Subscription) {
 
 // ─── customer.subscription.deleted ───────────────────────────────────────────
 async function onSubscriptionDeleted(sub: Stripe.Subscription) {
-	const { uid, type, orgId } = sub.metadata ?? {};
-	if (!uid) return;
-
-	if (type === 'org' && orgId) {
-		await getAdminDb().doc(`orgs/${orgId}`).set({
-			subscriptionStatus: 'canceled',
-			updatedAt:          FieldValue.serverTimestamp(),
-		}, { merge: true });
-	} else {
-		// Routed through the shared sync so deleting a STALE subscription
-		// (not the user's current one) can't knock a paying user to free.
-		await syncSubscriptionToFirestore(sub);
-	}
+	// Routed through the shared sync (users AND orgs) so deleting a STALE
+	// subscription can't knock a paying user or team back to free.
+	await syncSubscriptionToFirestore(sub);
 }
 
 // ─── invoice.payment_failed ───────────────────────────────────────────────────

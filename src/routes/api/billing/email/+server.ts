@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types';
 import Stripe from 'stripe';
 import { stripe, connectedAccount } from '$lib/server/stripe';
 import { getAdminDb, verifyIdToken } from '$lib/server/firebase-admin';
+import { getConnectedCustomerId } from '$lib/server/stripe-customer';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -22,8 +23,7 @@ export const PATCH: RequestHandler = async ({ request }) => {
 		await db.doc(`users/${uid}`).update({ billingEmail: email });
 
 		// Keep the Stripe customer's email in sync so receipts land in the right inbox
-		const userData = (await db.doc(`users/${uid}`).get()).data() ?? {};
-		const customerId: string = userData.subscription?.stripeCustomerId ?? '';
+		const customerId = await getConnectedCustomerId(uid);
 		if (customerId) {
 			await stripe.customers.update(customerId, { email }, connectedAccount);
 		}

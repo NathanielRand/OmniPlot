@@ -105,7 +105,27 @@
 		}
 	}
 
-	onMount(load);
+	// ─── Billing health (same checks as the daily cron) ───
+	interface HealthCheck { name: string; ok: boolean; detail: string; }
+	let health        = $state<HealthCheck[] | null>(null);
+	let healthLoading = $state(false);
+	let healthError   = $state<string | null>(null);
+
+	async function runHealth() {
+		healthLoading = true; healthError = null;
+		try {
+			const res = await fetch('/api/admin/billing/health', { headers: await authHeaders() });
+			if (!res.ok) throw new Error((await res.json()).error ?? 'Health check failed');
+			health = (await res.json()).checks;
+		} catch (e) {
+			healthError = e instanceof Error ? e.message : 'Health check failed';
+		} finally {
+			healthLoading = false;
+		}
+	}
+	const healthFailed = $derived(health?.filter((c) => !c.ok) ?? []);
+
+	onMount(() => { load(); runHealth(); });
 
 	// Firebase free-tier limits for reference
 	const FIREBASE_LIMITS = {
@@ -146,6 +166,38 @@
 			<button class="retry-btn" onclick={load}>Retry</button>
 		</div>
 	{/if}
+
+	<!-- ── Billing health ────────────────────────────── -->
+	<div class="cost-section">
+		<div class="section-head">
+			<div class="section-icon section-icon--stripe" aria-hidden="true">
+				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+			</div>
+			<div>
+				<h2 class="section-title">Billing health</h2>
+				<p class="section-desc">Env config, Stripe prices, webhook delivery, misrouted checkouts, and subscription ↔ plan sync. Also runs daily; failures alert support@.</p>
+			</div>
+			<button class="ext-link" style="cursor:pointer" onclick={runHealth} disabled={healthLoading}>
+				{healthLoading ? 'Checking…' : 'Run checks'}
+			</button>
+		</div>
+		{#if healthError}
+			<div class="gcp-billing-note">{healthError}</div>
+		{:else if health}
+			<div class="health-summary" class:health-summary--bad={healthFailed.length > 0}>
+				{healthFailed.length ? `${healthFailed.length} of ${health.length} checks failing` : `All ${health.length} checks passing`}
+			</div>
+			<ul class="health-list">
+				{#each [...healthFailed, ...health.filter((c) => c.ok)] as c (c.name)}
+					<li class="health-row" class:health-row--bad={!c.ok}>
+						<span class="health-dot" aria-hidden="true"></span>
+						<span class="health-name">{c.name}</span>
+						<span class="health-detail">{c.detail}</span>
+					</li>
+				{/each}
+			</ul>
+		{/if}
+	</div>
 
 	<!-- ── Firebase ──────────────────────────────────── -->
 	<div class="cost-section">
@@ -565,6 +617,25 @@
 	.usage-card__value--sm { font-size: 1rem; font-weight: 600; font-family: var(--font-body); letter-spacing: 0; color: var(--text-secondary); }
 	.usage-card__limit  { font-size: 0.6875rem; color: var(--text-tertiary); line-height: 1.5; margin-top: 4px; }
 	.usage-card__paid   { display: block; color: var(--text-tertiary); opacity: 0.7; }
+
+	.health-summary {
+		font-size: 0.8125rem; font-weight: 600; color: var(--color-success, #16a34a); margin-bottom: 8px;
+	}
+	.health-summary--bad { color: var(--color-danger, #dc2626); }
+	.health-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+	.health-row {
+		display: grid; grid-template-columns: 8px minmax(140px, 220px) 1fr; gap: 10px; align-items: baseline;
+		font-size: 0.8125rem; padding: 6px 8px; border-radius: var(--radius-md, 6px);
+	}
+	.health-row--bad { background: color-mix(in srgb, var(--color-danger, #dc2626) 8%, transparent); }
+	.health-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--color-success, #16a34a); align-self: center; }
+	.health-row--bad .health-dot { background: var(--color-danger, #dc2626); }
+	.health-name { font-weight: 500; color: var(--text-primary); }
+	.health-detail { color: var(--text-secondary); overflow-wrap: anywhere; }
+	@media (max-width: 640px) {
+		.health-row { grid-template-columns: 8px 1fr; }
+		.health-detail { grid-column: 2; }
+	}
 
 	.gcp-billing-note {
 		display: flex; align-items: flex-start; gap: 8px;

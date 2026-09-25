@@ -3,15 +3,14 @@ import type { RequestHandler } from './$types';
 import Stripe from 'stripe';
 import { stripe, connectedAccount } from '$lib/server/stripe';
 import { getAdminDb, verifyIdToken } from '$lib/server/firebase-admin';
+import { getConnectedCustomerId } from '$lib/server/stripe-customer';
 
 export const GET: RequestHandler = async ({ request }) => {
 	try {
 		const uid = await verifyIdToken(request.headers.get('authorization'));
 		if (!uid) return json({ error: 'Unauthorized' }, { status: 401 });
 
-		const snap = await getAdminDb().doc(`users/${uid}`).get();
-		const customerId: string = snap.data()?.subscription?.stripeCustomerId ?? '';
-
+		const customerId = await getConnectedCustomerId(uid);
 		if (!customerId) return json({ methods: [], defaultMethodId: null });
 
 		const [methods, customer] = await Promise.all([
@@ -54,8 +53,7 @@ export const PATCH: RequestHandler = async ({ request }) => {
 		const { methodId } = await request.json();
 		if (!methodId) return json({ error: 'methodId required' }, { status: 400 });
 
-		const snap = await getAdminDb().doc(`users/${uid}`).get();
-		const customerId: string = snap.data()?.subscription?.stripeCustomerId ?? '';
+		const customerId = await getConnectedCustomerId(uid);
 		if (!customerId) return json({ error: 'No billing account found.' }, { status: 404 });
 
 		await stripe.customers.update(
@@ -83,6 +81,13 @@ export const DELETE: RequestHandler = async ({ request }) => {
 
 		const { methodId } = await request.json();
 		if (!methodId) return json({ error: 'methodId required' }, { status: 400 });
+
+		// Only detach the caller's own card — this previously accepted any
+		// payment method ID on the account.
+		const customerId = await getConnectedCustomerId(uid);
+		const pm = await stripe.paymentMethods.retrieve(methodId, {}, connectedAccount);
+		const owner = typeof pm.customer === 'string' ? pm.customer : pm.customer?.id;
+		if (!customerId || owner !== customerId) return json({ error: 'Card not found.' }, { status: 404 });
 
 		await stripe.paymentMethods.detach(methodId, {}, connectedAccount);
 

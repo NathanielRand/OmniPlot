@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types';
 import Stripe from 'stripe';
 import { stripe, connectedAccount } from '$lib/server/stripe';
 import { getAdminDb, verifyIdToken } from '$lib/server/firebase-admin';
+import { getConnectedCustomerId } from '$lib/server/stripe-customer';
 
 // Creates (or reuses) a Stripe customer for the user, then opens a hosted
 // setup session so they can save a card without an immediate charge.
@@ -15,19 +16,9 @@ export const POST: RequestHandler = async ({ request, url }) => {
 		const snap = await db.doc(`users/${uid}`).get();
 		const userData = snap.data() ?? {};
 
-		let customerId: string = userData.subscription?.stripeCustomerId ?? '';
-
-		// Create a Stripe customer if one doesn't exist yet
-		if (!customerId) {
-			const customer = await stripe.customers.create({
-				email:    userData.billingEmail ?? userData.email ?? undefined,
-				name:     userData.displayName ?? undefined,
-				metadata: { uid },
-			}, connectedAccount);
-			customerId = customer.id;
-			// Persist so future calls reuse the same customer
-			await db.doc(`users/${uid}`).update({ 'subscription.stripeCustomerId': customerId });
-		}
+		// Verifies the stored customer exists on the connected account (not a
+		// stale platform-account ID) and creates one if needed.
+		const customerId = (await getConnectedCustomerId(uid, { create: true }))!;
 
 		const session = await stripe.checkout.sessions.create({
 			mode:                 'setup',

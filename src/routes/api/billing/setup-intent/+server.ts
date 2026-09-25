@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types';
 import Stripe from 'stripe';
 import { stripe, connectedAccount } from '$lib/server/stripe';
 import { getAdminDb, verifyIdToken } from '$lib/server/firebase-admin';
+import { getConnectedCustomerId } from '$lib/server/stripe-customer';
 import { STRIPE_CONNECTED_ACCOUNT_ID } from '$env/static/private';
 import { checkRateLimit, rateLimitedResponse } from '$lib/server/rate-limit';
 
@@ -18,17 +19,9 @@ export const POST: RequestHandler = async ({ request }) => {
 		const snap = await db.doc(`users/${uid}`).get();
 		const userData = snap.data() ?? {};
 
-		let customerId: string = userData.subscription?.stripeCustomerId ?? '';
-
-		if (!customerId) {
-			const customer = await stripe.customers.create({
-				email:    userData.billingEmail ?? userData.email ?? undefined,
-				name:     userData.displayName ?? undefined,
-				metadata: { uid },
-			}, connectedAccount);
-			customerId = customer.id;
-			await db.doc(`users/${uid}`).update({ 'subscription.stripeCustomerId': customerId });
-		}
+		// Verifies the stored customer exists on the connected account (not a
+		// stale platform-account ID) and creates one if needed.
+		const customerId = (await getConnectedCustomerId(uid, { create: true }))!;
 
 		const intent = await stripe.setupIntents.create({
 			customer:             customerId,

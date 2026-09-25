@@ -58,8 +58,6 @@ export interface ShopPricingPlan {
 	seats: number;
 	description: string;
 	features: string[];
-	stripePriceId: string;
-	stripeYearlyPriceId: string;
 	popular?: boolean;
 }
 
@@ -79,8 +77,6 @@ export const SHOP_PRICING_PLANS: ShopPricingPlan[] = [
 			"Auto-nesting optimizer",
 			"Shared job history",
 		],
-		stripePriceId: import.meta.env.VITE_STRIPE_SHOP_STARTER_MONTHLY ?? "",
-		stripeYearlyPriceId: import.meta.env.VITE_STRIPE_SHOP_STARTER_YEARLY ?? "",
 	},
 	{
 		id: "team",
@@ -97,8 +93,6 @@ export const SHOP_PRICING_PLANS: ShopPricingPlan[] = [
 			"Priority support",
 			"PDF export",
 		],
-		stripePriceId: import.meta.env.VITE_STRIPE_SHOP_TEAM_MONTHLY ?? "",
-		stripeYearlyPriceId: import.meta.env.VITE_STRIPE_SHOP_TEAM_YEARLY ?? "",
 		popular: true,
 	},
 	{
@@ -116,8 +110,6 @@ export const SHOP_PRICING_PLANS: ShopPricingPlan[] = [
 			"Dedicated account manager",
 			"Volume discounts on patterns",
 		],
-		stripePriceId: import.meta.env.VITE_STRIPE_SHOP_STUDIO_MONTHLY ?? "",
-		stripeYearlyPriceId: import.meta.env.VITE_STRIPE_SHOP_STUDIO_YEARLY ?? "",
 	},
 ];
 
@@ -132,7 +124,7 @@ export const PRICING_PLANS: PricingPlan[] = [
 		features: [
 			"10 cuts per month",
 			"Platform & community pattern library",
-			"HPGL / SVG / DXF export",
+			"HPGL / SVG export",
 			"Any plotter, any device",
 			"Auto-nesting preview",
 		],
@@ -145,8 +137,6 @@ export const PRICING_PLANS: PricingPlan[] = [
 			prioritySupport: false,
 			exportFormats: ["hpgl", "svg"],
 		},
-		stripePriceId: "",
-		stripeYearlyPriceId: "",
 	},
 	{
 		id: "lite",
@@ -171,8 +161,6 @@ export const PRICING_PLANS: PricingPlan[] = [
 			prioritySupport: false,
 			exportFormats: ["hpgl", "svg", "dxf"],
 		},
-		stripePriceId: import.meta.env.VITE_STRIPE_LITE_MONTHLY,
-		stripeYearlyPriceId: import.meta.env.VITE_STRIPE_LITE_YEARLY,
 		popular: true,
 		badge: "Most popular",
 	},
@@ -199,8 +187,6 @@ export const PRICING_PLANS: PricingPlan[] = [
 			prioritySupport: true,
 			exportFormats: ["hpgl", "svg", "dxf", "pdf"],
 		},
-		stripePriceId: import.meta.env.VITE_STRIPE_PRO_MONTHLY,
-		stripeYearlyPriceId: import.meta.env.VITE_STRIPE_PRO_YEARLY,
 	},
 ];
 

@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types';
 import Stripe from 'stripe';
 import { stripe, connectedAccount } from '$lib/server/stripe';
 import { getAdminDb, verifyIdToken } from '$lib/server/firebase-admin';
+import { getConnectedCustomerId } from '$lib/server/stripe-customer';
 import { getOrgRole, roleAtLeast } from '$lib/server/org-auth';
 
 export const POST: RequestHandler = async ({ request, url }) => {
@@ -30,8 +31,7 @@ export const POST: RequestHandler = async ({ request, url }) => {
 			customerId = snap.data()?.stripeCustomerId ?? null;
 			returnPath = '/settings?tab=team';
 		} else {
-			const snap = await db.doc(`users/${uid}`).get();
-			customerId = snap.data()?.subscription?.stripeCustomerId ?? null;
+			customerId = await getConnectedCustomerId(uid);
 		}
 
 		if (!customerId) {

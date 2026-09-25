@@ -3,14 +3,14 @@ import type { RequestHandler } from './$types';
 import Stripe from 'stripe';
 import { stripe, connectedAccount } from '$lib/server/stripe';
 import { getAdminDb, verifyIdToken } from '$lib/server/firebase-admin';
+import { getConnectedCustomerId } from '$lib/server/stripe-customer';
 
 export const GET: RequestHandler = async ({ request }) => {
 	try {
 		const uid = await verifyIdToken(request.headers.get('authorization'));
 		if (!uid) return json({ error: 'Unauthorized' }, { status: 401 });
 
-		const snap = await getAdminDb().doc(`users/${uid}`).get();
-		const customerId: string = snap.data()?.subscription?.stripeCustomerId ?? '';
+		const customerId = await getConnectedCustomerId(uid);
 
 		if (!customerId) return json({ invoices: [] });
 

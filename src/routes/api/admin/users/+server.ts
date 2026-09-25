@@ -58,7 +58,15 @@ export const PATCH: RequestHandler = async ({ request }) => {
 	const db    = getAdminDb();
 	const patch: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
 
-	if (tier)         patch.tier            = tier;
+	if (tier) {
+		if (!['free', 'lite', 'pro', 'admin'].includes(tier)) {
+			return new Response(JSON.stringify({ error: 'Invalid tier' }), { status: 400 });
+		}
+		patch.tier = tier;
+		// A paid tier granted by hand (no Stripe subscription behind it) is a
+		// comp — flagged so the billing health reconciliation doesn't report it.
+		patch.compedTier = tier === 'lite' || tier === 'pro';
+	}
 	if (status)       patch.status          = status;
 	if (clearSession) patch.activeSessionId = null;
 
