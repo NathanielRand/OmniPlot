@@ -19,6 +19,7 @@
 		shops: {
 			total: number;
 			byShopPlan: { starter: number; team: number; studio: number };
+			unpaid: number;
 		};
 		plotters: { total: number };
 		agent: { downloads: number };
@@ -28,12 +29,35 @@
 		};
 	} | null>(null);
 
+	// Finance comes from the same endpoint as /admin/revenue so the two pages
+	// always agree. It reads Stripe live and is slower, so it loads on its own.
+	let finance        = $state<{
+		mrr: number;
+		activeSubscribers: number;
+		trialing: number;
+		cancelling: number;
+		atRiskMrr: number;
+		totals: { net: number };
+		months: { month: string; net: number }[];
+		balance: { available: number; pending: number } | null;
+	} | null>(null);
+	let financeLoading = $state(true);
+	let financeError   = $state<string | null>(null);
+
 	onMount(async () => {
+		const token = await auth.currentUser?.getIdToken();
+		const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+
+		fetch("/api/admin/revenue", { headers })
+			.then(async (res) => {
+				if (!res.ok) throw new Error((await res.json().catch(() => null))?.error ?? "Failed to load finance");
+				finance = await res.json();
+			})
+			.catch((e) => { financeError = e instanceof Error ? e.message : "Could not load finance"; })
+			.finally(() => { financeLoading = false; });
+
 		try {
-			const token = await auth.currentUser?.getIdToken();
-			const res = await fetch("/api/admin/stats", {
-				headers: token ? { Authorization: `Bearer ${token}` } : {},
-			});
+			const res = await fetch("/api/admin/stats", { headers });
 			if (!res.ok) throw new Error("Failed to load stats");
 			stats = await res.json();
 		} catch (e) {
@@ -43,15 +67,31 @@
 		}
 	});
 
+	function usd(cents: number) {
+		return (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: cents % 100 === 0 ? 0 : 2 });
+	}
+
+	const financeCards = $derived.by(() => {
+		if (!finance) return [];
+		const thisMonth = new Date().toISOString().slice(0, 7);
+		const monthNet  = finance.months.find((m) => m.month === thisMonth)?.net ?? 0;
+		return [
+			{ label: "MRR",            value: usd(finance.mrr),        sub: finance.cancelling ? `${usd(finance.atRiskMrr)} cancelling` : "active subscriptions" },
+			{ label: "Paying Subs",    value: finance.activeSubscribers.toLocaleString(), sub: finance.trialing ? `+${finance.trialing} trialing` : "active + past due" },
+			{ label: "Net This Month", value: usd(monthNet),           sub: `${usd(finance.totals.net)} all time` },
+			{ label: "Stripe Balance", value: finance.balance ? usd(finance.balance.available) : "—", sub: finance.balance ? `${usd(finance.balance.pending)} pending` : "unavailable" },
+		];
+	});
+
 	// ── Derived metric sections ──────────────────────
 	const metricSections = $derived(stats ? [
 		{
 			title: "Platform",
 			cards: [
-				{ label: "Total Users",      value: stats.users.total.toLocaleString(),       sub: "all accounts" },
-				{ label: "Active Today",     value: stats.users.activeToday.toLocaleString(), sub: "updated in 24h" },
-				{ label: "Cuts Today",       value: stats.jobs.today.toLocaleString(),        sub: "jobs processed" },
-				{ label: "MRR",              value: "—",                                      sub: "via Stripe" },
+				{ label: "Total Users",  value: stats.users.total.toLocaleString(),       sub: "all accounts" },
+				{ label: "Active (24h)", value: stats.users.activeToday.toLocaleString(), sub: "used the app in 24h" },
+				{ label: "Cuts (24h)",   value: stats.jobs.today.toLocaleString(),        sub: "jobs created in 24h" },
+				{ label: "Plotters",     value: (stats.plotters?.total ?? 0).toLocaleString(), sub: "registered, all users" },
 			],
 		},
 		{
@@ -66,17 +106,16 @@
 		{
 			title: "Shop Accounts",
 			cards: [
-				{ label: "Starter Shops", value: (stats.shops?.byShopPlan?.starter ?? 0).toLocaleString(), sub: pct(stats.shops?.byShopPlan?.starter ?? 0, stats.shops?.total ?? 0) },
-				{ label: "Team Shops",    value: (stats.shops?.byShopPlan?.team    ?? 0).toLocaleString(), sub: pct(stats.shops?.byShopPlan?.team    ?? 0, stats.shops?.total ?? 0) },
-				{ label: "Studio Shops",  value: (stats.shops?.byShopPlan?.studio  ?? 0).toLocaleString(), sub: pct(stats.shops?.byShopPlan?.studio  ?? 0, stats.shops?.total ?? 0) },
-				{ label: "Total Shops",   value: (stats.shops?.total ?? 0).toLocaleString(),               sub: "all shop accounts" },
+				{ label: "Starter Shops", value: (stats.shops?.byShopPlan?.starter ?? 0).toLocaleString(), sub: "subscribed" },
+				{ label: "Team Shops",    value: (stats.shops?.byShopPlan?.team    ?? 0).toLocaleString(), sub: "subscribed" },
+				{ label: "Studio Shops",  value: (stats.shops?.byShopPlan?.studio  ?? 0).toLocaleString(), sub: "subscribed" },
+				{ label: "Total Shops",   value: (stats.shops?.total ?? 0).toLocaleString(),               sub: `${stats.shops?.unpaid ?? 0} without a subscription` },
 			],
 		},
 		{
-			title: "Infrastructure",
+			title: "Distribution",
 			cards: [
-				{ label: "Registered Plotters", value: (stats.plotters?.total ?? 0).toLocaleString(), sub: "across all users" },
-				{ label: "Agent Downloads",     value: (stats.agent?.downloads ?? 0).toLocaleString(), sub: "total binary downloads" },
+				{ label: "Agent Downloads", value: (stats.agent?.downloads ?? 0).toLocaleString(), sub: "download clicks, not unique" },
 			],
 		},
 	] : []);
@@ -99,12 +138,42 @@
 			<h1 class="overview-title">Overview</h1>
 			<p class="overview-sub">Platform health and key metrics at a glance.</p>
 		</div>
-		<Badge variant="success" dot>All systems operational</Badge>
+	</div>
+
+	<!-- Finance -->
+	<div class="metrics-section">
+		<div class="metrics-section__head">
+			<h2 class="metrics-section__title">Finance</h2>
+			<a href="/admin/revenue" class="admin-panel__link">Revenue →</a>
+		</div>
+		{#if financeLoading}
+			<div class="metrics-grid">
+				{#each { length: 4 } as _}
+					<div class="metric-card metric-card--skeleton">
+						<div class="skel skel--label"></div>
+						<div class="skel skel--value"></div>
+						<div class="skel skel--sub"></div>
+					</div>
+				{/each}
+			</div>
+		{:else if financeError}
+			<div class="load-error"><p>{financeError}</p></div>
+		{:else}
+			<div class="metrics-grid">
+				{#each financeCards as m}
+					<div class="metric-card">
+						<div class="metric-card__label">{m.label}</div>
+						<div class="metric-card__value">{m.value}</div>
+						<div class="metric-card__sub">{m.sub}</div>
+					</div>
+				{/each}
+			</div>
+		{/if}
 	</div>
 
 	<!-- Metrics sections -->
 	{#if loading}
-		{#each [8, 4, 4, 2] as count}
+		{#each [4, 4, 4, 1] as count}
 			<div class="metrics-section">
 				<div class="metrics-grid">
 					{#each { length: count } as _}
@@ -316,6 +385,11 @@
 		display: flex;
 		flex-direction: column;
 		gap: 8px;
+	}
+	.metrics-section__head {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
 	}
 	.metrics-section__title {
 		font-size: 0.6875rem;

@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { getAdminDb, verifyIdToken } from '$lib/server/firebase-admin';
+import { getAdminAuth, getAdminDb, verifyIdToken } from '$lib/server/firebase-admin';
 
 async function assertAdmin(authHeader: string | null): Promise<boolean> {
 	const uid = await verifyIdToken(authHeader);
@@ -15,38 +15,60 @@ export const GET: RequestHandler = async ({ request }) => {
 	}
 
 	const db = getAdminDb();
-	const now = new Date();
-	const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-	const oneDayAgo  = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+	const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
 	// ── Users ────────────────────────────────────
-	const usersSnap = await db.collection('users').orderBy('createdAt', 'desc').limit(500).get();
+	// Every user doc — a capped query lets the tier counts drift once the
+	// platform outgrows the cap.
+	const usersSnap = await db.collection('users').orderBy('createdAt', 'desc').get();
 
 	const KNOWN_USER_TIERS = new Set(['free', 'lite', 'pro', 'admin']);
 	const byTier: Record<string, number> = { free: 0, lite: 0, pro: 0, admin: 0 };
-	let activeToday      = 0;
-	let shopMemberCount  = 0;
+	let shopMemberCount = 0;
 
 	for (const doc of usersSnap.docs) {
 		const d    = doc.data();
 		const tier = d.tier ?? 'free';
 		const key  = KNOWN_USER_TIERS.has(tier) ? tier : 'other';
 		byTier[key] = (byTier[key] ?? 0) + 1;
-		const lastActive: Date | null = d.updatedAt?.toDate?.() ?? null;
-		if (lastActive && lastActive >= oneDayAgo) activeToday++;
 		if (d.shopId) shopMemberCount++;
 	}
 
+	// Activity comes from Firebase Auth, not the user doc's updatedAt — that
+	// only moves on profile edits, admin patches and billing writes. The ID
+	// token refreshes hourly while the app is open, so lastRefreshTime is a
+	// real "used the app" signal.
+	let activeToday = 0;
+	try {
+		let pageToken: string | undefined;
+		do {
+			const page = await getAdminAuth().listUsers(1000, pageToken);
+			for (const u of page.users) {
+				const last = u.metadata.lastRefreshTime ?? u.metadata.lastSignInTime;
+				if (last && new Date(last) >= oneDayAgo) activeToday++;
+			}
+			pageToken = page.pageToken;
+		} while (pageToken);
+	} catch (err) {
+		console.error('[admin/stats] listUsers failed:', err);
+	}
+
 	// ── Shops ─────────────────────────────────────
+	// A shop's `plan` is set to starter at creation whether or not it ever
+	// subscribes, so only shops with a live subscription count toward a plan.
+	const PAID_SHOP_STATUSES = new Set(['active', 'trialing', 'past_due']);
 	const KNOWN_SHOP_PLANS = new Set(['starter', 'team', 'studio']);
 	const byShopPlan: Record<string, number> = { starter: 0, team: 0, studio: 0 };
-	let totalShops = 0;
+	let totalShops  = 0;
+	let unpaidShops = 0;
 
 	try {
 		const shopsSnap = await db.collection('shops').get();
 		totalShops = shopsSnap.size;
 		for (const doc of shopsSnap.docs) {
-			const plan = doc.data().plan ?? 'starter';
+			const d = doc.data();
+			if (!PAID_SHOP_STATUSES.has(d.subscriptionStatus)) { unpaidShops++; continue; }
+			const plan = d.plan ?? 'starter';
 			const key  = KNOWN_SHOP_PLANS.has(plan) ? plan : 'other';
 			byShopPlan[key] = (byShopPlan[key] ?? 0) + 1;
 		}
@@ -120,11 +142,9 @@ export const GET: RequestHandler = async ({ request }) => {
 			};
 		});
 
-		// Count today's cuts from the slice we have (jobs are ordered desc so filter)
-		cutsToday = jobsSnap.docs.filter((doc) => {
-			const ts: Date | null = doc.data().createdAt?.toDate?.() ?? null;
-			return ts && ts >= todayStart;
-		}).length;
+		// Counted server-side — filtering the 10-job slice above undercounts busy days.
+		const countSnap = await db.collection('jobs').where('createdAt', '>=', oneDayAgo).count().get();
+		cutsToday = countSnap.data().count;
 	} catch {
 		// jobs collection doesn't exist yet
 	}
@@ -140,6 +160,7 @@ export const GET: RequestHandler = async ({ request }) => {
 		shops: {
 			total:      totalShops,
 			byShopPlan,
+			unpaid:     unpaidShops,
 		},
 		plotters: {
 			total: totalPlotters,

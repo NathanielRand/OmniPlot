@@ -17,10 +17,14 @@ export const GET: RequestHandler = async ({ request, url }) => {
 		return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403 });
 	}
 
-	const limitCount = Math.min(parseInt(url.searchParams.get('limit') ?? '100'), 500);
+	// Defaults to every user: the page's tabs, counts and search all filter
+	// client-side, so a capped list silently hid older accounts from them.
+	const limitParam = url.searchParams.get('limit');
 	const db = getAdminDb();
 
-	const snap = await db.collection('users').orderBy('createdAt', 'desc').limit(limitCount).get();
+	let query = db.collection('users').orderBy('createdAt', 'desc');
+	if (limitParam) query = query.limit(Math.max(1, parseInt(limitParam) || 100));
+	const snap = await query.get();
 
 	const users = snap.docs.map((doc) => {
 		const d = doc.data();
