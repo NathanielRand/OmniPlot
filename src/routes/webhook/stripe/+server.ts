@@ -141,6 +141,13 @@ export const POST: RequestHandler = async ({ request }) => {
 		return new Response(JSON.stringify({ received: true, error: String(e) }), { status: 500 });
 	}
 
+	// Receipt of a fully processed event. The billing health check uses these to
+	// tell OmniPlot's own deliveries apart from other apps' endpoints on the
+	// shared platform account (whose failures also leave events "pending").
+	await getAdminDb().collection('webhookReceipts').doc(event.id)
+		.set({ type: event.type, receivedAt: Date.now() })
+		.catch((e) => console.error('[webhook] receipt write failed:', e));
+
 	return new Response(JSON.stringify({ received: true }), { status: 200 });
 };
 

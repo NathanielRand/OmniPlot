@@ -1,4 +1,5 @@
 import { STRIPE_CONNECTED_ACCOUNT_ID, STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET } from '$env/static/private';
+import type Stripe from 'stripe';
 import { stripe, connectedAccount } from '$lib/server/stripe';
 import { getAdminDb } from '$lib/server/firebase-admin';
 import { tierFromSubscription, PAID_TIERS, SHOP_PLANS } from '$lib/server/stripe-ledger';
@@ -76,12 +77,29 @@ export async function checkBillingHealth(): Promise<HealthCheck[]> {
 	});
 
 	// ── 5. Webhook delivering (connected-account events not stuck) ──────────
+	// `pending_webhooks` counts EVERY endpoint on the shared platform account —
+	// another business's Connect endpoint rejecting our events leaves them
+	// pending too. So an event only counts as stuck for OmniPlot when it's a
+	// type our endpoint subscribes to and our handler never wrote a receipt.
 	await run('webhook delivery', async () => {
+		let ours: Stripe.WebhookEndpoint | null = null;
+		for await (const ep of stripe.webhookEndpoints.list({ limit: 100 })) {
+			if (/omniplot\.app\/webhook\/stripe\/?$/.test(ep.url)) { ours = ep; break; }
+		}
+		if (!ours) { add('webhook delivery', false, 'No webhook endpoint for omniplot.app/webhook/stripe on the platform account'); return; }
+		if (ours.status !== 'enabled') { add('webhook delivery', false, `Webhook endpoint ${ours.id} is ${ours.status}`); return; }
+
+		const subscribed = new Set(ours.enabled_events);
 		const now = Math.floor(Date.now() / 1000);
 		const events = await stripe.events.list({ limit: 100, created: { gte: now - 3 * 86400, lte: now - 3600 } }, connectedAccount);
-		const stuck = events.data.filter((e) => e.pending_webhooks > 0);
+		const pending = events.data.filter((e) => e.pending_webhooks > 0 && (subscribed.has('*') || subscribed.has(e.type)));
+		const receipts = pending.length ? await db.getAll(...pending.map((e) => db.doc(`webhookReceipts/${e.id}`))) : [];
+		const stuck = pending.filter((_, i) => !receipts[i].exists);
+		const otherApps = pending.length - stuck.length;
 		add('webhook delivery', stuck.length === 0,
-			stuck.length ? `${stuck.length} event(s) >1h old still undelivered (e.g. ${stuck[0].type}) — check STRIPE_WEBHOOK_SECRET / function logs` : `${events.data.length} recent events delivered`);
+			stuck.length
+				? `${stuck.length} event(s) >1h old not received by OmniPlot (e.g. ${stuck[0].type} ${stuck[0].id}) — check STRIPE_WEBHOOK_SECRET / function logs`
+				: `${events.data.length} recent events delivered${otherApps ? ` (${otherApps} still pending for another app's endpoint on the platform account)` : ''}`);
 	});
 
 	// ── 6. Reconciliation: Stripe subscriptions ↔ Firestore entitlements ───
