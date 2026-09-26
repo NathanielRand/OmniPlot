@@ -19,23 +19,23 @@ interface Rule {
 const RULES: Rule[] = [
 	{
 		tag: 'billing-dispute',
-		pattern: /charged (twice|two times|again|after cancel)|double[- ]?charg|over ?charg|refund|unauthori[sz]ed|didn'?t authori[sz]e|chargeback|dispute/i,
+		pattern: /charged (twice|two times|again|after cancel)|double[- ]?charg|over ?charg|refund|unauthori[sz]ed|didn'?t authori[sz]e|chargeback|dispute|cobr(o|ó|aron) (dos veces|doble|de más)|doble cobro|cobro (duplicado|doble)|reembolso|devoluci[oó]n|no autoric[eé]/i,
 		priority: 'urgent',
 	},
 	{
 		// "Paid but still Free" — the Sep 2026 misrouted-billing symptom.
 		tag: 'billing-sync',
-		pattern: /(paid|purchased|subscribed|bought|upgraded|active|charged).{0,120}(still|shows?|showing|says|stuck|only).{0,30}free|free plan.{0,80}(paid|purchased|subscribed|charged|active)|(plan|subscription|lite|pro).{0,40}(not|isn'?t|never|didn'?t).{0,15}(activ|show|updat|appl)/is,
+		pattern: /(paid|purchased|subscribed|bought|upgraded|active|charged).{0,120}(still|shows?|showing|says|stuck|only).{0,30}free|free plan.{0,80}(paid|purchased|subscribed|charged|active)|(plan|subscription|lite|pro).{0,40}(not|isn'?t|never|didn'?t).{0,15}(activ|show|updat|appl)|(pagu[eé]|pagado|compr[eé]|suscrib[ií]|me cobraron).{0,120}(sigue|aparece|dice|muestra).{0,40}(gratis|free|gratuito)|(plan|suscripci[oó]n).{0,40}no (se )?(activ|aparece|actualiz|aplic)/is,
 		priority: 'high',
 	},
 	{
 		tag: 'access',
-		pattern: /(can'?t|cannot|unable to|won'?t let me) (log ?in|sign ?in|access|get in)|locked out|magic link|login link|sms code|verification code/i,
+		pattern: /(can'?t|cannot|unable to|won'?t let me) (log ?in|sign ?in|access|get in)|locked out|magic link|login link|sms code|verification code|no puedo (iniciar sesi[oó]n|entrar|acceder|ingresar)|c[oó]digo de verificaci[oó]n|enlace (de acceso|m[aá]gico)/i,
 		priority: 'high',
 	},
 	{
 		tag: 'plotter-connection',
-		pattern: /(plotter|cutter|machine|agent).{0,40}(not|won'?t|doesn'?t|isn'?t|can'?t|cannot|never).{0,20}(connect|detect|respond|cut|found|show)|web ?serial|com ?port|serial port|baud|offline/i,
+		pattern: /(plotter|cutter|machine|agent).{0,40}(not|won'?t|doesn'?t|isn'?t|can'?t|cannot|never).{0,20}(connect|detect|respond|cut|found|show)|web ?serial|com ?port|serial port|baud|offline|(plotter|pl[oó]ter|cortadora|m[aá]quina|agente).{0,40}no (se )?(conecta|detecta|corta|responde|aparece)|puerto (com|serie|serial)/i,
 	},
 	{
 		tag: 'cut-quality',
@@ -53,7 +53,7 @@ const RULES: Rule[] = [
 	{
 		tag: 'cancellation',
 		topics: ['billing', 'account', 'other'],
-		pattern: /cancel|downgrade|delete (my )?account|close (my )?account/i,
+		pattern: /cancel|downgrade|delete (my )?account|close (my )?account|eliminar (mi )?cuenta|cerrar (mi )?cuenta|dar de baja/i,
 		priority: 'high',
 	},
 ];

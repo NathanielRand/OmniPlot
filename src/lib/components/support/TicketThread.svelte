@@ -1,12 +1,19 @@
 <script lang="ts">
-	import type { Ticket, TicketMessage } from "$lib/support/tickets";
+	import { isForeign, type Ticket, type TicketMessage } from "$lib/support/tickets";
 
 	interface Props {
 		ticket: Ticket;
 		/** Whose screen this is — their own messages sit on the right. */
 		viewer: "user" | "admin";
+		/** Staff view: show the cached English translation of customer messages. */
+		showEnglish?: boolean;
 	}
-	let { ticket, viewer }: Props = $props();
+	let { ticket, viewer, showEnglish = false }: Props = $props();
+
+	function translationFor(m: TicketMessage) {
+		const t = showEnglish && m.from === "user" ? ticket.translations?.[m.id] : undefined;
+		return isForeign(t) ? t : null;
+	}
 
 	// The original request is stored on the ticket itself, not in messages[] —
 	// fold it in as the first entry so the thread reads top to bottom.
@@ -38,6 +45,7 @@
 				<time datetime={new Date(m.at).toISOString()}>{fmt(m.at)}</time>
 			</li>
 		{:else}
+			{@const tr = translationFor(m)}
 			<li
 				class="msg"
 				class:msg--mine={isMine(m)}
@@ -48,7 +56,8 @@
 					<span class="msg__author">{authorLabel(m)}</span>
 					<time datetime={new Date(m.at).toISOString()}>{fmt(m.at)}</time>
 				</div>
-				<p class="msg__body">{m.body}</p>
+				<p class="msg__body">{tr ? tr.english : m.body}</p>
+				{#if tr}<span class="msg__translated" title={m.body}>Translated from {tr.language}</span>{/if}
 			</li>
 		{/if}
 	{/each}
@@ -79,6 +88,14 @@
 	.msg--internal {
 		background: color-mix(in srgb, var(--color-warning) 8%, transparent);
 		border: 1px dashed color-mix(in srgb, var(--color-warning) 45%, transparent);
+	}
+
+	.msg__translated {
+		display: inline-block;
+		margin-top: 6px;
+		font-size: 0.6875rem;
+		color: var(--text-tertiary);
+		font-style: italic;
 	}
 
 	.msg__meta {

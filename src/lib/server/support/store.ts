@@ -20,6 +20,7 @@ import {
 	type TicketPriority,
 	type TicketStatus,
 	type TicketTopic,
+	type TicketTranslation,
 } from '$lib/support/tickets';
 
 const COLLECTION = 'supportRequests';
@@ -74,6 +75,7 @@ function normalize(id: string, d: FirebaseFirestore.DocumentData): Ticket {
 		resolvedAt:          toMs(d.resolvedAt) || null,
 		duplicateOf:         typeof d.duplicateOf === 'string' && d.duplicateOf ? d.duplicateOf : null,
 		duplicates:          Array.isArray(d.duplicates) ? d.duplicates.filter((x: unknown) => typeof x === 'string') : [],
+		translations:        d.translations && typeof d.translations === 'object' ? d.translations : {},
 	};
 }
 
@@ -85,6 +87,7 @@ export function toRequesterView(t: Ticket): Ticket {
 		messages: t.messages.filter((m) => !m.internal),
 		tags: [],
 		priority: 'normal',
+		translations: {},
 	};
 }
 
@@ -431,6 +434,15 @@ export async function updateTriage(id: string, data: { priority?: TicketPriority
 	const update: Record<string, unknown> = { updatedAt: Date.now() };
 	if (data.priority) update.priority = data.priority;
 	if (data.tags) update.tags = [...new Set(data.tags.map((t) => t.trim().toLowerCase()).filter(Boolean))].slice(0, 20);
+	await col().doc(id).update(update);
+}
+
+/** Caches staff translations on the ticket (merged per key, so a new reply
+ *  only adds its own entry). */
+export async function saveTranslations(id: string, entries: Record<string, TicketTranslation>): Promise<void> {
+	if (!Object.keys(entries).length) return;
+	const update: Record<string, unknown> = {};
+	for (const [key, value] of Object.entries(entries)) update[`translations.${key}`] = value;
 	await col().doc(id).update(update);
 }
 

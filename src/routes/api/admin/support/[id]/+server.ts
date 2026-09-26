@@ -10,6 +10,7 @@ import {
 	listTicketsForUser,
 	linkTicketToAccount,
 	markSeen,
+	saveTranslations,
 	markDuplicate,
 	unmarkDuplicate,
 	updateTriage,
@@ -19,7 +20,7 @@ import { notifyAdminReply, notifyDuplicate, notifyStatusChange } from '$lib/serv
 import Stripe from 'stripe';
 import { applyCredit, fmtCents, CreditError } from '$lib/server/credits';
 import { cannedById } from '$lib/support/responses';
-import { ticketRef, type Ticket, type TicketPriority, type TicketStatus } from '$lib/support/tickets';
+import { ticketRef, translatableParts, type Ticket, type TicketPriority, type TicketStatus, type TicketTranslation } from '$lib/support/tickets';
 
 const STATUSES: TicketStatus[] = ['new', 'in_progress', 'awaiting_customer', 'resolved', 'closed'];
 const PRIORITIES: TicketPriority[] = ['normal', 'high', 'urgent'];
@@ -127,7 +128,7 @@ export const POST: RequestHandler = async ({ request, params }) => {
 	// A duplicate is locked. Refuse up front — before anything with side
 	// effects (e.g. the reply path applies a credit before saving the reply).
 	// The store re-checks inside its transaction to close the race.
-	const LOCKED_OK = ['note', 'link', 'unduplicate'];
+	const LOCKED_OK = ['note', 'link', 'unduplicate', 'translate'];
 	if (ticket.duplicateOf && !LOCKED_OK.includes(payload.action)) {
 		return json({ error: `This ticket is a duplicate of ${ticketRef(ticket.duplicateOf)} and is locked. Work on that ticket, or unmark the duplicate first.` }, { status: 409 });
 	}
@@ -218,6 +219,21 @@ export const POST: RequestHandler = async ({ request, params }) => {
 			case 'unduplicate': {
 				const updated = await unmarkDuplicate(ticket.id, admin);
 				return json({ ticket: updated });
+			}
+
+			// Staff-only English translations, produced in the admin's browser
+			// (open-source model, no API) and cached here. Only parts that
+			// actually exist on this ticket are accepted.
+			case 'translate': {
+				const allowed = new Set(translatableParts(ticket).map((p) => p.id));
+				const input = payload.translations && typeof payload.translations === 'object' ? payload.translations : {};
+				const entries: Record<string, TicketTranslation> = {};
+				for (const [id, t] of Object.entries(input as Record<string, Partial<TicketTranslation>>)) {
+					if (!allowed.has(id) || typeof t?.english !== 'string' || typeof t?.language !== 'string') continue;
+					entries[id] = { language: t.language.trim().slice(0, 40), english: t.english.slice(0, 20_000) };
+				}
+				await saveTranslations(ticket.id, entries);
+				return json({ ticket: { ...ticket, translations: { ...ticket.translations, ...entries } } });
 			}
 
 			case 'triage': {

@@ -19,6 +19,9 @@ export interface CannedResponse {
 	topics: TicketTopic[];
 	/** Tags that also float it to the top (set by intake triggers). */
 	tags?: string[];
+	/** Always first in the picker, on every ticket, whatever its topic,
+	 *  tags or language. For the go-to replies. */
+	pinned?: boolean;
 	/** Status the ticket moves to when sent. */
 	setStatus: TicketStatus;
 	addTags?: string[];
@@ -33,11 +36,31 @@ export interface CannedResponse {
 export interface ReplyContext {
 	/** "Lite", "Pro", … — undefined when unknown. */
 	planName?: string;
+	/** A free month will actually be applied with this reply (account with an
+	 *  active subscription and the credit box ticked). Templates only promise
+	 *  one when this is true. */
+	freeMonth?: boolean;
 }
+
+const FREE_MONTH = `\n\nBecause this one was on us, your next month is free: we've applied a "1 month on us" discount to your subscription, and it comes off your next invoice automatically. There's nothing you need to do, and your plan stays exactly as it is.`;
 
 const SIGN = '\n\n— OmniPlot Support';
 
 export const CANNED_RESPONSES: CannedResponse[] = [
+	{
+		// The go-to reply while OmniPlot is in active development: works for
+		// any bug on any ticket. The free-month paragraph appears only when
+		// the credit will really be applied.
+		id: 'our-bug-credit',
+		label: 'Our bug — fixed + month on us',
+		topics: ['account', 'billing', 'patterns', 'plotter', 'technical', 'feature', 'other'],
+		pinned: true,
+		setStatus: 'resolved',
+		addTags: ['our-bug'],
+		offerCredit: { months: 1, reason: 'service_issue' },
+		body: (n, ctx) =>
+			`Hi ${n},\n\nThanks for reporting this, and sorry for the trouble. This was a bug on our side, and it's now fixed. Refresh OmniPlot (or restart the Cut Agent if you use it) and you should be all set.${ctx.freeMonth ? FREE_MONTH : ''}\n\nThanks for your patience while we keep improving OmniPlot. Reply here if you still see the problem and we'll reopen it.${SIGN}`,
+	},
 	{
 		id: 'acknowledge',
 		label: 'Acknowledge & investigating',
@@ -108,7 +131,7 @@ export const CANNED_RESPONSES: CannedResponse[] = [
 	},
 	{
 		id: 'incident-fixed-credit',
-		label: 'Our bug, fixed + month on us',
+		label: 'Checkout outage fixed + month on us',
 		topics: ['billing', 'account'],
 		tags: ['billing-sync', 'billing-dispute'],
 		setStatus: 'resolved',
@@ -121,9 +144,7 @@ Thank you for your patience, and we're sorry for the trouble. A system-wide issu
 
 That's now fixed: your ${ctx.planName ? `${ctx.planName} plan is` : 'subscription is'} active, and you'll see it under Settings → Billing (refresh the page if it's still open).
 
-We've also reviewed your payments. If you were charged more than once, the duplicate charge is being refunded to your original payment method — refunds usually take 5–10 business days to appear.
-
-Because this one was on us, your next month is free: we've applied a "1 month on us" discount to your subscription, and it comes off your next invoice automatically. There's nothing you need to do, and your plan stays exactly as it is.
+We've also reviewed your payments. If you were charged more than once, the duplicate charge is being refunded to your original payment method — refunds usually take 5–10 business days to appear.${ctx.freeMonth ? FREE_MONTH : ''}
 
 Thanks for sticking with OmniPlot — reply here if anything still looks off.${SIGN}`,
 	},
@@ -195,11 +216,11 @@ export function cannedById(id: string | null | undefined): CannedResponse | unde
 	return id ? CANNED_RESPONSES.find((c) => c.id === id) : undefined;
 }
 
-/** Topic/tag matches first, everything else after — the admin never hits a
- *  dead end on an off-template ticket. */
+/** Pinned templates first, then topic/tag matches, everything else after —
+ *  the admin never hits a dead end on an off-template ticket. */
 export function sortCanned(topic: string, tags: string[]): CannedResponse[] {
 	const score = (c: CannedResponse) =>
-		(c.tags?.some((t) => tags.includes(t)) ? 0 : 2) + (c.topics.includes(topic as TicketTopic) ? 0 : 1);
+		(c.pinned ? -10 : 0) + (c.tags?.some((t) => tags.includes(t)) ? 0 : 2) + (c.topics.includes(topic as TicketTopic) ? 0 : 1);
 	return [...CANNED_RESPONSES].sort((a, b) => score(a) - score(b));
 }
 

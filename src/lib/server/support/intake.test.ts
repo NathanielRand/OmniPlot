@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { runIntake, suggestionsFor } from './intake';
 import { hasUserUnread, needsAdminAction, needsUserAction, userAttentionCount, type Ticket } from '$lib/support/tickets';
-import { sortCanned } from '$lib/support/responses';
+import { cannedById, sortCanned } from '$lib/support/responses';
 
 const base = { topic: 'other' as const, subject: '', prioritySupport: false };
 
@@ -50,12 +50,20 @@ describe('paid-but-still-free tickets', () => {
 		expect(r.priority).toBe('high');
 	});
 
-	it('floats the incident + credit template to the top and names their plan', () => {
-		const [first] = sortCanned('billing', ['billing-sync']);
+	it('floats the incident + credit template up (after pinned) and names their plan', () => {
+		const [first] = sortCanned('billing', ['billing-sync']).filter((c) => !c.pinned);
 		expect(first.id).toBe('incident-fixed-credit');
 		expect(first.offerCredit).toEqual({ months: 1, reason: 'service_issue' });
 		expect(first.body('Sam', { planName: 'Lite' })).toContain('your Lite plan is active');
 		expect(first.body('Sam', {})).toContain('your subscription is active');
+	});
+
+	it('tags the same symptom written in Spanish', () => {
+		const r = runIntake({
+			...base, topic: 'billing', subject: 'Plan Lite',
+			message: 'Pagué la suscripción Lite pero mi cuenta sigue apareciendo como plan gratis.',
+		});
+		expect(r.tags).toContain('billing-sync');
 	});
 });
 
@@ -88,8 +96,21 @@ describe('turn tracking', () => {
 });
 
 describe('sortCanned', () => {
-	it('floats tag + topic matches above everything else', () => {
-		const sorted = sortCanned('plotter', ['plotter-connection']);
+	it('floats tag + topic matches above everything but pinned templates', () => {
+		const sorted = sortCanned('plotter', ['plotter-connection']).filter((c) => !c.pinned);
 		expect(sorted[0].id).toBe('plotter-connection');
+	});
+
+	it('always puts the generic "our bug + month on us" template first, on any ticket', () => {
+		for (const topic of ['technical', 'plotter', 'billing', 'other', 'feature']) {
+			expect(sortCanned(topic, [])[0].id).toBe('our-bug-credit');
+		}
+	});
+
+	it('only promises a free month when one will be applied', () => {
+		const t = sortCanned('other', [])[0];
+		expect(t.body('Ana', { freeMonth: true })).toContain('your next month is free');
+		expect(t.body('Ana', { freeMonth: false })).not.toContain('free');
+		expect(cannedById('incident-fixed-credit')!.body('Ana', {})).not.toContain('next month is free');
 	});
 });

@@ -14,6 +14,8 @@
 		TOPIC_LABEL,
 		ticketRef,
 		timeAgo,
+		isForeign,
+		translatableParts,
 		type Ticket,
 		type TicketPriority,
 		type TicketStatus,
@@ -106,14 +108,27 @@
 		load();
 	});
 
+	// The text last generated from a template — when the admin hasn't edited
+	// it, toggling the free-month box regenerates it so the reply never
+	// promises a credit that won't be applied (or leaves one out that will).
+	let generatedBody = '';
+
+	function renderCanned(c: CannedResponse, freeMonth: boolean): string {
+		// Prefer the live account tier (it may have just been fixed by a resync).
+		const tier = context?.account?.tier ?? ticket?.tier ?? undefined;
+		return c.body(ticket?.name?.trim().split(' ')[0] || 'there', { planName: tier ? PLAN_LABEL[tier] : undefined, freeMonth });
+	}
+
 	function pickCanned(c: CannedResponse) {
 		mode = 'reply';
 		canned = c;
-		// Prefer the live account tier (it may have just been fixed by a resync).
-		const tier = context?.account?.tier ?? ticket?.tier ?? undefined;
-		body = c.body(ticket?.name?.trim().split(' ')[0] || 'there', { planName: tier ? PLAN_LABEL[tier] : undefined });
 		sendStatus = c.setStatus;
 		applyCredit = !!c.offerCredit && canCredit;
+		body = generatedBody = renderCanned(c, applyCredit);
+	}
+
+	function onCreditToggle() {
+		if (canned && body === generatedBody) body = generatedBody = renderCanned(canned, applyCredit);
 	}
 
 	function clearCanned() {
@@ -194,6 +209,43 @@
 		});
 		if (!ok) return;
 		if (await act({ action: 'link' }, 'Ticket linked to account')) await load();
+	}
+
+	// ─── Translation (staff only) ─────────────────
+	// Cached on the ticket; "Translate" only sends parts not translated yet.
+	let showEnglish = $state(true);
+	let translating = $state(false);
+	let translateStatus = $state('');
+	const untranslated = $derived(ticket ? translatableParts(ticket).filter((p) => !ticket!.translations?.[p.id]) : []);
+	const hasForeign = $derived(!!ticket && Object.values(ticket.translations ?? {}).some((t) => isForeign(t)));
+	const foreignLanguage = $derived(ticket ? Object.values(ticket.translations ?? {}).find((t) => isForeign(t))?.language ?? null : null);
+	const subjectEnglish = $derived(ticket && isForeign(ticket.translations?.subject) ? ticket.translations.subject.english : null);
+
+	// Runs in this browser (free, open-source model — nothing leaves the
+	// page), then the result is saved on the ticket for next time.
+	async function translate() {
+		if (!ticket || translating) return;
+		translating = true;
+		translateStatus = 'Preparing…';
+		try {
+			const { translateParts } = await import('$lib/support/translator');
+			const translations = await translateParts(untranslated, (p) => {
+				translateStatus = p.phase === 'loading'
+					? `Downloading translator… ${p.percent}%`
+					: `Translating ${p.done + 1} of ${p.total}…`;
+			});
+			const data = await api('POST', { action: 'translate', translations });
+			ticket = data.ticket;
+			showEnglish = true;
+			const foreign = Object.values(translations).filter((t) => isForeign(t));
+			if (foreign.length) toastStore.success('Translated to English', `${foreign.length} from ${foreign[0].language}`);
+			else toastStore.info('Nothing to translate', 'Everything here is English (or too short to tell).');
+		} catch (err) {
+			toastStore.error('Translation failed', err instanceof Error ? err.message : 'Could not load the translator.');
+		} finally {
+			translating = false;
+			translateStatus = '';
+		}
 	}
 
 	// ─── Duplicate ────────────────────────────────
@@ -286,7 +338,8 @@
 	{:else}
 		<div class="head">
 			<div class="head__main">
-				<h1 class="head__title">{ticket.subject}</h1>
+				<h1 class="head__title">{showEnglish && subjectEnglish ? subjectEnglish : ticket.subject}</h1>
+				{#if showEnglish && subjectEnglish}<p class="head__orig" title="Original subject">{ticket.subject}</p>{/if}
 				<p class="head__meta">
 					{ticketRef(ticket.id)} · {TOPIC_LABEL[ticket.topic] ?? ticket.topic} · opened {timeAgo(ticket.createdAt)}
 				</p>
@@ -365,7 +418,27 @@
 				{/if}
 
 				<div class="card">
-					<TicketThread {ticket} viewer="admin" />
+					<div class="thread-bar">
+						{#if hasForeign}
+							<span class="thread-bar__lang">
+								{showEnglish ? `Showing English · translated from ${foreignLanguage}` : `Original · ${foreignLanguage}`}
+							</span>
+							<button class="btn btn--ghost btn--sm" onclick={() => (showEnglish = !showEnglish)}>
+								{showEnglish ? 'Show original' : 'Show English'}
+							</button>
+						{/if}
+						{#if untranslated.length}
+							<button class="btn btn--ghost btn--sm" onclick={translate} disabled={translating}
+								title="Translate what the customer wrote into English. Runs in your browser (free, open-source model); the first use downloads it once. The customer never sees this.">
+								{#if translating}
+									{translateStatus || 'Translating…'}
+								{:else}
+									{Object.keys(ticket.translations ?? {}).length ? `Translate ${untranslated.length} new` : 'Translate to English'}
+								{/if}
+							</button>
+						{/if}
+					</div>
+					<TicketThread {ticket} viewer="admin" {showEnglish} />
 				</div>
 
 				<!-- Composer -->
@@ -387,9 +460,10 @@
 									class="chip"
 									class:chip--suggested={suggestedIds.has(c.id)}
 									class:chip--on={canned?.id === c.id}
+									class:chip--pinned={c.pinned}
 									title="Sets status to {STATUS_LABEL_ADMIN[c.setStatus]}{c.addTags?.length ? ` · tags ${c.addTags.join(', ')}` : ''}"
 									onclick={() => pickCanned(c)}
-								>{c.label}</button>
+								>{#if c.pinned}<span aria-hidden="true">★ </span>{/if}{c.label}</button>
 							{/each}
 						</div>
 					{/if}
@@ -416,7 +490,7 @@
 								{/if}
 								{#if canned?.offerCredit}
 									<label class="trigger__credit" class:trigger__credit--off={!canCredit}>
-										<input type="checkbox" bind:checked={applyCredit} disabled={!canCredit} />
+										<input type="checkbox" bind:checked={applyCredit} disabled={!canCredit} onchange={onCreditToggle} />
 										{context?.account ? creditLabel : 'No account to credit'}
 									</label>
 								{/if}
@@ -595,6 +669,11 @@
 	.head__meta { margin: 4px 0 0; font-size: 0.8125rem; color: var(--text-tertiary); }
 
 	.head__badges { display: flex; gap: 6px; flex-shrink: 0; }
+	.head__orig { margin: 2px 0 0; font-size: 0.8125rem; color: var(--text-tertiary); font-style: italic; overflow-wrap: anywhere; }
+
+	.thread-bar { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+	.thread-bar:empty { display: none; }
+	.thread-bar__lang { margin-right: auto; font-size: 0.75rem; color: var(--text-tertiary); }
 
 	.dup-banner {
 		display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 14px;
@@ -676,6 +755,7 @@
 	}
 	.chip--suggested { color: var(--text-secondary); border-color: var(--border-strong); }
 	.chip:hover { border-color: var(--color-brand-dim); color: var(--text-primary); }
+	.chip--pinned { color: var(--text-primary); border-color: var(--border-brand); }
 	.chip--on { border-color: var(--color-brand-dim); background: var(--color-brand-muted); color: var(--text-brand); }
 
 	.composer__input {

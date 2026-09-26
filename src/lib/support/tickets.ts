@@ -75,6 +75,32 @@ export interface Ticket {
 	duplicateOf: string | null;
 	/** Tickets marked as duplicates of this one. */
 	duplicates: string[];
+	/** Staff-only English translations of what the customer wrote, keyed by
+	 *  'subject', 'original' or a message id. Never sent to the requester. */
+	translations: Record<string, TicketTranslation>;
+}
+
+export interface TicketTranslation {
+	/** Source language in English, e.g. "Spanish". */
+	language: string;
+	english: string;
+}
+
+/** A translation that actually differs from the source (not English, and
+ *  not text whose language couldn't be told). */
+export function isForeign(t: TicketTranslation | undefined): t is TicketTranslation {
+	const lang = t?.language.trim().toLowerCase();
+	return !!lang && lang !== 'english' && lang !== 'unknown';
+}
+
+/** What the customer wrote that can be translated: subject, original request,
+ *  and their thread replies (staff messages are already English). */
+export function translatableParts(t: Pick<Ticket, 'subject' | 'message' | 'messages'>): { id: string; text: string }[] {
+	return [
+		{ id: 'subject', text: t.subject },
+		{ id: 'original', text: t.message },
+		...t.messages.filter((m) => m.from === 'user' && !m.internal).map((m) => ({ id: m.id, text: m.body })),
+	].filter((p) => p.text.trim());
 }
 
 export const STATUS_LABEL_ADMIN: Record<TicketStatus, string> = {
