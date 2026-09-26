@@ -2,7 +2,7 @@
 	import "../app.css";
 	import { onMount } from "svelte";
 	import type { Snippet } from "svelte";
-	import { themeStore, patternStore, userStore, shopStore, uiStore, changelogStore } from "$lib/stores";
+	import { themeStore, patternStore, userStore, shopStore, uiStore, changelogStore, plotterStatusStore } from "$lib/stores";
 	import Toast from "$lib/components/ui/Toast.svelte";
 	import PricingModal from "$lib/components/ui/PricingModal.svelte";
 	import ReportModal from "$lib/components/ui/ReportModal.svelte";
@@ -33,12 +33,23 @@
 		return () => { unsubAuth(); unsubPatterns(); };
 	});
 
-	// Auto-surface the "what's new" modal once, right after we know whether
-	// this visitor has unseen releases (init() runs synchronously above).
+	// Auto-surface the "what's new" modal once per release, right after we
+	// know whether this visitor has unseen releases (init() runs above).
+	// Never over a running cut — it waits until the job finishes.
 	$effect(() => {
-		if (changelogStore.hasUnseen && userStore.isAuth) {
+		if (changelogStore.shouldShowModal && userStore.isAuth && plotterStatusStore.current.state !== "cutting") {
 			uiStore.openChangelogModal();
 		}
+	});
+
+	// A reload or full-page navigation mid-cut would cut the plotter off
+	// mid-job (USB sends run in this tab). Once SvelteKit sees a new deploy,
+	// every link click becomes a full page load — so guard the tab itself.
+	$effect(() => {
+		if (plotterStatusStore.current.state !== "cutting") return;
+		const guard = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ""; };
+		window.addEventListener("beforeunload", guard);
+		return () => window.removeEventListener("beforeunload", guard);
 	});
 
 	// Keep shopStore in sync with the signed-in user's shop

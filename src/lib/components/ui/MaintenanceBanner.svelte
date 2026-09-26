@@ -1,10 +1,12 @@
 <script lang="ts">
 	import { platformStore } from "$lib/stores";
+	import { page } from "$app/state";
+	import { updateCard } from "./UpdateBanner.svelte";
 
 	// Admin → Settings → Maintenance mode. Floats over the page rather than
 	// pushing layout, and can be dismissed for the rest of the tab session.
-	// Docked bottom-left (toasts own bottom-right) so it never covers the
-	// nav or the promo bar.
+	// Docked bottom-centre (the update card owns bottom-left, toasts
+	// bottom-right) so it never covers the nav or the promo bar.
 	const DISMISS_KEY = "omniplot_maintenance_dismissed";
 
 	let dismissed = $state(false);
@@ -19,7 +21,13 @@
 </script>
 
 {#if platformStore.flags.maintenanceMode && !dismissed}
-	<div class="maintenance" role="status" aria-live="polite">
+	<div
+		class="maintenance"
+		class:maintenance--studio={page.url.pathname.startsWith("/studio")}
+		class:maintenance--stacked={updateCard.visible}
+		role="status"
+		aria-live="polite"
+	>
 		<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
 		<span>We're doing some maintenance — parts of OmniPlot may be slow or briefly unavailable.</span>
 		<button class="maintenance__close" onclick={dismiss} aria-label="Dismiss maintenance notice">
@@ -32,7 +40,8 @@
 	.maintenance {
 		position: fixed;
 		bottom: calc(16px + env(safe-area-inset-bottom, 0px));
-		left: 16px;
+		left: 50%;
+		transform: translateX(-50%);
 		z-index: 9999;
 		width: max-content;
 		max-width: min(460px, calc(100vw - 32px));
@@ -48,8 +57,20 @@
 		font-size: 0.8125rem;
 		line-height: 1.4;
 	}
+	/* Studio: above the fixed metrics bar */
+	.maintenance--studio { bottom: calc(58px + 16px + env(safe-area-inset-bottom, 0px)); }
+	/* Below ~1100px, centred would run into the 300px update card at the
+	   bottom-left — stack above it instead. */
+	@media (max-width: 1100px) {
+		.maintenance--stacked { left: 24px; transform: none; bottom: calc(190px + env(safe-area-inset-bottom, 0px)); }
+		.maintenance--stacked.maintenance--studio { bottom: calc(58px + 190px + env(safe-area-inset-bottom, 0px)); }
+	}
 	@media (max-width: 480px) {
-		.maintenance { left: 12px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); width: auto; max-width: none; }
+		.maintenance { left: 12px; right: 12px; transform: none; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); width: auto; max-width: none; }
+		.maintenance--studio { bottom: calc(58px + 12px + env(safe-area-inset-bottom, 0px)); }
+		/* Update card is full-width at the bottom here — stack above it */
+		.maintenance--stacked { left: 12px; max-width: none; bottom: calc(150px + env(safe-area-inset-bottom, 0px)); }
+		.maintenance--stacked.maintenance--studio { bottom: calc(58px + 150px + env(safe-area-inset-bottom, 0px)); }
 	}
 	.maintenance > svg { flex-shrink: 0; color: var(--color-warning, #f59e0b); }
 	.maintenance__close {

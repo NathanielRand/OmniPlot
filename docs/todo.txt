@@ -50,8 +50,9 @@ run of the new tools, use a Stripe tase project, or try them first onyour own ac
 //////////////////////////////////////
 // BACKLOG
 ////////////////////////////////
-- translate btn on support ticket (from spanish to english)
-- support ticket template "our bug, fixed, + month on us" only shows up sometimes, why is that? it doesnt show up for some (especially in spanish) so probably best to persist a generic version of that template since ill be using it alot during dev stages.
+Why I didn't do the last two steps:
+- Rules: the live app still records usage from the browser, and the new rules block that. Deploying them now would silently stop counting every cut until the app deploys.
+- Backfill: the live app would show the reconstructed rows on customers' Jobs pages.
 - tooltips need responsive aligning.
 - save draft btn on each step of the pattern importer
 - pattern uplaoder: ui message and/or reposition to missing or incorrect values on the form instead ofg silently failing the submit.

@@ -58,10 +58,15 @@ function createThemeStore() {
 export const themeStore = createThemeStore();
 
 // ─── Changelog ────────────────────────────────
+// Two separate markers: the nav "new" badge clears only when the changelog
+// page is actually viewed; the auto "what's new" modal only needs to have
+// been shown (and dismissed) once per release.
 const CHANGELOG_SEEN_KEY = "cc-changelog-seen";
+const CHANGELOG_MODAL_SEEN_KEY = "cc-changelog-modal-seen";
 
 function createChangelogStore() {
 	let lastSeenVersion = $state<string | null>(null);
+	let modalSeenVersion = $state<string | null>(null);
 	let ready = $state(false);
 
 	const versionIndex = (v: string) =>
@@ -90,13 +95,25 @@ function createChangelogStore() {
 		} else {
 			lastSeenVersion = saved;
 		}
+		modalSeenVersion = localStorage.getItem(CHANGELOG_MODAL_SEEN_KEY);
 		ready = true;
 	}
 
+	/** The changelog page was viewed — clears the nav badge (and the modal). */
 	function markSeen() {
 		lastSeenVersion = LATEST_VERSION;
+		modalSeenVersion = LATEST_VERSION;
 		if (typeof localStorage !== "undefined") {
 			localStorage.setItem(CHANGELOG_SEEN_KEY, LATEST_VERSION);
+			localStorage.setItem(CHANGELOG_MODAL_SEEN_KEY, LATEST_VERSION);
+		}
+	}
+
+	/** The "what's new" modal was dismissed — the nav badge stays until the page is viewed. */
+	function markModalSeen() {
+		modalSeenVersion = LATEST_VERSION;
+		if (typeof localStorage !== "undefined") {
+			localStorage.setItem(CHANGELOG_MODAL_SEEN_KEY, LATEST_VERSION);
 		}
 	}
 
@@ -110,8 +127,13 @@ function createChangelogStore() {
 		get hasUnseen() {
 			return hasUnseen;
 		},
+		/** Unseen releases and the modal hasn't been shown for this version yet. */
+		get shouldShowModal() {
+			return hasUnseen && modalSeenVersion !== LATEST_VERSION;
+		},
 		init,
 		markSeen,
+		markModalSeen,
 	};
 }
 

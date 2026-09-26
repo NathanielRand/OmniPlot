@@ -4,7 +4,13 @@
 	import Button from "$lib/components/ui/Button.svelte";
 	import Badge from "$lib/components/ui/Badge.svelte";
 
+	// "Got it" only retires the modal — the nav badge stays until the
+	// changelog page itself is opened.
 	function dismiss() {
+		changelogStore.markModalSeen();
+		uiStore.closeChangelogModal();
+	}
+	function openChangelog() {
 		changelogStore.markSeen();
 		uiStore.closeChangelogModal();
 	}
@@ -43,7 +49,7 @@
 			</div>
 
 			<div class="modal__actions">
-				<a href="/changelog" class="modal__link" onclick={dismiss}>View full changelog →</a>
+				<a href="/changelog#v{LATEST_VERSION}" class="modal__link" onclick={openChangelog}>View full changelog →</a>
 				<Button variant="primary" size="sm" onclick={dismiss}>Got it</Button>
 			</div>
 		</div>

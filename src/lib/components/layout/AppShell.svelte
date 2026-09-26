@@ -149,6 +149,20 @@
 				</button>
 			{/if}
 
+			<!-- What's new — badge stays until the changelog page is viewed -->
+			<a
+				href="/changelog#v{LATEST_VERSION}"
+				class="whats-new"
+				class:whats-new--new={changelogStore.hasUnseen}
+				aria-label={changelogStore.hasUnseen ? `What's new — v${LATEST_VERSION} (new)` : "What's new"}
+				use:tooltip={changelogStore.hasUnseen ? `New in v${LATEST_VERSION} — see what changed` : "What's new"}
+			>
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 5.8L20 10l-5 3.6L16.8 20 12 16.6 7.2 20 9 13.6 4 10l6.1-1.2z"/></svg>
+				{#if changelogStore.hasUnseen}
+					<span class="whats-new__badge">v{LATEST_VERSION}</span>
+				{/if}
+			</a>
+
 			<ThemeToggle />
 
 			<!-- Avatar dropdown -->
@@ -252,6 +266,12 @@
 							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
 							Support tickets
 							{#if supportCount}<span class="user-menu__count" aria-label={supportLabel}>{supportCount}</span>{/if}
+						</a>
+
+						<a href="/changelog#v{LATEST_VERSION}" role="menuitem" class="user-menu__item" onclick={closeMenu}>
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 5.8L20 10l-5 3.6L16.8 20 12 16.6 7.2 20 9 13.6 4 10l6.1-1.2z"/></svg>
+							What's new
+							{#if changelogStore.hasUnseen}<span class="user-menu__new">v{LATEST_VERSION}</span>{/if}
 						</a>
 
 						<button
@@ -456,11 +476,12 @@
 					href="/changelog"
 					class="sidebar__item sidebar__item--changelog"
 					class:active={currentPath === "/changelog"}
-					use:tooltip={!uiStore.sidebarOpen ? "Changelog" : undefined}
-					onclick={() => { changelogStore.markSeen(); uiStore.closeMobileMenu(); }}
+					use:tooltip={!uiStore.sidebarOpen ? (changelogStore.hasUnseen ? `Changelog — new: v${LATEST_VERSION}` : "Changelog") : undefined}
+					onclick={uiStore.closeMobileMenu}
 				>
 					<span class="sidebar__icon" aria-hidden="true">
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/><path d="M4 4v16h16"/></svg>
+						{#if changelogStore.hasUnseen}<span class="sidebar__icon-dot sidebar__icon-dot--brand"></span>{/if}
 					</span>
 					<span class="sidebar__label">Changelog</span>
 					{#if changelogStore.hasUnseen}
@@ -597,6 +618,44 @@
 		gap: 8px;
 		margin-left: auto;
 		flex-shrink: 0;
+	}
+
+	.whats-new {
+		position: relative;
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		height: 30px;
+		padding: 0 8px;
+		border-radius: var(--radius-md);
+		color: var(--text-tertiary);
+		text-decoration: none;
+		transition: background 0.12s, color 0.12s;
+		flex-shrink: 0;
+	}
+	.whats-new:hover { background: var(--interactive-hover); color: var(--text-primary); }
+	.whats-new--new { color: var(--text-brand); }
+	.whats-new__badge {
+		padding: 1px 6px;
+		border-radius: 999px;
+		font-size: 0.625rem;
+		font-weight: 700;
+		font-family: var(--font-mono);
+		background: var(--color-brand-muted);
+		color: var(--text-brand);
+		border: 1px solid var(--border-brand);
+		white-space: nowrap;
+	}
+	.user-menu__new {
+		margin-left: auto;
+		padding: 0 6px;
+		border-radius: 999px;
+		font-size: 0.625rem;
+		font-weight: 700;
+		font-family: var(--font-mono);
+		background: var(--color-brand-muted);
+		color: var(--text-brand);
+		border: 1px solid var(--border-brand);
 	}
 
 	.upgrade-btn {
@@ -873,6 +932,7 @@
 		box-shadow: 0 0 0 2px var(--bg-surface);
 	}
 	.sidebar-collapsed .sidebar__icon-dot { display: block; }
+	.sidebar__icon-dot--brand { background: var(--color-brand); }
 
 	.avatar__alert {
 		position: absolute;
@@ -1144,6 +1204,21 @@
 		}
 		.topbar { gap: 8px; }
 		.topbar__right { gap: 6px; }
+	}
+	@media (max-width: 640px) {
+		/* Badge text → dot; the drawer and avatar menu show the version */
+		.whats-new__badge {
+			position: absolute;
+			top: 3px;
+			right: 3px;
+			width: 8px;
+			height: 8px;
+			padding: 0;
+			font-size: 0;
+			border: none;
+			background: var(--color-brand);
+			box-shadow: 0 0 0 2px var(--bg-surface);
+		}
 	}
 	/* Small phones: Upgrade lives in the drawer + avatar menu; icon-only logo */
 	@media (max-width: 400px) {

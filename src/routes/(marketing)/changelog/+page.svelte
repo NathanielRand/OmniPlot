@@ -1,6 +1,14 @@
 <script lang="ts">
 	import Badge from "$lib/components/ui/Badge.svelte";
-	import { CHANGELOG } from "$lib/config";
+	import { CHANGELOG, LATEST_VERSION } from "$lib/config";
+	import { changelogStore } from "$lib/stores";
+	import { onMount } from "svelte";
+
+	// Viewing this page is what clears the "new" badge in the app navs.
+	onMount(() => {
+		changelogStore.init();
+		changelogStore.markSeen();
+	});
 
 	const TYPE_VARIANT = {
 		feature: "brand",
@@ -30,20 +38,23 @@
 
 	<div class="changelog-feed">
 		{#each CHANGELOG as release}
-			<div class="release">
-				<div class="release__meta">
-					<div class="release__version">v{release.version}</div>
-					<div class="release__date">
-						{new Date(release.date).toLocaleDateString("en-US", {
+			<section class="release" id="v{release.version}" aria-labelledby="v{release.version}-title">
+				<header class="release__meta">
+					<div class="release__tags">
+						<a class="release__version" href="#v{release.version}">v{release.version}</a>
+						{#if release.version === LATEST_VERSION}
+							<span class="release__latest">Latest</span>
+						{/if}
+					</div>
+					<h2 class="release__title" id="v{release.version}-title">{release.label}</h2>
+					<time class="release__date" datetime={release.date}>
+						{new Date(`${release.date}T00:00:00`).toLocaleDateString("en-US", {
 							year: "numeric",
 							month: "long",
 							day: "numeric",
 						})}
-					</div>
-					{#if release.label}
-						<Badge variant="brand" size="sm">{release.label}</Badge>
-					{/if}
-				</div>
+					</time>
+				</header>
 
 				<div class="release__changes">
 					{#each release.changes as change}
@@ -58,7 +69,7 @@
 						</div>
 					{/each}
 				</div>
-			</div>
+			</section>
 		{/each}
 
 		<!-- Roadmap teaser -->
@@ -118,11 +129,13 @@
 	}
 
 	.release {
-		display: grid;
-		grid-template-columns: 160px 1fr;
-		gap: 24px;
-		padding: 32px 0;
+		display: flex;
+		flex-direction: column;
+		gap: 18px;
+		padding: 36px 0;
 		border-bottom: 1px solid var(--border-subtle);
+		/* Clear the sticky marketing header when linked to #v1.2.3 */
+		scroll-margin-top: 88px;
 	}
 
 	.release:first-child {
@@ -133,20 +146,56 @@
 		display: flex;
 		flex-direction: column;
 		gap: 6px;
-		padding-top: 2px;
+		min-width: 0;
+	}
+
+	.release__tags {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		flex-wrap: wrap;
 	}
 
 	.release__version {
 		font-family: var(--font-mono);
 		font-size: 0.75rem;
 		font-weight: 600;
-		color: var(--text-primary);
-		letter-spacing: 0.05em;
+		letter-spacing: 0.04em;
+		color: var(--text-brand);
+		background: var(--color-brand-muted);
+		border: 1px solid var(--border-brand);
+		border-radius: 999px;
+		padding: 2px 9px;
+		text-decoration: none;
+	}
+	.release__version:hover {
+		text-decoration: underline;
+	}
+
+	.release__latest {
+		font-size: 0.6875rem;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+		color: var(--text-tertiary);
+	}
+
+	.release__title {
+		font-size: clamp(1.125rem, 2.4vw, 1.375rem);
+		letter-spacing: -0.02em;
+		line-height: 1.25;
+		margin: 0;
+		overflow-wrap: break-word;
 	}
 
 	.release__date {
 		font-size: 0.8125rem;
 		color: var(--text-tertiary);
+	}
+
+	.release:target .release__version {
+		background: var(--color-brand-dim);
+		color: #fff;
 	}
 
 	.release__changes {
@@ -155,10 +204,15 @@
 		gap: 12px;
 	}
 
+	/* Type badges share one column width so every change's text lines up */
 	.change {
-		display: flex;
-		align-items: flex-start;
-		gap: 10px;
+		display: grid;
+		grid-template-columns: 76px minmax(0, 1fr);
+		align-items: start;
+		gap: 12px;
+	}
+	.change :global(.badge) {
+		justify-self: start;
 	}
 
 	.change__text {
@@ -219,9 +273,23 @@
 	}
 
 	@media (max-width: 600px) {
+		.changelog-page {
+			padding: 40px 16px 64px;
+		}
 		.release {
-			grid-template-columns: 1fr;
-			gap: 12px;
+			gap: 14px;
+			padding: 28px 0;
+		}
+		.release__changes {
+			gap: 18px;
+		}
+		.change {
+			grid-template-columns: minmax(0, 1fr);
+			gap: 6px;
+		}
+		.roadmap-item__body {
+			flex-wrap: wrap;
+			gap: 4px 12px;
 		}
 	}
 </style>
