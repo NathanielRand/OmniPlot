@@ -5,6 +5,7 @@ import { checkRateLimit, rateLimitedResponse } from '$lib/server/rate-limit';
 import { SHOP_PLAN_LIMITS } from '$lib/config';
 import { TICKET_TOPICS, TOPIC_LABEL, ticketRef, type TicketTopic } from '$lib/support/tickets';
 import { createTicket } from '$lib/server/support/store';
+import { phoneCandidates } from '$lib/support/phone';
 import { runIntake, suggestionsFor } from '$lib/server/support/intake';
 import { notifyTicketCreated, requesterLink } from '$lib/server/support/notify';
 import type { ShopPlan } from '$lib/types';
@@ -13,7 +14,7 @@ const TOPICS = new Set(TICKET_TOPICS.map((t) => t.value));
 
 /** Plan context for triage — resolved server-side so it can't be spoofed. */
 async function requesterContext(uid: string | null) {
-	if (!uid) return { email: null, name: null, tier: null, shopPlan: null, prioritySupport: false };
+	if (!uid) return { email: null, name: null, phone: null, tier: null, shopPlan: null, prioritySupport: false };
 	const db = getAdminDb();
 	const user = (await db.doc(`users/${uid}`).get()).data() ?? {};
 	let shopPlan: ShopPlan | null = null;
@@ -25,6 +26,7 @@ async function requesterContext(uid: string | null) {
 	return {
 		email: (user.email as string | undefined) ?? null,
 		name: (user.displayName as string | undefined) ?? null,
+		phone: (user.phone as string | undefined) ?? null,
 		tier: (user.tier as string | undefined) ?? 'free',
 		shopPlan,
 		prioritySupport,
@@ -37,7 +39,7 @@ export const POST: RequestHandler = async ({ request, getClientAddress }) => {
 	const limit = await checkRateLimit(`support:${getClientAddress()}`, { max: 5, windowSeconds: 300 });
 	if (!limit.allowed) return rateLimitedResponse(limit);
 
-	let body: { topic?: string; subject?: string; name?: string; email?: string; message?: string; pageUrl?: string };
+	let body: { topic?: string; subject?: string; name?: string; email?: string; message?: string; pageUrl?: string; phone?: string };
 	try {
 		body = await request.json();
 	} catch {
@@ -52,9 +54,12 @@ export const POST: RequestHandler = async ({ request, getClientAddress }) => {
 	const name = (body.name?.trim() || ctx.name || '').slice(0, 120);
 	const message = (body.message ?? '').trim();
 	const subject = (body.subject?.trim() || TOPIC_LABEL[topic]).slice(0, 140);
+	// Optional, for guests who sign in by text code: staff match it to their account.
+	const phone = (ctx.phone ?? body.phone ?? '').trim().slice(0, 40);
 
 	if (!email || !message) return json({ error: 'Email and message are required.' }, { status: 400 });
 	if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json({ error: 'Please enter a valid email address.' }, { status: 400 });
+	if (phone && !phoneCandidates(phone).length) return json({ error: 'Please enter a valid phone number, or leave it blank.' }, { status: 400 });
 	if (message.length > 5000) return json({ error: 'Messages are limited to 5,000 characters.' }, { status: 400 });
 
 	const intake = runIntake({ topic, subject, message, prioritySupport: ctx.prioritySupport });
@@ -64,6 +69,7 @@ export const POST: RequestHandler = async ({ request, getClientAddress }) => {
 		created = await createTicket({
 			uid,
 			email,
+			phone,
 			name,
 			topic,
 			subject,

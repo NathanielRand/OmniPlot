@@ -17,12 +17,22 @@
 		isForeign,
 		translatableParts,
 		type Ticket,
+		type TicketLinkBasis,
 		type TicketPriority,
 		type TicketStatus,
 	} from '$lib/support/tickets';
 
+	interface AccountHit { uid: string; displayName: string; email: string; phone: string | null; tier: string }
+
+	const LINK_BASIS_LABEL: Record<TicketLinkBasis, string> = {
+		email: 'Linked by staff · same email',
+		phone: 'Linked by staff · phone match',
+		admin: 'Attached by staff',
+	};
+
 	interface Context {
-		link: { status: 'linked' | 'match' | 'none'; method: 'session' | 'manual' | null; uid: string | null };
+		link: { status: 'linked' | 'match' | 'none'; method: 'session' | 'manual' | null; basis: TicketLinkBasis | null; uid: string | null };
+		phoneMatches: (AccountHit & { typed: string; source: 'form' | 'message' })[];
 		account: {
 			uid: string; displayName: string; email: string; tier: string; createdAt: number | null;
 			subscriptionStatus: string | null; cancelAtPeriodEnd: boolean; pausedCollection: boolean;
@@ -209,6 +219,79 @@
 		});
 		if (!ok) return;
 		if (await act({ action: 'link' }, 'Ticket linked to account')) await load();
+	}
+
+	// ─── Attach to a specific account ─────────────
+	// Phone matches (fuzzy — suggestions only) and a manual search, for when
+	// the email on the ticket isn't the account's (SMS-login customers, typos,
+	// a second address). Linking shows the ticket in that account's Support list.
+	const canRelink = $derived(!!ticket && ticket.linkMethod !== 'session');
+	let attachOpen = $state(false);
+	let searchQ = $state('');
+	let searching = $state(false);
+	let searchResults = $state<AccountHit[] | null>(null);
+	let searchTimer: ReturnType<typeof setTimeout> | undefined;
+
+	function accountLine(a: AccountHit) {
+		return [a.displayName || '—', a.email || null, a.phone || null].filter(Boolean).join(' · ');
+	}
+
+	function onSearchInput() {
+		clearTimeout(searchTimer);
+		const q = searchQ.trim();
+		if (q.length < 2) { searchResults = null; return; }
+		searchTimer = setTimeout(() => runSearch(q), 300);
+	}
+
+	async function runSearch(q: string) {
+		searching = true;
+		try {
+			const token = await auth.currentUser?.getIdToken();
+			const res = await fetch(`/api/admin/support/accounts?q=${encodeURIComponent(q)}`, {
+				headers: token ? { Authorization: `Bearer ${token}` } : {},
+			});
+			const data = await res.json();
+			if (!res.ok) throw new Error(data.error ?? 'Search failed');
+			// Ignore a slow response for a query the admin has since changed.
+			if (q === searchQ.trim()) searchResults = data.accounts;
+		} catch (err) {
+			toastStore.error('Search failed', err instanceof Error ? err.message : '');
+		} finally {
+			searching = false;
+		}
+	}
+
+	async function attachTo(a: AccountHit, why: string) {
+		if (!ticket) return;
+		const moving = !!ticket.uid;
+		const ok = await confirmStore.ask({
+			title: moving ? 'Move this ticket to another account?' : 'Attach this ticket to the account?',
+			message: `The ticket and its whole conversation will show up in this account's Support list${moving ? ' instead of the current one' : ''}. Replies still go to ${ticket.email}.`,
+			confirmLabel: moving ? 'Move ticket' : 'Attach',
+			variant: 'primary',
+			details: [
+				{ label: 'Account', value: accountLine(a) },
+				{ label: 'Why', value: why },
+			],
+		});
+		if (!ok) return;
+		if (await act({ action: 'link', uid: a.uid }, 'Ticket attached to account')) {
+			attachOpen = false;
+			searchQ = '';
+			searchResults = null;
+			await load();
+		}
+	}
+
+	async function unlinkAccount() {
+		const ok = await confirmStore.ask({
+			title: 'Unlink this ticket from the account?',
+			message: 'It drops out of that account\'s Support list (unless the account uses the ticket\'s email). Nothing is sent to the customer.',
+			confirmLabel: 'Unlink',
+			variant: 'danger',
+		});
+		if (!ok) return;
+		if (await act({ action: 'unlink' }, 'Ticket unlinked')) await load();
 	}
 
 	// ─── Translation (staff only) ─────────────────
@@ -526,14 +609,17 @@
 								{ticket.email}
 							{/if}
 						</dd>
+						{#if ticket.phone}<dt>Phone</dt><dd class="mono">{ticket.phone}</dd>{/if}
 						<dt>Account</dt>
 						<dd>
 							{#if !context}
 								—
 							{:else if context.link.status === 'linked'}
-								<span class="link-ok">{context.link.method === 'manual' ? 'Linked by staff' : 'Filed while signed in'}</span>
+								<span class="link-ok">{context.link.method === 'manual' ? LINK_BASIS_LABEL[context.link.basis ?? 'email'] : 'Filed while signed in'}</span>
 							{:else if context.link.status === 'match'}
 								<span class="warn">Not linked · matching email</span>
+							{:else if context.phoneMatches.length}
+								<span class="warn">Not linked · possible phone match</span>
 							{:else}
 								<span class="muted-inline">Guest — no account with this email</span>
 							{/if}
@@ -544,8 +630,65 @@
 					{#if context?.link.status === 'match'}
 						<button class="link-btn" onclick={linkAccount} disabled={busy}>Link to account</button>
 					{/if}
-					{#if accountHref}
-						<div class="links"><a href={accountHref}>Open account →</a></div>
+
+					{#if context?.phoneMatches.length}
+						<div class="matches">
+							<p class="matches__title">Phone matches</p>
+							{#each context.phoneMatches as m (m.uid)}
+								<div class="match">
+									<span class="match__main">
+										<span class="match__name">{m.displayName || m.email || m.uid}</span>
+										<span class="match__meta">{accountLine(m)} · {m.tier}</span>
+										<span class="match__meta">Matched “{m.typed}” from {m.source === 'form' ? 'the form' : 'their message'}</span>
+									</span>
+									<button class="btn btn--ghost btn--sm" disabled={busy}
+										onclick={() => attachTo(m, `Phone ${m.phone} matches “${m.typed}” from ${m.source === 'form' ? 'the form' : 'their message'}`)}>
+										Link
+									</button>
+								</div>
+							{/each}
+						</div>
+					{/if}
+
+					<div class="links">
+						{#if accountHref}<a href={accountHref}>Open account →</a>{/if}
+						{#if canRelink}
+							<button class="text-btn" onclick={() => (attachOpen = !attachOpen)} disabled={busy}>
+								{ticket.uid ? 'Change account…' : 'Attach to account…'}
+							</button>
+							{#if ticket.uid}<button class="text-btn text-btn--danger" onclick={unlinkAccount} disabled={busy}>Unlink</button>{/if}
+						{/if}
+					</div>
+
+					{#if attachOpen && canRelink}
+						<div class="attach">
+							<input
+								class="attach__input"
+								type="search"
+								placeholder="Email, phone, name or uid"
+								aria-label="Find an account"
+								bind:value={searchQ}
+								oninput={onSearchInput}
+							/>
+							{#if searching}
+								<p class="muted">Searching…</p>
+							{:else if searchResults && !searchResults.length}
+								<p class="muted">No accounts found.</p>
+							{:else if searchResults}
+								{#each searchResults as a (a.uid)}
+									<div class="match">
+										<span class="match__main">
+											<span class="match__name">{a.displayName || a.email || a.uid}</span>
+											<span class="match__meta">{accountLine(a)} · {a.tier}</span>
+										</span>
+										<button class="btn btn--ghost btn--sm" disabled={busy || a.uid === ticket.uid}
+											onclick={() => attachTo(a, `Chosen by staff from a search for “${searchQ.trim()}”`)}>
+											{a.uid === ticket.uid ? 'Current' : 'Attach'}
+										</button>
+									</div>
+								{/each}
+							{/if}
+						</div>
 					{/if}
 				</section>
 
@@ -802,6 +945,33 @@
 	.links { display: flex; gap: 12px; margin-top: 12px; font-size: 0.8125rem; }
 	.links a { color: var(--text-brand); text-decoration: none; }
 	.links a:hover { text-decoration: underline; }
+	.text-btn {
+		padding: 0; border: none; background: none; cursor: pointer;
+		font-size: 0.8125rem; font-family: var(--font-body); color: var(--text-brand);
+	}
+	.text-btn:hover:not(:disabled) { text-decoration: underline; }
+	.text-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+	.text-btn--danger { color: var(--text-tertiary); }
+	.text-btn--danger:hover:not(:disabled) { color: var(--text-danger); }
+
+	.matches, .attach { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+	.matches__title {
+		margin: 0; font-size: 0.6875rem; font-weight: 600;
+		text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-warning);
+	}
+	.match {
+		display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+		border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--bg-surface);
+	}
+	.match__main { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+	.match__name { font-size: 0.8125rem; color: var(--text-primary); overflow-wrap: anywhere; }
+	.match__meta { font-size: 0.6875rem; color: var(--text-tertiary); overflow-wrap: anywhere; }
+	.attach__input {
+		width: 100%; box-sizing: border-box; padding: 6px 10px; border-radius: var(--radius-sm);
+		border: 1px solid var(--border-default); background: var(--bg-surface); color: var(--text-primary);
+		font-size: 0.8125rem; font-family: var(--font-body);
+	}
+	.attach__input:focus { outline: none; border-color: var(--color-brand-dim); }
 
 	.tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
 	.tag {

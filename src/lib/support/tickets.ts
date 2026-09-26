@@ -8,6 +8,7 @@
 export type TicketStatus = 'new' | 'in_progress' | 'awaiting_customer' | 'resolved' | 'closed';
 export type TicketPriority = 'normal' | 'high' | 'urgent';
 export type TicketActor = 'user' | 'admin' | 'system';
+export type TicketLinkBasis = 'email' | 'phone' | 'admin';
 
 export type TicketTopic = 'account' | 'billing' | 'patterns' | 'plotter' | 'technical' | 'feature' | 'other';
 
@@ -42,9 +43,14 @@ export interface Ticket {
 	id: string;
 	uid: string | null;
 	/** How `uid` got set: 'session' = filed while signed in; 'manual' = an
-	 *  admin linked a legacy/guest ticket to the account with the same email. */
+	 *  admin linked a legacy/guest ticket to an account (see `linkBasis`). */
 	linkMethod: 'session' | 'manual' | null;
+	/** Why staff picked that account: same email, a phone number that matched
+	 *  it, or chosen by hand. Null unless `linkMethod` is 'manual'. */
+	linkBasis: TicketLinkBasis | null;
 	email: string;
+	/** Phone the requester gave on the form (as typed/E.164), '' when none. */
+	phone: string;
 	name: string;
 	topic: TicketTopic;
 	subject: string;

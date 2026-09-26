@@ -50,6 +50,8 @@ run of the new tools, use a Stripe tase project, or try them first onyour own ac
 //////////////////////////////////////
 // BACKLOG
 ////////////////////////////////
+- translate btn on support ticket (from spanish to english)
+- support ticket template "our bug, fixed, + month on us" only shows up sometimes, why is that? it doesnt show up for some (especially in spanish) so probably best to persist a generic version of that template since ill be using it alot during dev stages.
 - tooltips need responsive aligning.
 - save draft btn on each step of the pattern importer
 - pattern uplaoder: ui message and/or reposition to missing or incorrect values on the form instead ofg silently failing the submit.

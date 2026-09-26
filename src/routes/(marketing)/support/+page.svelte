@@ -4,6 +4,7 @@
 	import { auth } from "$lib/firebase/client";
 	import { userStore } from "$lib/stores";
 	import { TICKET_TOPICS } from "$lib/support/tickets";
+	import PhoneInput from "$lib/components/ui/PhoneInput.svelte";
 
 	const TOPICS = TICKET_TOPICS;
 	const VALID_TOPICS = new Set<string>(TOPICS.map((t) => t.value));
@@ -15,6 +16,7 @@
 	let subject   = $state((page.url.searchParams.get("subject") ?? "").slice(0, 140));
 	let name      = $state("");
 	let email     = $state("");
+	let phone     = $state("");   // E.164 from PhoneInput
 	let message   = $state("");
 	let submitting = $state(false);
 	let submitted  = $state(false);
@@ -49,7 +51,7 @@
 			const res = await fetch("/api/support", {
 				method: "POST",
 				headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-				body: JSON.stringify({ topic, subject, name, email, message, pageUrl: document.referrer || page.url.href }),
+				body: JSON.stringify({ topic, subject, name, email, phone: signedIn ? undefined : phone, message, pageUrl: document.referrer || page.url.href }),
 			});
 			const data = await res.json();
 			if (!res.ok) throw new Error(data.error ?? "Submission failed");
@@ -209,6 +211,15 @@
 						/>
 					</div>
 				</div>
+
+				{#if !signedIn}
+					<!-- Phone (guests only — lets us find SMS-login accounts that have no email) -->
+					<div class="form-field">
+						<label class="form-label" for="phone">Phone <span class="form-optional">(optional)</span></label>
+						<PhoneInput id="phone" bind:value={phone} />
+						<p class="form-hint">If you sign in with a text code, add that number so we can find your account.</p>
+					</div>
+				{/if}
 
 				<!-- Subject -->
 				<div class="form-field">
@@ -403,6 +414,12 @@
 	}
 	.form-optional {
 		font-weight: 400;
+		color: var(--text-tertiary);
+	}
+
+	.form-hint {
+		margin: 0;
+		font-size: 0.75rem;
 		color: var(--text-tertiary);
 	}
 	.form-required {

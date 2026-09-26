@@ -9,6 +9,7 @@ import {
 	getTicket,
 	listTicketsForUser,
 	linkTicketToAccount,
+	unlinkTicket,
 	markSeen,
 	saveTranslations,
 	markDuplicate,
@@ -16,6 +17,8 @@ import {
 	updateTriage,
 	TicketError,
 } from '$lib/server/support/store';
+import { findPhoneMatches, getAccount, ticketPhones } from '$lib/server/support/match';
+import { phoneMatches } from '$lib/support/phone';
 import { notifyAdminReply, notifyDuplicate, notifyStatusChange } from '$lib/server/support/notify';
 import Stripe from 'stripe';
 import { applyCredit, fmtCents, CreditError } from '$lib/server/credits';
@@ -44,10 +47,13 @@ async function customerContext(t: Ticket) {
 	}
 	// linked  = the ticket carries the uid (filed signed in, or linked by an admin)
 	// match   = legacy/guest ticket whose email matches an account — linkable
-	const link = { status: t.uid ? 'linked' : uid ? 'match' : 'none', method: t.linkMethod, uid } as const;
+	const link = { status: t.uid ? 'linked' : uid ? 'match' : 'none', method: t.linkMethod, basis: t.linkBasis, uid } as const;
+	// Unlinked: accounts whose phone matches a number the requester gave. Only
+	// suggestions — the account below stays empty until staff link one.
+	const phoneHits = t.uid ? [] : (await findPhoneMatches(t)).filter((m) => m.uid !== uid);
 	if (!uid) {
 		const others = await listTicketsForUser(null, t.email || null);
-		return { link, account: null, related: others.filter((o) => o.id !== t.id).map(slim), reports: [], errors: [] };
+		return { link, phoneMatches: phoneHits, account: null, related: others.filter((o) => o.id !== t.id).map(slim), reports: [], errors: [] };
 	}
 
 	const [userSnap, related, reportsSnap, errorsSnap] = await Promise.all([
@@ -61,6 +67,7 @@ async function customerContext(t: Ticket) {
 
 	return {
 		link,
+		phoneMatches: phoneHits,
 		account: {
 			uid,
 			displayName: u.displayName ?? '',
@@ -128,7 +135,7 @@ export const POST: RequestHandler = async ({ request, params }) => {
 	// A duplicate is locked. Refuse up front — before anything with side
 	// effects (e.g. the reply path applies a credit before saving the reply).
 	// The store re-checks inside its transaction to close the race.
-	const LOCKED_OK = ['note', 'link', 'unduplicate', 'translate'];
+	const LOCKED_OK = ['note', 'link', 'unlink', 'unduplicate', 'translate'];
 	if (ticket.duplicateOf && !LOCKED_OK.includes(payload.action)) {
 		return json({ error: `This ticket is a duplicate of ${ticketRef(ticket.duplicateOf)} and is locked. Work on that ticket, or unmark the duplicate first.` }, { status: 409 });
 	}
@@ -194,13 +201,33 @@ export const POST: RequestHandler = async ({ request, params }) => {
 				return json({ ticket: updated });
 			}
 
-			// Legacy cover: link a guest/old ticket to the account with the SAME
-			// email. Never to an arbitrary account — the email must match.
+			// Attach a guest/old ticket to an account. Without a uid: the account
+			// with the same email. With one: the account staff picked (a phone
+			// match or a manual search) — recorded with why it was chosen.
 			case 'link': {
-				if (ticket.uid) return json({ error: 'This ticket is already linked to an account.' }, { status: 409 });
-				const uid = await accountUid(ticket);
-				if (!uid) return json({ error: 'No account uses this ticket\'s email.' }, { status: 404 });
-				const updated = await linkTicketToAccount(ticket.id, uid, admin);
+				if (!payload.uid) {
+					if (ticket.uid) return json({ error: 'This ticket is already linked to an account.' }, { status: 409 });
+					const uid = await accountUid(ticket);
+					if (!uid) return json({ error: 'No account uses this ticket\'s email.' }, { status: 404 });
+					const account = await getAccount(uid);
+					const updated = await linkTicketToAccount(ticket.id, { uid, label: account?.email || 'account' }, 'email', admin);
+					return json({ ticket: updated });
+				}
+				const uid = String(payload.uid);
+				if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid)) return json({ error: 'Invalid account.' }, { status: 400 });
+				const account = await getAccount(uid);
+				if (!account) return json({ error: 'That account no longer exists.' }, { status: 404 });
+				const basis =
+					ticket.email && account.email.toLowerCase() === ticket.email ? 'email'
+					: ticketPhones(ticket).some((p) => phoneMatches(p.typed, account.phone)) ? 'phone'
+					: 'admin';
+				const label = [account.displayName, account.email || account.phone].filter(Boolean).join(' · ') || 'account';
+				const updated = await linkTicketToAccount(ticket.id, { uid, label }, basis, admin);
+				return json({ ticket: updated });
+			}
+
+			case 'unlink': {
+				const updated = await unlinkTicket(ticket.id, admin);
 				return json({ ticket: updated });
 			}
 

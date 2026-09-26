@@ -16,6 +16,7 @@ import {
 	ticketRef,
 	type Ticket,
 	type TicketActor,
+	type TicketLinkBasis,
 	type TicketMessage,
 	type TicketPriority,
 	type TicketStatus,
@@ -52,7 +53,10 @@ function normalize(id: string, d: FirebaseFirestore.DocumentData): Ticket {
 		id,
 		uid:        d.uid ?? null,
 		linkMethod: d.linkMethod ?? (d.uid ? 'session' : null),
+		// Links made before phone matching were always by email.
+		linkBasis:  d.linkMethod === 'manual' ? (d.linkBasis ?? 'email') : null,
 		email:      d.email ?? '',
+		phone:      typeof d.phone === 'string' ? d.phone : '',
 		name:       d.name ?? '',
 		topic:      (d.topic ?? 'other') as TicketTopic,
 		subject:    d.subject || d.topicLabel || TOPIC_LABEL[d.topic] || 'Support request',
@@ -157,6 +161,7 @@ export function accessKeyMatches(expected: string | null, given: string | null):
 export interface CreateTicketInput {
 	uid: string | null;
 	email: string;
+	phone: string;
 	name: string;
 	topic: TicketTopic;
 	subject: string;
@@ -292,14 +297,56 @@ export async function changeStatus(
 	return addMessage(id, { from: by.actor === 'user' ? 'user' : 'system', body, authorName: who }, { status: next });
 }
 
-/** Links a legacy/guest ticket to an account. The caller verifies the
- *  account's email matches the ticket's — tickets filed while signed in are
- *  linked at submission and never need this. */
-export async function linkTicketToAccount(id: string, uid: string, admin: { uid: string; name: string }): Promise<Ticket> {
-	await col().doc(id).update({ uid, linkMethod: 'manual', linkedBy: admin.name, linkedAt: Date.now() });
+const LINK_REASON: Record<TicketLinkBasis, string> = {
+	email: 'same email',
+	phone: 'matching phone number',
+	admin: 'chosen by staff',
+};
+
+/** Attaches a guest/legacy ticket to an account (or moves a staff-made link
+ *  to a different one). The account then sees the ticket in its Support list.
+ *  Tickets filed while signed in are linked at submission and never move. */
+export async function linkTicketToAccount(
+	id: string,
+	account: { uid: string; label: string },
+	basis: TicketLinkBasis,
+	admin: { uid: string; name: string },
+): Promise<Ticket> {
+	const ref = col().doc(id);
+	const previous = await getAdminDb().runTransaction(async (tx) => {
+		const snap = await tx.get(ref);
+		if (!snap.exists) throw new TicketError('Ticket not found', 404);
+		const t = normalize(snap.id, snap.data()!);
+		if (t.linkMethod === 'session') throw new TicketError('This ticket was filed while signed in — its account can\'t be changed.', 409);
+		if (t.uid === account.uid) throw new TicketError('Already linked to that account.', 409);
+		tx.update(ref, { uid: account.uid, linkMethod: 'manual', linkBasis: basis, linkedBy: admin.name, linkedAt: Date.now() });
+		return t.uid;
+	});
 	return addMessage(id, {
 		from: 'admin',
-		body: `Linked this ticket to the matching OmniPlot account (${uid}).`,
+		body: `${previous ? `Moved this ticket from account ${previous} to` : 'Linked this ticket to'} ${account.label} (${account.uid}) — ${LINK_REASON[basis]}.`,
+		authorName: admin.name,
+		authorUid: admin.uid,
+		internal: true,
+	});
+}
+
+/** Undo for a wrong staff link. The ticket stays visible to anyone signed in
+ *  with its email, same as any guest ticket. */
+export async function unlinkTicket(id: string, admin: { uid: string; name: string }): Promise<Ticket> {
+	const ref = col().doc(id);
+	const previous = await getAdminDb().runTransaction(async (tx) => {
+		const snap = await tx.get(ref);
+		if (!snap.exists) throw new TicketError('Ticket not found', 404);
+		const t = normalize(snap.id, snap.data()!);
+		if (!t.uid) throw new TicketError('This ticket isn\'t linked to an account.', 409);
+		if (t.linkMethod === 'session') throw new TicketError('This ticket was filed while signed in — it can\'t be unlinked.', 409);
+		tx.update(ref, { uid: null, linkMethod: null, linkBasis: null, linkedBy: null, linkedAt: null });
+		return t.uid;
+	});
+	return addMessage(id, {
+		from: 'admin',
+		body: `Unlinked this ticket from account ${previous}.`,
 		authorName: admin.name,
 		authorUid: admin.uid,
 		internal: true,
