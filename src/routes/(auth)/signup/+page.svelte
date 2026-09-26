@@ -341,6 +341,7 @@
 		cursor: pointer; font-size: 0.8125rem; color: var(--text-secondary);
 	}
 	.terms-check { accent-color: var(--color-brand-dim); margin-top: 2px; flex-shrink: 0; }
+	@media (pointer: coarse) { .terms-check { width: 20px; height: 20px; margin-top: 0; } }
 	.terms-text { line-height: 1.5; }
 	.field-link { color: var(--text-brand); text-decoration: none; }
 	.field-link:hover { text-decoration: underline; }

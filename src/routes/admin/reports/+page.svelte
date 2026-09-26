@@ -463,4 +463,22 @@
 	@media (max-width: 480px) {
 		.stats-row { grid-template-columns: 1fr; }
 	}
+	/* Phones: two-line rows — type · title · chevron, then who / when / status */
+	@media (max-width: 640px) {
+		.report-table__head { display: none; }
+		.report-row__main {
+			grid-template-columns: auto minmax(0, 1fr) auto;
+			grid-template-areas:
+				"type title chev"
+				"who  who   status"
+				"date date  date";
+			row-gap: 4px;
+		}
+		.report-row__type    { grid-area: type; }
+		.report-row__title   { grid-area: title; }
+		.report-row__chevron { grid-area: chev; }
+		.report-row__reporter { grid-area: who; }
+		.report-row__status  { grid-area: status; justify-self: end; }
+		.report-row__date    { grid-area: date; }
+	}
 </style>

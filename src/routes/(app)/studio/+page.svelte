@@ -28,7 +28,9 @@
 	import { sendToPlotter, sendToPlotterSegmented, sendSettings, connectSerialPort, openAuthorizedSerial, getOpenSerialPortInfo, isCachedPort, disconnectSerialPort, queryPlotter, releaseAgentPort, type SerialPortInfo, type CutProgress } from "$lib/utils/plotter-connection";
 	import { logPlotterError } from "$lib/firebase/firestore";
 	import { CutLimitError, finishCutJob, recordCutJob, startCutJob, type CutSummary } from "$lib/firebase/cuts";
-	import { plansStore, platformStore } from "$lib/stores";
+	import { plansStore, platformStore, plotterStatusStore, type PlotterStatus, type PlotterConnType } from "$lib/stores";
+	import { page } from "$app/state";
+	import { replaceState } from "$app/navigation";
 	import type { PlotterDiagnostic } from "$lib/utils/plotter-errors";
 	import PlotterDiagPanel from "$lib/components/ui/PlotterDiagPanel.svelte";
 	import {
@@ -617,6 +619,11 @@
 			? localStorage.getItem("op-panel-collapsed") === "true"
 			: false,
 	);
+	// At ≤1024px the panel is a bottom sheet over the canvas — always start
+	// with the canvas visible there; the FAB / toolbar Settings opens it.
+	if (typeof window !== "undefined" && window.matchMedia("(max-width: 1024px)").matches) {
+		panelCollapsed = true;
+	}
 	$effect(() => {
 		if (typeof localStorage !== "undefined") {
 			localStorage.setItem("op-panel-collapsed", String(panelCollapsed));
@@ -624,11 +631,18 @@
 	});
 
 	// Jump to the Plotter tab, expanding the settings panel if it's collapsed —
-	// used by the toolbar plotter badge's Connect/View button.
+	// used by the app shell's plotter badge (via ?panel=plotter).
 	function openPlotterTab() {
 		panelTab = "plotter";
 		panelCollapsed = false;
 	}
+	$effect(() => {
+		if (page.url.searchParams.get("panel") !== "plotter") return;
+		openPlotterTab();
+		const url = new URL(page.url);
+		url.searchParams.delete("panel");
+		replaceState(url, page.state);
+	});
 
 	// ─── Canvas interaction ───────────────────────
 	let canvasEl = $state<HTMLDivElement | null>(null);
@@ -1084,21 +1098,14 @@
 		return { label: "Connected", tone: "ok" };
 	});
 
-	// ─── Toolbar plotter status badge ─────────────
-	// Quick-glance card in the main toolbar: name, connection medallion, and
-	// live status. Reacts to every signal that can change it — connect/
-	// disconnect (isConnected/serialPortInfo), the agent going offline
+	// ─── App-shell plotter status badge ───────────
+	// Published to plotterStatusStore for the top bar / sidebar badge.
+	// Reacts to every signal that can change it — connect/disconnect
+	// (isConnected/serialPortInfo), the agent going offline
 	// (agentStore.status), a job starting/finishing (cutting/cutProgress),
 	// and material/plotter width compatibility (compat).
-	type ToolbarConnType = "usb-serial" | "cut-agent" | "network" | "download";
-	interface ToolbarPlotterBadge {
-		state: "cutting" | "connected" | "detected" | "scanning" | "none";
-		name: string | null;
-		connType: ToolbarConnType | null;
-		detail: string;
-		tone: "ok" | "warn" | "error" | "missing" | "cutting";
-	}
-	const toolbarPlotterBadge = $derived.by((): ToolbarPlotterBadge => {
+	type ToolbarConnType = PlotterConnType;
+	const toolbarPlotterBadge = $derived.by((): PlotterStatus => {
 		if (isConnected) {
 			if (cutting) {
 				return {
@@ -1150,6 +1157,10 @@
 		}
 		return { state: "none", name: null, connType: null, detail: "No plotter detected", tone: "missing" };
 	});
+	$effect(() => {
+		plotterStatusStore.publish(toolbarPlotterBadge);
+	});
+	$effect(() => () => plotterStatusStore.publish(null));
 
 	// ─── Metered feature gates ────────────────────
 	// Admin-configurable per-tier allowances (Admin → Products) from the
@@ -2314,18 +2325,6 @@
 
 <svelte:window onkeydown={onWindowKeydown} />
 
-{#snippet connTypeIcon(c: "usb-serial" | "cut-agent" | "network" | "download")}
-	{#if c === "usb-serial"}
-		<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9h9M4 15h9"/><path d="M13 6h4l3 3v6l-3 3h-4"/><circle cx="7" cy="9" r="0.5" fill="currentColor"/><circle cx="7" cy="15" r="0.5" fill="currentColor"/><path d="M9 6V4M9 20v-2"/></svg>
-	{:else if c === "cut-agent"}
-		<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><circle cx="7" cy="7.5" r="1" fill="currentColor" stroke="none"/><circle cx="7" cy="16.5" r="1" fill="currentColor" stroke="none"/><path d="M12 7.5h6M12 16.5h6"/></svg>
-	{:else if c === "network"}
-		<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 8.5a15 15 0 0 1 20 0"/><path d="M5.5 12.5a10 10 0 0 1 13 0"/><path d="M9 16.5a5 5 0 0 1 6 0"/><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/></svg>
-	{:else}
-		<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 19h16"/></svg>
-	{/if}
-{/snippet}
-
 {#snippet patternCard(item: CanvasItem)}
 	<div class="pattern-card-wrap">
 		<div
@@ -2835,34 +2834,21 @@
 		<!-- Spacer -->
 		<div style="flex:1" aria-hidden="true"></div>
 
-		<!-- Plotter status badge: quick-glance name, connection type, and live status -->
-		<div
-			class="plotter-badge plotter-badge--{toolbarPlotterBadge.tone}"
-			use:tooltip={`${toolbarPlotterBadge.name ?? "No plotter"} · ${toolbarPlotterBadge.detail}`}
-			role="status"
-			aria-live="polite"
+		<!-- Settings panel toggle (mirrors the gear on the panel's edge) -->
+		<button
+			class="tool-btn tool-btn--settings"
+			class:active={!panelCollapsed}
+			onclick={() => (panelCollapsed = !panelCollapsed)}
+			use:tooltip={panelCollapsed ? "Show settings panel" : "Hide settings panel"}
+			aria-pressed={!panelCollapsed}
+			aria-label={panelCollapsed ? "Show settings panel" : "Hide settings panel"}
 		>
-			<span class="plotter-badge__dot" aria-hidden="true"></span>
-			{#if toolbarPlotterBadge.connType}
-				<span class="plotter-badge__medallion plotter-badge__medallion--{toolbarPlotterBadge.connType}">
-					{@render connTypeIcon(toolbarPlotterBadge.connType)}
-				</span>
-			{/if}
-			<span class="plotter-badge__text">
-				<span class="plotter-badge__name">{toolbarPlotterBadge.name ?? "No plotter"}</span>
-				<span class="plotter-badge__detail">{toolbarPlotterBadge.detail}</span>
-			</span>
-			<button
-				class="plotter-badge__action"
-				onclick={openPlotterTab}
-				use:tooltip={toolbarPlotterBadge.state === "connected" || toolbarPlotterBadge.state === "cutting" ? "View plotter settings" : "Connect a plotter"}
-			>
-				{toolbarPlotterBadge.state === "connected" || toolbarPlotterBadge.state === "cutting" ? "View" : "Connect"}
-			</button>
-		</div>
-
-		<!-- Spacer -->
-		<div style="flex:1" aria-hidden="true"></div>
+			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+				<circle cx="12" cy="12" r="3" />
+				<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+			</svg>
+			<span class="ai-mode-label">Settings</span>
+		</button>
 
 		<!-- Cut progress indicator — shown during segmented USB send -->
 		{#if cutProgress}
@@ -4343,7 +4329,7 @@
 
 <style>
 	.studio {
-		--statusbar-h: 44px;
+		--statusbar-h: 58px;
 		display: grid;
 		/* Status bar is fixed to the viewport (see .studio__statusbar) and no
 		   longer takes a row here — its height (--statusbar-h) is reserved via
@@ -4513,6 +4499,21 @@
 	.tool-btn--ai-mode:hover:not(:disabled) {
 		background: rgba(0, 112, 255, 0.1);
 		color: var(--color-brand-dim);
+	}
+	/* Settings panel toggle — labelled, outlined like the export button */
+	.tool-btn--settings {
+		width: auto;
+		height: 32px;
+		padding: 0 11px;
+		gap: 6px;
+		color: var(--text-secondary);
+		border: 1px solid var(--border-default);
+		background: var(--bg-surface-2);
+	}
+	.tool-btn--settings.active {
+		color: var(--color-brand-dim);
+		background: rgba(0, 112, 255, 0.08);
+		border-color: rgba(0, 112, 255, 0.25);
 	}
 	.ai-mode-label {
 		font-size: 0.75rem;
@@ -4748,128 +4749,6 @@
 
 	.cut-btn--hidden {
 		display: none;
-	}
-
-	/* ─── Toolbar plotter status badge ────── */
-	.plotter-badge {
-		display: flex;
-		align-items: center;
-		gap: 7px;
-		height: 34px;
-		padding: 0 7px 0 11px;
-		border-radius: var(--radius-md);
-		border: 1px solid var(--border-default);
-		background: var(--bg-surface-2);
-		max-width: 280px;
-		flex-shrink: 1;
-		min-width: 0;
-	}
-
-	.plotter-badge__dot {
-		width: 7px;
-		height: 7px;
-		border-radius: 50%;
-		flex-shrink: 0;
-	}
-	.plotter-badge--ok .plotter-badge__dot {
-		background: var(--color-success);
-	}
-	.plotter-badge--warn .plotter-badge__dot {
-		background: var(--color-warning);
-	}
-	.plotter-badge--error .plotter-badge__dot {
-		background: var(--color-danger);
-		box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-danger) 25%, transparent);
-	}
-	.plotter-badge--missing .plotter-badge__dot {
-		background: var(--text-tertiary);
-	}
-	.plotter-badge--cutting .plotter-badge__dot {
-		background: var(--color-brand);
-		animation: plotter-badge-pulse 1.1s ease-in-out infinite;
-	}
-	@keyframes plotter-badge-pulse {
-		0%, 100% { opacity: 1; transform: scale(1); }
-		50% { opacity: 0.4; transform: scale(0.7); }
-	}
-
-	/* Small version of the connection-type medallions from the connected-plotters page */
-	.plotter-badge__medallion {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 18px;
-		height: 18px;
-		border-radius: 5px;
-		flex-shrink: 0;
-	}
-	.plotter-badge__medallion--usb-serial {
-		background: rgba(96, 165, 250, 0.14);
-		color: #60a5fa;
-	}
-	.plotter-badge__medallion--cut-agent {
-		background: rgba(52, 211, 153, 0.14);
-		color: #34d399;
-	}
-	.plotter-badge__medallion--network {
-		background: rgba(251, 191, 36, 0.14);
-		color: #fbbf24;
-	}
-	.plotter-badge__medallion--download {
-		background: rgba(148, 163, 184, 0.14);
-		color: #94a3b8;
-	}
-
-	.plotter-badge__text {
-		display: flex;
-		flex-direction: column;
-		min-width: 0;
-		line-height: 1.25;
-	}
-	.plotter-badge__name {
-		font-size: 0.75rem;
-		font-weight: 600;
-		color: var(--text-primary);
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		max-width: 150px;
-	}
-	.plotter-badge__detail {
-		font-size: 0.625rem;
-		color: var(--text-tertiary);
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		max-width: 150px;
-	}
-	.plotter-badge--cutting .plotter-badge__detail {
-		color: var(--color-brand);
-		font-weight: 600;
-	}
-	.plotter-badge--error .plotter-badge__detail {
-		color: var(--color-danger);
-	}
-
-	.plotter-badge__action {
-		flex-shrink: 0;
-		margin-left: 2px;
-		padding: 4px 9px;
-		font-size: 0.6875rem;
-		font-weight: 600;
-		font-family: var(--font-body);
-		border-radius: 999px;
-		border: 1px solid var(--border-default);
-		background: var(--bg-surface-3);
-		color: var(--text-secondary);
-		cursor: pointer;
-		white-space: nowrap;
-		transition: background 0.12s, color 0.12s, border-color 0.12s;
-	}
-	.plotter-badge__action:hover {
-		background: var(--color-brand);
-		color: var(--bg-surface);
-		border-color: var(--color-brand);
 	}
 
 	.offline-tip {
@@ -6551,21 +6430,34 @@
 		position: fixed;
 		bottom: 0;
 		right: 0;
-		height: var(--statusbar-h);
+		/* Height grows by the home-indicator inset so metrics sit above it */
+		height: calc(var(--statusbar-h) + env(safe-area-inset-bottom, 0px));
+		padding-bottom: env(safe-area-inset-bottom, 0px);
 		z-index: 30;
 		display: flex;
 		align-items: stretch;
 		background: var(--bg-surface);
 		border-top: 1px solid var(--border-subtle);
+		/* Scroll sideways on narrow screens, never vertically — and without a
+		   scrollbar eating into the bar's height. */
 		overflow-x: auto;
+		overflow-y: hidden;
+		scrollbar-width: none;
+	}
+	.studio__statusbar::-webkit-scrollbar {
+		display: none;
 	}
 
 	.status-metric {
 		display: flex;
 		flex-direction: column;
-		padding: 6px 16px;
+		justify-content: center;
+		gap: 2px;
+		padding: 8px 16px 10px;
 		border-right: 1px solid var(--border-subtle);
 		min-width: 100px;
+		flex-shrink: 0;
+		line-height: 1.25;
 	}
 
 	.status-metric__label {
@@ -6574,7 +6466,7 @@
 		color: var(--text-tertiary);
 		text-transform: uppercase;
 		letter-spacing: 0.1em;
-		margin-bottom: 1px;
+		white-space: nowrap;
 	}
 
 	.status-metric__value {
@@ -6582,6 +6474,7 @@
 		font-size: 0.9974rem;
 		font-weight: 500;
 		color: var(--text-primary);
+		white-space: nowrap;
 	}
 
 	.status-metric__value.good {
@@ -6637,6 +6530,30 @@
 		display: none;
 	}
 
+	/* Laptops: the toolbar scrolls rather than wraps, so trim it before the
+	   Cut button (last item) gets pushed out of view. Hints keep their
+	   tooltips; toggles keep their state colour. */
+	@media (max-width: 1440px) {
+		.offline-tip {
+			font-size: 0;
+			gap: 0;
+			padding: 6px;
+		}
+		.offline-tip :global(strong) {
+			display: none;
+		}
+	}
+	@media (max-width: 1200px) {
+		.tool-btn--ai-mode .ai-mode-label,
+		.tool-btn--auto-reoptimize .ai-mode-label {
+			display: none;
+		}
+		.tool-btn--ai-mode,
+		.tool-btn--auto-reoptimize {
+			padding: 0 8px;
+		}
+	}
+
 	@media (max-width: 1024px) {
 		.studio__body {
 			grid-template-columns: 1fr;
@@ -6649,7 +6566,8 @@
 			right: 0;
 			bottom: 0;
 			height: 70vh;
-			max-height: 70vh;
+			height: 70dvh;
+			max-height: 70dvh;
 			z-index: 410;
 			border-left: none;
 			border-top: 1px solid var(--border-default);
@@ -6677,7 +6595,8 @@
 			justify-content: center;
 			position: fixed;
 			right: 16px;
-			bottom: 16px;
+			/* Clear the fixed metrics bar along the bottom edge */
+			bottom: calc(var(--statusbar-h) + 12px + env(safe-area-inset-bottom, 0px));
 			width: 48px;
 			height: 48px;
 			border-radius: 50%;
@@ -6700,9 +6619,37 @@
 		.cut-btn span {
 			display: none;
 		}
-		/* App sidebar is hidden entirely below this breakpoint (see AppShell) */
+		/* The panel is a sheet here, so the toolbar's own Settings button
+		   and the FAB both open it — keep the toolbar one icon-only. */
+		.tool-btn--settings .ai-mode-label {
+			display: none;
+		}
+		.tool-btn--settings {
+			padding: 0 8px;
+		}
+	}
+
+	/* App sidebar becomes a drawer at ≤768px (see AppShell), so the metrics
+	   bar spans the full width there — but not at tablet widths, where the
+	   sidebar column is still visible. */
+	@media (max-width: 768px) {
 		.studio__statusbar {
 			left: 0 !important;
+		}
+		.studio__toolbar {
+			gap: 4px;
+			padding: 6px 8px;
+			scrollbar-width: none;
+		}
+		.studio__toolbar::-webkit-scrollbar {
+			display: none;
+		}
+		.tool-btn {
+			width: 34px;
+			height: 34px;
+		}
+		.toolbar-sep {
+			display: none;
 		}
 	}
 
@@ -6713,13 +6660,18 @@
 	@media (max-width: 480px) {
 		.studio__panel {
 			height: 80vh;
-			max-height: 80vh;
+			height: 80dvh;
+			max-height: 80dvh;
 		}
 		.mobile-panel-fab {
 			width: 44px;
 			height: 44px;
 			right: 12px;
-			bottom: 12px;
+			bottom: calc(var(--statusbar-h) + 10px + env(safe-area-inset-bottom, 0px));
+		}
+		/* Zoom % readout is the least useful thing on a phone toolbar */
+		.zoom-display {
+			display: none;
 		}
 	}
 

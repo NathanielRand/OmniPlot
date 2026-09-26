@@ -17,6 +17,7 @@ import {
 	onSnapshot,
 	serverTimestamp,
 	deleteField,
+	increment,
 	Timestamp,
 	type DocumentData,
 	type QueryConstraint,
@@ -24,6 +25,7 @@ import {
 } from "firebase/firestore";
 import { db, auth } from "./client";
 import { sizeError } from "$lib/utils/patternSize";
+import { pathStats } from "$lib/utils/pathStats";
 import type {
 	UserProfile,
 	Vehicle,
@@ -584,17 +586,22 @@ function toUserPattern(id: string, data: DocumentData): UserPattern {
 		heightInches:      data.heightInches      ?? 0,
 		svgPath:           data.svgPath           ?? "",
 		notes:             data.notes,
+		source:            data.source,
+		batchId:           data.batchId,
+		tierAtUpload:      data.tierAtUpload,
+		geometry:          data.geometry,
+		editCount:         data.editCount,
 		createdAt:         fromTimestamp(data.createdAt),
 		updatedAt:         fromTimestamp(data.updatedAt),
 	};
 }
 
 export async function addUserPattern(
-	data: Omit<UserPattern, "id" | "createdAt" | "updatedAt" | "status" | "isPublished">,
+	data: Omit<UserPattern, "id" | "createdAt" | "updatedAt" | "status" | "isPublished" | "geometry" | "editCount">,
 ): Promise<string> {
 	assertExactSize(data, `Pattern "${data.name}"`);
 	const ref = doc(collection(db, Collections.USER_PATTERNS));
-	const { vehicleId, notes, adminNotes, patternName, address, propertyLabel, ...rest } = data;
+	const { vehicleId, notes, adminNotes, patternName, address, propertyLabel, source, batchId, tierAtUpload, ...rest } = data;
 	await setDoc(ref, {
 		...rest,
 		...(vehicleId     ? { vehicleId }     : {}),
@@ -603,6 +610,13 @@ export async function addUserPattern(
 		...(patternName   ? { patternName }   : {}),
 		...(address       ? { address }       : {}),
 		...(propertyLabel ? { propertyLabel } : {}),
+		// Tracking for Admin → Uploads. setDoc rejects undefined values, so
+		// the source's optional fields are dropped rather than written blank.
+		...(source        ? { source: Object.fromEntries(Object.entries(source).filter(([, v]) => v !== undefined && v !== "")) } : {}),
+		...(batchId       ? { batchId }       : {}),
+		...(tierAtUpload  ? { tierAtUpload }  : {}),
+		geometry:  pathStats(data.svgPath),
+		editCount: 0,
 		isPublished: false,
 		status: data.submitToCommunity ? "pending" : "private",
 		createdAt: serverTimestamp(),
@@ -640,6 +654,11 @@ export async function updateUserPattern(
 	const update: Record<string, unknown> = { ...patch, updatedAt: serverTimestamp() };
 	if (patch.submitToCommunity !== undefined) {
 		update.status = patch.submitToCommunity ? "pending" : "private";
+	}
+	// Anything beyond the community toggle is a content edit.
+	if (Object.keys(patch).some((k) => k !== "submitToCommunity")) {
+		update.editCount = increment(1);
+		if (typeof patch.svgPath === "string") update.geometry = pathStats(patch.svgPath);
 	}
 	// Firebase v12 throws on undefined values in updateDoc — convert them to
 	// deleteField() so optional fields (e.g. notes) are properly cleared.

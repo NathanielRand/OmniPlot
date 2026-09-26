@@ -2031,7 +2031,7 @@ onMount(() => {
 <style>
 	.patterns-page { padding: 24px; display: flex; flex-direction: column; gap: 20px; max-width: 1100px; margin: 0 auto; }
 
-	.page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+	.page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 	.page-title  { font-size: 1.375rem; margin-bottom: 3px; }
 	.page-sub    { font-size: 0.875rem; color: var(--text-secondary); }
 	.page-header__actions { display: flex; align-items: center; gap: 8px; }
@@ -2167,6 +2167,7 @@ onMount(() => {
 	.row-resolved { opacity: 0.6; }
 
 	.row-actions { display: flex; gap: 4px; opacity: 0; transition: opacity 0.12s; align-items: center; }
+	@media (hover: none) { .row-actions { opacity: 1; } }
 	tr:hover .row-actions { opacity: 1; }
 	.row-actions--always { opacity: 1; }
 
@@ -2225,7 +2226,7 @@ onMount(() => {
 
 	/* ─── Review Panel ─── */
 	.review-panel {
-		position: fixed; top: 0; right: 0; height: 100vh; width: 520px; max-width: 95vw;
+		position: fixed; top: 0; right: 0; height: 100vh; height: 100dvh; width: 520px; max-width: 95vw;
 		background: var(--bg-surface); border-left: 1px solid var(--border-default);
 		box-shadow: -8px 0 32px rgba(0,0,0,0.25); z-index: 100;
 		display: flex; flex-direction: column; overflow: hidden;
@@ -2417,7 +2418,7 @@ onMount(() => {
 
 	/* ─── Edit Panel ─── */
 	.panel-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.35); z-index: 99; }
-	.edit-panel { position: fixed; top: 0; right: 0; height: 100vh; width: 480px; max-width: 95vw; background: var(--bg-surface); border-left: 1px solid var(--border-default); box-shadow: -8px 0 32px rgba(0,0,0,0.2); z-index: 100; display: flex; flex-direction: column; overflow: hidden; animation: ep-slide-in 0.2s ease; }
+	.edit-panel { position: fixed; top: 0; right: 0; height: 100vh; height: 100dvh; width: 480px; max-width: 95vw; background: var(--bg-surface); border-left: 1px solid var(--border-default); box-shadow: -8px 0 32px rgba(0,0,0,0.2); z-index: 100; display: flex; flex-direction: column; overflow: hidden; animation: ep-slide-in 0.2s ease; }
 	@keyframes ep-slide-in { from { transform: translateX(100%); } to { transform: translateX(0); } }
 	.edit-panel__header { display: flex; align-items: flex-start; justify-content: space-between; padding: 18px 20px; border-bottom: 1px solid var(--border-subtle); flex-shrink: 0; }
 	.edit-panel__sub   { font-size: 0.6875rem; color: var(--text-tertiary); font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 3px; }

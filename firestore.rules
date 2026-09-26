@@ -107,6 +107,16 @@ service cloud.firestore {
       allow delete: if resource.data.ownerId == uid() || isAdmin();
     }
 
+    // ─── Pattern moderation + admin audit ─────────────────────────────────
+    // Admin → Uploads. Server-only (Admin SDK) — the owner of a flagged
+    // pattern must never be able to read or clear the flag.
+    match /patternModeration/{patternId} {
+      allow read, write: if false;
+    }
+    match /adminAudit/{entryId} {
+      allow read, write: if false;
+    }
+
     // ─── Pattern adjustment requests ──────────────────────────────────────
     // Users request changes to approved community patterns; admin reviews.
     match /patternAdjustments/{adjId} {

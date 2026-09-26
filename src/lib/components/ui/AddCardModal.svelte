@@ -187,6 +187,8 @@
 		padding: 28px;
 		width: 100%;
 		max-width: 420px;
+		max-height: calc(100dvh - 32px);
+		overflow-y: auto;
 		position: relative;
 	}
 

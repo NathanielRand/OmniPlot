@@ -1205,6 +1205,7 @@
 		display: flex;
 		align-items: flex-start;
 		justify-content: space-between;
+		flex-wrap: wrap;
 		gap: 12px;
 	}
 
@@ -1772,6 +1773,7 @@
 		z-index: 901;
 		width: min(520px, calc(100vw - 32px));
 		max-height: calc(100vh - 64px);
+		max-height: calc(100dvh - 64px);
 		overflow-y: auto;
 		background: var(--bg-surface);
 		border: 1px solid var(--border-default, var(--border-subtle));

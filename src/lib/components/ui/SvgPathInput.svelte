@@ -1,3 +1,8 @@
+<script lang="ts" module>
+	import type { PatternUploadSource } from '$lib/types';
+	export type SvgInputSource = Omit<PatternUploadSource, "flow" | "batchSize">;
+</script>
+
 <script lang="ts">
 	import { traceImageData } from '$lib/utils/trace';
 	import { smoothBezierJunctions } from '$lib/utils/bezier-smooth';
@@ -27,8 +32,11 @@
 		 *  file declares absolute units (in/mm/cm/pt/pc), otherwise null. Never
 		 *  called for traced images/PDFs (their size is unknown). */
 		onFileSize?: (size: { widthInches: number; heightInches: number } | null) => void;
+		/** Where the current value came from (file kind + import method) —
+		 *  saved with the pattern for Admin → Uploads. Null until there's a value. */
+		source?: SvgInputSource | null;
 	}
-	let { value = $bindable(""), id = "svgPath", error = false, showMirror = false, mirrorOrigLabel, mirrorFlipLabel, onMultiExtract, autoExtract = false, onVectorizingChange, widthInches, heightInches, onFileSize }: Props = $props();
+	let { value = $bindable(""), id = "svgPath", error = false, showMirror = false, mirrorOrigLabel, mirrorFlipLabel, onMultiExtract, autoExtract = false, onVectorizingChange, widthInches, heightInches, onFileSize, source = $bindable(null) }: Props = $props();
 
 	// ─── Resolution rating (shared by the Input / Output info bars) ─────────
 	interface ImgDims { w: number; h: number }
@@ -76,6 +84,7 @@
 
 	function extractPastedSvg() {
 		if (!pastedSvgText.trim()) return;
+		touched = true;
 		pasteErr = "";
 		try {
 			value = importSvgFile(pastedSvgText);
@@ -89,6 +98,9 @@
 	// selected pipeline against the same source instead of asking to re-upload.
 	let uploadedFile        = $state<File | null>(null);
 	let uploadedPreviewUrl  = $state("");
+	// The file the user actually picked — uploadedFile may be a rasterized
+	// PDF or an enhanced/rotated copy of it.
+	let originalFile        = $state<File | null>(null);
 	// True once the user has provided *some* input — either a file or raw path
 	// data — at which point the method picker / contour options are revealed.
 	const hasStarted = $derived(!!uploadedFile || !!value.trim());
@@ -258,6 +270,8 @@
 		const file = (e.target as HTMLInputElement).files?.[0];
 		(e.target as HTMLInputElement).value = "";
 		if (!file) return;
+		touched = true;
+		originalFile = file;
 		const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
 		if (isPdf) {
 			convertPdfAndUse(file);
@@ -265,6 +279,28 @@
 		}
 		setUploadedFile(file);
 	}
+
+	// ─── Source tracking ───────────────────────────
+	// An SVG file is imported as-is whichever method tab is picked; a raster
+	// (or rasterized PDF) goes through the picked pipeline.
+	const currentSource = $derived.by((): SvgInputSource | null => {
+		if (!value.trim()) return null;
+		if (!uploadedFile) return { input: pasteMode === "path" ? "path-paste" : "svg-paste" };
+		const orig = originalFile ?? uploadedFile;
+		const fromPdf = orig.type === "application/pdf" || orig.name.toLowerCase().endsWith(".pdf");
+		const isSvg = !fromPdf && (uploadedFile.type === "image/svg+xml" || uploadedFile.name.toLowerCase().endsWith(".svg"));
+		return {
+			input: isSvg ? "svg-file" : tab === "vectorize" || tab === "cutout" || tab === "trace" ? `image-${tab}` : "unknown",
+			...(fromPdf ? { fromPdf: true } : {}),
+			fileName:  orig.name.slice(0, 200),
+			fileType:  orig.type || undefined,
+			fileBytes: orig.size,
+		};
+	});
+	// Only once the user has imported something here — a value restored from
+	// a draft keeps the source the parent restored with it.
+	let touched = $state(false);
+	$effect(() => { if (touched) source = currentSource; });
 
 	// ─── PDF support ───────────────────────────────
 	// PDFs aren't a raster or an in-DOM SVG, so they can't go through either
@@ -1172,6 +1208,7 @@
 				class="spi__textarea"
 				class:spi__textarea--error={error && !value.trim()}
 				bind:value
+				oninput={() => (touched = true)}
 				rows="6"
 				spellcheck="false"
 				placeholder={"M 5,5 L 95,5 95,95 5,95 Z\nM 50,5 L 95,80 5,80 Z\nM 15,50 C 15,15 85,15 85,50 C 85,85 15,85 15,50 Z"}
@@ -1573,6 +1610,7 @@
 						class="spi__textarea"
 						class:spi__textarea--error={error && !value.trim()}
 						bind:value
+						oninput={() => (touched = true)}
 						rows="6"
 						spellcheck="false"
 						placeholder={"M 5,5 L 95,5 95,95 5,95 Z\nM 50,5 L 95,80 5,80 Z\nM 15,50 C 15,15 85,15 85,50 C 85,85 15,85 15,50 Z"}

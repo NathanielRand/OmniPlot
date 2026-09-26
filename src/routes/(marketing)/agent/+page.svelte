@@ -773,7 +773,7 @@
 	}
 	.download-grid {
 		display: grid;
-		grid-template-columns: repeat(2, 1fr);
+		grid-template-columns: repeat(2, minmax(0, 1fr));
 		gap: 12px;
 		margin-bottom: 24px;
 	}
@@ -788,6 +788,7 @@
 		text-decoration: none;
 		color: var(--text-primary);
 		transition: border-color 0.12s, background 0.12s;
+		min-width: 0;
 	}
 	.download-card:hover {
 		border-color: var(--color-brand-dim);
@@ -1137,7 +1138,11 @@
 			grid-template-columns: 1fr;
 		}
 		.download-grid {
-			grid-template-columns: 1fr;
+			grid-template-columns: minmax(0, 1fr);
+		}
+		.download-card {
+			gap: 12px;
+			padding: 14px;
 		}
 		.agent-hero__actions {
 			flex-direction: column;

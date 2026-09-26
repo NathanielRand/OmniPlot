@@ -3231,6 +3231,16 @@
 	}
 
 	/* Responsive */
+	/* Tablets / small laptops: the app sidebar is still a column here, so
+	   slim the section nav and stack form pairs rather than squeezing them. */
+	@media (max-width: 1024px) {
+		.settings-page {
+			grid-template-columns: 168px minmax(0, 1fr);
+		}
+		.form-grid {
+			grid-template-columns: minmax(0, 1fr);
+		}
+	}
 	@media (max-width: 768px) {
 		.settings-page {
 			grid-template-columns: 1fr;

@@ -210,6 +210,7 @@
 		position: fixed;
 		z-index: 1002;
 		width: 320px;
+		max-width: calc(100vw - 24px);
 		background: var(--bg-surface);
 		border: 1px solid var(--border-default);
 		border-radius: var(--radius-lg);

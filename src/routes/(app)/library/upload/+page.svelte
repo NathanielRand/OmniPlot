@@ -4,11 +4,12 @@
 	import { userStore, shopStore, toastStore, uiStore, plansStore } from "$lib/stores";
 	import { patternStore, RESIDENTIAL_ZONES_LIST, COMMERCIAL_ZONES_LIST, MIRROR_PAIRS, PATTERN_CATEGORIES, zonesForCategory } from "$lib/stores/patternStore.svelte";
 	import { addUserPattern } from "$lib/firebase/firestore";
-	import SvgPathInput from "$lib/components/ui/SvgPathInput.svelte";
+	import SvgPathInput, { type SvgInputSource } from "$lib/components/ui/SvgPathInput.svelte";
 	import VehicleCombobox from "$lib/components/ui/VehicleCombobox.svelte";
 	import InfoTip from "$lib/components/ui/InfoTip.svelte";
 	import { tooltip } from "$lib/actions/tooltip";
-	import type { PatternCategory, PatternZone, PatternCoverage } from "$lib/types";
+	import { uid } from "$lib/utils";
+	import type { PatternCategory, PatternZone, PatternCoverage, PatternUploadFlow } from "$lib/types";
 	import type { VehicleEntry } from "$lib/stores/patternStore.svelte";
 	import { fitPattern } from "$lib/actions/fitPattern";
 	import { deriveHeight, deriveWidth, relinkSize, applyFileSize, sizeError } from "$lib/utils/patternSize";
@@ -67,10 +68,14 @@
 		widthInches: number;
 		heightInches: number;
 		svgPath: string;
+		source?: SvgInputSource | null;
 	}
 	let uploadMode  = $state<UploadMode>("single");
 	let multiMethod = $state<MultiMethod>("individual");
 	let multiFileSvgPath = $state("");
+	// How each pattern was imported — saved with it for Admin → Uploads.
+	let patternSource = $state<SvgInputSource | null>(null);
+	let multiSource   = $state<SvgInputSource | null>(null);
 	let individualSlots = $state<IndividualSlot[]>([{ zone: "" as PatternZone | "", customZoneLabel: "", widthInches: 0, heightInches: 0, svgPath: "" }]);
 	let indivErrors = $state<Record<number, Record<string, string>>>({});
 
@@ -376,6 +381,17 @@
 		};
 	}
 
+	// ─── Upload tracking ───────────────────────────
+	// Stored on each pattern so support can see how it was made and we can
+	// see which import paths people actually use. Never shown to the user.
+	function trackingFields(flow: PatternUploadFlow, src: SvgInputSource | null | undefined, batch?: { id: string; size: number }) {
+		return {
+			source: { flow, input: "unknown" as const, ...(src ?? {}), ...(batch ? { batchSize: batch.size } : {}) },
+			batchId: batch?.id,
+			tierAtUpload: shopStore.isActive ? "shop" : userStore.user?.tier,
+		};
+	}
+
 	// ─── Draft persistence ─────────────────────────
 	// One draft per signed-in user, stored locally. Not routed as separate
 	// wizard steps, so a "Save Draft" affordance is repeated at every
@@ -394,6 +410,8 @@
 		uploadMode: UploadMode;
 		multiMethod: MultiMethod;
 		multiFileSvgPath: string;
+		patternSource?: SvgInputSource | null;
+		multiSource?: SvgInputSource | null;
 		individualSlots: IndividualSlot[];
 		multiMode: boolean;
 		multiSlots: MultiSlot[];
@@ -410,7 +428,7 @@
 			mode, projectType, customName, propertyAddress, propertyLabel,
 			vehicle: { ...vehicle, models: [...vehicle.models], years: [...vehicle.years] },
 			pattern: { ...pattern, zones: [...pattern.zones], customZoneLabels: [...pattern.customZoneLabels] },
-			uploadMode, multiMethod, multiFileSvgPath,
+			uploadMode, multiMethod, multiFileSvgPath, patternSource, multiSource,
 			individualSlots: individualSlots.map((s) => ({ ...s })),
 			multiMode,
 			multiSlots: multiSlots.map((s) => ({ ...s })),
@@ -449,6 +467,8 @@
 		uploadMode = d.uploadMode ?? uploadMode;
 		multiMethod = d.multiMethod ?? multiMethod;
 		multiFileSvgPath = d.multiFileSvgPath ?? "";
+		patternSource = d.patternSource ?? null;
+		multiSource = d.multiSource ?? null;
 		if (d.individualSlots?.length) individualSlots = d.individualSlots;
 		multiMode = !!d.multiMode;
 		if (d.multiSlots) multiSlots = d.multiSlots;
@@ -512,9 +532,11 @@
 			submitting = true;
 			try {
 				let saved = 0;
+				const batch = { id: uid("batch_"), size: individualSlots.length };
 				for (const slot of individualSlots) {
 					const zone = slot.zone as PatternZone;
 					await addUserPattern({
+						...trackingFields("multi-individual", slot.source, batch),
 						ownerId:           userStore.user.uid,
 						submitToCommunity: mode === "community",
 						...identityPayload(),
@@ -553,9 +575,11 @@
 			try {
 				const active = multiSlots.filter(s => !s.skip && s.zone);
 				let saved = 0;
+				const batch = { id: uid("batch_"), size: active.length };
 				for (const slot of active) {
 					const zone = slot.zone as PatternZone;
 					await addUserPattern({
+						...trackingFields("multi-extract", multiSource, batch),
 						ownerId:           userStore.user.uid,
 						submitToCommunity: mode === "community",
 						...identityPayload(),
@@ -588,6 +612,7 @@
 		try {
 			const name = pattern.zones.map((z, i) => zoneLabel(z, i)).join(" + ");
 			await addUserPattern({
+				...trackingFields("single", patternSource),
 				ownerId:           userStore.user.uid,
 				submitToCommunity: mode === "community",
 				...identityPayload(),
@@ -632,6 +657,8 @@
 		uploadMode  = "single";
 		multiMethod = "individual";
 		multiFileSvgPath = "";
+		patternSource    = null;
+		multiSource      = null;
 		individualSlots = [{ zone: "" as PatternZone | "", customZoneLabel: "", widthInches: 0, heightInches: 0, svgPath: "" }];
 		indivErrors = {};
 	}
@@ -1102,7 +1129,7 @@
 
 									<div class="field" class:field--error={!!slotErrs.svgPath}>
 										<span class="field__label">Pattern Importer</span>
-										<SvgPathInput bind:value={slot.svgPath} widthInches={slot.widthInches} heightInches={slot.heightInches} onFileSize={(sz) => tick().then(() => applyFileSize(slot, slot.svgPath, sz))}/>
+										<SvgPathInput bind:value={slot.svgPath} bind:source={slot.source} widthInches={slot.widthInches} heightInches={slot.heightInches} onFileSize={(sz) => tick().then(() => applyFileSize(slot, slot.svgPath, sz))}/>
 										{#if slotErrs.svgPath}<span class="field__error">{slotErrs.svgPath}</span>{/if}
 									</div>
 								</div>
@@ -1196,6 +1223,7 @@
 							</span>
 							<SvgPathInput
 								bind:value={multiFileSvgPath}
+								bind:source={multiSource}
 								onMultiExtract={handleMultiExtract}
 								autoExtract={true}
 								onVectorizingChange={(v) => { isImporting = v; }}
@@ -1211,6 +1239,7 @@
 							<SvgPathInput
 								id="svgPath"
 								bind:value={pattern.svgPath}
+								bind:source={patternSource}
 								widthInches={pattern.widthInches}
 								heightInches={pattern.heightInches}
 								onFileSize={(sz) => tick().then(() => applyFileSize(pattern, pattern.svgPath, sz))}
@@ -2018,6 +2047,11 @@
 	}
 
 	/* ─── Responsive ─── */
+	/* Tablets: 4-up cards drop to ~100px each beside the app sidebar */
+	@media (max-width: 1024px) {
+		.category-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+		.type-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+	}
 	@media (max-width: 640px) {
 		.mode-bar { grid-template-columns: 1fr; }
 		.mode-card { border-right: none; border-bottom: 1px solid var(--border-subtle); }

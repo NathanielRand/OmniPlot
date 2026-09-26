@@ -26,6 +26,7 @@
     'layout-dashboard': 'M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z',
     'users':            'M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75',
     'vector-bezier':    'M3 3l4 4 10-10 4 4-10 10-4-4zM3 17v4h4l10-10-4-4L3 17z',
+    'upload':           'M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12',
     'book-open':        'M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2zM22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z',
     'printer':          'M6 9V2h12v7M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2M6 14h12v8H6z',
     'alert-triangle':   'M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0zM12 9v4M12 17h.01',
@@ -282,6 +283,7 @@
     align-items: center;
     justify-content: center;
     height: 100vh;
+    height: 100dvh;
     background: var(--bg-base);
   }
   .auth-gate__spinner {
@@ -298,6 +300,7 @@
     display: grid;
     grid-template-columns: 220px 1fr;
     height: 100vh;
+    height: 100dvh;
     overflow: hidden;
     background: var(--bg-base);
     transition: grid-template-columns 0.16s var(--ease-smooth);

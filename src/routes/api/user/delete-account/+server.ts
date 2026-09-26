@@ -73,6 +73,7 @@ export const POST: RequestHandler = async ({ request }) => {
 		await Promise.all([
 			deleteQuery(db.collection('jobs').where('userId', '==', uid)),
 			deleteQuery(db.collection('userPatterns').where('ownerId', '==', uid)),
+			deleteQuery(db.collection('patternModeration').where('ownerId', '==', uid)),
 			deleteQuery(db.collection('patternAdjustments').where('requestedBy', '==', uid)),
 			deleteQuery(db.collection('plotters').where('userId', '==', uid)),
 			deleteQuery(db.collection(`users/${uid}/sessions`)),

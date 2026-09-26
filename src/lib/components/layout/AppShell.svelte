@@ -6,6 +6,7 @@
 	import EarlyAccessBadge from "$lib/components/ui/EarlyAccessBadge.svelte";
 	import ThemeToggle from "$lib/components/ui/ThemeToggle.svelte";
 	import CreditNoticeBanner from "$lib/components/ui/CreditNoticeBanner.svelte";
+	import PlotterStatusBadge from "./PlotterStatusBadge.svelte";
 	import { uiStore, userStore, shopStore, agentStore, changelogStore, supportStore, plansStore, platformStore } from "$lib/stores";
 	import { APP_NAV, LATEST_VERSION } from "$lib/config";
 	import { signOutUser } from "$lib/firebase/auth";
@@ -138,11 +139,8 @@
 		</nav>
 
 		<div class="topbar__right">
-			<!-- Plotter status -->
-			<div class="plotter-status" use:tooltip={"Plotter connected"}>
-				<span class="plotter-status__dot" aria-hidden="true"></span>
-				<span class="plotter-status__label">Ready</span>
-			</div>
+			<!-- Plotter status + Connect -->
+			<PlotterStatusBadge variant="topbar" />
 
 			<!-- Upgrade CTA for free/lite -->
 			{#if user && user.tier !== "pro" && user.tier !== "admin"}
@@ -314,6 +312,10 @@
 					<path d="M15 18l-6-6 6-6" />
 				</svg>
 			</button>
+
+			<div class="sidebar__plotter" class:sidebar__plotter--collapsed={!uiStore.sidebarOpen}>
+				<PlotterStatusBadge variant="sidebar" collapsed={!uiStore.sidebarOpen && !uiStore.mobileMenuOpen} onnavigate={uiStore.closeMobileMenu} />
+			</div>
 
 			<nav class="sidebar__nav">
 				{#each navItems as item}
@@ -491,6 +493,7 @@
 		display: grid;
 		grid-template-rows: 52px 1fr;
 		height: 100vh;
+		height: 100dvh;
 		overflow: hidden;
 		background: var(--bg-base);
 	}
@@ -594,51 +597,6 @@
 		gap: 8px;
 		margin-left: auto;
 		flex-shrink: 0;
-	}
-
-	.plotter-status {
-		display: flex;
-		align-items: center;
-		gap: 5px;
-		padding: 4px 10px;
-		background: var(--bg-surface-2);
-		border: 1px solid var(--border-subtle);
-		border-radius: 20px;
-		font-family: var(--font-mono);
-		font-size: 0.6875rem;
-		color: var(--text-tertiary);
-		letter-spacing: 0.05em;
-	}
-
-	.plotter-status__dot {
-		width: 5px;
-		height: 5px;
-		border-radius: 50%;
-		background: var(--color-success);
-		animation: pulse-dot 2s ease-in-out infinite;
-		flex-shrink: 0;
-	}
-
-	.plotter-status__label {
-		display: none;
-	}
-
-	@media (min-width: 768px) {
-		.plotter-status__label {
-			display: block;
-		}
-	}
-
-	@keyframes pulse-dot {
-		0%,
-		100% {
-			opacity: 1;
-			box-shadow: 0 0 0 0 rgba(0, 214, 143, 0.4);
-		}
-		50% {
-			opacity: 0.8;
-			box-shadow: 0 0 0 4px rgba(0, 214, 143, 0);
-		}
 	}
 
 	.upgrade-btn {
@@ -835,6 +793,9 @@
 	.sidebar-collapsed .sidebar {
 		width: 52px;
 	}
+
+	.sidebar__plotter { padding: 10px 8px 0; }
+	.sidebar__plotter--collapsed { padding: 10px 0 0; }
 
 	.sidebar__nav {
 		display: flex;
@@ -1130,11 +1091,23 @@
 
 		.sidebar-collapsed .sidebar__label,
 		.sidebar-collapsed .sidebar__version-badge,
-		.sidebar-collapsed .sidebar__update-badge {
+		.sidebar-collapsed .sidebar__update-badge,
+		.sidebar-collapsed .sidebar__count-badge {
 			opacity: 1;
 			max-width: 140px;
 			pointer-events: auto;
 		}
+		.sidebar-collapsed .sidebar__icon-dot { display: none; }
+		/* The drawer is always full-width, whatever the desktop collapse state */
+		.sidebar-collapsed .sidebar__item { padding: 12px 10px; justify-content: flex-start; gap: 9px; }
+		.sidebar__upsell--hidden {
+			opacity: 1;
+			max-height: 120px;
+			padding-top: 10px;
+			padding-bottom: 10px;
+			pointer-events: auto;
+		}
+		.sidebar__plotter--collapsed { padding: 10px 8px 0; }
 
 		.sidebar-backdrop {
 			display: block;
@@ -1169,5 +1142,12 @@
 			padding: 5px 9px;
 			font-size: 0.6875rem;
 		}
+		.topbar { gap: 8px; }
+		.topbar__right { gap: 6px; }
+	}
+	/* Small phones: Upgrade lives in the drawer + avatar menu; icon-only logo */
+	@media (max-width: 400px) {
+		.upgrade-btn { display: none; }
+		.topbar__brand :global(.wordmark) { display: none; }
 	}
 </style>

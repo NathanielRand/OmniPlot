@@ -233,7 +233,7 @@
 	/* ── Stats ────────────────────────────────── */
 	.about-split__stat-group {
 		display: grid;
-		grid-template-columns: 1fr 1fr;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
 		gap: 16px;
 	}
 	.stat-card {
@@ -244,10 +244,11 @@
 		display: flex;
 		flex-direction: column;
 		gap: 4px;
+		min-width: 0;
 	}
 	.stat-card__num {
 		font-family: var(--font-display);
-		font-size: 2rem;
+		font-size: clamp(1.5rem, 7vw, 2rem);
 		font-weight: 800;
 		letter-spacing: -0.04em;
 		color: var(--text-primary);
@@ -384,7 +385,7 @@
 	/* ── Responsive ───────────────────────────── */
 	@media (max-width: 900px) {
 		.about-section__inner--split {
-			grid-template-columns: 1fr;
+			grid-template-columns: minmax(0, 1fr);
 			gap: 40px;
 		}
 		.about-pillars {
@@ -396,7 +397,11 @@
 			grid-template-columns: 1fr;
 		}
 		.about-split__stat-group {
-			grid-template-columns: 1fr 1fr;
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+			gap: 10px;
+		}
+		.stat-card {
+			padding: 18px 14px;
 		}
 	}
 	@media (max-width: 380px) {

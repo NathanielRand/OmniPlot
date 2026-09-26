@@ -827,6 +827,7 @@ export const ADMIN_NAV = [
 	{ label: "Users",     href: "/admin/users",       icon: "users" },
 	{ label: "Support",   href: "/admin/support",     icon: "message" },
 	{ label: "Patterns",  href: "/admin/patterns",    icon: "vector-bezier" },
+	{ label: "Uploads",   href: "/admin/uploads",     icon: "upload" },
 	{ label: "Insights",  href: "/admin/insights",    icon: "book-open" },
 	{ label: "Plotters",  href: "/admin/plotters",    icon: "printer" },
 	{ label: "Errors",    href: "/admin/errors",      icon: "alert-triangle" },
@@ -980,9 +981,48 @@ export const FAQ_ITEMS = [
 // ─── Changelog ────────────────────────────────
 // Newest first. `LATEST_VERSION` drives the sidebar "what's new" badge —
 // bump it whenever a release entry is added below.
-export const LATEST_VERSION = "1.12.0";
+export const LATEST_VERSION = "1.13.0";
 
 export const CHANGELOG = [
+	{
+		version: "1.13.0",
+		date: "2026-09-26",
+		label: "Plotter status everywhere & every screen size",
+		changes: [
+			{
+				type: "feature",
+				text: "Your plotter's live status now lives in the top bar and sidebar on every page — see at a glance whether it's connected, cutting, or needs attention, and tap Connect to jump straight to the Studio's Plotter tab.",
+			},
+			{
+				type: "improvement",
+				text: "The Studio toolbar has its own Settings button, alongside the gear on the settings panel, so the panel is one click away wherever you're working.",
+			},
+			{
+				type: "improvement",
+				text: "OmniPlot now works properly on phones, tablets and laptops. The Studio, Jobs, Settings, pattern upload and the whole website adapt to your screen instead of spilling off the side or cutting off buttons.",
+			},
+			{
+				type: "improvement",
+				text: "On phones and tablets the Studio opens with the canvas in view — the settings sheet opens from the Settings button when you need it.",
+			},
+			{
+				type: "improvement",
+				text: "Jobs show as easy-to-read cards on phones, and row actions (download, delete) are always visible on touch screens instead of appearing only on hover.",
+			},
+			{
+				type: "fix",
+				text: "The Studio's bottom stats bar (material usage, cut paths, cut time and more) is taller, so its numbers are no longer cut off and it no longer scrolls.",
+			},
+			{
+				type: "fix",
+				text: "Tapping a text field on iPhone no longer zooms the page, and the bottom of the app is no longer hidden behind the phone's browser bar.",
+			},
+			{
+				type: "fix",
+				text: "The maintenance notice no longer covers the navigation or promo bar — it now sits at the bottom of the screen.",
+			},
+		],
+	},
 	{
 		version: "1.12.0",
 		date: "2026-09-25",

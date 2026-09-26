@@ -99,6 +99,13 @@ export const GET: RequestHandler = async ({ request, params }) => {
 		});
 	} catch { /* transactions collection or index may not exist yet */ }
 
+	// Size of their pattern library — the list itself loads on demand
+	// (GET /api/admin/user-patterns, audited) so opening the drawer doesn't.
+	let patternCount = 0;
+	try {
+		patternCount = (await db.collection('userPatterns').where('ownerId', '==', params.uid).count().get()).data().count;
+	} catch (err) { console.error('[admin/users/uid] patternCount:', err); }
+
 	return json({
 		uid:             params.uid,
 		displayName:     d.displayName  ?? '',
@@ -140,5 +147,6 @@ export const GET: RequestHandler = async ({ request, params }) => {
 		shop,
 		recentJobs,
 		recentTransactions,
+		patternCount,
 	});
 };

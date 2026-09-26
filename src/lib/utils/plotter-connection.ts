@@ -109,6 +109,18 @@ export async function sendToPlotterSegmented(
 // doesn't re-prompt for port selection on every job.
 let _cachedPort: any | null = null;
 
+// Anything outside the Studio (the app shell's plotter badge) that needs to
+// know when the cached port opens or closes subscribes here.
+const _portListeners = new Set<(open: boolean) => void>();
+function _setCachedPort(port: any | null): void {
+    _cachedPort = port;
+    for (const fn of _portListeners) fn(!!port);
+}
+export function onSerialPortChange(fn: (open: boolean) => void): () => void {
+    _portListeners.add(fn);
+    return () => _portListeners.delete(fn);
+}
+
 export type SerialPortInfo = { label: string; vendorId?: number; productId?: number };
 
 export type SerialOpenResult =
@@ -164,7 +176,7 @@ export async function openAuthorizedSerial(
     if (_cachedPort && _cachedPort !== port) {
         try { await _cachedPort.close?.(); } catch { /* already closed */ }
     }
-    _cachedPort = port;
+    _setCachedPort(port);
     return { ok: true, info: _portInfo(port) };
 }
 
@@ -196,7 +208,7 @@ export async function connectSerialPort(
     if (_cachedPort && _cachedPort !== port) {
         try { await _cachedPort.close?.(); } catch { /* already closed */ }
     }
-    _cachedPort = port;
+    _setCachedPort(port);
     return _portInfo(port);
 }
 
@@ -212,7 +224,7 @@ export function isCachedPort(port: unknown): boolean {
 
 export function disconnectSerialPort(): void {
     try { _cachedPort?.close?.(); } catch { /* ignore */ }
-    _cachedPort = null;
+    _setCachedPort(null);
 }
 
 export function isSerialConnected(): boolean {
@@ -334,7 +346,7 @@ async function sendViaSerial(hpgl: string, config: PlotterConfig): Promise<SendR
         return { ok: true };
     } catch (err: any) {
         if (err?.name === "NetworkError" || err?.name === "InvalidStateError") {
-            _cachedPort = null;
+            _setCachedPort(null);
         }
         return {
             ok: false,
@@ -390,7 +402,7 @@ async function _sendViaSerialSegmented(
         return { ok: true, completedCount };
     } catch (err: any) {
         if (err?.name === "NetworkError" || err?.name === "InvalidStateError") {
-            _cachedPort = null;
+            _setCachedPort(null);
         }
         return {
             ok: false,

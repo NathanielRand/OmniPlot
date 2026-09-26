@@ -620,6 +620,52 @@ export interface UserPattern {
 	heightInches: number;
 	svgPath: string;
 	notes?: string;
+	// ── Tracking (support / product insight — set at upload, never user-edited) ──
+	// Absent on patterns uploaded before tracking existed.
+	source?: PatternUploadSource;
+	/** Shared by every pattern saved from one upload (multi-piece saves). */
+	batchId?: string;
+	/** The uploader's plan when they saved it. */
+	tierAtUpload?: string;
+	geometry?: PatternGeometryStats;
+	/** Content edits after upload (renames, re-imports, resizes). */
+	editCount?: number;
+}
+
+/** How a private pattern got into the library. */
+export type PatternUploadFlow  = "single" | "multi-individual" | "multi-extract";
+export type PatternUploadInput =
+	| "svg-file" | "svg-paste" | "path-paste"
+	| "image-vectorize" | "image-cutout" | "image-trace"
+	| "unknown";
+export interface PatternUploadSource {
+	flow: PatternUploadFlow;
+	input: PatternUploadInput;
+	/** The file was a PDF, rasterized before the image pipeline ran. */
+	fromPdf?: boolean;
+	fileName?: string;
+	fileType?: string;
+	fileBytes?: number;
+	/** Patterns saved together in this upload. */
+	batchSize?: number;
+}
+export interface PatternGeometryStats {
+	pathBytes: number;
+	/** Separate outlines (M/m commands). */
+	subpaths: number;
+	/** Drawing commands — a rough complexity measure. */
+	commands: number;
+}
+
+/** Admin-only moderation state for a private pattern. Lives in its own
+ *  server-only collection (patternModeration/{patternId}) so the owner can
+ *  never read or clear it. */
+export interface PatternModeration {
+	flagged: boolean;
+	flagReason?: string;
+	note?: string;
+	updatedBy?: string;
+	updatedAt?: Date;
 }
 
 // ─── Pattern Adjustment Requests ─────────────

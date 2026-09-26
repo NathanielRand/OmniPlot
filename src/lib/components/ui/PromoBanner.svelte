@@ -196,6 +196,10 @@
 		align-items: center;
 		transition: opacity 0.15s;
 	}
+	/* Finger-sized hit area; the icon stays the same size */
+	@media (pointer: coarse) {
+		.promo-banner__dismiss { padding: 11px; right: 2px; }
+	}
 	.promo-banner__dismiss:hover { opacity: 1; }
 
 	@media (max-width: 640px) {

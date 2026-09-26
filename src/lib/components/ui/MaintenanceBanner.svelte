@@ -3,6 +3,8 @@
 
 	// Admin → Settings → Maintenance mode. Floats over the page rather than
 	// pushing layout, and can be dismissed for the rest of the tab session.
+	// Docked bottom-left (toasts own bottom-right) so it never covers the
+	// nav or the promo bar.
 	const DISMISS_KEY = "omniplot_maintenance_dismissed";
 
 	let dismissed = $state(false);
@@ -29,12 +31,11 @@
 <style>
 	.maintenance {
 		position: fixed;
-		top: 12px;
-		left: 50%;
-		transform: translateX(-50%);
+		bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+		left: 16px;
 		z-index: 9999;
 		width: max-content;
-		max-width: calc(100vw - 32px);
+		max-width: min(460px, calc(100vw - 32px));
 		display: flex;
 		align-items: center;
 		gap: 10px;
@@ -47,6 +48,9 @@
 		font-size: 0.8125rem;
 		line-height: 1.4;
 	}
+	@media (max-width: 480px) {
+		.maintenance { left: 12px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); width: auto; max-width: none; }
+	}
 	.maintenance > svg { flex-shrink: 0; color: var(--color-warning, #f59e0b); }
 	.maintenance__close {
 		all: unset;
@@ -56,6 +60,9 @@
 		border-radius: var(--radius-sm);
 		color: var(--text-tertiary);
 		cursor: pointer;
+	}
+	@media (pointer: coarse) {
+		.maintenance__close { padding: 11px; margin: -7px -7px -7px 0; }
 	}
 	.maintenance__close:hover { color: var(--text-primary); background: var(--interactive-hover); }
 	.maintenance__close:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 1px; }

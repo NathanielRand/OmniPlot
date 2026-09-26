@@ -758,15 +758,29 @@
 	   768px — collapse to a single, comfortably-capped column starting at
 	   tablet widths instead of squeezing into ~240px columns. */
 	@media (max-width: 1024px) {
-		.plans-row {
-			grid-template-columns: 1fr;
-			max-width: 420px;
+		.plans-row,
+		.shop-plans-row {
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+			max-width: 760px;
 			margin: 0 auto;
 		}
+		/* 2 + 1: the odd card out sits centred under the pair, same width */
+		.plans-row > :last-child:nth-child(odd),
+		.shop-plans-row > :last-child:nth-child(odd) {
+			grid-column: 1 / -1;
+			justify-self: center;
+			width: calc(50% - 8px);
+		}
+	}
+	@media (max-width: 640px) {
+		.plans-row,
 		.shop-plans-row {
-			grid-template-columns: 1fr;
+			grid-template-columns: minmax(0, 1fr);
 			max-width: 420px;
-			margin: 0 auto;
+		}
+		.plans-row > :last-child:nth-child(odd),
+		.shop-plans-row > :last-child:nth-child(odd) {
+			width: 100%;
 		}
 	}
 

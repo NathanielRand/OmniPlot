@@ -99,6 +99,11 @@
 		padding: 26px;
 		width: 100%;
 		max-width: 400px;
+		max-height: calc(100dvh - 32px);
+		overflow-y: auto;
+	}
+	@media (max-width: 400px) {
+		.modal { padding: 20px; }
 	}
 
 	.modal__header {

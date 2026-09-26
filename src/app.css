@@ -174,6 +174,38 @@ body {
 	overflow-x: hidden;
 }
 
+/* ─── Responsive baseline ────────────────────── */
+/* Media never pushes the page wider than the screen. */
+img,
+video,
+canvas {
+	max-width: 100%;
+}
+
+/* iOS Safari zooms the whole page when a focused field's text is under
+   16px. On touch screens, fields get 16px; desktop keeps its compact sizes. */
+@media (pointer: coarse) {
+	input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+	select,
+	textarea {
+		font-size: max(16px, 1em) !important;
+	}
+}
+
+/* Long unbroken strings (emails, ids, URLs) wrap instead of overflowing. */
+p,
+li,
+dd {
+	overflow-wrap: break-word;
+}
+
+/* Google injects the reCAPTCHA badge with inline styles and no z-index.
+   Lift it above the Studio's fixed metrics bar (z 30), but keep it under
+   the mobile settings sheet (400+) and modals. */
+.grecaptcha-badge {
+	z-index: 40 !important;
+}
+
 /* ─── Typography ─────────────────────────────── */
 h1,
 h2,

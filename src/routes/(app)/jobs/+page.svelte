@@ -256,24 +256,25 @@
 								<div class="job-name">{job.name}</div>
 								<div class="job-zones">{getVehicleName(job.vehicleId)}</div>
 							</td>
-							<td class="td-material">
+							<td class="td-material" data-label="Material">
 								{job.materialSheet?.name ?? job.canvasState?.sheet?.name ?? "—"}
 							</td>
-							<td>
+							<td class="td-status" data-label="Status">
 								<Badge variant={STATUS_VARIANT[job.status] as any} dot>
 									{STATUS_LABEL[job.status]}
 								</Badge>
 							</td>
-							<td class="td-mono">{job.metrics?.itemCount ?? "—"}</td>
+							<td class="td-mono" data-label="Pieces">{job.metrics?.itemCount ?? "—"}</td>
 							<td
 								class="td-mono"
+								data-label="Efficiency"
 								class:text-success={eff > 0.7}
 								class:text-warning={eff > 0 && eff <= 0.7}
 							>
 								{fmtEff(eff)}
 							</td>
-							<td class="td-mono">{fmtTime(job.metrics?.estimatedCutSeconds ?? 0)}</td>
-							<td class="td-date" use:tooltip={formatDate(job.createdAt)}
+							<td class="td-mono" data-label="Cut time">{fmtTime(job.metrics?.estimatedCutSeconds ?? 0)}</td>
+							<td class="td-date" data-label="Created" use:tooltip={formatDate(job.createdAt)}
 								>{formatRelativeTime(job.createdAt)}</td
 							>
 							<td
@@ -710,5 +711,57 @@
 		.jobs-stats {
 			grid-template-columns: repeat(2, 1fr);
 		}
+	}
+
+	/* Touch screens have no hover — actions are always visible */
+	@media (hover: none) {
+		.row-actions { opacity: 1; }
+	}
+
+	/* Phones: each job is a card — name + checkbox + actions on top,
+	   the rest as labelled rows — instead of an 860px sideways scroll. */
+	@media (max-width: 640px) {
+		.jobs-table {
+			min-width: 0;
+		}
+		.jobs-table thead {
+			display: none;
+		}
+		.jobs-table,
+		.jobs-table tbody {
+			display: block;
+		}
+		.jobs-table tbody tr {
+			display: grid;
+			grid-template-columns: auto minmax(0, 1fr) auto;
+			column-gap: 10px;
+			row-gap: 4px;
+			padding: 12px 14px;
+			border-bottom: 1px solid var(--border-subtle);
+		}
+		.jobs-table tbody td {
+			display: block;
+			padding: 0;
+			border: none;
+		}
+		.jobs-table .td-check { grid-column: 1; grid-row: 1; align-self: center; }
+		.jobs-table .td-name { grid-column: 2; grid-row: 1; min-width: 0; }
+		.jobs-table .td-actions { grid-column: 3; grid-row: 1; align-self: center; }
+		.jobs-table td[data-label] {
+			grid-column: 2 / -1;
+			display: flex;
+			justify-content: space-between;
+			gap: 12px;
+			font-size: 0.8125rem;
+		}
+		.jobs-table td[data-label]::before {
+			content: attr(data-label);
+			color: var(--text-tertiary);
+			font-family: var(--font-body);
+			font-size: 0.75rem;
+		}
+		.jobs-table .shimmer-row td:not(.td-check):not(.td-name) { display: none; }
+		.row-check { width: 20px; height: 20px; }
+		.row-action-btn { width: 36px; height: 36px; }
 	}
 </style>

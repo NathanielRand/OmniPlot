@@ -1,6 +1,7 @@
 <script lang="ts">
 	import Badge from "$lib/components/ui/Badge.svelte";
 	import AccountBillingTools from "$lib/components/admin/AccountBillingTools.svelte";
+	import AdminUserLibrary from "$lib/components/admin/AdminUserLibrary.svelte";
 	import { formatDate, formatRelativeTime } from "$lib/utils";
 	import { auth } from "$lib/firebase/client";
 	import { onMount } from "svelte";
@@ -96,6 +97,7 @@
 			description:    string | null;
 			created:        string | null;
 		}[];
+		patternCount: number;
 	}
 
 	// ── State ──────────────────────────────────────
@@ -874,6 +876,12 @@
 					{/if}
 				</div>
 
+				<!-- Pattern library (private uploads included, loaded on demand) -->
+				<div class="drawer-section">
+					<div class="drawer-section__title">Pattern library</div>
+					<AdminUserLibrary uid={detail.uid} count={detail.patternCount ?? 0}/>
+				</div>
+
 				<!-- Recent jobs -->
 				{#if detail.recentJobs.length > 0}
 					<div class="drawer-section">
@@ -1158,7 +1166,7 @@
 		gap: 16px;
 	}
 
-	.page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+	.page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 	.page-title  { font-size: 1.375rem; margin-bottom: 3px; }
 	.page-sub    { font-size: 0.875rem; color: var(--text-secondary); }
 
@@ -1179,7 +1187,8 @@
 	}
 
 	/* ── Toolbar ───────────────────────────────── */
-	.toolbar { display: flex; align-items: center; gap: 10px; }
+	.toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+	@media (max-width: 640px) { .search-wrap { max-width: none; } }
 	.search-wrap { position: relative; max-width: 320px; width: 100%; }
 	.search-icon { position: absolute; left: 9px; top: 50%; transform: translateY(-50%); color: var(--text-tertiary); pointer-events: none; }
 	.search-input {
@@ -1287,6 +1296,7 @@
 	.td-date    { font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-tertiary); white-space: nowrap; }
 
 	.row-actions { display: flex; gap: 4px; opacity: 0; transition: opacity 0.12s; }
+	@media (hover: none) { .row-actions { opacity: 1; } }
 	tr:hover .row-actions { opacity: 1; }
 	.row-btn {
 		width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
