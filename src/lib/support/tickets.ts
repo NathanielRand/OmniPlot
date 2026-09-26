@@ -69,6 +69,12 @@ export interface Ticket {
 	userLastSeenAt: number;
 	adminLastSeenAt: number;
 	resolvedAt: number | null;
+	/** Set when staff marked this ticket a duplicate of another ticket from the
+	 *  same requester. A duplicate is resolved and locked: no replies, status
+	 *  changes or credits, so the same issue can't be resolved twice. */
+	duplicateOf: string | null;
+	/** Tickets marked as duplicates of this one. */
+	duplicates: string[];
 }
 
 export const STATUS_LABEL_ADMIN: Record<TicketStatus, string> = {
@@ -106,6 +112,11 @@ export const PRIORITY_LABEL: Record<TicketPriority, string> = {
 /** Short human reference for subjects and conversations ("#K3F9QA"). */
 export function ticketRef(id: string): string {
 	return `#${id.slice(0, 6).toUpperCase()}`;
+}
+
+/** Locked duplicates only take internal notes (and staff can undo the mark). */
+export function isDuplicate(t: Pick<Ticket, 'duplicateOf'>): boolean {
+	return !!t.duplicateOf;
 }
 
 export function isOpen(t: Pick<Ticket, 'status'>): boolean {

@@ -27,7 +27,7 @@
 			currentPeriodEnd: number | null; stripeCustomerId: string | null; cutCount: number; lastCutAt: number | null;
 			shop: { name: string; plan: string | null; role: string | null; status: string | null } | null;
 		} | null;
-		related: { id: string; subject: string; status: TicketStatus; createdAt: number }[];
+		related: { id: string; subject: string; status: TicketStatus; createdAt: number; duplicateOf: string | null }[];
 		reports: { id: string; title: string; type: string; status: string; createdAt: number }[];
 		errors: { id: string; route: string; message: string; count: number; lastSeenAt: number }[];
 	}
@@ -196,6 +196,62 @@
 		if (await act({ action: 'link' }, 'Ticket linked to account')) await load();
 	}
 
+	// ─── Duplicate ────────────────────────────────
+	// A duplicate is resolved and locked (server-enforced): only internal notes
+	// and "unmark" remain, so the same issue can't be resolved twice.
+	const locked = $derived(!!ticket?.duplicateOf);
+	let dupOpen = $state(false);
+	let dupTarget = $state<string | null>(null);
+	let dupNotify = $state(true);
+	// Candidates: the requester's other tickets. Picking one that is itself a
+	// duplicate is fine — the server follows it to the original.
+	const dupCandidates = $derived(context?.related ?? []);
+	const originalOfThis = $derived(ticket?.duplicateOf ? context?.related.find((r) => r.id === ticket!.duplicateOf) ?? null : null);
+
+	$effect(() => {
+		if (locked && mode === 'reply') mode = 'note';
+	});
+
+	function openDuplicate() {
+		dupTarget = dupCandidates.find((r) => !r.duplicateOf)?.id ?? dupCandidates[0]?.id ?? null;
+		dupNotify = true;
+		dupOpen = true;
+	}
+
+	async function markDuplicate() {
+		const target = dupCandidates.find((r) => r.id === dupTarget);
+		if (!ticket || !target) return;
+		const ok = await confirmStore.ask({
+			title: 'Mark as duplicate?',
+			message: 'This ticket will be resolved and locked — no more replies, status changes or credits here. The conversation continues on the original.',
+			confirmLabel: 'Mark duplicate',
+			variant: 'primary',
+			details: [
+				{ label: 'Duplicate', value: `${ticketRef(ticket.id)} · ${ticket.subject}` },
+				{ label: 'Original', value: `${ticketRef(target.id)} · ${target.subject}` },
+				{ label: 'Customer', value: dupNotify ? `Emailed at ${ticket.email}` : 'Not emailed' },
+			],
+		});
+		if (!ok) return;
+		if (await act({ action: 'duplicate', originalId: target.id, notify: dupNotify }, `Marked duplicate of ${ticketRef(target.id)}`)) {
+			dupOpen = false;
+			body = '';
+			clearCanned();
+			await load();
+		}
+	}
+
+	async function unmarkDuplicate() {
+		const ok = await confirmStore.ask({
+			title: 'Unmark duplicate?',
+			message: 'The ticket is unlocked and reopened as In progress, and the customer sees it reopened. Only do this if it was marked by mistake.',
+			confirmLabel: 'Unmark & reopen',
+			variant: 'danger',
+		});
+		if (!ok) return;
+		if (await act({ action: 'unduplicate' }, 'Duplicate mark removed · ticket reopened')) await load();
+	}
+
 	async function remove() {
 		const ok = await confirmStore.ask({
 			title: 'Delete this ticket?',
@@ -235,8 +291,25 @@
 					{ticketRef(ticket.id)} · {TOPIC_LABEL[ticket.topic] ?? ticket.topic} · opened {timeAgo(ticket.createdAt)}
 				</p>
 			</div>
-			<Badge variant={STATUS_VARIANT[ticket.status]} size="md">{STATUS_LABEL_ADMIN[ticket.status]}</Badge>
+			<div class="head__badges">
+				{#if locked}<Badge variant="default" size="md">Duplicate</Badge>{/if}
+				<Badge variant={STATUS_VARIANT[ticket.status]} size="md">{STATUS_LABEL_ADMIN[ticket.status]}</Badge>
+			</div>
 		</div>
+
+		{#if locked && ticket.duplicateOf}
+			<div class="dup-banner" role="status">
+				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+				<div class="dup-banner__body">
+					<strong>Duplicate of <a href="/admin/support/{ticket.duplicateOf}">{ticketRef(ticket.duplicateOf)}{originalOfThis ? ` · ${originalOfThis.subject}` : ''}</a></strong>
+					<span>Resolved and locked — replies, status changes and credits are disabled here. Internal notes still work.</span>
+				</div>
+				<div class="dup-banner__actions">
+					<a class="btn btn--primary btn--sm" href="/admin/support/{ticket.duplicateOf}">Open original →</a>
+					<button class="btn btn--ghost btn--sm" onclick={unmarkDuplicate} disabled={busy}>Unmark</button>
+				</div>
+			</div>
+		{/if}
 
 		<div class="layout">
 			<div class="main">
@@ -244,18 +317,52 @@
 				<div class="controls">
 					<div class="seg" role="group" aria-label="Status">
 						{#each STATUSES as s}
-							<button class="seg__btn" class:seg__btn--on={ticket.status === s} disabled={busy} onclick={() => setStatus(s)}>
+							<button class="seg__btn" class:seg__btn--on={ticket.status === s} disabled={busy || locked} onclick={() => setStatus(s)}>
 								{STATUS_LABEL_ADMIN[s]}
 							</button>
 						{/each}
 					</div>
 					<label class="prio">
 						Priority
-						<select value={ticket.priority} disabled={busy} onchange={(e) => setPriority(e.currentTarget.value as TicketPriority)}>
+						<select value={ticket.priority} disabled={busy || locked} onchange={(e) => setPriority(e.currentTarget.value as TicketPriority)}>
 							{#each PRIORITIES as p}<option value={p}>{PRIORITY_LABEL[p]}</option>{/each}
 						</select>
 					</label>
+					{#if !locked}
+						<button class="btn btn--ghost btn--sm" onclick={openDuplicate} disabled={busy || dupCandidates.length === 0}
+							title={dupCandidates.length === 0 ? 'This requester has no other tickets' : 'Resolve this ticket as a duplicate of another one'}>
+							Mark duplicate…
+						</button>
+					{/if}
 				</div>
+
+				{#if dupOpen && !locked}
+					<div class="card dup-picker">
+						<h2 class="card__title">Mark as duplicate of…</h2>
+						<p class="muted">Pick the ticket the conversation should continue on. This one will be resolved and locked.</p>
+						<div class="dup-list" role="radiogroup" aria-label="Original ticket">
+							{#each dupCandidates as r (r.id)}
+								<label class="dup-option" class:dup-option--on={dupTarget === r.id}>
+									<input type="radio" name="dup-target" value={r.id} bind:group={dupTarget} />
+									<span class="dup-option__main">
+										<span class="dup-option__subject">{ticketRef(r.id)} · {r.subject}</span>
+										<span class="dup-option__meta">
+											{STATUS_LABEL_ADMIN[r.status]} · {fmtDate(r.createdAt)}
+											{#if r.duplicateOf} · itself a duplicate of {ticketRef(r.duplicateOf)} — its original is used{/if}
+										</span>
+									</span>
+								</label>
+							{/each}
+						</div>
+						<div class="dup-picker__foot">
+							<label class="dup-notify"><input type="checkbox" bind:checked={dupNotify} /> Email the customer where to continue</label>
+							<div class="dup-picker__btns">
+								<button class="btn btn--ghost" onclick={() => (dupOpen = false)} disabled={busy}>Cancel</button>
+								<button class="btn btn--primary" onclick={markDuplicate} disabled={busy || !dupTarget}>{busy ? 'Saving…' : 'Mark duplicate & resolve'}</button>
+							</div>
+						</div>
+					</div>
+				{/if}
 
 				<div class="card">
 					<TicketThread {ticket} viewer="admin" />
@@ -264,7 +371,7 @@
 				<!-- Composer -->
 				<form class="card composer" class:composer--note={mode === 'note'} onsubmit={submit}>
 					<div class="composer__tabs" role="tablist">
-						<button type="button" role="tab" class="tab" class:tab--on={mode === 'reply'} aria-selected={mode === 'reply'} onclick={() => (mode = 'reply')}>
+						<button type="button" role="tab" class="tab" class:tab--on={mode === 'reply'} aria-selected={mode === 'reply'} disabled={locked} title={locked ? 'Locked — reply on the original ticket' : undefined} onclick={() => (mode = 'reply')}>
 							Reply to {ticket.name?.split(' ')[0] || 'customer'}
 						</button>
 						<button type="button" role="tab" class="tab" class:tab--on={mode === 'note'} aria-selected={mode === 'note'} onclick={() => { mode = 'note'; clearCanned(); }}>
@@ -397,7 +504,7 @@
 					{/if}
 				</section>
 
-				{#if context?.account}
+				{#if context?.account && !locked}
 					<section class="card">
 						<h2 class="card__title">Billing tools</h2>
 						<AccountBillingTools uid={context.account.uid} ticketId={ticket.id} bind:summary={creditSummary} onchange={load} />
@@ -408,14 +515,16 @@
 					<h2 class="card__title">Tags</h2>
 					<div class="tags">
 						{#each ticket.tags as tag}
-							<span class="tag">{tag}<button type="button" aria-label="Remove {tag}" onclick={() => removeTag(tag)}>×</button></span>
+							<span class="tag">{tag}{#if !locked}<button type="button" aria-label="Remove {tag}" onclick={() => removeTag(tag)}>×</button>{/if}</span>
 						{:else}
 							<span class="muted">No tags</span>
 						{/each}
 					</div>
-					<form class="tag-form" onsubmit={addTag}>
-						<input placeholder="Add tag" bind:value={tagInput} maxlength="40" />
-					</form>
+					{#if !locked}
+						<form class="tag-form" onsubmit={addTag}>
+							<input placeholder="Add tag" bind:value={tagInput} maxlength="40" />
+						</form>
+					{/if}
 				</section>
 
 				{#if context?.related.length}
@@ -423,7 +532,25 @@
 						<h2 class="card__title">Other tickets ({context.related.length})</h2>
 						<ul class="mini">
 							{#each context.related as r}
-								<li><a href="/admin/support/{r.id}">{r.subject}</a><span>{STATUS_LABEL_ADMIN[r.status]} · {fmtDate(r.createdAt)}</span></li>
+								<li>
+									<a href="/admin/support/{r.id}">{r.subject}</a>
+									<span>
+										{ticketRef(r.id)} · {STATUS_LABEL_ADMIN[r.status]} · {fmtDate(r.createdAt)}
+										{#if r.duplicateOf === ticket.id} · duplicate of this{:else if r.duplicateOf} · duplicate{/if}
+									</span>
+								</li>
+							{/each}
+						</ul>
+					</section>
+				{/if}
+
+				{#if ticket.duplicates.length}
+					<section class="card">
+						<h2 class="card__title">Merged duplicates ({ticket.duplicates.length})</h2>
+						<ul class="mini">
+							{#each ticket.duplicates as d}
+								{@const r = context?.related.find((x) => x.id === d)}
+								<li><a href="/admin/support/{d}">{ticketRef(d)}{r ? ` · ${r.subject}` : ''}</a><span>Resolved as a duplicate of this ticket</span></li>
 							{/each}
 						</ul>
 					</section>
@@ -466,6 +593,40 @@
 	.head__main { min-width: 0; }
 	.head__title { margin: 0; font-size: 1.375rem; font-weight: 700; overflow-wrap: anywhere; }
 	.head__meta { margin: 4px 0 0; font-size: 0.8125rem; color: var(--text-tertiary); }
+
+	.head__badges { display: flex; gap: 6px; flex-shrink: 0; }
+
+	.dup-banner {
+		display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 14px;
+		border-radius: var(--radius-lg); border: 1px solid var(--border-strong); background: var(--bg-surface-3);
+		color: var(--text-secondary); font-size: 0.8125rem;
+	}
+	.dup-banner svg { flex-shrink: 0; color: var(--text-tertiary); }
+	.dup-banner__body { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 200px; }
+	.dup-banner__body strong { color: var(--text-primary); font-weight: 600; }
+	.dup-banner__body a { color: var(--text-brand); text-decoration: none; }
+	.dup-banner__body a:hover { text-decoration: underline; }
+	.dup-banner__actions { display: flex; gap: 6px; }
+
+	.dup-picker { display: flex; flex-direction: column; gap: 10px; }
+	.dup-list { display: flex; flex-direction: column; gap: 6px; max-height: 280px; overflow-y: auto; }
+	.dup-option {
+		display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px; cursor: pointer;
+		border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--bg-surface);
+	}
+	.dup-option--on { border-color: var(--color-brand-dim); background: var(--color-brand-muted); }
+	.dup-option input { margin-top: 3px; }
+	.dup-option__main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+	.dup-option__subject { font-size: 0.8125rem; color: var(--text-primary); overflow-wrap: anywhere; }
+	.dup-option__meta { font-size: 0.6875rem; color: var(--text-tertiary); }
+	.dup-picker__foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+	.dup-picker__btns { display: flex; gap: 8px; }
+	.dup-notify { display: flex; align-items: center; gap: 6px; font-size: 0.75rem; color: var(--text-secondary); }
+
+	.btn--sm { padding: 5px 10px; font-size: 0.75rem; text-decoration: none; display: inline-flex; align-items: center; }
+	.btn--ghost { background: transparent; border: 1px solid var(--border-strong); color: var(--text-secondary); }
+	.btn--ghost:hover:not(:disabled) { color: var(--text-primary); background: var(--interactive-hover); }
+	.tab:disabled { opacity: 0.45; cursor: not-allowed; }
 
 	.layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; }
 	.main, .side { display: flex; flex-direction: column; gap: 16px; min-width: 0; }

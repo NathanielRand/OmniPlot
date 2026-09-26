@@ -5,6 +5,8 @@ import { getAdminDb } from '$lib/server/firebase-admin';
 import { requireSupportAdmin } from '$lib/server/support/admin-auth';
 import { applyCredit, getCreditSummary, reverseCredit, CreditError, CREDIT_REASON_LABEL, type CreditReason } from '$lib/server/credits';
 import { sendAccountCreditEmail } from '$lib/server/email';
+import { getTicket } from '$lib/server/support/store';
+import { ticketRef } from '$lib/support/tickets';
 
 const REASONS = Object.keys(CREDIT_REASON_LABEL) as CreditReason[];
 
@@ -43,6 +45,14 @@ export const POST: RequestHandler = async ({ request }) => {
 		}
 
 		if (!body.uid) return json({ error: 'uid required' }, { status: 400 });
+		// No credits against a ticket that was merged as a duplicate — that issue
+		// is handled (and credited, if at all) on the original ticket.
+		if (body.ticketId) {
+			const found = await getTicket(String(body.ticketId));
+			if (found?.ticket.duplicateOf) {
+				return json({ error: `This ticket is a duplicate of ${ticketRef(found.ticket.duplicateOf)} — apply credits from that ticket.` }, { status: 409 });
+			}
+		}
 		const credit = await applyCredit({
 			uid: String(body.uid),
 			months: body.months ? Number(body.months) : undefined,

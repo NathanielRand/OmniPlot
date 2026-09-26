@@ -156,7 +156,7 @@
 							</span>
 						</span>
 						<span class="row__side">
-							<Badge variant={STATUS_VARIANT[t.status]}>{STATUS_LABEL_ADMIN[t.status]}</Badge>
+							<Badge variant={STATUS_VARIANT[t.status]}>{t.duplicateOf ? 'Duplicate' : STATUS_LABEL_ADMIN[t.status]}</Badge>
 							<span class="row__time">
 								{#if needsAdminAction(t)}
 									<span class:overdue={Date.now() - t.awaitingSince > 24 * 3600_000}>waiting {waiting(t)}</span>

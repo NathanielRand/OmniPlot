@@ -2,15 +2,6 @@
 // URGENT
 //////////////////////////////
 
-- evolve existing customer support ticket system to be a 2-way conversation capabilites, email notifications, nav badges on status changes or action needed for both admin/user ui to resolve based on common situations for this type of saas. prefilled responses and triggers based on certain responses. reference another project's system here for how we built this before but tweaked for OmniPlot specifically (C:\Users\natha\Dev\Code\ccsc)
-- credit effected user's account with free 1 month. how should we approach this and admin being able to credit accounts on the fly from the panel going forward
-- Still needed from you:
-1. Fix the Vercel env: set STRIPE_CONNECTED_ACCOUNT_ID=acct_1Ta4d8FTK26Xr6hG, and check that STRIPE_WEBHOOK_SECRET matches endpoint we_1TatCRF…. Four of today's connected-account events are still undelivered.
-2. Commit and deploy these changes before Oct 5, when the first migrated subscription starts billing. Then open Admin → Billing → Billing health; every check should be green.
-3. Tell the 3 Lite customers. Their next statement will show the connected account's name instead of the old one, and mf6m… will see a $29 refund.
-
-
-
 
 ///////////////////////////////
 // USER VERIFICATION
@@ -19,15 +10,8 @@
 - VERIFY: Cut agent fails start probe (see ref images in /test folder)
 - VERIFY: the plotter connection types (usb direct, cut agent, etc) need large specialized ui medallions/badges with icons on the connected plotter cards so it is clear to the user which connection is which quickly.
 
-////////////////////////////////////
-// DEV VERIFICATION
-////////////////////////////////
-- Add pattern # as "(n)" next to the pattern name of each pattern on the canvas and also the pattern list values on the settings panel for easier pattern indentification.
-- Nesting needs another pass. Add 6 l/r windows to see why it doesnt rotate the last pattern's ;long end needs to be horizontial instead of vertical. The number one goal for our nesting is to reduce length of roll used.
-- Support as a core feature reworking our vehicle focus to include the following products/users: "custom", "vehicle", "residential", "commerical" with PPF, Window Tint, and ANYTHING else we have add that can be used in a commerical plotting/cutting device. think creative. think about other professions who use those types of machines and who could benefit from our platform. we need to craft project types and features and marketing for them from the start. we are really sticking with the mission of our delivering on our name "OmniPlot" not just a vehicle platform. requires major upgrade but with production paying users so we must preserve their data and not break any patterns they've uploaded, we can migrate what we can.
-
 ///////////////////////////////
-// ONGOING
+// ADMIN VERIFICATION
 ///////////////////////////////
 This checklist is built from your todo list, my notes from the migration, and the current state of the repo. In order:
 
@@ -66,7 +50,6 @@ run of the new tools, use a Stripe tase project, or try them first onyour own ac
 //////////////////////////////////////
 // BACKLOG
 ////////////////////////////////
-- revenue page for admin panel with accurate data.
 - tooltips need responsive aligning.
 - save draft btn on each step of the pattern importer
 - pattern uplaoder: ui message and/or reposition to missing or incorrect values on the form instead ofg silently failing the submit.

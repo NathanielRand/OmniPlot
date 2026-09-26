@@ -13,6 +13,7 @@ import {
 	TOPIC_LABEL,
 	needsAdminAction,
 	needsUserAction,
+	ticketRef,
 	type Ticket,
 	type TicketActor,
 	type TicketMessage,
@@ -71,6 +72,8 @@ function normalize(id: string, d: FirebaseFirestore.DocumentData): Ticket {
 		userLastSeenAt:      toMs(d.userLastSeenAt),
 		adminLastSeenAt:     toMs(d.adminLastSeenAt),
 		resolvedAt:          toMs(d.resolvedAt) || null,
+		duplicateOf:         typeof d.duplicateOf === 'string' && d.duplicateOf ? d.duplicateOf : null,
+		duplicates:          Array.isArray(d.duplicates) ? d.duplicates.filter((x: unknown) => typeof x === 'string') : [],
 	};
 }
 
@@ -223,6 +226,12 @@ export async function addMessage(
 		const snap = await tx.get(ref);
 		if (!snap.exists) throw new TicketError('Ticket not found', 404);
 		const before = normalize(snap.id, snap.data()!);
+		// A duplicate is locked — checked inside the transaction so a reply or
+		// status change racing the "mark duplicate" can never slip through and
+		// resolve the same issue twice. Internal notes are still allowed.
+		if (before.duplicateOf && (!msg.internal || transition.status || transition.priority || transition.addTags?.length)) {
+			throw new TicketError(`This ticket is a duplicate of ${ticketRef(before.duplicateOf)} — continue on that ticket instead.`, 409);
+		}
 		const now = Date.now();
 
 		const entry: TicketMessage = { id: randomUUID(), from: msg.from, body: msg.body, at: now };
@@ -291,6 +300,130 @@ export async function linkTicketToAccount(id: string, uid: string, admin: { uid:
 		authorName: admin.name,
 		authorUid: admin.uid,
 		internal: true,
+	});
+}
+
+function sameRequester(a: Ticket, b: Ticket): boolean {
+	return (!!a.uid && a.uid === b.uid) || (!!a.email && a.email === b.email);
+}
+
+function entry(msg: Omit<TicketMessage, 'id' | 'at'>, at: number): TicketMessage {
+	return { id: randomUUID(), at, ...Object.fromEntries(Object.entries(msg).filter(([, v]) => v !== undefined)) } as TicketMessage;
+}
+
+/**
+ * Marks `id` a duplicate of `originalId`: resolves it (a closed ticket stays
+ * closed), tells the requester where the conversation continues, and locks it.
+ * Pointing at a ticket that is itself a duplicate follows the chain to the
+ * root; loops, self-references, other requesters' tickets and re-marking are
+ * refused. One transaction, so two admins can't both resolve it.
+ */
+export async function markDuplicate(
+	id: string,
+	originalId: string,
+	admin: { uid: string; name: string },
+): Promise<{ ticket: Ticket; original: Ticket }> {
+	if (id === originalId) throw new TicketError("A ticket can't be a duplicate of itself.");
+	const ref = col().doc(id);
+	return getAdminDb().runTransaction(async (tx) => {
+		const snap = await tx.get(ref);
+		if (!snap.exists) throw new TicketError('Ticket not found', 404);
+		const dup = normalize(snap.id, snap.data()!);
+		if (dup.duplicateOf) throw new TicketError(`Already marked a duplicate of ${ticketRef(dup.duplicateOf)}.`, 409);
+
+		// Follow the chain to the root ticket (reads must all precede writes).
+		const seen = new Set([id]);
+		let rootId = originalId;
+		let rootSnap: FirebaseFirestore.DocumentSnapshot | null = null;
+		for (let hop = 0; hop < 10; hop++) {
+			if (seen.has(rootId)) throw new TicketError('That ticket is already a duplicate of this one — pick a different original.', 409);
+			seen.add(rootId);
+			rootSnap = await tx.get(col().doc(rootId));
+			if (!rootSnap.exists) throw new TicketError('The original ticket no longer exists.', 404);
+			const next = rootSnap.data()!.duplicateOf;
+			if (!next) break;
+			rootId = next;
+		}
+		const original = normalize(rootSnap!.id, rootSnap!.data()!);
+		if (original.duplicateOf) throw new TicketError('Could not find the original ticket for that chain.', 409);
+		if (!sameRequester(dup, original)) {
+			throw new TicketError('Only another ticket from the same requester can be the original.', 400);
+		}
+
+		const now = Date.now();
+		const origRef = ticketRef(original.id);
+		const dupUpdate: Record<string, unknown> = {
+			duplicateOf: original.id,
+			messages: [
+				...dup.messages,
+				entry({ from: 'system', authorName: 'OmniPlot Support', body: `OmniPlot Support marked this a duplicate of ${origRef} ("${original.subject}"). We'll keep helping you on that ticket.` }, now),
+				entry({ from: 'admin', authorName: admin.name, authorUid: admin.uid, internal: true, body: `Marked duplicate of ${origRef} — this ticket is now locked.` }, now),
+			],
+			updatedAt: now,
+			lastActivityAt: now,
+			lastAdminActivityAt: now,
+			adminLastSeenAt: now,
+		};
+		const nextStatus: TicketStatus = dup.status === 'closed' ? 'closed' : 'resolved';
+		if (nextStatus !== dup.status) applyStatus(dupUpdate, dup, nextStatus, now);
+
+		const origUpdate: Record<string, unknown> = {
+			duplicates: [...new Set([...original.duplicates, id])],
+			messages: [
+				...original.messages,
+				entry({ from: 'admin', authorName: admin.name, authorUid: admin.uid, internal: true, body: `${ticketRef(id)} ("${dup.subject}") was marked a duplicate of this ticket.` }, now),
+			],
+			updatedAt: now,
+		};
+
+		tx.update(ref, dupUpdate);
+		tx.update(col().doc(original.id), origUpdate);
+		return {
+			ticket: normalize(id, { ...snap.data()!, ...dupUpdate }),
+			original: normalize(original.id, { ...rootSnap!.data()!, ...origUpdate }),
+		};
+	});
+}
+
+/** Undo for a mistaken duplicate mark: unlocks the ticket and reopens it as in progress. */
+export async function unmarkDuplicate(id: string, admin: { uid: string; name: string }): Promise<Ticket> {
+	const ref = col().doc(id);
+	return getAdminDb().runTransaction(async (tx) => {
+		const snap = await tx.get(ref);
+		if (!snap.exists) throw new TicketError('Ticket not found', 404);
+		const dup = normalize(snap.id, snap.data()!);
+		if (!dup.duplicateOf) throw new TicketError('This ticket is not marked as a duplicate.', 409);
+		const origRef = col().doc(dup.duplicateOf);
+		const origSnap = await tx.get(origRef);
+
+		const now = Date.now();
+		const update: Record<string, unknown> = {
+			duplicateOf: null,
+			messages: [
+				...dup.messages,
+				entry({ from: 'system', authorName: 'OmniPlot Support', body: 'OmniPlot Support reopened this ticket.' }, now),
+				entry({ from: 'admin', authorName: admin.name, authorUid: admin.uid, internal: true, body: `Removed the duplicate mark (was ${ticketRef(dup.duplicateOf)}).` }, now),
+			],
+			updatedAt: now,
+			lastActivityAt: now,
+			lastAdminActivityAt: now,
+			adminLastSeenAt: now,
+		};
+		applyStatus(update, dup, 'in_progress', now);
+
+		if (origSnap.exists) {
+			const original = normalize(origSnap.id, origSnap.data()!);
+			tx.update(origRef, {
+				duplicates: original.duplicates.filter((d) => d !== id),
+				messages: [
+					...original.messages,
+					entry({ from: 'admin', authorName: admin.name, authorUid: admin.uid, internal: true, body: `${ticketRef(id)} is no longer marked a duplicate of this ticket.` }, now),
+				],
+				updatedAt: now,
+			});
+		}
+		tx.update(ref, update);
+		return normalize(id, { ...snap.data()!, ...update });
 	});
 }
 

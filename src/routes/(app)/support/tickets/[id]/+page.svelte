@@ -55,7 +55,7 @@
 	{:else if error || !ticket}
 		<div class="state">{error ?? "Ticket not found."}</div>
 	{:else}
-		<RequesterTicket bind:ticket {send} />
+		<RequesterTicket bind:ticket {send} ticketHref={(id) => `/support/tickets/${id}`} />
 	{/if}
 </div>
 

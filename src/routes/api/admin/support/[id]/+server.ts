@@ -10,10 +10,12 @@ import {
 	listTicketsForUser,
 	linkTicketToAccount,
 	markSeen,
+	markDuplicate,
+	unmarkDuplicate,
 	updateTriage,
 	TicketError,
 } from '$lib/server/support/store';
-import { notifyAdminReply, notifyStatusChange } from '$lib/server/support/notify';
+import { notifyAdminReply, notifyDuplicate, notifyStatusChange } from '$lib/server/support/notify';
 import Stripe from 'stripe';
 import { applyCredit, fmtCents, CreditError } from '$lib/server/credits';
 import { cannedById } from '$lib/support/responses';
@@ -94,7 +96,7 @@ async function accountUid(t: Ticket): Promise<string | null> {
 }
 
 function slim(t: Ticket) {
-	return { id: t.id, subject: t.subject, status: t.status, createdAt: t.createdAt };
+	return { id: t.id, subject: t.subject, status: t.status, createdAt: t.createdAt, duplicateOf: t.duplicateOf };
 }
 
 export const GET: RequestHandler = async ({ request, params }) => {
@@ -121,6 +123,14 @@ export const POST: RequestHandler = async ({ request, params }) => {
 	const found = await getTicket(params.id);
 	if (!found) return json({ error: 'Ticket not found' }, { status: 404 });
 	const { ticket, accessKey } = found;
+
+	// A duplicate is locked. Refuse up front — before anything with side
+	// effects (e.g. the reply path applies a credit before saving the reply).
+	// The store re-checks inside its transaction to close the race.
+	const LOCKED_OK = ['note', 'link', 'unduplicate'];
+	if (ticket.duplicateOf && !LOCKED_OK.includes(payload.action)) {
+		return json({ error: `This ticket is a duplicate of ${ticketRef(ticket.duplicateOf)} and is locked. Work on that ticket, or unmark the duplicate first.` }, { status: 409 });
+	}
 
 	try {
 		switch (payload.action) {
@@ -190,6 +200,23 @@ export const POST: RequestHandler = async ({ request, params }) => {
 				const uid = await accountUid(ticket);
 				if (!uid) return json({ error: 'No account uses this ticket\'s email.' }, { status: 404 });
 				const updated = await linkTicketToAccount(ticket.id, uid, admin);
+				return json({ ticket: updated });
+			}
+
+			// Resolve + lock as a duplicate of another ticket from the same requester.
+			case 'duplicate': {
+				const originalId = String(payload.originalId ?? '').trim();
+				if (!/^[A-Za-z0-9_-]{1,128}$/.test(originalId)) return json({ error: 'Choose the original ticket.' }, { status: 400 });
+				const { ticket: updated, original } = await markDuplicate(ticket.id, originalId, admin);
+				if (payload.notify !== false) {
+					const orig = await getTicket(original.id);
+					await notifyDuplicate(updated, accessKey, original, orig?.accessKey ?? null);
+				}
+				return json({ ticket: updated, original: { id: original.id, subject: original.subject } });
+			}
+
+			case 'unduplicate': {
+				const updated = await unmarkDuplicate(ticket.id, admin);
 				return json({ ticket: updated });
 			}
 

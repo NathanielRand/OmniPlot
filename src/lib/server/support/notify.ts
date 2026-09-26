@@ -10,6 +10,7 @@ import {
 	sendTicketReplyEmail,
 	sendTicketStatusEmail,
 	sendTicketNudgeEmail,
+	sendTicketDuplicateEmail,
 	sendAdminTicketEmail,
 	type SupportEmailTicket,
 } from '$lib/server/email';
@@ -80,4 +81,11 @@ export async function notifyCustomerReply(t: Ticket, accessKey: string | null, b
 
 export async function notifyNudge(t: Ticket, accessKey: string | null): Promise<void> {
 	await attempt('nudge to requester', () => sendTicketNudgeEmail(toEmail(t, accessKey)));
+}
+
+export async function notifyDuplicate(t: Ticket, accessKey: string | null, original: Ticket, originalKey: string | null): Promise<void> {
+	if (!t.email) return;
+	await attempt('duplicate to requester', () =>
+		sendTicketDuplicateEmail(toEmail(t, accessKey), { ref: ticketRef(original.id), subject: original.subject, link: requesterLink(original, originalKey) }),
+	);
 }

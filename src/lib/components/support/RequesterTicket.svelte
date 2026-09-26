@@ -16,8 +16,10 @@
 		ticket: Ticket;
 		/** Performs a requester action against the API and returns the updated ticket. */
 		send: (payload: { action: "reply" | "resolve"; body?: string; intent?: ReplyIntent }) => Promise<Ticket>;
+		/** Link to another of the requester's tickets (signed-in only — guests get the keyed link by email). */
+		ticketHref?: (id: string) => string | null;
 	}
-	let { ticket = $bindable(), send }: Props = $props();
+	let { ticket = $bindable(), send, ticketHref = () => null }: Props = $props();
 
 	let body = $state("");
 	let intent = $state<ReplyIntent>("info");
@@ -27,6 +29,9 @@
 
 	const closed = $derived(ticket.status === "closed");
 	const resolved = $derived(ticket.status === "resolved");
+	// Merged into another ticket by support — the conversation continues there.
+	const merged = $derived(!!ticket.duplicateOf);
+	const mergedHref = $derived(ticket.duplicateOf ? ticketHref(ticket.duplicateOf) : null);
 
 	function applyStarter(s: (typeof REPLY_STARTERS)[number]) {
 		body = s.body;
@@ -72,7 +77,13 @@
 		<Badge variant={STATUS_VARIANT[ticket.status]} size="md">{STATUS_LABEL_USER[ticket.status]}</Badge>
 	</header>
 
-	{#if needsUserAction(ticket)}
+	{#if merged && ticket.duplicateOf}
+		<div class="rt__banner rt__banner--done" role="status">
+			We merged this request into ticket
+			{#if mergedHref}<a href={mergedHref}>{ticketRef(ticket.duplicateOf)}</a>{:else}<strong>{ticketRef(ticket.duplicateOf)}</strong>{/if}
+			because it's about the same issue. We'll keep helping you there{mergedHref ? "" : " — check your email for the link"}.
+		</div>
+	{:else if needsUserAction(ticket)}
 		<div class="rt__banner rt__banner--action" role="status">
 			We replied and need a bit more from you — take a look below.
 		</div>
@@ -88,7 +99,12 @@
 
 	<TicketThread {ticket} viewer="user" />
 
-	{#if closed}
+	{#if merged && ticket.duplicateOf}
+		<p class="rt__closed">
+			Replies are turned off on merged requests.
+			{#if mergedHref}<a href={mergedHref}>Continue on {ticketRef(ticket.duplicateOf)} →</a>{/if}
+		</p>
+	{:else if closed}
 		<p class="rt__closed">
 			This ticket is closed. Need more help? <a href="/support">Open a new request</a>.
 		</p>
@@ -185,6 +201,7 @@
 		background: color-mix(in srgb, var(--color-success) 8%, transparent);
 		border-color: color-mix(in srgb, var(--color-success) 35%, transparent);
 	}
+	.rt__banner a { color: var(--text-brand); font-weight: 600; }
 
 	.rt__composer {
 		display: flex;

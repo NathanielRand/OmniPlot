@@ -615,6 +615,26 @@ ${smallPrint(
 	);
 }
 
+/** A ticket was merged into an earlier one from the same requester — point
+ *  them at the ticket where the conversation continues. */
+export async function sendTicketDuplicateEmail(
+	t: SupportEmailTicket,
+	original: { ref: string; subject: string; link: string },
+): Promise<void> {
+	const content = `
+${alertBox(`Merged into ticket ${escapeHtml(original.ref)}`, 'success')}
+${heading("We've combined your requests")}
+${subtext(`Hi ${escapeHtml(firstName(t.name))}, <strong style="color:#f0f2f7;">${escapeHtml(t.subject)}</strong> is about the same issue as <strong style="color:#f0f2f7;">${escapeHtml(original.subject)}</strong>, so we've merged them to keep everything in one place. We'll keep helping you there.`)}
+${cta('Go to your ticket', original.link)}
+${smallPrint(`${NO_EMAIL_REPLIES}<br/>Ticket ${t.ref} → ${escapeHtml(original.ref)}`)}`;
+
+	await sendEmail(
+		t.email,
+		`[${t.ref}] Merged into ${original.ref}: ${t.subject}`,
+		base(`Your request was merged into ticket ${original.ref}.`, content)
+	);
+}
+
 export async function sendTicketNudgeEmail(t: SupportEmailTicket): Promise<void> {
 	const content = `
 ${heading('Still need a hand?')}
