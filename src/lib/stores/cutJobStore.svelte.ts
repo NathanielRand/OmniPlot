@@ -1,5 +1,5 @@
 import type { CutJob } from "$lib/types";
-import { saveJob, subscribeUserJobs } from "$lib/firebase/firestore";
+import { subscribeUserJobs } from "$lib/firebase/firestore";
 import type { Unsubscribe } from "firebase/firestore";
 
 function createCutJobStore() {
@@ -22,6 +22,11 @@ function createCutJobStore() {
 				loading = false;
 			},
 			100,
+			(err) => {
+				console.error("[cutJobStore]", err);
+				error   = "Couldn't load your cut history.";
+				loading = false;
+			},
 		);
 	}
 
@@ -34,19 +39,12 @@ function createCutJobStore() {
 		error    = "";
 	}
 
-	function addJob(job: CutJob) {
-		// Optimistic local insert so the UI reflects the new job immediately.
-		jobs = [job, ...jobs.filter((j) => j.id !== job.id)];
-		saveJob(job).catch(() => {});
-	}
-
 	return {
 		get jobs()    { return jobs; },
 		get loading() { return loading; },
 		get error()   { return error; },
 		init,
 		cleanup,
-		addJob,
 	};
 }
 

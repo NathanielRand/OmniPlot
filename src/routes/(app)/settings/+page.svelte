@@ -41,6 +41,7 @@
 	import { goto } from "$app/navigation";
 	import AddCardModal from "$lib/components/ui/AddCardModal.svelte";
 	import { cutLimitsFromPlans, type PlanCutLimits } from "$lib/utils";
+	import { usageInWindow } from "$lib/cuts";
 	import type { Shop, Organization, Group, GroupMember, ShopMember, ShopInvite, ShopRole, ShopPlan } from "$lib/types";
 
 	let activeTab = $state<
@@ -1152,10 +1153,11 @@
 			{@const allowance = cutLimits[tier === "lite" || tier === "pro" ? tier : "free"]}
 			{@const daily    = tier !== "admin" && allowance.cutsPerDay !== null}
 			{@const limit    = tier === "admin" ? null : (allowance.cutsPerDay ?? allowance.cutsPerMonth)}
-			{@const resetAt  = daily ? usage?.dayResetAt : usage?.monthResetAt}
-			{@const inWindow = !!resetAt && new Date() < new Date(resetAt)}
-			{@const cutCount = inWindow ? (daily ? usage?.dailyCount : usage?.monthlyCount) ?? 0 : 0}
-			{@const usagePct = limit ? Math.min(100, Math.round((cutCount / limit) * 100)) : 0}
+			{@const used     = usageInWindow(usage)}
+			{@const meters   = tier === "admin" ? [] : [
+				...(allowance.cutsPerDay   !== null ? [{ label: "Daily cuts",  count: used.day,   limit: allowance.cutsPerDay,   resetAt: used.dayResetAt }] : []),
+				...(allowance.cutsPerMonth !== null ? [{ label: "30-day cuts", count: used.month, limit: allowance.cutsPerMonth, resetAt: used.monthResetAt }] : []),
+			]}
 
 			<div class="settings-section">
 				<h2 class="settings-section-title">Plan & Billing</h2>
@@ -1196,21 +1198,27 @@
 						</div>
 					{/each}
 
-					{#if limit !== null}
-						<div class="billing-plan__usage">
-							<div class="usage-row">
-								<span class="usage-label">{daily ? "Cuts today" : "Cuts this period"}</span>
-								<span class="usage-val">{cutCount} / {limit}</span>
+					{#if meters.length}
+						<!-- Every window the plan enforces (canCut checks both when both are set). -->
+						{#each meters as m}
+							{@const pct = Math.min(100, Math.round((m.count / m.limit) * 100))}
+							<div class="billing-plan__usage">
+								<div class="usage-row">
+									<span class="usage-label">{m.label}</span>
+									<span class="usage-val">{m.count} / {m.limit}</span>
+								</div>
+								<!-- Windows are rolling: they start at the first cut after the last one ended. -->
+								<div class="usage-reset">{m.resetAt ? `Resets ${m.resetAt.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : "Starts with your next cut"}</div>
+								<div class="usage-bar-track" role="progressbar" aria-valuenow={m.count} aria-valuemax={m.limit}>
+									<div class="usage-bar-fill" class:usage-bar-fill--warn={pct >= 80} style="width:{pct}%"></div>
+								</div>
 							</div>
-							<div class="usage-bar-track" role="progressbar" aria-valuenow={cutCount} aria-valuemax={limit}>
-								<div class="usage-bar-fill" class:usage-bar-fill--warn={usagePct >= 80} style="width:{usagePct}%"></div>
-							</div>
-						</div>
+						{/each}
 					{:else}
 						<div class="billing-plan__usage">
 							<div class="usage-row">
-								<span class="usage-label">Cuts this period</span>
-								<span class="usage-val">{usage?.monthlyCount ?? 0} <span style="color:var(--text-tertiary)">/ unlimited</span></span>
+								<span class="usage-label">30-day cuts</span>
+								<span class="usage-val">{used.month} <span style="color:var(--text-tertiary)">/ unlimited</span></span>
 							</div>
 						</div>
 					{/if}
@@ -2452,6 +2460,11 @@
 	.usage-label {
 		font-size: 0.8125rem;
 		color: var(--text-secondary);
+	}
+	.usage-reset {
+		margin-top: 4px;
+		font-size: 0.6875rem;
+		color: var(--text-tertiary);
 	}
 	.usage-val {
 		font-family: var(--font-mono);

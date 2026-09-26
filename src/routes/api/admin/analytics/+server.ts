@@ -2,6 +2,7 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { Timestamp } from 'firebase-admin/firestore';
 import { getAdminDb, verifyIdToken } from '$lib/server/firebase-admin';
+import { cutTotalsByDay, isReconstructed, jobPieces, jobStatus, jobSubjects } from '$lib/server/cut-stats';
 
 type Range = '7d' | '30d' | '90d' | 'ytd';
 const RANGES: Range[] = ['7d', '30d', '90d', 'ytd'];
@@ -29,14 +30,6 @@ function toDate(v: unknown): Date | null {
 
 const dayKey = (d: Date) => d.toISOString().slice(0, 10);
 
-function subjectLabel(j: FirebaseFirestore.DocumentData): string {
-	const v = j.vehicle;
-	if (v && (v.projectType ?? 'vehicle') === 'vehicle' && (v.make || v.model)) {
-		return [v.year, v.make, v.model].filter(Boolean).join(' ');
-	}
-	return v?.propertyLabel || v?.model || j.name || 'Untitled';
-}
-
 // GET /api/admin/analytics?range=30d — usage metrics for Admin → Analytics.
 // Reads users and in-range jobs directly; revenue/MRR comes from
 // /api/admin/revenue, which is reconciled against Stripe.
@@ -56,7 +49,7 @@ export const GET: RequestHandler = async ({ request, url }) => {
 			db.collection('shops').select('plan').get(),
 			db.collection('jobs')
 				.where('createdAt', '>=', Timestamp.fromDate(start))
-				.select('userId', 'vehicleId', 'vehicle', 'name', 'status', 'metrics.itemCount', 'createdAt')
+				.select('userId', 'vehicleId', 'vehicle', 'subject', 'name', 'status', 'metrics.itemCount', 'metrics.patternsCompleted', 'createdAt', 'updatedAt', 'completedAt')
 				.get(),
 		]);
 
@@ -97,35 +90,41 @@ export const GET: RequestHandler = async ({ request, url }) => {
 		}
 
 		// ── Jobs ──
+		// "Jobs" in the response = COMPLETED cuts (the series, the KPI and top
+		// subjects). Failed/interrupted and cancelled runs are counted apart.
+		const jobDocs = jobsSnap.docs.map((d) => ({ id: d.id, ...d.data() }) as FirebaseFirestore.DocumentData & { id: string });
+		const [totals, subjectOf] = await Promise.all([cutTotalsByDay(start, jobDocs), jobSubjects(jobDocs)]);
+		let jobs = 0, pieces = 0, failed = 0, cancelled = 0;
+		for (const t of totals.values()) {
+			const b = days.get(t.date);
+			if (b) { b.jobs = t.cuts; b.pieces = t.pieces; }
+			jobs += t.cuts; pieces += t.pieces; failed += t.failed; cancelled += t.cancelled;
+		}
+
 		const subjects = new Map<string, { label: string; jobs: number; pieces: number }>();
 		const cutters = new Set<string>();
-		let jobs = 0, pieces = 0, failed = 0;
-		const recent: { id: string; user: string; subject: string; status: string; pieces: number; createdAt: string | null }[] = [];
-		for (const doc of jobsSnap.docs) {
-			const j = doc.data();
-			const created = toDate(j.createdAt);
-			const n = Number(j.metrics?.itemCount ?? 0) || 0;
-			jobs++;
-			pieces += n;
-			if (j.status === 'error' || j.status === 'failed') failed++;
-			if (j.userId) cutters.add(j.userId);
-			if (created) {
-				const b = days.get(dayKey(created));
-				if (b) { b.jobs++; b.pieces += n; }
+		const recent: { id: string; user: string; subject: string; status: string; pieces: number; reconstructed: boolean; createdAt: string | null }[] = [];
+		for (const j of jobDocs) {
+			const status = jobStatus(j);
+			const label = subjectOf(j);
+			const { total, done } = jobPieces(j);
+			if (status === 'complete' && j.userId) cutters.add(j.userId);
+			// A reconstructed cut is real, but we don't know what was cut.
+			if (status === 'complete' && !isReconstructed(j)) {
+				const key = j.vehicleId || label;
+				const s = subjects.get(key) ?? { label, jobs: 0, pieces: 0 };
+				s.jobs++;
+				s.pieces += total;
+				subjects.set(key, s);
 			}
-			const label = subjectLabel(j);
-			const key = j.vehicleId || label;
-			const s = subjects.get(key) ?? { label, jobs: 0, pieces: 0 };
-			s.jobs++;
-			s.pieces += n;
-			subjects.set(key, s);
 			recent.push({
-				id: doc.id,
+				id: j.id,
 				user: names.get(j.userId) ?? (j.userId ? String(j.userId).slice(0, 8) : '—'),
 				subject: label,
-				status: j.status ?? 'complete',
-				pieces: n,
-				createdAt: created?.toISOString() ?? null,
+				status,
+				pieces: status === 'complete' ? total : done,
+				reconstructed: isReconstructed(j),
+				createdAt: toDate(j.createdAt)?.toISOString() ?? null,
 			});
 		}
 		recent.sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
@@ -135,7 +134,7 @@ export const GET: RequestHandler = async ({ request, url }) => {
 			start: start.toISOString(),
 			users: { total: usersSnap.size, byTier, shopMembers, newUsers, activeUsers },
 			shops: { total: shopsSnap.size, byShopPlan },
-			jobs: { total: jobs, pieces, failed, cutters: cutters.size },
+			jobs: { total: jobs, pieces, failed, cancelled, cutters: cutters.size },
 			series: [...days.values()],
 			topSubjects: [...subjects.values()].sort((a, b) => b.jobs - a.jobs || b.pieces - a.pieces).slice(0, 8),
 			recentJobs: recent.slice(0, 10),

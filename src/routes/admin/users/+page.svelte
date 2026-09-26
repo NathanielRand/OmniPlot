@@ -43,6 +43,8 @@
 		usage: {
 			cutCount:     number;
 			monthlyCount: number;
+			dailyCount:   number;
+			thisMonth:    number | null;
 			lastCutAt:    string | null;
 			monthResetAt: string | null;
 		};
@@ -80,6 +82,8 @@
 			name:       string;
 			status:     string;
 			pieces:     number;
+			piecesDone: number;
+			reconstructed?: boolean;
 			connection: string;
 			createdAt:  string | null;
 		}[];
@@ -587,9 +591,15 @@
 							<span class="kv-value kv-value--mono">{detail.usage.cutCount.toLocaleString()}</span>
 						</div>
 						<div class="drawer-kv">
-							<span class="kv-label">This month</span>
-							<span class="kv-value kv-value--mono">{detail.usage.monthlyCount}</span>
+							<span class="kv-label">Current 30-day window</span>
+							<span class="kv-value kv-value--mono" title={detail.usage.monthResetAt ? `Window resets ${formatDate(new Date(detail.usage.monthResetAt))}` : "No open window"}>{detail.usage.monthlyCount} · {detail.usage.dailyCount} in 24h</span>
 						</div>
+						{#if detail.usage.thisMonth !== null}
+							<div class="drawer-kv">
+								<span class="kv-label">This calendar month</span>
+								<span class="kv-value kv-value--mono">{detail.usage.thisMonth}</span>
+							</div>
+						{/if}
 						<div class="drawer-kv">
 							<span class="kv-label">Last cut</span>
 							<span class="kv-value">{detail.usage.lastCutAt ? formatRelativeTime(new Date(detail.usage.lastCutAt)) : "—"}</span>
@@ -873,8 +883,8 @@
 								<div class="job-row">
 									<span class="job-row__name">{j.name}</span>
 									<span class="job-row__conn">{connLabel(j.connection)}</span>
-									<span class="job-row__pieces">{j.pieces}pc</span>
-									<Badge variant={j.status === "complete" || j.status === "completed" ? "success" : j.status === "error" ? "danger" : "default"} size="sm" dot>{j.status}</Badge>
+									<span class="job-row__pieces">{j.reconstructed ? "—" : j.status === "complete" ? `${j.pieces}pc` : `${j.piecesDone}/${j.pieces}pc`}</span>
+									<Badge variant={j.status === "complete" ? "success" : j.status === "error" || j.status === "interrupted" ? "danger" : j.status === "cutting" ? "info" : "default"} size="sm" dot>{j.status}</Badge>
 									<span class="job-row__date">{j.createdAt ? formatRelativeTime(new Date(j.createdAt)) : "—"}</span>
 								</div>
 							{/each}

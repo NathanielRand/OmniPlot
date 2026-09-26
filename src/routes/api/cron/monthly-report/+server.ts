@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types';
 import { CRON_SECRET } from '$env/static/private';
 import { getAdminDb } from '$lib/server/firebase-admin';
 import { sendMonthlyReportEmail } from '$lib/server/email';
+import { monthKey } from '$lib/cuts';
 
 const BATCH_SIZE = 10;
 
@@ -36,6 +37,25 @@ export const GET: RequestHandler = async ({ request }) => {
 	const db         = getAdminDb();
 	const monthLabel = getMonthLabel();
 
+	// Completed cuts in the previous calendar month (UTC). Per-user month
+	// counters (usage.byMonth) are authoritative from Sep 2026 and survive
+	// "Clear history"; the jobs cover earlier months. Take the larger.
+	// (usage.monthlyCount is a rolling 30-day window — wrong for a monthly report.)
+	const now        = new Date();
+	const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+	const monthEnd   = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+	const reportKey  = monthKey(monthStart);
+	const jobCounts  = new Map<string, number>();
+	const jobsSnap   = await db.collection('jobs')
+		.where('completedAt', '>=', monthStart)
+		.where('completedAt', '<', monthEnd)
+		.select('userId')
+		.get();
+	for (const d of jobsSnap.docs) {
+		const uid = d.data().userId;
+		if (uid) jobCounts.set(uid, (jobCounts.get(uid) ?? 0) + 1);
+	}
+
 	let sent       = 0;
 	let errors     = 0;
 	let lastDoc: FirebaseFirestore.QueryDocumentSnapshot | null = null;
@@ -65,7 +85,7 @@ export const GET: RequestHandler = async ({ request }) => {
 					const email       = data.email as string | undefined;
 					const displayName = (data.displayName as string) ?? '';
 					const tier        = (data.tier as string) ?? 'free';
-					const cutCount    = (data.usage?.monthlyCount as number) ?? 0;
+					const cutCount    = Math.max(Number(data.usage?.byMonth?.[reportKey] ?? 0) || 0, jobCounts.get(doc.id) ?? 0);
 
 					if (!email) return;
 

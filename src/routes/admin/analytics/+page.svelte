@@ -12,10 +12,10 @@
 		start: string;
 		users: { total: number; byTier: Record<string, number>; shopMembers: number; newUsers: number; activeUsers: number };
 		shops: { total: number; byShopPlan: Record<string, number> };
-		jobs: { total: number; pieces: number; failed: number; cutters: number };
+		jobs: { total: number; pieces: number; failed: number; cancelled?: number; cutters: number };
 		series: { date: string; signups: number; jobs: number; pieces: number }[];
 		topSubjects: { label: string; jobs: number; pieces: number }[];
-		recentJobs: { id: string; user: string; subject: string; status: string; pieces: number; createdAt: string | null }[];
+		recentJobs: { id: string; user: string; subject: string; status: string; pieces: number; reconstructed?: boolean; createdAt: string | null }[];
 	}
 
 	const RANGE_LABELS: Record<Range, string> = {
@@ -166,7 +166,7 @@
 				<div class="kpi-note">signed in · {RANGE_LABELS[range].toLowerCase()}</div>
 			</div>
 			<div class="kpi-card">
-				<div class="kpi-label">Cut jobs</div>
+				<div class="kpi-label">Completed cuts</div>
 				<div class="kpi-value">{stats.jobs.total.toLocaleString()}</div>
 				<div class="kpi-note">{stats.jobs.pieces.toLocaleString()} pieces · {stats.jobs.cutters} {stats.jobs.cutters === 1 ? "user" : "users"}</div>
 			</div>
@@ -189,7 +189,7 @@
 	<!-- Daily charts -->
 	<div class="chart-row">
 		{#each [
-			{ title: "Cut jobs", key: "jobs" as const, max: maxJobs, empty: "No cut jobs in this range" },
+			{ title: "Completed cuts", key: "jobs" as const, max: maxJobs, empty: "No completed cuts in this range" },
 			{ title: "Sign-ups", key: "signups" as const, max: maxSignups, empty: "No sign-ups in this range" },
 		] as chart (chart.key)}
 			<div class="admin-panel">
@@ -206,7 +206,7 @@
 						<div class="bars" role="img" aria-label="{chart.title} {perWeek ? 'per week' : 'per day'}, {RANGE_LABELS[range]}">
 							<span class="bars__max">{chart.max}</span>
 							{#each buckets as b (b.date)}
-								<div class="bars__col" use:tooltip={`${b.label}: ${b[chart.key]} ${chart.key === "jobs" ? `job${b[chart.key] === 1 ? "" : "s"} · ${b.pieces} pcs` : `sign-up${b[chart.key] === 1 ? "" : "s"}`}`}>
+								<div class="bars__col" use:tooltip={`${b.label}: ${b[chart.key]} ${chart.key === "jobs" ? `cut${b[chart.key] === 1 ? "" : "s"} · ${b.pieces} pcs` : `sign-up${b[chart.key] === 1 ? "" : "s"}`}`}>
 									<div class="bars__bar" style="height: {(b[chart.key] / chart.max) * 100}%"></div>
 								</div>
 							{/each}
@@ -295,7 +295,7 @@
 	<div class="admin-panel">
 		<div class="admin-panel__header">
 			<h2 class="admin-panel__title">Recent cut jobs</h2>
-			{#if stats}<span class="chart-note">{stats.jobs.failed} failed · {RANGE_LABELS[range].toLowerCase()}</span>{/if}
+			{#if stats}<span class="chart-note">{stats.jobs.failed} failed · {stats.jobs.cancelled ?? 0} cancelled · {RANGE_LABELS[range].toLowerCase()}</span>{/if}
 		</div>
 		{#if !stats}
 			<div class="tier-body">{#each { length: 5 } as _}<div class="skel" style="width:100%;height:12px"></div>{/each}</div>
@@ -311,9 +311,9 @@
 								<td class="td-mono">{j.createdAt ? new Date(j.createdAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—"}</td>
 								<td class="td-user">{j.user}</td>
 								<td class="td-vehicle">{j.subject}</td>
-								<td class="td-mono">{j.pieces}</td>
+								<td class="td-mono">{j.reconstructed ? "—" : j.pieces}</td>
 								<td>
-									<Badge variant={j.status === "complete" || j.status === "completed" ? "success" : j.status === "error" || j.status === "failed" ? "danger" : "default"} size="sm" dot>
+									<Badge variant={j.status === "complete" ? "success" : j.status === "error" || j.status === "interrupted" ? "danger" : j.status === "cutting" ? "info" : "default"} size="sm" dot>
 										{j.status}
 									</Badge>
 								</td>

@@ -95,6 +95,7 @@ export function deepClone<T>(obj: T): T {
 // ─── Check tier limits ────────────────────────
 import type { UserProfile } from "$lib/types";
 import { DEFAULT_PLAN_SETTINGS } from "$lib/plans";
+import { usageInWindow } from "$lib/cuts";
 
 // Per-tier cut allowances; `null` means unlimited on that window. Defaults
 // come from $lib/plans — the live values come from `/api/settings/plans`
@@ -128,7 +129,7 @@ export function cutLimitsFromPlans(plans: Partial<Record<keyof PlanCutLimits, Pa
  * which overrides the individual tier with unlimited cuts.
  */
 export function canCut(
-	user: UserProfile,
+	user: Pick<UserProfile, "tier" | "usage">,
 	teamActive = false,
 	limits: PlanCutLimits = DEFAULT_CUT_LIMITS,
 ): { allowed: boolean; reason?: string; remaining: number | null } {
@@ -144,10 +145,11 @@ export function canCut(
 	let remaining: number | null = null;
 	let blocked: string | undefined;
 
+	const window = usageInWindow(usage, now);
+
 	if (cutsPerMonth !== null) {
-		const resetAt = usage.monthResetAt ? new Date(usage.monthResetAt) : null;
-		const used = resetAt && now < resetAt ? usage.monthlyCount : 0;
-		const left = Math.max(0, cutsPerMonth - used);
+		const resetAt = window.monthResetAt;
+		const left = Math.max(0, cutsPerMonth - window.month);
 		remaining = left;
 		if (left === 0) {
 			const daysLeft = resetAt ? Math.ceil((resetAt.getTime() - now.getTime()) / 86_400_000) : 0;
@@ -157,9 +159,8 @@ export function canCut(
 	}
 
 	if (cutsPerDay !== null) {
-		const resetAt = usage.dayResetAt ? new Date(usage.dayResetAt) : null;
-		const used = resetAt && now < resetAt ? usage.dailyCount : 0;
-		const left = Math.max(0, cutsPerDay - used);
+		const resetAt = window.dayResetAt;
+		const left = Math.max(0, cutsPerDay - window.day);
 		remaining = remaining === null ? left : Math.min(remaining, left);
 		if (left === 0 && !blocked) {
 			const hoursLeft = resetAt ? Math.ceil((resetAt.getTime() - now.getTime()) / 3_600_000) : 0;

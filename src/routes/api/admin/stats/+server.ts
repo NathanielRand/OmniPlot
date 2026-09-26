@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { getAdminAuth, getAdminDb, verifyIdToken } from '$lib/server/firebase-admin';
+import { isReconstructed, jobPieces, jobStatus, jobSubjects } from '$lib/server/cut-stats';
 
 async function assertAdmin(authHeader: string | null): Promise<boolean> {
 	const uid = await verifyIdToken(authHeader);
@@ -106,47 +107,47 @@ export const GET: RequestHandler = async ({ request }) => {
 	});
 
 	// ── Jobs ─────────────────────────────────────
+	// "Cuts" = completed cuts (see $lib/server/cut-stats). The all-time total
+	// is the per-user counters, which survive users clearing their history.
 	let recentJobs:  object[] = [];
 	let cutsToday    = 0;
+	let cutsTotal    = 0;
+	for (const doc of usersSnap.docs) cutsTotal += Number(doc.data().usage?.cutCount ?? 0) || 0;
 
 	try {
-		const jobsSnap = await db.collection('jobs').orderBy('createdAt', 'desc').limit(10).get();
+		const [jobsSnap, countSnap] = await Promise.all([
+			db.collection('jobs').orderBy('createdAt', 'desc').limit(10).get(),
+			// Only completed jobs have a completedAt, so this is completed cuts
+			// in the last 24h — not every job started (failed/cancelled included).
+			db.collection('jobs').where('completedAt', '>=', oneDayAgo).count().get(),
+		]);
+		cutsToday = countSnap.data().count;
 
-		// Collect unique userIds to batch-fetch display names
-		const userIds = [...new Set(jobsSnap.docs.map((d) => d.data().userId).filter(Boolean))];
-		const userMap: Record<string, string> = {};
-		await Promise.all(
-			userIds.slice(0, 10).map(async (uid) => {
-				const snap = await db.doc(`users/${uid}`).get();
-				const u = snap.data();
-				// Priority: username/displayName → email → phone → uid
-				userMap[uid] = u?.displayName || u?.email || u?.phone || uid;
-			}),
-		);
+		const userMap = new Map(usersSnap.docs.map((d) => {
+			const u = d.data();
+			return [d.id, u.displayName || u.email || u.phone || d.id] as const;
+		}));
+		const subjectOf = await jobSubjects(jobsSnap.docs.map((d) => d.data()));
 
 		recentJobs = jobsSnap.docs.map((doc) => {
 			const d = doc.data();
-			const itemCount         = d.metrics?.itemCount ?? 0;
-			const patternsCompleted = d.metrics?.patternsCompleted ?? itemCount;
+			const { total, done } = jobPieces(d);
 			return {
 				id:                 doc.id,
 				userId:             d.userId ?? '',
-				userLabel:          userMap[d.userId] ?? d.userId ?? '',
-				vehicleName:        d.name ?? 'Unknown',
-				status:             d.status ?? 'complete',
-				pieces:             itemCount,
-				patternsCompleted,
+				userLabel:          userMap.get(d.userId) ?? d.userId ?? '',
+				vehicleName:        subjectOf(d),
+				status:             jobStatus(d),
+				pieces:             total,
+				patternsCompleted:  done,
+				reconstructed:      isReconstructed(d),
 				connection:         d.plotterConfig?.connection ?? 'unknown',
 				presetName:         d.plotterConfig?.name ?? '',
 				createdAt:          d.createdAt?.toDate?.()?.toISOString() ?? null,
 			};
 		});
-
-		// Counted server-side — filtering the 10-job slice above undercounts busy days.
-		const countSnap = await db.collection('jobs').where('createdAt', '>=', oneDayAgo).count().get();
-		cutsToday = countSnap.data().count;
-	} catch {
-		// jobs collection doesn't exist yet
+	} catch (err) {
+		console.error('[admin/stats] jobs:', err);
 	}
 
 	return json({
@@ -170,6 +171,7 @@ export const GET: RequestHandler = async ({ request }) => {
 		},
 		jobs: {
 			today:  cutsToday,
+			total:  cutsTotal,
 			recent: recentJobs,
 		},
 	});

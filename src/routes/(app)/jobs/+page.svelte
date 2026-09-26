@@ -2,7 +2,8 @@
 	import Badge from "$lib/components/ui/Badge.svelte";
 	import Button from "$lib/components/ui/Button.svelte";
 	import { formatDate, formatRelativeTime } from "$lib/utils";
-	import { cutJobStore } from "$lib/stores";
+	import { cutJobStore, userStore } from "$lib/stores";
+	import { usageInWindow } from "$lib/cuts";
 	import { getVehicleName } from "$lib/stores/patternStore.svelte";
 	import { tooltip } from "$lib/actions/tooltip";
 	import type { JobStatus } from "$lib/types";
@@ -54,6 +55,7 @@
 		cutting: "info",
 		ready: "warning",
 		draft: "default",
+		cancelled: "default",
 	};
 
 	const STATUS_LABEL: Record<JobStatus, string> = {
@@ -62,14 +64,17 @@
 		cutting: "Cutting",
 		ready: "Ready",
 		draft: "Draft",
+		cancelled: "Cancelled",
 	};
 
+	// Cut counts come from the server-kept counters on the user doc — the job
+	// list is only the latest 100 and is emptied by "Clear history".
 	const stats = $derived({
-		total: jobs.length,
-		completed: jobs.filter((j) => j.status === "complete").length,
-		failed: jobs.filter((j) => j.status === "error").length,
+		completed: userStore.user?.usage.cutCount ?? 0,
+		period: usageInWindow(userStore.user?.usage).month,
+		failed: jobs.filter((j) => j.status === "error" || j.status === "cancelled").length,
 		avgEff: (() => {
-			const withEff = jobs.filter((j) => j.metrics?.materialEfficiency);
+			const withEff = jobs.filter((j) => j.status === "complete" && j.metrics?.materialEfficiency);
 			if (!withEff.length) return "—";
 			const avg = withEff.reduce((s, j) => s + j.metrics.materialEfficiency, 0) / withEff.length;
 			return `${(avg * 100).toFixed(0)}%`;
@@ -105,7 +110,7 @@
 
 	<!-- ─── Stats ─── -->
 	<div class="jobs-stats">
-		{#each [["Total Jobs", loading ? "…" : stats.total.toString(), ""], ["Completed", loading ? "…" : stats.completed.toString(), "success"], ["Failed", loading ? "…" : stats.failed.toString(), "danger"], ["Avg Efficiency", loading ? "…" : stats.avgEff, "brand"]] as [label, val, cls]}
+		{#each [["Cuts completed", stats.completed.toLocaleString(), "success"], ["Last 30 days", stats.period.toLocaleString(), ""], ["Stopped early", loading ? "…" : stats.failed.toString(), "danger"], ["Avg Efficiency", loading ? "…" : stats.avgEff, "brand"]] as [label, val, cls]}
 			<div class="stat-card" class:shimmer={loading}>
 				<span
 					class="stat-card__val"
@@ -145,7 +150,7 @@
 		</div>
 
 		<div class="status-filters" role="group" aria-label="Filter by status">
-			{#each [["all","All"],["complete","Complete"],["error","Error"],["cutting","Cutting"],["ready","Ready"],["draft","Draft"]] as [val, label]}
+			{#each [["all","All"],["complete","Complete"],["error","Error"],["cancelled","Cancelled"],["cutting","Cutting"]] as [val, label]}
 				<button
 					class="status-filter"
 					class:active={filterStatus === val}

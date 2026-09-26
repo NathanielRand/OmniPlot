@@ -16,7 +16,6 @@ import {
 	limit,
 	onSnapshot,
 	serverTimestamp,
-	increment,
 	deleteField,
 	Timestamp,
 	type DocumentData,
@@ -303,112 +302,57 @@ export async function getPatternsByVehicle(
 }
 
 // ─── Job queries ──────────────────────────────
+// Reconstructed records (scripts/backfill-reconstructed-cuts.mjs) stand in
+// for cuts whose details were lost in 2026 — they keep admin history right
+// but have nothing useful to show the customer.
+function userVisibleJobs(docs: { id: string; data: () => DocumentData }[]): CutJob[] {
+	return docs.filter((d) => !d.data().backfilled).map((d) => toCutJob(d.id, d.data()));
+}
+
+function toCutJob(id: string, data: DocumentData): CutJob {
+	// Firestore returns Timestamp objects; coerce to JS Date so callers
+	// that type CutJob.createdAt as Date don't crash at runtime.
+	return {
+		id,
+		...data,
+		createdAt:   data.createdAt?.toDate?.()   ?? data.createdAt   ?? new Date(),
+		updatedAt:   data.updatedAt?.toDate?.()   ?? data.updatedAt   ?? new Date(),
+		completedAt: data.completedAt?.toDate?.() ?? data.completedAt ?? null,
+	} as CutJob;
+}
+
+// Newest first, ordered by the server (jobs: userId ASC + createdAt DESC
+// index). Without the orderBy, limit() returned an arbitrary slice for
+// anyone with more jobs than the limit.
+function userJobsQuery(uid: string, limitCount: number) {
+	return query(
+		collection(db, Collections.JOBS),
+		where("userId", "==", uid),
+		orderBy("createdAt", "desc"),
+		limit(limitCount),
+	);
+}
+
 export function subscribeUserJobs(
 	uid: string,
 	onNext: (jobs: CutJob[]) => void,
 	limitCount = 100,
+	onError?: (err: Error) => void,
 ): Unsubscribe {
-	const q = query(
-		collection(db, Collections.JOBS),
-		where("userId", "==", uid),
-		limit(limitCount),
-	);
-	return onSnapshot(q, (snap) => {
-		const jobs = snap.docs
-			.map((d) => {
-				const data = d.data();
-				return {
-					id: d.id,
-					...data,
-					createdAt:   data.createdAt?.toDate?.()   ?? data.createdAt   ?? new Date(),
-					updatedAt:   data.updatedAt?.toDate?.()   ?? data.updatedAt   ?? new Date(),
-					completedAt: data.completedAt?.toDate?.() ?? data.completedAt ?? null,
-				} as CutJob;
-			})
-			.sort((a, b) => (b.updatedAt as Date).getTime() - (a.updatedAt as Date).getTime());
-		onNext(jobs);
-	});
-}
-
-export async function getUserJobs(
-	uid: string,
-	limitCount = 100,
-): Promise<CutJob[]> {
-	// Avoid orderBy(updatedAt) + where(userId) — that combination requires a
-	// composite index which may not exist and causes the SDK to hang instead of
-	// rejecting cleanly. Sort client-side after fetching instead.
-	const q = query(
-		collection(db, Collections.JOBS),
-		where("userId", "==", uid),
-		limit(limitCount),
-	);
-	const snap = await getDocs(q);
-	return snap.docs
-		.map((d) => {
-			const data = d.data();
-			// Firestore returns Timestamp objects; coerce to JS Date so callers
-			// that type CutJob.createdAt as Date don't crash at runtime.
-			return {
-				id: d.id,
-				...data,
-				createdAt:   data.createdAt?.toDate?.()   ?? data.createdAt   ?? new Date(),
-				updatedAt:   data.updatedAt?.toDate?.()   ?? data.updatedAt   ?? new Date(),
-				completedAt: data.completedAt?.toDate?.() ?? data.completedAt ?? null,
-			} as CutJob;
-		})
-		.sort((a, b) => (b.updatedAt as Date).getTime() - (a.updatedAt as Date).getTime());
-}
-
-// ─── Cut usage tracking ───────────────────────
-// Call once per successful cut/download. Handles 30-day window reset client-side.
-// The real-time listener on the user document propagates the change back to userStore
-// so canCut() re-derives immediately without requiring a page reload.
-export async function incrementCutUsage(
-	uid: string,
-	currentMonthResetAt: Date | null,
-	currentDayResetAt: Date | null = null,
-): Promise<void> {
-	const now = new Date();
-	const monthWindowExpired = !currentMonthResetAt || now >= currentMonthResetAt;
-	const dayWindowExpired = !currentDayResetAt || now >= currentDayResetAt;
-
-	const patch: Record<string, unknown> = {
-		"usage.cutCount": increment(1),
-		"usage.lastCutAt": serverTimestamp(),
-		updatedAt: serverTimestamp(),
-	};
-
-	if (monthWindowExpired) {
-		// Start a fresh 30-day window
-		patch["usage.monthlyCount"] = 1;
-		patch["usage.monthResetAt"] = Timestamp.fromDate(
-			new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000),
-		);
-	} else {
-		patch["usage.monthlyCount"] = increment(1);
-	}
-
-	if (dayWindowExpired) {
-		// Start a fresh 24-hour window
-		patch["usage.dailyCount"] = 1;
-		patch["usage.dayResetAt"] = Timestamp.fromDate(
-			new Date(now.getTime() + 24 * 60 * 60 * 1000),
-		);
-	} else {
-		patch["usage.dailyCount"] = increment(1);
-	}
-
-	await updateDoc(doc(db, Collections.USERS, uid), patch);
-}
-
-export async function saveJob(job: CutJob): Promise<void> {
-	const ref = doc(db, Collections.JOBS, job.id);
-	await setDoc(
-		ref,
-		{ ...job, updatedAt: serverTimestamp() },
-		{ merge: true },
+	return onSnapshot(
+		userJobsQuery(uid, limitCount),
+		(snap) => onNext(userVisibleJobs(snap.docs)),
+		(err) => onError?.(err),
 	);
 }
+
+export async function getUserJobs(uid: string, limitCount = 100): Promise<CutJob[]> {
+	const snap = await getDocs(userJobsQuery(uid, limitCount));
+	return userVisibleJobs(snap.docs);
+}
+
+// Cut jobs and usage counters are written only by the server — see
+// $lib/firebase/cuts (client) and $lib/server/cuts.
 
 // ─── Admin queries ────────────────────────────
 export async function getAllUsers(limitCount = 50): Promise<UserProfile[]> {

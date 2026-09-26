@@ -79,15 +79,20 @@
 	// ─── Derived ─────────────────────────────────
 	const jobs       = $derived(cutJobStore.jobs);
 	const activeJobs = $derived(jobs.filter(j => j.status === "cutting" || j.status === "ready"));
-	const recentJobs = $derived(jobs.filter(j => j.status === "complete" || j.status === "error").slice(0, 10));
+	const recentJobs = $derived(jobs.filter(j => j.status === "complete" || j.status === "error" || j.status === "cancelled").slice(0, 10));
 	const failedJobs = $derived(jobs.filter(j => j.status === "error").slice(0, 5));
 
+	// Completed cuts today (local day), by when they finished — not by the
+	// last write, which a later status change would move.
 	const jobsToday = $derived(jobs.filter(j => {
-		const d = new Date(j.updatedAt);
+		if (j.status !== "complete" || !j.completedAt) return false;
+		const d = new Date(j.completedAt);
 		const n = new Date();
 		return d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate();
 	}).length);
 
+	// Of the runs that ended on their own, how many finished. A run the user
+	// cancelled isn't a plotter failure.
 	const successRate = $derived(() => {
 		const done = jobs.filter(j => j.status === "complete" || j.status === "error");
 		if (!done.length) return 100;
@@ -699,7 +704,7 @@
 		{#each [
 			["Registered", loading ? "…" : String(plotters.length), ""],
 			["Agent", agentStatus === "online" ? "Online" : agentStatus === "offline" ? "Offline" : "…", agentStatus === "online" ? "success" : agentStatus === "offline" ? "danger" : ""],
-			["Jobs Today", loading ? "…" : String(jobsToday), ""],
+			["Cuts Today", loading ? "…" : String(jobsToday), ""],
 			["Success Rate", loading ? "…" : `${successRate()}%`, successRate() >= 90 ? "success" : successRate() >= 70 ? "warning" : "danger"],
 		] as [label, val, cls]}
 			<div class="stat-card" class:shimmer={loading && label !== "Agent"}>
@@ -1707,6 +1712,7 @@
 	.status-badge--complete { background: rgba(34, 197, 94, 0.13);  color: #4ade80; }
 	.status-badge--error    { background: rgba(239, 68, 68, 0.13);  color: #f87171; }
 	.status-badge--draft    { background: rgba(255, 255, 255, 0.05); color: var(--text-tertiary, #6b7280); }
+	.status-badge--cancelled { background: rgba(255, 255, 255, 0.05); color: var(--text-tertiary, #6b7280); }
 
 	/* ─── Troubleshoot ─── */
 	.trouble-card {

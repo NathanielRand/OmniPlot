@@ -1,6 +1,8 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { getAdminDb, verifyIdToken } from '$lib/server/firebase-admin';
+import { isReconstructed, jobPieces, jobStatus, jobSubjects, toDate } from '$lib/server/cut-stats';
+import { monthKey, usageInWindow } from '$lib/cuts';
 
 async function assertAdmin(authHeader: string | null): Promise<boolean> {
 	const uid = await verifyIdToken(authHeader);
@@ -51,18 +53,29 @@ export const GET: RequestHandler = async ({ request, params }) => {
 			.orderBy('createdAt', 'desc')
 			.limit(5)
 			.get();
+		const subjectOf = await jobSubjects(jobsSnap.docs.map((d) => d.data()));
 		recentJobs = jobsSnap.docs.map((doc) => {
 			const j = doc.data();
+			const { total, done } = jobPieces(j);
 			return {
 				id:         doc.id,
-				name:       j.name                     ?? 'Unknown',
-				status:     j.status                   ?? 'complete',
-				pieces:     j.metrics?.itemCount       ?? 0,
+				name:       subjectOf(j),
+				status:     jobStatus(j),
+				pieces:     total,
+				piecesDone: done,
+				reconstructed: isReconstructed(j),
 				connection: j.plotterConfig?.connection ?? 'unknown',
 				createdAt:  j.createdAt?.toDate?.()?.toISOString() ?? null,
 			};
 		});
-	} catch { /* index may not exist yet — return empty */ }
+	} catch (err) { console.error('[admin/users/uid] jobs:', err); }
+
+	// Counts in the CURRENT windows — the raw monthlyCount/dailyCount keep
+	// last period's number until the next cut starts a new window.
+	const window = usageInWindow({
+		monthlyCount: d.usage?.monthlyCount, monthResetAt: toDate(d.usage?.monthResetAt),
+		dailyCount: d.usage?.dailyCount, dayResetAt: toDate(d.usage?.dayResetAt),
+	});
 
 	// Financial history for this user (needs the transactions/uid+created index)
 	let recentTransactions: object[] = [];
@@ -100,9 +113,12 @@ export const GET: RequestHandler = async ({ request, params }) => {
 		activeSessionId: d.activeSessionId ?? null,
 		usage: {
 			cutCount:     d.usage?.cutCount      ?? 0,
-			monthlyCount: d.usage?.monthlyCount  ?? 0,
+			monthlyCount: window.month,
+			dailyCount:   window.day,
+			/** Calendar month (UTC) — only tracked from Sep 2026 on. */
+			thisMonth:    d.usage?.byMonth?.[monthKey(new Date())] ?? null,
 			lastCutAt:    d.usage?.lastCutAt?.toDate?.()?.toISOString()    ?? null,
-			monthResetAt: d.usage?.monthResetAt?.toDate?.()?.toISOString() ?? null,
+			monthResetAt: window.monthResetAt?.toISOString() ?? null,
 		},
 		subscription: {
 			status:               d.subscription?.status               ?? null,

@@ -26,8 +26,9 @@
 	import { orientationTestHpgl, orientationTestPreview, correctedOrientation } from "$lib/utils/orientationTest";
 	import { isOrientationVerified, saveOrientation } from "$lib/stores";
 	import { sendToPlotter, sendToPlotterSegmented, sendSettings, connectSerialPort, openAuthorizedSerial, getOpenSerialPortInfo, isCachedPort, disconnectSerialPort, queryPlotter, releaseAgentPort, type SerialPortInfo, type CutProgress } from "$lib/utils/plotter-connection";
-	import { logPlotterError, incrementCutUsage } from "$lib/firebase/firestore";
-	import { cutJobStore, plansStore, platformStore } from "$lib/stores";
+	import { logPlotterError } from "$lib/firebase/firestore";
+	import { CutLimitError, finishCutJob, recordCutJob, startCutJob, type CutSummary } from "$lib/firebase/cuts";
+	import { plansStore, platformStore } from "$lib/stores";
 	import type { PlotterDiagnostic } from "$lib/utils/plotter-errors";
 	import PlotterDiagPanel from "$lib/components/ui/PlotterDiagPanel.svelte";
 	import {
@@ -65,7 +66,7 @@
 	import type { TourStep } from "$lib/components/ui/GuidedTour.svelte";
 	import { getVehicleName } from "$lib/stores/patternStore.svelte";
 	import { tooltip } from "$lib/actions/tooltip";
-	import type { CanvasItem, PlotterConfig } from "$lib/types";
+	import type { CanvasItem, CutSource, PlotterConfig } from "$lib/types";
 	import { sizeError } from "$lib/utils/patternSize";
 
 	// ─── Guided tour ─────────────────────────────
@@ -806,6 +807,9 @@
 		geometryVersion: number;
 		layoutHash: string;
 		jobLengthInches: number;
+		/** Server job for the original run — a successful resume completes
+		 *  (and counts) that job rather than starting a new one. */
+		jobId?: string;
 	}
 	// Bump whenever pattern geometry/placement math changes, so checkpoints
 	// saved by an older engine are never resumed.
@@ -1764,6 +1768,7 @@
 			if (result.aborted) {
 				const done = lastCompletedIdx + 1;
 				toastStore.warning("Cut cancelled", `${done} of ${remainingItems.length} patterns sent.`);
+				if (checkpoint.jobId) closeCutJob(checkpoint.jobId, "cancelled", checkpoint.completedCount + done);
 				if (done > 0 && done < remainingItems.length) {
 					const sortedRemaining = [...remainingItems].sort((a, b) => a.layer - b.layer || a.y - b.y);
 					const newCheckpoint: ResumeCheckpoint = {
@@ -1774,6 +1779,7 @@
 						geometryVersion: checkpoint.geometryVersion,
 						layoutHash: checkpoint.layoutHash,
 						jobLengthInches: checkpoint.jobLengthInches,
+						jobId: checkpoint.jobId,
 					};
 					localStorage.setItem("omniplot-resume-checkpoint", JSON.stringify(newCheckpoint));
 					resumeCheckpoint = newCheckpoint;
@@ -1785,7 +1791,10 @@
 					"Resume complete",
 					`${remainingItems.length} remaining pattern${remainingItems.length !== 1 ? "s" : ""} sent.`,
 				);
+				// The original run's job completes now — and counts once.
+				if (checkpoint.jobId) closeCutJob(checkpoint.jobId, "complete", checkpoint.totalCount);
 			} else {
+				if (checkpoint.jobId) closeCutJob(checkpoint.jobId, "error", checkpoint.completedCount + lastCompletedIdx + 1);
 				if (lastCompletedIdx >= 0) {
 					const sortedRemaining = [...remainingItems].sort((a, b) => a.layer - b.layer || a.y - b.y);
 					const newCheckpoint: ResumeCheckpoint = {
@@ -1796,6 +1805,7 @@
 						geometryVersion: checkpoint.geometryVersion,
 						layoutHash: checkpoint.layoutHash,
 						jobLengthInches: checkpoint.jobLengthInches,
+						jobId: checkpoint.jobId,
 					};
 					localStorage.setItem("omniplot-resume-checkpoint", JSON.stringify(newCheckpoint));
 					resumeCheckpoint = newCheckpoint;
@@ -1841,15 +1851,21 @@
 		const eff       = sheetArea > 0 ? Math.min(1, patternArea / sheetArea) : 0;
 		const jobName   = `Job ${new Date().toLocaleDateString()}`;
 		const fileSlug  = `omniplot-${new Date().toISOString().slice(0, 10)}`;
+		const summary   = cutSummary(plotterStore.config.connection === "download" ? "download" : "plotter", jobName, inBounds, { eff, patternArea, sheetArea });
 
-		// ── Download mode: synchronous, no loading state needed ──────────
+		// ── Download mode: recorded first, then the file ─────────────────
 		if (plotterStore.config.connection === "download") {
+			if (!(await openCutJob(() => recordCutJob(summary)))) return;
 			downloadHpgl(canvasStore.state, plotterStore.config, fileSlug);
 			const connLabel = `PLT file downloaded (${inBounds.length} paths)`;
 			toastStore.success("Cut job ready", connLabel);
-			persistJob({ user, inBounds, eff, usedLength, patternArea, sheetArea, jobName });
 			return;
 		}
+
+		// The server opens the job and checks the allowance before anything
+		// reaches the plotter.
+		const jobId = await openCutJob(() => startCutJob(summary));
+		if (!jobId) return;
 
 		// ── Live connection: async segmented send ────────────────────────
 		// USB uses per-pattern segmented send so progress is tracked and the job
@@ -1863,6 +1879,7 @@
 		// Sorted in-bounds items match the order generateHpglSegments will use
 		const sortedInBounds = [...inBounds].sort((a, b) => a.layer - b.layer || a.y - b.y);
 		let lastCompletedIdx = -1;
+		let closed = false;
 
 		try {
 			const result = await sendToPlotterSegmented(
@@ -1881,6 +1898,8 @@
 				// User cancelled — save a resume checkpoint if any patterns sent
 				const doneSoFar = lastCompletedIdx + 1;
 				toastStore.warning("Cut cancelled", `${doneSoFar} of ${inBounds.length} pattern${inBounds.length !== 1 ? "s" : ""} sent.`);
+				closed = true;
+				closeCutJob(jobId, "cancelled", doneSoFar);
 				if (doneSoFar > 0 && doneSoFar < sortedInBounds.length) {
 					const checkpoint: ResumeCheckpoint = {
 						remainingItemIds: sortedInBounds.slice(doneSoFar).map((i) => i.id),
@@ -1888,6 +1907,7 @@
 						totalCount: sortedInBounds.length,
 						presetName: plotterStore.config.name,
 						...checkpointMeta(),
+						jobId,
 					};
 					localStorage.setItem("omniplot-resume-checkpoint", JSON.stringify(checkpoint));
 					resumeCheckpoint = checkpoint;
@@ -1896,9 +1916,12 @@
 				localStorage.removeItem("omniplot-resume-checkpoint");
 				resumeCheckpoint = null;
 				toastStore.success("Sent to plotter", `${inBounds.length} pattern${inBounds.length !== 1 ? "s" : ""} sent successfully.`);
-				persistJob({ user, inBounds, eff, usedLength, patternArea, sheetArea, jobName });
+				closed = true;
+				closeCutJob(jobId, "complete", inBounds.length);
 			} else {
 				const completedSoFar = lastCompletedIdx + 1;
+				closed = true;
+				closeCutJob(jobId, "error", completedSoFar);
 				if (lastCompletedIdx >= 0 && lastCompletedIdx < sortedInBounds.length - 1) {
 					const checkpoint: ResumeCheckpoint = {
 						remainingItemIds: sortedInBounds.slice(completedSoFar).map((i) => i.id),
@@ -1906,22 +1929,10 @@
 						totalCount: sortedInBounds.length,
 						presetName: plotterStore.config.name,
 						...checkpointMeta(),
+						jobId,
 					};
 					localStorage.setItem("omniplot-resume-checkpoint", JSON.stringify(checkpoint));
 					resumeCheckpoint = checkpoint;
-				}
-				if (completedSoFar > 0) {
-					persistJob({
-						user,
-						inBounds: sortedInBounds,
-						eff,
-						usedLength,
-						patternArea,
-						sheetArea,
-						jobName,
-						status: "error",
-						patternsCompleted: completedSoFar,
-					});
 				}
 				diagData     = result.diagnostic;
 				diagReported = result.diagnostic.escalate;
@@ -1943,6 +1954,8 @@
 				}
 			}
 		} finally {
+			// A send that threw never reached a branch above — don't leave the job "cutting".
+			if (!closed) closeCutJob(jobId, "error", lastCompletedIdx + 1);
 			cutting = false;
 			cutProgress = null;
 			cutAbortController = null;
@@ -1973,49 +1986,56 @@
 		diagReported = true;
 	}
 
-	function persistJob(opts: {
-		user: typeof userStore.user;
-		inBounds: typeof canvasStore.items;
-		eff: number;
-		usedLength: number;
-		patternArea: number;
-		sheetArea: number;
-		jobName: string;
-		status?: "complete" | "error";
-		patternsCompleted?: number; // for interrupted jobs; defaults to inBounds.length
-	}) {
-		if (!opts.user) return;
-		const status = opts.status ?? "complete";
-		const patternsCompleted = opts.patternsCompleted ?? opts.inBounds.length;
-		const job = {
-			id: uid("job_"),
-			userId: opts.user.uid,
-			vehicleId: canvasStore.items[0]?.pattern.vehicleId ?? "",
-			name: opts.jobName,
-			status,
-			canvasState: canvasStore.state,
-			plotterConfig: plotterStore.config,
-			materialSheet: canvasStore.sheet,
-			exportFormat: "hpgl" as const,
+	// ─── Cut recording ─────────────────────────────
+	// Jobs and usage are written by the server (/api/cuts) in one transaction,
+	// so the job list, the allowance and the admin stats always agree.
+	function cutSummary(
+		source: CutSource,
+		name: string,
+		items: typeof canvasStore.items,
+		m: { eff: number; patternArea: number; sheetArea: number },
+	): CutSummary {
+		return {
+			source,
+			name,
+			items,
+			plotter: plotterStore.config,
+			sheet: canvasStore.sheet,
 			metrics: {
-				materialEfficiency: opts.eff,
-				totalPathLengthMm: 0,
-				estimatedCutSeconds: estimateCutTime(opts.inBounds, plotterStore.config.cuttingSpeed),
-				itemCount: opts.inBounds.length,
-				patternsCompleted,
-				sheetArea: opts.sheetArea,
-				usedArea: opts.patternArea,
+				materialEfficiency: m.eff,
+				estimatedCutSeconds: estimateCutTime(items, plotterStore.config.cuttingSpeed),
+				sheetArea: m.sheetArea,
+				usedArea: m.patternArea,
 			},
-			createdAt: new Date(),
-			updatedAt: new Date(),
-			completedAt: status === "complete" ? new Date() : null,
-			exportUrl: null,
 		};
-		cutJobStore.addJob(job);
-		// Only count usage increments for completed jobs
-		if (status === "complete") {
-			incrementCutUsage(opts.user.uid, opts.user.usage.monthResetAt, opts.user.usage.dayResetAt).catch(() => {});
+	}
+
+	/** Opens/records a job. Returns its id, or null when the cut must not go
+	 *  ahead (allowance used up, or the server couldn't be reached). */
+	async function openCutJob(open: () => Promise<string>): Promise<string | null> {
+		try {
+			return await open();
+		} catch (err) {
+			if (err instanceof CutLimitError) {
+				toastStore.warning("Cut limit reached", err.message);
+				uiStore.openPricing();
+			} else {
+				console.error("[cuts] could not open job", err);
+				toastStore.error("Couldn't start the cut", "We couldn't reach OmniPlot to record it. Check your connection and try again.");
+			}
+			return null;
 		}
+	}
+
+	/** Closes a job in the background, retrying briefly — the cut itself has
+	 *  already happened, so this never blocks the UI. */
+	function closeCutJob(jobId: string, status: "complete" | "error" | "cancelled", patternsCompleted: number) {
+		const attempt = (n: number): Promise<void> =>
+			finishCutJob(jobId, status, patternsCompleted).catch((err) => {
+				if (n >= 3) { console.error("[cuts] could not close job", jobId, err); return; }
+				return new Promise<void>((r) => setTimeout(r, 1000 * 2 ** n)).then(() => attempt(n + 1));
+			});
+		void attempt(0);
 	}
 
 	// ─── Export confirmation ───────────────────────
@@ -2044,21 +2064,29 @@
 		pendingExportFormat = format;
 	}
 
-	function confirmExport() {
-		if (pendingExportFormat) handleExport(pendingExportFormat);
+	async function confirmExport() {
+		const format = pendingExportFormat;
 		pendingExportFormat = null;
+		if (format) await handleExport(format);
 	}
 
 	// Preconditions (has items, plan gates) are already checked by requestExport
 	// before pendingExportFormat is set, so this just performs the download.
-	function handleExport(format: "hpgl" | "svg" | "dxf") {
-		if (blockIfSizeProblems(canvasStore.items.filter((i) => !i.outOfBounds))) { uiStore.closeExport(); return; }
+	async function handleExport(format: "hpgl" | "svg" | "dxf") {
+		const inBounds = canvasStore.items.filter((i) => !i.outOfBounds);
+		if (blockIfSizeProblems(inBounds)) { uiStore.closeExport(); return; }
 		const exportSlug = `omniplot-${new Date().toISOString().slice(0, 10)}`;
 		if (format === "hpgl") {
-			downloadHpgl(canvasStore.state, plotterStore.config, exportSlug);
-			if (userStore.user) {
-				incrementCutUsage(userStore.user.uid, userStore.user.usage.monthResetAt, userStore.user.usage.dayResetAt).catch(() => {});
+			// A plotter file is a cut — recorded (and allowance-checked) before download.
+			if (userStore.user && inBounds.length) {
+				const usedLength = Math.max(...inBounds.map((i) => i.x + i.width));
+				const patternArea = inBounds.reduce((s, i) => s + samplePolygonArea(i.pattern.svgPath, i.pattern.widthInches, i.pattern.heightInches), 0);
+				const sheetArea = canvasStore.sheet.widthInches * usedLength;
+				const eff = sheetArea > 0 ? Math.min(1, patternArea / sheetArea) : 0;
+				const summary = cutSummary("export", `Export ${new Date().toLocaleDateString()}`, inBounds, { eff, patternArea, sheetArea });
+				if (!(await openCutJob(() => recordCutJob(summary)))) { uiStore.closeExport(); return; }
 			}
+			downloadHpgl(canvasStore.state, plotterStore.config, exportSlug);
 		} else if (format === "dxf") {
 			downloadDxf(canvasStore.state, exportSlug);
 		} else {

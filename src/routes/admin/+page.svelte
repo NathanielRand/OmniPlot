@@ -25,7 +25,8 @@
 		agent: { downloads: number };
 		jobs: {
 			today: number;
-			recent: { id: string; userId: string; userLabel: string; vehicleName: string; status: string; pieces: number; patternsCompleted: number; connection: string; presetName: string; createdAt: string | null }[];
+			total: number;
+			recent: { id: string; userId: string; userLabel: string; vehicleName: string; status: string; pieces: number; patternsCompleted: number; reconstructed?: boolean; connection: string; presetName: string; createdAt: string | null }[];
 		};
 	} | null>(null);
 
@@ -90,7 +91,7 @@
 			cards: [
 				{ label: "Total Users",  value: stats.users.total.toLocaleString(),       sub: "all accounts" },
 				{ label: "Active (24h)", value: stats.users.activeToday.toLocaleString(), sub: "used the app in 24h" },
-				{ label: "Cuts (24h)",   value: stats.jobs.today.toLocaleString(),        sub: "jobs created in 24h" },
+				{ label: "Cuts (24h)",   value: stats.jobs.today.toLocaleString(),        sub: `completed · ${(stats.jobs.total ?? 0).toLocaleString()} all time` },
 				{ label: "Plotters",     value: (stats.plotters?.total ?? 0).toLocaleString(), sub: "registered, all users" },
 			],
 		},
@@ -302,7 +303,9 @@
 										{/if}
 									</td>
 									<td class="td-pieces">
-										{#if j.status === "error" && j.patternsCompleted < j.pieces}
+										{#if j.reconstructed}
+											—
+										{:else if j.status !== "complete" && j.patternsCompleted < j.pieces}
 											<span class="td-partial">{j.patternsCompleted}/{j.pieces}</span>
 										{:else}
 											{j.pieces}
@@ -314,8 +317,8 @@
 										</span>
 									</td>
 									<td>
-										<Badge variant={j.status === "complete" || j.status === "completed" ? "success" : j.status === "error" ? "danger" : "default"} size="sm" dot>
-											{j.status === "error" && j.patternsCompleted < j.pieces ? "partial" : j.status}
+										<Badge variant={j.status === "complete" ? "success" : j.status === "error" || j.status === "interrupted" ? "danger" : j.status === "cutting" ? "info" : "default"} size="sm" dot>
+											{j.status}
 										</Badge>
 									</td>
 								</tr>

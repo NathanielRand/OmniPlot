@@ -27,6 +27,8 @@ export interface UserProfile {
 		monthResetAt: Date;
 		dailyCount: number;
 		dayResetAt: Date | null;
+		/** Completed cuts per UTC calendar month ("YYYY-MM"). */
+		byMonth?: Record<string, number>;
 	};
 
 	// Subscription
@@ -364,19 +366,34 @@ export interface CanvasState {
 }
 
 // ─── Cut Jobs ─────────────────────────────────
-export type JobStatus = "draft" | "ready" | "cutting" | "complete" | "error";
+export type JobStatus = "draft" | "ready" | "cutting" | "complete" | "error" | "cancelled";
 export type ExportFormat = "hpgl" | "svg" | "dxf" | "pdf";
+/** How the cut left OmniPlot: sent to a connected plotter, the "download"
+ *  connection's PLT file, or Export → HPGL from the studio menu. */
+export type CutSource = "plotter" | "download" | "export";
 
+/**
+ * One cut, written only by the server (/api/cuts) in the same transaction
+ * that updates the user's usage counters and the platform's daily totals —
+ * so the job list, the allowance and admin stats can't disagree.
+ * Jobs written before Sep 2026 also carry a full `canvasState`.
+ */
 export interface CutJob {
 	id: string;
 	userId: string;
 	vehicleId: string;
+	/** Every vehicle/project on the sheet (a job can mix several). */
+	vehicleIds?: string[];
+	patternIds?: string[];
 	vehicle?: Vehicle;
 	name: string;
+	/** Readable label for what was cut, stored at record time. */
+	subject?: string;
 	status: JobStatus;
-	canvasState: CanvasState;
-	plotterConfig: PlotterConfig;
-	materialSheet: MaterialSheet;
+	source?: CutSource;
+	canvasState?: CanvasState;
+	plotterConfig: Pick<PlotterConfig, "name" | "connection" | "protocol"> & Partial<PlotterConfig>;
+	materialSheet: Pick<MaterialSheet, "name" | "widthInches"> & Partial<MaterialSheet>;
 	exportFormat: ExportFormat;
 
 	// Metrics
@@ -385,9 +402,13 @@ export interface CutJob {
 		totalPathLengthMm: number;
 		estimatedCutSeconds: number;
 		itemCount: number;
+		/** Pieces actually sent — less than itemCount for a failed/cancelled cut. */
+		patternsCompleted?: number;
 		sheetArea: number;
 		usedArea: number;
 	};
+	/** True once this job has been counted against the user's allowance. */
+	counted?: boolean;
 
 	createdAt: Date;
 	updatedAt: Date;
