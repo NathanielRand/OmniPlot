@@ -124,6 +124,7 @@ export const PRICING_PLANS: PricingPlan[] = [
 			"Platform & community pattern library",
 			"HPGL / SVG export",
 			"Any plotter, any device",
+			"USB Direct plotter connection",
 			"Auto-nesting preview",
 		],
 		limits: {
@@ -147,7 +148,6 @@ export const PRICING_PLANS: PricingPlan[] = [
 			"Everything in Free",
 			"Auto-nesting optimizer",
 			"Cut history & job log (90 days)",
-			"Web Serial plotter control",
 			"1 seat",
 		],
 		limits: {
@@ -988,6 +988,10 @@ export const CHANGELOG = [
 		date: "2026-09-25",
 		label: "Plotter memory & auto-reconnect",
 		changes: [
+			{
+				type: "improvement",
+				text: "USB Direct is now available on every plan, including Free — connect your cutter straight from Chrome or Edge with no upgrade needed.",
+			},
 			{
 				type: "feature",
 				text: "Plotter history — OmniPlot remembers every plotter you connect to: its model, your name for it, and how it's connected. Reconnect any of them in one click from Recent plotters in the Studio Plotter tab, or see the full history on the Plotters page.",

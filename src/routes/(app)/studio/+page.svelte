@@ -1457,11 +1457,6 @@
 			if (!opts.auto) toastStore.warning("Not supported", "USB Direct requires Chrome or Edge.");
 			return false;
 		}
-		if (isFree) {
-			if (opts.auto) h.setStatus({ phase: "failed", key: entry?.key ?? null, attempt: retryAttempt, message: "USB Direct is available on Lite and above." });
-			else { toastStore.info("Lite plan required", "USB Direct is available on Lite and above."); uiStore.openPricing(); }
-			return false;
-		}
 		// Switching from the agent: have it let go of the port first.
 		if (!opts.auto && plotterStore.config.connection === "cut-agent") await releaseAgentPort(plotterStore.config);
 		const baud = entry?.baudRate ?? preset.baudRate ?? plotterStore.config.baudRate ?? 9600;
@@ -1588,7 +1583,6 @@
 
 	async function handleGrantUsbPort() {
 		if (!("serial" in navigator)) return;
-		if (isFree) { uiStore.openPricing(); return; }
 		await beginManual();
 		try {
 			if (plotterStore.config.connection === "cut-agent") await releaseAgentPort(plotterStore.config);
