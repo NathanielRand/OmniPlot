@@ -969,8 +969,8 @@ onMount(() => {
 									<div class="pattern-cell">
 										<PatternPreview svgPath={sub.svgPath} widthInches={sub.widthInches} heightInches={sub.heightInches} size="thumb" />
 										<div>
-											<div class="cell-name">{sub.name}</div>
-											<div class="cell-meta">{submissionZoneLabels(sub)}</div>
+											<div class="cell-name cell-name--clip" title={submissionZoneLabels(sub)}>{submissionZoneLabels(sub)}</div>
+											<div class="cell-title" title={sub.name}><span class="cell-title__label">Title</span>{sub.name}</div>
 										</div>
 									</div>
 								</td>
@@ -2132,6 +2132,11 @@ onMount(() => {
 	.pattern-cell { display: flex; align-items: center; gap: 10px; }
 	.cell-name { font-size: 0.8125rem; font-weight: 500; color: var(--text-primary); }
 	.cell-meta { font-size: 0.6875rem; color: var(--text-tertiary); font-family: var(--font-mono); margin-top: 1px; }
+	/* Submission rows stay one compact line + a small title row, however long the names are. */
+	.pattern-cell:has(.cell-name--clip) > div:last-child { min-width: 0; width: clamp(180px, 22vw, 320px); }
+	.cell-name--clip { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+	.cell-title { display: flex; align-items: baseline; gap: 6px; margin-top: 2px; font-size: 0.6875rem; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+	.cell-title__label { flex-shrink: 0; font-size: 0.5625rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-tertiary); }
 
 	.vehicle-cell { display: flex; align-items: center; gap: 9px; }
 	.vehicle-icon { width: 30px; height: 30px; border-radius: var(--radius-md); background: var(--bg-surface-3); border: 1px solid var(--border-subtle); display: flex; align-items: center; justify-content: center; color: var(--text-tertiary); flex-shrink: 0; }
@@ -2144,7 +2149,7 @@ onMount(() => {
 
 	.td-mono    { font-family: var(--font-mono); font-size: 0.8125rem; }
 	.td-date    { font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-tertiary); white-space: nowrap; }
-	.td-vehicle { font-size: 0.875rem; font-weight: 500; color: var(--text-primary); white-space: nowrap; }
+	.td-vehicle { font-size: 0.875rem; font-weight: 500; color: var(--text-primary); white-space: nowrap; max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
 	.td-notes   { font-size: 0.75rem; color: var(--text-tertiary); max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 	.td-empty   { text-align: center; padding: 40px; color: var(--text-tertiary); }
 	.td-muted   { font-size: 0.75rem; color: var(--text-tertiary); }
