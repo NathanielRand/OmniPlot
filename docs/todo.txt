@@ -1,7 +1,7 @@
 ////////////////////////////////
 // URGENT
 //////////////////////////////
-
+ Outline-only art still fails. A 3 px hairline outline on white gets thinned and broken by the blur-and-rethreshold step, so potrace traces a sliver and the error is hundreds of pixels. This isn't the type of file in your samples, and I left it alone. The bench reports it as L1600-stroke, and it's fixable if you expect that kind of upload.
 
 ///////////////////////////////
 // USER VERIFICATION
