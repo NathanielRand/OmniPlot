@@ -981,9 +981,52 @@ export const FAQ_ITEMS = [
 // ─── Changelog ────────────────────────────────
 // Newest first. `LATEST_VERSION` drives the sidebar "what's new" badge —
 // bump it whenever a release entry is added below.
-export const LATEST_VERSION = "1.13.0";
+export const LATEST_VERSION = "1.14.0";
 
 export const CHANGELOG = [
+	{
+		version: "1.14.0",
+		date: "2026-09-30",
+		label: "Sharper imports, exact PDFs & a matching edit page",
+		changes: [
+			{
+				type: "feature",
+				text: "Vector PDFs are now imported exactly. If your PDF contains cut paths (lines and curves), OmniPlot reads them directly instead of turning the page into a picture and tracing it — the outline, corners and real-world size come through untouched. Scans and images still go through Vectorize.",
+			},
+			{
+				type: "improvement",
+				text: "Vectorize is more accurate on photos and images: traced outlines now stay within about one pixel of your original, where some shapes could previously drift several pixels at corners and long edges. Outline-only artwork (a single thin line drawn as the pattern edge) now imports correctly too.",
+			},
+			{
+				type: "improvement",
+				text: "Vectorize is now the default import method and runs automatically as soon as you add an image. Switching to another method still runs that one, and each method's result is kept so you can flip back without waiting. The default options are marked with a Default badge.",
+			},
+			{
+				type: "improvement",
+				text: "\"Multiple contours in a file\" now defaults to Keep inner only, listed first, followed by Keep outer only, Keep all layers and manual selection.",
+			},
+			{
+				type: "improvement",
+				text: "The Edit pattern page now matches the upload page — the same Private / Community choice, pattern type cards, category, zones, size, importer and notes — is full width, and adapts to phones and tablets. You can now see and change a pattern's type (Vehicle, Residential, Commercial, Custom) when editing.",
+			},
+			{
+				type: "improvement",
+				text: "My patterns now shows each pattern's type and lets you filter by type.",
+			},
+			{
+				type: "fix",
+				text: "Saving a pattern no longer fails with an \"unsupported field value: undefined\" error when a zone isn't custom.",
+			},
+			{
+				type: "fix",
+				text: "Patterns filed under the wrong type (for example a residential or custom project showing as a vehicle) now appear under the correct type.",
+			},
+			{
+				type: "fix",
+				text: "Patterns you submit to the community library now reach the admin review queue — admins previously couldn't load submissions. The review list is also more compact, with each submission's title shown as a small line under its zones.",
+			},
+		],
+	},
 	{
 		version: "1.13.0",
 		date: "2026-09-26",
