@@ -1,0 +1,74 @@
+BACK GLASS (59.2,13.7).p L800-m6      IoU 99.852%  maxDev 0.0284in = 0.3px @(0.0,12.9)  [raw potrace 0.3px]  p99 0.22px  aspectErr 0.055%  gtBBox 0.000%
+BACK GLASS (59.2,13.7).p L1600-m6     IoU 99.876%  maxDev 0.0154in = 0.4px @(0.9,13.6)  [raw potrace 0.4px]  p99 0.27px  aspectErr 0.078%  gtBBox 0.000%
+BACK GLASS (59.2,13.7).p L3000-jpg70  IoU 99.935%  maxDev 0.0119in = 0.6px @(0.0,13.3)  [raw potrace 0.6px]  p99 0.45px  aspectErr 0.042%  gtBBox 0.000%
+BACK GLASS (59.2,13.7).p L1600-tight  IoU 99.923%  maxDev 0.0248in = 0.7px @(34.3,0.0)  [raw potrace 0.7px]  p99 0.45px  aspectErr 0.115%  gtBBox 0.000%
+BACK GLASS (59.2,13.7).p L1200-poor   IoU 99.877%  maxDev 0.0199in = 0.4px @(59.2,12.9)  [raw potrace 0.4px]  p99 0.30px  aspectErr 0.022%  gtBBox 0.000%
+BACK GLASS (59.2,13.7).p L1600-stroke IoU 99.223%  maxDev 0.0945in = 2.2px @(53.6,13.6)  [raw potrace 2.2px]  p99 2.23px  aspectErr 0.653%  gtBBox 0.000%
+CENTER BACK GLASS (14.6, L800-m6      IoU 99.938%  maxDev 0.0080in = 0.4px @(0.3,10.8)  [raw potrace 0.4px]  p99 0.18px  aspectErr 0.030%  gtBBox 0.004%
+CENTER BACK GLASS (14.6, L1600-m6     IoU 99.948%  maxDev 0.0056in = 0.5px @(0.0,8.1)  [raw potrace 0.5px]  p99 0.51px  aspectErr 0.007%  gtBBox 0.004%
+CENTER BACK GLASS (14.6, L3000-jpg70  IoU 99.954%  maxDev 0.0036in = 0.7px @(0.0,8.6)  [raw potrace 0.7px]  p99 0.53px  aspectErr 0.021%  gtBBox 0.004%
+CENTER BACK GLASS (14.6, L1600-tight  IoU 99.885%  maxDev 0.0061in = 0.7px @(14.6,4.9)  [raw potrace 0.7px]  p99 0.64px  aspectErr 0.054%  gtBBox 0.004%
+CENTER BACK GLASS (14.6, L1200-poor   IoU 99.907%  maxDev 0.0117in = 0.9px @(14.6,10.8)  [raw potrace 0.9px]  p99 0.49px  aspectErr 0.061%  gtBBox 0.004%
+CENTER BACK GLASS (14.6, L1600-stroke IoU 99.918%  maxDev 0.0071in = 0.7px @(14.5,0.3)  [raw potrace 0.7px]  p99 0.64px  aspectErr 0.062%  gtBBox 0.004%
+LEFT BACK GLASS (20.6,11 L800-m6      IoU 99.913%  maxDev 0.0078in = 0.3px @(2.7,0.1)  [raw potrace 0.3px]  p99 0.22px  aspectErr 0.034%  gtBBox 0.004%
+LEFT BACK GLASS (20.6,11 L1600-m6     IoU 99.939%  maxDev 0.0066in = 0.5px @(0.1,0.3)  [raw potrace 0.5px]  p99 0.32px  aspectErr 0.007%  gtBBox 0.004%
+LEFT BACK GLASS (20.6,11 L3000-jpg70  IoU 99.957%  maxDev 0.0044in = 0.6px @(20.6,11.0)  [raw potrace 0.6px]  p99 0.47px  aspectErr 0.015%  gtBBox 0.004%
+LEFT BACK GLASS (20.6,11 L1600-tight  IoU 99.955%  maxDev 0.0066in = 0.5px @(1.2,0.0)  [raw potrace 0.5px]  p99 0.26px  aspectErr 0.023%  gtBBox 0.004%
+LEFT BACK GLASS (20.6,11 L1200-poor   IoU 99.946%  maxDev 0.0073in = 0.4px @(0.2,11.4)  [raw potrace 0.4px]  p99 0.31px  aspectErr 0.009%  gtBBox 0.004%
+LEFT BACK GLASS (20.6,11 L1600-stroke IoU 99.786%  maxDev 0.0203in = 1.4px @(15.6,11.5)  [raw potrace 1.4px]  p99 1.35px  aspectErr 0.161%  gtBBox 0.004%
+LEFT FRONT ROLLUP (32.5, L800-m6      IoU 99.940%  maxDev 0.0115in = 0.2px @(1.6,10.8)  [raw potrace 0.3px]  p99 0.21px  aspectErr 0.022%  gtBBox 0.000%
+LEFT FRONT ROLLUP (32.5, L1600-m6     IoU 99.959%  maxDev 0.0066in = 0.3px @(1.2,10.5)  [raw potrace 0.3px]  p99 0.25px  aspectErr 0.014%  gtBBox 0.000%
+LEFT FRONT ROLLUP (32.5, L3000-jpg70  IoU 99.896%  maxDev 0.0122in = 1.1px @(30.5,0.0)  [raw potrace 1.0px]  p99 0.93px  aspectErr 0.035%  gtBBox 0.000%
+LEFT FRONT ROLLUP (32.5, L1600-tight  IoU 99.943%  maxDev 0.0102in = 0.5px @(16.7,18.9)  [raw potrace 0.5px]  p99 0.46px  aspectErr 0.014%  gtBBox 0.000%
+LEFT FRONT ROLLUP (32.5, L1200-poor   IoU 99.885%  maxDev 0.0266in = 0.9px @(30.5,0.0)  [raw potrace 0.9px]  p99 0.52px  aspectErr 0.046%  gtBBox 0.000%
+LEFT FRONT ROLLUP (32.5, L1600-stroke IoU 99.804%  maxDev 0.0339in = 1.5px @(16.7,18.9)  [raw potrace 1.5px]  p99 1.40px  aspectErr 0.125%  gtBBox 0.000%
+LEFT REAR ROLLUP (30.3,1 L800-m6      IoU 99.938%  maxDev 0.0174in = 0.4px @(30.0,1.2)  [raw potrace 0.4px]  p99 0.27px  aspectErr 0.020%  gtBBox 0.002%
+LEFT REAR ROLLUP (30.3,1 L1600-m6     IoU 99.936%  maxDev 0.0128in = 0.6px @(0.0,0.0)  [raw potrace 0.6px]  p99 0.43px  aspectErr 0.046%  gtBBox 0.002%
+LEFT REAR ROLLUP (30.3,1 L3000-jpg70  IoU 99.929%  maxDev 0.0132in = 1.2px @(0.0,0.0)  [raw potrace 1.2px]  p99 0.92px  aspectErr 0.027%  gtBBox 0.002%
+LEFT REAR ROLLUP (30.3,1 L1600-tight  IoU 99.929%  maxDev 0.0095in = 0.5px @(20.0,0.0)  [raw potrace 0.5px]  p99 0.44px  aspectErr 0.003%  gtBBox 0.002%
+LEFT REAR ROLLUP (30.3,1 L1200-poor   IoU 99.941%  maxDev 0.0318in = 1.1px @(0.0,0.0)  [raw potrace 1.1px]  p99 0.33px  aspectErr 0.043%  gtBBox 0.002%
+LEFT REAR ROLLUP (30.3,1 L1600-stroke IoU 99.830%  maxDev 0.0317in = 1.5px @(13.5,19.7)  [raw potrace 1.5px]  p99 1.44px  aspectErr 0.144%  gtBBox 0.002%
+RIGHT BACK GLASS (20.6,1 L800-m6      IoU 99.905%  maxDev 0.0098in = 0.3px @(20.3,9.6)  [raw potrace 0.3px]  p99 0.30px  aspectErr 0.004%  gtBBox 0.001%
+RIGHT BACK GLASS (20.6,1 L1600-m6     IoU 99.938%  maxDev 0.0064in = 0.4px @(20.5,8.6)  [raw potrace 0.4px]  p99 0.35px  aspectErr 0.011%  gtBBox 0.001%
+RIGHT BACK GLASS (20.6,1 L3000-jpg70  IoU 99.954%  maxDev 0.0045in = 0.6px @(3.8,1.6)  [raw potrace 0.6px]  p99 0.47px  aspectErr 0.022%  gtBBox 0.001%
+RIGHT BACK GLASS (20.6,1 L1600-tight  IoU 99.952%  maxDev 0.0069in = 0.5px @(20.4,8.8)  [raw potrace 0.5px]  p99 0.40px  aspectErr 0.014%  gtBBox 0.001%
+RIGHT BACK GLASS (20.6,1 L1200-poor   IoU 99.956%  maxDev 0.0097in = 0.5px @(20.4,8.8)  [raw potrace 0.5px]  p99 0.25px  aspectErr 0.007%  gtBBox 0.001%
+RIGHT BACK GLASS (20.6,1 L1600-stroke IoU 99.762%  maxDev 0.0212in = 1.5px @(17.4,11.5)  [raw potrace 1.4px]  p99 1.45px  aspectErr 0.156%  gtBBox 0.001%
+RIGHT FRONT ROLLUP (32.5 L800-m6      IoU 99.923%  maxDev 0.0154in = 0.3px @(32.5,0.5)  [raw potrace 0.3px]  p99 0.22px  aspectErr 0.031%  gtBBox 0.001%
+RIGHT FRONT ROLLUP (32.5 L1600-m6     IoU 99.960%  maxDev 0.0057in = 0.2px @(0.2,17.8)  [raw potrace 0.2px]  p99 0.22px  aspectErr 0.019%  gtBBox 0.001%
+RIGHT FRONT ROLLUP (32.5 L3000-jpg70  IoU 99.916%  maxDev 0.0109in = 0.9px @(32.5,0.5)  [raw potrace 0.9px]  p99 0.73px  aspectErr 0.009%  gtBBox 0.001%
+RIGHT FRONT ROLLUP (32.5 L1600-tight  IoU 99.914%  maxDev 0.0122in = 0.6px @(30.5,0.0)  [raw potrace 0.6px]  p99 0.50px  aspectErr 0.019%  gtBBox 0.001%
+RIGHT FRONT ROLLUP (32.5 L1200-poor   IoU 99.918%  maxDev 0.0214in = 0.7px @(0.0,19.8)  [raw potrace 0.7px]  p99 0.36px  aspectErr 0.033%  gtBBox 0.001%
+RIGHT FRONT ROLLUP (32.5 L1600-stroke IoU 99.815%  maxDev 0.0257in = 1.1px @(30.5,19.8)  [raw potrace 1.1px]  p99 1.11px  aspectErr 0.127%  gtBBox 0.001%
+RIGHT REAR ROLLUP (30.3, L800-m6      IoU 99.956%  maxDev 0.0157in = 0.4px @(0.0,19.9)  [raw potrace 0.4px]  p99 0.18px  aspectErr 0.006%  gtBBox 0.001%
+RIGHT REAR ROLLUP (30.3, L1600-m6     IoU 99.940%  maxDev 0.0096in = 0.4px @(9.1,19.9)  [raw potrace 0.5px]  p99 0.44px  aspectErr 0.040%  gtBBox 0.001%
+RIGHT REAR ROLLUP (30.3, L3000-jpg70  IoU 99.941%  maxDev 0.0109in = 1.0px @(18.3,19.9)  [raw potrace 1.0px]  p99 0.76px  aspectErr 0.022%  gtBBox 0.001%
+RIGHT REAR ROLLUP (30.3, L1600-tight  IoU 99.924%  maxDev 0.0147in = 0.8px @(29.7,18.8)  [raw potrace 0.8px]  p99 0.70px  aspectErr 0.022%  gtBBox 0.001%
+RIGHT REAR ROLLUP (30.3, L1200-poor   IoU 99.942%  maxDev 0.0320in = 1.1px @(0.0,19.9)  [raw potrace 1.1px]  p99 0.22px  aspectErr 0.027%  gtBBox 0.001%
+RIGHT REAR ROLLUP (30.3, L1600-stroke IoU 99.822%  maxDev 0.0311in = 1.4px @(0.0,19.9)  [raw potrace 1.4px]  p99 1.44px  aspectErr 0.143%  gtBBox 0.001%
+SUNSTRIP V2 (56.3,8.4).p L800-m6      IoU 99.580%  maxDev 0.0261in = 0.3px @(55.7,5.5)  [raw potrace 0.3px]  p99 0.29px  aspectErr 0.217%  gtBBox 0.014%
+SUNSTRIP V2 (56.3,8.4).p L1600-m6     IoU 99.656%  maxDev 0.0284in = 0.7px @(55.3,3.2)  [raw potrace 0.7px]  p99 0.66px  aspectErr 0.160%  gtBBox 0.014%
+SUNSTRIP V2 (56.3,8.4).p L3000-jpg70  IoU 99.679%  maxDev 0.0183in = 0.9px @(8.8,8.4)  [raw potrace 0.9px]  p99 0.92px  aspectErr 0.158%  gtBBox 0.014%
+SUNSTRIP V2 (56.3,8.4).p L1600-tight  IoU 99.826%  maxDev 0.0142in = 0.4px @(56.3,8.3)  [raw potrace 0.4px]  p99 0.35px  aspectErr 0.066%  gtBBox 0.014%
+SUNSTRIP V2 (56.3,8.4).p L1200-poor   IoU 99.528%  maxDev 0.0358in = 0.7px @(0.6,5.3)  [raw potrace 0.7px]  p99 0.62px  aspectErr 0.234%  gtBBox 0.014%
+SUNSTRIP V2 (56.3,8.4).p L1600-stroke IoU 97.788%  maxDev 0.1396in = 3.5px @(56.3,8.5)  [raw potrace 3.5px]  p99 3.47px  aspectErr 1.662%  gtBBox 0.014%
+WINDSHIELD (60.5,29.5).p L800-m6      IoU 99.906%  maxDev 0.0267in = 0.3px @(27.5,2.1)  [raw potrace 0.3px]  p99 0.25px  aspectErr 0.057%  gtBBox 0.004%
+WINDSHIELD (60.5,29.5).p L1600-m6     IoU 99.927%  maxDev 0.0148in = 0.3px @(0.2,21.9)  [raw potrace 0.3px]  p99 0.31px  aspectErr 0.005%  gtBBox 0.004%
+WINDSHIELD (60.5,29.5).p L3000-jpg70  IoU 99.910%  maxDev 0.0196in = 0.9px @(1.7,24.2)  [raw potrace 0.9px]  p99 0.85px  aspectErr 0.011%  gtBBox 0.004%
+WINDSHIELD (60.5,29.5).p L1600-tight  IoU 99.979%  maxDev 0.0184in = 0.5px @(5.5,0.0)  [raw potrace 0.5px]  p99 0.29px  aspectErr 0.043%  gtBBox 0.004%
+WINDSHIELD (60.5,29.5).p L1200-poor   IoU 99.926%  maxDev 0.0181in = 0.3px @(58.5,8.3)  [raw potrace 0.3px]  p99 0.28px  aspectErr 0.018%  gtBBox 0.004%
+WINDSHIELD (60.5,29.5).p L1600-stroke IoU 99.700%  maxDev 0.0731in = 1.7px @(27.1,29.5)  [raw potrace 1.7px]  p99 1.63px  aspectErr 0.181%  gtBBox 0.004%
+WINDSHIELD V2 (60.5,29.5 L800-m6      IoU 99.903%  maxDev 0.0508in = 0.6px @(31.2,8.7)  [raw potrace 0.6px]  p99 0.23px  aspectErr 0.043%  gtBBox 0.000%
+WINDSHIELD V2 (60.5,29.5 L1600-m6     IoU 99.944%  maxDev 0.0262in = 0.6px @(31.2,8.7)  [raw potrace 0.6px]  p99 0.23px  aspectErr 0.002%  gtBBox 0.000%
+WINDSHIELD V2 (60.5,29.5 L3000-jpg70  IoU 99.925%  maxDev 0.0267in = 1.2px @(31.2,8.7)  [raw potrace 1.2px]  p99 0.70px  aspectErr 0.013%  gtBBox 0.000%
+WINDSHIELD V2 (60.5,29.5 L1600-tight  IoU 99.968%  maxDev 0.0203in = 0.5px @(31.2,8.7)  [raw potrace 0.5px]  p99 0.28px  aspectErr 0.033%  gtBBox 0.000%
+WINDSHIELD V2 (60.5,29.5 L1200-poor   IoU 99.917%  maxDev 0.0573in = 1.0px @(31.2,8.7)  [raw potrace 1.0px]  p99 0.30px  aspectErr 0.019%  gtBBox 0.000%
+WINDSHIELD V2 (60.5,29.5 L1600-stroke IoU 99.638%  maxDev 0.0923in = 2.1px @(31.2,8.7)  [raw potrace 2.1px]  p99 1.71px  aspectErr 0.208%  gtBBox 0.000%
+
+SUMMARY (gate: max deviation <= 1 source pixel)
+L800-m6       n=11 meanSymDiff=0.114%  worstMaxDev=0.6px / 0.0508in  (WINDSHIELD V2 (60.5,29.5).pdf)
+L1600-m6      n=11 meanSymDiff=0.089%  worstMaxDev=0.7px / 0.0284in  (SUNSTRIP V2 (56.3,8.4).pdf)
+L3000-jpg70   n=11 meanSymDiff=0.092%  worstMaxDev=1.2px / 0.0267in  (WINDSHIELD V2 (60.5,29.5).pdf)
+L1600-tight   n=11 meanSymDiff=0.073%  worstMaxDev=0.8px / 0.0248in  (RIGHT REAR ROLLUP (30.3,19.9).pdf)
+L1200-poor    n=11 meanSymDiff=0.114%  worstMaxDev=1.1px / 0.0573in  (RIGHT REAR ROLLUP (30.3,19.9).pdf)
+L1600-stroke  n=11 meanSymDiff=0.452%  worstMaxDev=3.5px / 0.1396in  (SUNSTRIP V2 (56.3,8.4).pdf)

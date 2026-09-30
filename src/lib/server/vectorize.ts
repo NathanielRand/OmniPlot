@@ -335,10 +335,21 @@ function keepOuterSubpaths(d: string): string {
 	// them both produces a d="M…Z M…Z" that renders as two disconnected stroke paths.
 	// Taking the largest-area piece gives the true pattern outline.
 	const pool = outer.length > 0 ? outer : subpaths;
-	return pool.reduce((best, s) =>
+	const largest = pool.reduce((best, s) =>
 		Math.abs(approxSignedArea(s)) > Math.abs(approxSignedArea(best)) ? s : best
 	);
+	// Outline-only art: a hairline drawn as the pattern edge traces as a thin RING —
+	// an outer contour and a hole of almost the same area. Dropping the hole would
+	// silently pick the outside edge of the line; return both so the importer's
+	// contour option (inner / outer / all) decides. A solid shape's hole is much
+	// smaller than the shape and is still dropped as before.
+	const outerArea = Math.abs(approxSignedArea(largest));
+	const ring = subpaths.find(s => approxSignedArea(s) < 0 && Math.abs(approxSignedArea(s)) > outerArea * RING_HOLE_RATIO);
+	return ring && largest !== ring ? `${largest} ${ring}` : largest;
 }
+
+// A hole this close to the outer contour's area means the "shape" is only a thin line.
+export const RING_HOLE_RATIO = 0.9;
 
 function filterSvgOuterPaths(svg: string): string {
 	return svg.replace(/\bd="([^"]+)"/g, (_, d: string) => `d="${keepOuterSubpaths(d)}"`);
@@ -562,7 +573,27 @@ export async function preprocessForTrace(inputBuffer: Buffer, targetLongEdge = T
 	// MorphOpen: remove remaining pixel-scale protrusions from the binary edge.
 	const img = await readJimp(binaryBuf);
 	const morphRadius = Math.max(2, Math.min(5, Math.round(2 * Math.sqrt(scaleRatio))));
+	const inkBefore = countInk(img);
 	morphOpen(img, morphRadius);
 
+	// Line-art guard. Opening deletes any feature thinner than ~2·radius px, which is
+	// exactly what it should do to staircase bumps — but on outline-only art (a
+	// hairline drawn as the pattern edge) it deletes stretches of the line itself,
+	// breaking the ring so potrace traces a sliver instead of the outline. A solid
+	// shape loses a negligible amount of ink to the open; if it removed more than
+	// MORPH_MAX_INK_LOSS the image is thin-line art, so keep the un-opened bitmap.
+	if (inkBefore > 0 && countInk(img) < inkBefore * (1 - MORPH_MAX_INK_LOSS)) return binaryBuf;
+
 	return jimpToBuffer(img);
+}
+
+// Measured on the sample patterns: solid shapes lose <= 0.001 % of their ink to the open,
+// thin-line art loses 0.1 - 5 %. 0.1 % sits 100x above the former and at the floor of the latter.
+export const MORPH_MAX_INK_LOSS = 0.001;
+
+function countInk(img: Jimp): number {
+	const data = img.bitmap.data as unknown as Buffer;
+	let n = 0;
+	for (let i = 0; i < data.length; i += 4) if (data[i] < 128) n++;
+	return n;
 }

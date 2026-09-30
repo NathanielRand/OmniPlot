@@ -64,8 +64,8 @@
 	}
 
 	// ─── Tab state ────────────────────────────────
-	// No default — nothing is selected/run until the user explicitly picks a
-	// method. Picking a method processes the uploaded image for real.
+	// Vectorize is the default and runs automatically on every new upload;
+	// picking another method processes the uploaded image with that one instead.
 	type Tab = "vectorize" | "cutout" | "paste" | "trace";
 	let tab = $state<Tab | null>(null);
 
@@ -212,6 +212,7 @@
 	}
 
 	function setUploadedFile(file: File, opts?: { keepCompare?: boolean }) {
+		_abortCtrl?.abort();   // a run for the previous image must not overwrite this one
 		uploadedFile = file;
 		if (uploadedPreviewUrl) URL.revokeObjectURL(uploadedPreviewUrl);
 		uploadedPreviewUrl = URL.createObjectURL(file);
@@ -231,6 +232,10 @@
 			compareBefore = null;
 			compareAfter  = null;
 		}
+		// Vectorize is the default method: it runs as soon as a new image arrives.
+		// (Picking another method later runs that one; results are cached per method.)
+		tab = "vectorize";
+		void runForTab("vectorize", file);
 	}
 
 	// ─── Input image resolution (for the Input info bar) ─────────────────
@@ -288,7 +293,8 @@
 		if (!uploadedFile) return { input: pasteMode === "path" ? "path-paste" : "svg-paste" };
 		const orig = originalFile ?? uploadedFile;
 		const fromPdf = orig.type === "application/pdf" || orig.name.toLowerCase().endsWith(".pdf");
-		const isSvg = !fromPdf && (uploadedFile.type === "image/svg+xml" || uploadedFile.name.toLowerCase().endsWith(".svg"));
+		// A vector PDF is handed over as an SVG, so it counts as an SVG import too.
+		const isSvg = uploadedFile.type === "image/svg+xml" || uploadedFile.name.toLowerCase().endsWith(".svg");
 		return {
 			input: isSvg ? "svg-file" : tab === "vectorize" || tab === "cutout" || tab === "trace" ? `image-${tab}` : "unknown",
 			...(fromPdf ? { fromPdf: true } : {}),
@@ -323,8 +329,14 @@
 				try { msg = (JSON.parse(body) as { message?: string }).message ?? ""; } catch { msg = body; }
 				throw new Error(msg || `Server error ${res.status}`);
 			}
-			const { image } = await res.json() as { image: string };
-			const blob = await (await fetch(image)).blob();
+			const body = await res.json() as { image?: string; svg?: string };
+			if (body.svg) {
+				// Vector PDF: its exact paths arrive as an SVG in real units and are
+				// imported like any uploaded SVG (no rasterizing, no tracing).
+				setUploadedFile(new File([body.svg], file.name.replace(/\.pdf$/i, "") + ".svg", { type: "image/svg+xml" }));
+				return;
+			}
+			const blob = await (await fetch(body.image!)).blob();
 			const pngFile = new File([blob], file.name.replace(/\.pdf$/i, "") + ".png", { type: "image/png" });
 			setUploadedFile(pngFile);
 		} catch (err) {
@@ -353,11 +365,13 @@
 	// Lossless SVG extraction (Vectorize's SVG branch, Path Data upload) can pull
 	// in nested contours from the source file — e.g. a "ribbon" shape whose outer
 	// boundary and inner hole are both traced, producing a visible double line.
-	// PRECISION: by default EVERY contour in the file is kept — the upload is
-	// reproduced exactly as drawn (holes, multi-part art, everything). Only an
-	// explicit user choice ("outer"/"inner"/manual) may drop a contour.
-	let layerAutoKeep    = $state(false);
-	let layerPreference  = $state<"outer" | "inner">("outer");
+	// DEFAULT: "Keep inner only" — when a file holds several nested contours
+	// (e.g. an outline drawn as a ring of two lines), the inner one is the cut.
+	// The picker below offers Keep outer / Keep all / manual selection instead,
+	// and the contour count is always shown so nothing is dropped unnoticed.
+	// A file with a single contour is never affected.
+	let layerAutoKeep    = $state(true);
+	let layerPreference  = $state<"outer" | "inner">("inner");
 	let layerManualMode  = $state(false);
 	let detectedLayers   = $state<{ d: string; area: number }[]>([]);
 	let layerSelection   = $state<boolean[]>([]);
@@ -1666,7 +1680,7 @@
 				<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
 			</span>
 			<span class="spi__method-body">
-				<span class="spi__method-title">Vectorize <span class="spi__badge spi__badge--rec">Recommended</span></span>
+				<span class="spi__method-title">Vectorize <span class="spi__badge spi__badge--rec">Recommended</span> <span class="spi__badge spi__badge--def">Default</span></span>
 				<span class="spi__method-sub">Any image — SVG extracted losslessly, raster traced to precise curves</span>
 			</span>
 		</button>
@@ -1708,10 +1722,10 @@
 	<span class="spi__section-title">Multiple contours in a file</span>
 	<div class="spi__contour-pref">
 		<div class="spi__contour-pref-group" role="radiogroup" aria-label="Contour handling">
+			<button type="button" class="spi__contour-pref-btn" class:spi__contour-pref-btn--active={contourPref === "inner"}
+				onclick={() => setContourPref("inner")}>Keep inner only <span class="spi__badge spi__badge--def">Default</span></button>
 			<button type="button" class="spi__contour-pref-btn" class:spi__contour-pref-btn--active={contourPref === "outer"}
 				onclick={() => setContourPref("outer")}>Keep outer only</button>
-			<button type="button" class="spi__contour-pref-btn" class:spi__contour-pref-btn--active={contourPref === "inner"}
-				onclick={() => setContourPref("inner")}>Keep inner only</button>
 			<button type="button" class="spi__contour-pref-btn" class:spi__contour-pref-btn--active={contourPref === "all"}
 				onclick={() => setContourPref("all")}>
 				Keep all layers
@@ -1868,6 +1882,10 @@
 	.spi__badge--rec {
 		background: color-mix(in srgb, var(--color-brand) 16%, transparent);
 		color: var(--color-brand);
+	}
+	.spi__badge--def {
+		background: color-mix(in srgb, currentColor 14%, transparent);
+		color: inherit;
 	}
 	.spi__badge--exp {
 		background: color-mix(in srgb, #f59e0b 14%, transparent);

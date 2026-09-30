@@ -1,6 +1,7 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { renderPdfFirstPageToPng } from '$lib/server/pdf';
+import { extractPdfVector } from '$lib/server/pdf-vector';
 import { checkRateLimit, rateLimitedResponse } from '$lib/server/rate-limit';
 import { logServerError } from '$lib/server/log-error';
 
@@ -28,6 +29,15 @@ export const POST: RequestHandler = async ({ request, getClientAddress }) => {
 		if (!isPdf) throw error(415, `Expected a PDF, got: ${file.type || 'unknown type'}`);
 
 		const raw = Buffer.from(await file.arrayBuffer());
+
+		// Pure-vector PDFs (the norm for exported patterns) are read exactly — no
+		// rasterizing, no tracing. Anything else (scans, images, text) is rendered
+		// to a PNG and goes through the normal raster pipeline.
+		const vector = await extractPdfVector(raw).catch((err) => {
+			console.warn('[pdf-convert] vector extraction failed, using raster:', err?.message ?? err);
+			return null;
+		});
+		if (vector) return json({ svg: vector.svg, vector: true });
 
 		const png = await renderPdfFirstPageToPng(raw).catch((err) => {
 			const msg = err?.message ?? 'unknown error';

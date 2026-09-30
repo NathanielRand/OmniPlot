@@ -455,6 +455,86 @@ function removeStepArtifacts(segs: Seg[], minAngleDeg = 60, maxRatio = 0.15): Se
 	return arr;
 }
 
+// ─── Deviation guard ──────────────────────────────────────────────────────────
+//
+// ⚠ PRECISION: smoothing is cosmetic and must never change the cut. Potrace's own
+// output is within ~1 source pixel of the true edge; the smoothing passes below can
+// (on some shapes) pull a corner or a long edge many pixels away. Every subpath is
+// therefore checked against the pre-smoothing curve, and the un-smoothed subpath is
+// kept if any part of the result strays further than SMOOTH_MAX_DEV of its extent.
+//
+// Bound as a fraction of the subpath's longest bbox side so it is scale-free (this
+// runs on the normalized 0–100 outline). 0.02 % of the long edge is far below the
+// 99.9 % target and below the pixel size of any image we trace (≤ 6000 px → 0.017 %).
+export const SMOOTH_MAX_DEV = 0.0002;
+
+function cubicPoints(s: Seg, n: number, out: Pt[]): void {
+	for (let k = 0; k < n; k++) {
+		const t = k / n, u = 1 - t;
+		const a = u * u * u, b = 3 * u * u * t, c = 3 * u * t * t, d = t * t * t;
+		out.push({
+			x: a * s.p0.x + b * s.p1.x + c * s.p2.x + d * s.p3.x,
+			y: a * s.p0.y + b * s.p1.y + c * s.p2.y + d * s.p3.y,
+		});
+	}
+}
+
+function densify(segs: Seg[], step: number): Pt[] {
+	const pts: Pt[] = [];
+	for (const s of segs) {
+		const span = mag(sub(s.p1, s.p0)) + mag(sub(s.p2, s.p1)) + mag(sub(s.p3, s.p2));
+		cubicPoints(s, Math.max(4, Math.min(2000, Math.ceil(span / step))), pts);
+	}
+	if (segs.length) pts.push(segs[segs.length - 1].p3);
+	return pts;
+}
+
+// Max distance from any point of `a` to the polyline `b` (grid-accelerated);
+// returns early once it exceeds `limit`.
+function maxDistToPolyline(a: Pt[], b: Pt[], cell: number, limit: number): number {
+	const grid = new Map<string, number[]>();
+	for (let i = 0; i + 1 < b.length; i++) {
+		const x0 = Math.floor(Math.min(b[i].x, b[i + 1].x) / cell), x1 = Math.floor(Math.max(b[i].x, b[i + 1].x) / cell);
+		const y0 = Math.floor(Math.min(b[i].y, b[i + 1].y) / cell), y1 = Math.floor(Math.max(b[i].y, b[i + 1].y) / cell);
+		for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) {
+			const k = `${x},${y}`;
+			const arr = grid.get(k);
+			if (arr) arr.push(i); else grid.set(k, [i]);
+		}
+	}
+	let worst = 0;
+	for (const p of a) {
+		const cx = Math.floor(p.x / cell), cy = Math.floor(p.y / cell);
+		let best = Infinity;
+		for (let r = 0; r <= 3 && best > r * cell; r++) {
+			for (let x = cx - r; x <= cx + r; x++) for (let y = cy - r; y <= cy + r; y++) {
+				if (Math.max(Math.abs(x - cx), Math.abs(y - cy)) !== r) continue;
+				for (const i of grid.get(`${x},${y}`) ?? []) {
+					const q0 = b[i], q1 = b[i + 1];
+					const dx = q1.x - q0.x, dy = q1.y - q0.y, l2 = dx * dx + dy * dy;
+					const t = l2 ? Math.max(0, Math.min(1, ((p.x - q0.x) * dx + (p.y - q0.y) * dy) / l2)) : 0;
+					const d = Math.hypot(p.x - (q0.x + t * dx), p.y - (q0.y + t * dy));
+					if (d < best) best = d;
+				}
+			}
+		}
+		if (best > worst) worst = best;
+		if (worst > limit) return worst;
+	}
+	return worst;
+}
+
+function withinSmoothBudget(before: Seg[], after: Seg[]): boolean {
+	const all = before.flatMap(s => [s.p0, s.p1, s.p2, s.p3]);
+	const xs = all.map(p => p.x), ys = all.map(p => p.y);
+	const long = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+	if (!(long > 0)) return true;
+	const tol = long * SMOOTH_MAX_DEV;
+	const A = densify(before, tol), B = densify(after, tol);
+	const cell = Math.max(tol * 4, long / 200);
+	return maxDistToPolyline(B, A, cell, tol) <= tol && maxDistToPolyline(A, B, cell, tol) <= tol;
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
@@ -473,8 +553,10 @@ function removeStepArtifacts(segs: Seg[], minAngleDeg = 60, maxRatio = 0.15): Se
  */
 export function smoothBezierJunctions(svgPath: string, cornerThresholdDeg = 50): string {
 	const subpaths  = parsePath(svgPath);
-	const processed = subpaths.map(segs => {
-		if (segs.length < 2) return segs;
+	const processed = subpaths.map(original => {
+		if (original.length < 2) return original;
+		// Smoothing edits segments in place, so keep a pristine copy for the deviation guard.
+		const segs = original.map(s => ({ ...s, p0: { ...s.p0 }, p1: { ...s.p1 }, p2: { ...s.p2 }, p3: { ...s.p3 } }));
 
 		// Pass 1: collapse collinear runs to single segments; smooth curved run
 		// endpoints.  Returns a new (possibly shorter) Seg[] so intermediate
@@ -519,7 +601,8 @@ export function smoothBezierJunctions(svgPath: string, cornerThresholdDeg = 50):
 		// Pass 6: re-run collinear collapse on the de-stepped result.
 		// Removing steps leaves near-collinear segments that span the original
 		// step displacement; a second collapse merges them into one L command.
-		return collapseCollinearRuns(destepped, cornerThresholdDeg);
+		const result = collapseCollinearRuns(destepped, cornerThresholdDeg);
+		return withinSmoothBudget(original, result) ? result : original;
 	});
 
 	return serializePath(processed);
