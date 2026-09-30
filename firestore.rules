@@ -96,8 +96,12 @@ service cloud.firestore {
     // Each user can create and read their own patterns immediately.
     // isPublished is set only by admins — owners cannot self-approve.
     // Publicly visible once isPublished == true (community-approved).
+    // Admins can read every pattern: Admin → Patterns loads the community
+    // review queue (submitToCommunity == true, other users' private docs) with a
+    // client query, which Firestore only allows when the rule permits ALL
+    // documents the query could match. Without this clause the queue never loads.
     match /userPatterns/{patternId} {
-      allow read:   if resource.data.ownerId == uid() || resource.data.isPublished == true;
+      allow read:   if resource.data.ownerId == uid() || resource.data.isPublished == true || isAdmin();
       allow create: if signedIn()
                      && request.resource.data.ownerId == uid()
                      && request.resource.data.isPublished == false;

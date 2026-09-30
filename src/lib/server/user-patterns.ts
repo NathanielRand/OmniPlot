@@ -5,6 +5,7 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { getAdminDb, verifyIdToken } from '$lib/server/firebase-admin';
 import { toDate } from '$lib/server/cut-stats';
 import { pathStats } from '$lib/utils/pathStats';
+import { resolveProjectType } from '$lib/utils/patternType';
 
 export interface AdminCaller { uid: string; name: string }
 
@@ -44,7 +45,7 @@ export function serializeUserPattern(
 		status:            d.status ?? 'private',
 		submitToCommunity: !!d.submitToCommunity,
 		isPublished:       !!d.isPublished,
-		projectType:       d.projectType ?? 'vehicle',
+		projectType:       resolveProjectType(d.projectType, d.make),
 		patternName:       d.patternName ?? null,
 		propertyLabel:     d.propertyLabel ?? null,
 		address:           d.address ?? null,

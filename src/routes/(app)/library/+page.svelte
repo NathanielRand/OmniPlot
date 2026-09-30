@@ -284,6 +284,7 @@
 	let mineStatus   = $state<MineStatus>("all");
 	let mineCategory = $state<"all" | PatternCategory>("all");
 	let mineSearch   = $state("");
+	let mineType     = $state<"all" | ProjectType>("all");
 
 	function mineStatusOf(p: UserPattern): Exclude<MineStatus, "all"> {
 		if (p.isPublished) return "published";
@@ -297,6 +298,7 @@
 	const mineStatusCounts = $derived(
 		myPatterns.reduce((acc, p) => { const s = mineStatusOf(p); acc[s] = (acc[s] ?? 0) + 1; return acc; }, {} as Record<string, number>),
 	);
+	const mineTypes = $derived(PROJECT_TYPES.map((x) => x.value).filter((t) => myPatterns.some((p) => (p.projectType ?? "vehicle") === t)));
 	const mineCategories = $derived(PATTERN_CATEGORIES.filter((c) => myPatterns.some((p) => p.category === c.value)));
 
 	function mySubjectLabel(p: UserPattern): string {
@@ -308,6 +310,7 @@
 		myPatterns.filter((p) => {
 			if (mineStatus !== "all" && mineStatusOf(p) !== mineStatus) return false;
 			if (mineCategory !== "all" && p.category !== mineCategory) return false;
+			if (mineType !== "all" && (p.projectType ?? "vehicle") !== mineType) return false;
 			const q = mineSearch.trim().toLowerCase();
 			return !q || `${p.name} ${mySubjectLabel(p)} ${compactZones(p)}`.toLowerCase().includes(q);
 		}),
@@ -671,6 +674,16 @@
 				</div>
 			{/if}
 
+			{#if mineTypes.length > 1}
+				<div class="lib-section-label">Type</div>
+				<div class="lib-filter-pills">
+					<button class="lib-pill" class:active={mineType === "all"} aria-pressed={mineType === "all"} onclick={() => (mineType = "all")}>All</button>
+					{#each mineTypes as t (t)}
+						<button class="lib-pill" class:active={mineType === t} aria-pressed={mineType === t} onclick={() => (mineType = t)}>{typeMeta(t).label}</button>
+					{/each}
+				</div>
+			{/if}
+
 			<a href="/library/upload" class="lib-request-btn">
 				<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
 				Upload a pattern
@@ -962,8 +975,8 @@
 			{:else}
 				<div class="my-patterns__summary">
 					{shownMine.length === myPatterns.length ? `${myPatterns.length} pattern${myPatterns.length === 1 ? "" : "s"}` : `${shownMine.length} of ${myPatterns.length} patterns`}
-					{#if mineStatus !== "all" || mineCategory !== "all" || mineSearch}
-						<button class="lib-empty__request" onclick={() => { mineStatus = "all"; mineCategory = "all"; mineSearch = ""; }}>Clear filters</button>
+					{#if mineStatus !== "all" || mineCategory !== "all" || mineType !== "all" || mineSearch}
+						<button class="lib-empty__request" onclick={() => { mineStatus = "all"; mineCategory = "all"; mineType = "all"; mineSearch = ""; }}>Clear filters</button>
 					{/if}
 				</div>
 				{#if shownMine.length === 0}
@@ -984,6 +997,7 @@
 									{#if mySubjectLabel(p)}{mySubjectLabel(p)} · {/if}{compactZones(p)}
 								</div>
 								<div class="my-pattern-card__badges">
+									<span class="mpbadge mpbadge--type">{typeMeta(p.projectType ?? "vehicle").label}</span>
 									<span class="mpbadge" style="--cat-accent: {categoryMeta(p.category).accent}">{categoryShortLabel(p.category)}</span>
 									<span class="mpbadge mpbadge--{st}">{MINE_STATUS_LABEL[st]}</span>
 									<span class="my-pattern-card__size">{p.widthInches.toFixed(2)}" × {p.heightInches.toFixed(2)}"</span>
@@ -2108,6 +2122,7 @@
 	}
 	.mpbadge--published { background: color-mix(in srgb, #22c55e 12%, transparent); color: #4ade80; }
 	.mpbadge--pending   { background: color-mix(in srgb, #f59e0b 12%, transparent); color: #fbbf24; }
+	.mpbadge--type { background: color-mix(in srgb, var(--color-brand) 12%, transparent); color: var(--color-brand); }
 	.mpbadge--private   { background: var(--bg-surface-3); color: var(--text-tertiary); }
 	.my-pattern-card__actions {
 		display: flex;

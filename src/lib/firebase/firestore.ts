@@ -1,6 +1,7 @@
 // ─────────────────────────────────────────────
 // OmniPlot — FIRESTORE HELPERS
 // ─────────────────────────────────────────────
+import { resolveProjectType } from "$lib/utils/patternType";
 import {
 	collection,
 	doc,
@@ -565,7 +566,7 @@ function toUserPattern(id: string, data: DocumentData): UserPattern {
 		rejectionReason:   data.rejectionReason || undefined,
 		// Without these, every residential/commercial/custom upload read back
 		// as a vehicle pattern everywhere it was shown.
-		projectType:       data.projectType ?? "vehicle",
+		projectType:       resolveProjectType(data.projectType, data.make),
 		patternName:       data.patternName  || undefined,
 		address:           data.address      || undefined,
 		propertyLabel:     data.propertyLabel || undefined,
@@ -602,8 +603,11 @@ export async function addUserPattern(
 	assertExactSize(data, `Pattern "${data.name}"`);
 	const ref = doc(collection(db, Collections.USER_PATTERNS));
 	const { vehicleId, notes, adminNotes, patternName, address, propertyLabel, source, batchId, tierAtUpload, ...rest } = data;
+	// setDoc throws on ANY undefined value (e.g. customZoneLabels for a non-custom
+	// zone, or an unset make/projectType) — drop them rather than fixing each caller.
+	const defined = Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined));
 	await setDoc(ref, {
-		...rest,
+		...defined,
 		...(vehicleId     ? { vehicleId }     : {}),
 		...(notes         ? { notes }         : {}),
 		...(adminNotes    ? { adminNotes }    : {}),

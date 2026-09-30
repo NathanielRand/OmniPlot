@@ -5,6 +5,7 @@
 	import { patternStore, MIRROR_PAIRS, PATTERN_CATEGORIES, zonesFor } from "$lib/stores/patternStore.svelte";
 	import { getUserPatternById, updateUserPattern, deleteUserPattern } from "$lib/firebase/firestore";
 	import SvgPathInput from "$lib/components/ui/SvgPathInput.svelte";
+	import InfoTip from "$lib/components/ui/InfoTip.svelte";
 	import VehicleCombobox from "$lib/components/ui/VehicleCombobox.svelte";
 	import { tooltip } from "$lib/actions/tooltip";
 	import { untrack } from "svelte";
@@ -20,7 +21,14 @@
 	let original = $state<UserPattern | null>(null);
 
 	// ─── Form state (mirrors upload form fields) ──
+	let mode = $state<"private" | "community">("private");
 	let projectType = $state<ProjectType>("vehicle");
+
+	const identityTitle = $derived(
+		projectType === "vehicle"     ? "Vehicle" :
+		projectType === "custom"      ? "Pattern Name" :
+		"Property",
+	);
 	let vehicle = $state({
 		make:      "",
 		models:    [] as string[],
@@ -164,6 +172,7 @@
 				return;
 			}
 			original    = p;
+			mode        = p.submitToCommunity ? "community" : "private";
 			projectType = p.projectType ?? "vehicle";
 			vehicle     = { make: p.make, models: [...p.models], years: [...p.years], bodyStyle: p.bodyStyle };
 			const isProperty = projectType === "residential" || projectType === "commercial";
@@ -248,22 +257,34 @@
 		return Object.keys(e).length === 0;
 	}
 
-	/** Subject fields, shaped exactly like the upload form writes them. */
+	/** Subject fields, shaped exactly like the upload form writes them. Fields that
+	 *  belong to another pattern type are explicitly cleared (undefined → deleteField),
+	 *  so changing the type never leaves stale address / project name behind. */
 	function identity(): Partial<UserPattern> {
 		if (projectType === "vehicle") {
-			return { make: vehicle.make.trim(), models: vehicle.models, years: vehicle.years, bodyStyle: vehicle.bodyStyle };
+			return {
+				projectType, make: vehicle.make.trim(), models: vehicle.models, years: vehicle.years, bodyStyle: vehicle.bodyStyle,
+				patternName: undefined, address: undefined, propertyLabel: undefined,
+			};
 		}
 		if (projectType === "custom") {
-			return { make: "Custom", models: [customName.trim()], years: [], patternName: customName.trim() };
+			return {
+				projectType, make: "Custom", models: [customName.trim()], years: [], bodyStyle: "sedan", patternName: customName.trim(),
+				address: undefined, propertyLabel: undefined,
+			};
 		}
 		return {
+			projectType,
 			make: projectType === "residential" ? "Residential" : "Commercial",
 			models: [propertyLabel.trim() || address.trim()],
 			years: [],
+			bodyStyle: "sedan",
 			address: address.trim() || undefined,
 			propertyLabel: propertyLabel.trim() || undefined,
+			patternName: undefined,
 		};
 	}
+
 
 	// ─── Save ─────────────────────────────────────
 	async function handleSave(e: SubmitEvent) {
@@ -283,6 +304,7 @@
 				heightInches: pattern.heightInches,
 				svgPath:      pattern.svgPath.trim(),
 				notes:        pattern.notes.trim() || undefined,
+				...((mode === "community") !== original.submitToCommunity ? { submitToCommunity: mode === "community" } : {}),
 			});
 			toastStore.success("Pattern saved", `${name} has been updated.`);
 			goto(MINE);
@@ -343,106 +365,198 @@
 			{/if}
 		</div>
 
+		<div class="mode-bar">
+			<button
+				type="button"
+				class="mode-card"
+				class:mode-card--active={mode === "private"}
+				onclick={() => (mode = "private")}
+				aria-pressed={mode === "private"}
+			>
+				<div class="mode-card__icon" aria-hidden="true">
+					<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+				</div>
+				<div class="mode-card__body">
+					<span class="mode-card__title">Private</span>
+					<span class="mode-card__sub">Only visible to you. Modify or delete anytime. Submit to community whenever you're ready.</span>
+				</div>
+				<div class="mode-card__check" aria-hidden="true">
+					{#if mode === "private"}
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg>
+					{/if}
+				</div>
+			</button>
+
+			<button
+				type="button"
+				class="mode-card"
+				class:mode-card--active={mode === "community"}
+				onclick={() => (mode = "community")}
+				aria-pressed={mode === "community"}
+			>
+				<div class="mode-card__icon" aria-hidden="true">
+					<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+				</div>
+				<div class="mode-card__body">
+					<span class="mode-card__title">Community Submission</span>
+					<span class="mode-card__sub">Queued for admin review before going public. Once approved, the pattern is locked and belongs to the community library.</span>
+				</div>
+				<div class="mode-card__check" aria-hidden="true">
+					{#if mode === "community"}
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg>
+					{/if}
+				</div>
+			</button>
+		</div>
+
 		<!-- Form -->
 		<div class="form-wrap">
 			<form class="edit-form" onsubmit={handleSave} novalidate>
 
-			<!-- Subject -->
+			<!-- Pattern Type -->
 				<section class="form-section">
 					<h2 class="section-title">
 						<span class="section-num">1</span>
-						{projectType === "vehicle" ? "Vehicle" : projectType === "custom" ? "Project" : projectType === "residential" ? "Residential property" : "Commercial property"}
+						Pattern Type
+					</h2>
+					<div class="type-grid" role="radiogroup" aria-label="Pattern type">
+						<button type="button" class="type-card" class:type-card--active={projectType === "vehicle"} onclick={() => (projectType = "vehicle")} aria-pressed={projectType === "vehicle"}>
+							<span class="type-card__icon" aria-hidden="true">
+								<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5 17a2 2 0 1 0 4 0 2 2 0 0 0-4 0zM15 17a2 2 0 1 0 4 0 2 2 0 0 0-4 0z"/><path d="M5 17H3v-6l2-5h11l3 5h1a1 1 0 0 1 1 1v5h-2M9 17h6"/></svg>
+							</span>
+							<span class="type-card__title">Vehicle</span>
+							<span class="type-card__sub">PPF or window tint for a make/model/year</span>
+						</button>
+						<button type="button" class="type-card" class:type-card--active={projectType === "residential"} onclick={() => (projectType = "residential")} aria-pressed={projectType === "residential"}>
+							<span class="type-card__icon" aria-hidden="true">
+								<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M9 21v-6h6v6"/></svg>
+							</span>
+							<span class="type-card__title">Residential</span>
+							<span class="type-card__sub">Window film for a home or property</span>
+						</button>
+						<button type="button" class="type-card" class:type-card--active={projectType === "commercial"} onclick={() => (projectType = "commercial")} aria-pressed={projectType === "commercial"}>
+							<span class="type-card__icon" aria-hidden="true">
+								<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="1"/><path d="M9 21v-4h6v4M8 7h1M8 11h1M8 15h1M15 7h1M15 11h1M15 15h1"/></svg>
+							</span>
+							<span class="type-card__title">Commercial</span>
+							<span class="type-card__sub">Window film for a storefront or building</span>
+						</button>
+						<button type="button" class="type-card" class:type-card--active={projectType === "custom"} onclick={() => (projectType = "custom")} aria-pressed={projectType === "custom"}>
+							<span class="type-card__icon" aria-hidden="true">
+								<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18"/></svg>
+							</span>
+							<span class="type-card__title">Custom</span>
+							<span class="type-card__sub">Anything else — just give it a name</span>
+						</button>
+					</div>
+				</section>
+
+				<!-- Identity -->
+				<section class="form-section">
+					<h2 class="section-title">
+						<span class="section-num">2</span>
+						{identityTitle}
 					</h2>
 
-					{#if projectType === "custom"}
-					<div class="field" class:field--error={!!errors.customName}>
-						<label class="field__label" for="customName">Project name</label>
-						<input id="customName" class="field__input" type="text" bind:value={customName} placeholder="Apparel HTV kit"/>
-						{#if errors.customName}<span class="field__error">{errors.customName}</span>{/if}
-					</div>
-					{:else if projectType !== "vehicle"}
-					<div class="field-row field-row--2">
-						<div class="field" class:field--error={!!errors.propertyLabel}>
-							<label class="field__label" for="propertyLabel">Label</label>
-							<input id="propertyLabel" class="field__input" type="text" bind:value={propertyLabel} placeholder={projectType === "residential" ? "Smith Residence" : "Main St Storefront"}/>
-							{#if errors.propertyLabel}<span class="field__error">{errors.propertyLabel}</span>{/if}
-						</div>
-						<div class="field">
-							<label class="field__label" for="address">Address <span class="field__hint">Optional</span></label>
-							<input id="address" class="field__input" type="text" bind:value={address} placeholder="123 Main St"/>
-						</div>
-					</div>
-					{:else}
-
-					<div class="field-row field-row--2">
-						<div class="field" class:field--error={!!errors.years}>
-							<label class="field__label" for="year-input">Year(s)</label>
-							<div class="multitag" class:multitag--error={!!errors.years}>
-								{#each vehicle.years as y (y)}
-									<span class="chip">
-										<span class="chip__label">{y}</span>
-										<button type="button" class="chip__remove" aria-label="Remove {y}" onclick={() => { vehicle.years = vehicle.years.filter(x => x !== y); }}>×</button>
-									</span>
-								{/each}
-								<input
-									id="year-input"
-									class="year-input"
-									type="text"
-									placeholder={vehicle.years.length ? "Add year or range…" : "2024 or 2020-2024"}
-									bind:value={yearInput}
-									onkeydown={onYearKeydown}
-									onblur={commitYear}
-								/>
-							</div>
-							{#if errors.years}<span class="field__error">{errors.years}</span>{/if}
-						</div>
+					{#if projectType === "vehicle"}
 						<div class="field" class:field--error={errors.make}>
 							<label class="field__label" for="make">Make</label>
 							<VehicleCombobox id="make" bind:value={vehicle.make} placeholder="Chevrolet" options={allMakes} error={!!errors.make}/>
 							{#if errors.make}<span class="field__error">{errors.make}</span>{/if}
 						</div>
-					</div>
 
-					<div class="field" class:field--error={!!errors.models}>
-						<label class="field__label" for="model-input">Model</label>
-						<div class="multitag" class:multitag--error={!!errors.models}>
-							{#each vehicle.models as m (m)}
-								<span class="chip">
-									<span class="chip__label">{m}</span>
-									<button type="button" class="chip__remove" aria-label="Remove {m}" onclick={() => { vehicle.models = vehicle.models.filter(x => x !== m); }}>×</button>
-								</span>
-							{/each}
-							<VehicleCombobox
-								id="model-input"
-								bind:value={modelInput}
-								placeholder={vehicle.models.length ? "Add another…" : "Silverado 1500 Crew Cab"}
-								options={makeModels.filter(m => !vehicle.models.includes(m))}
-								oncommit={(m) => { if (!vehicle.models.includes(m)) vehicle.models = [...vehicle.models, m]; }}
-							/>
+						<div class="field" class:field--error={!!errors.models}>
+							<label class="field__label" for="model-input">
+								Model
+								{#if vehicle.make.trim()}
+									<span class="field__hint">Matches narrow to {vehicle.make.trim()}</span>
+								{/if}
+							</label>
+							<div class="multitag" class:multitag--error={!!errors.models}>
+								{#each vehicle.models as m (m)}
+									<span class="chip">
+										<span class="chip__label">{m}</span>
+										<button type="button" class="chip__remove" aria-label="Remove {m}" onclick={() => { vehicle.models = vehicle.models.filter(x => x !== m); }}>×</button>
+									</span>
+								{/each}
+								<VehicleCombobox
+									id="model-input"
+									bind:value={modelInput}
+									placeholder={vehicle.models.length ? "Add another…" : "Silverado 1500 Crew Cab"}
+									options={makeModels.filter(m => !vehicle.models.includes(m))}
+									oncommit={(m) => { if (!vehicle.models.includes(m)) vehicle.models = [...vehicle.models, m]; }}
+								/>
+							</div>
+							{#if errors.models}<span class="field__error">{errors.models}</span>{/if}
 						</div>
-						{#if errors.models}<span class="field__error">{errors.models}</span>{/if}
-					</div>
 
-					<div class="field field--half">
-						<label class="field__label" for="bodyStyle">Body Style</label>
-						<select id="bodyStyle" class="field__select" bind:value={vehicle.bodyStyle}>
-							<option value="sedan">Sedan</option>
-							<option value="coupe">Coupe</option>
-							<option value="suv">SUV / Crossover</option>
-							<option value="truck">Truck</option>
-							<option value="convertible">Convertible</option>
-							<option value="wagon">Wagon</option>
-							<option value="hatchback">Hatchback</option>
-						</select>
-					</div>
+						<div class="field-row field-row--2">
+							<div class="field" class:field--error={!!errors.years}>
+								<label class="field__label" for="year-input">Year(s)</label>
+								<div class="multitag" class:multitag--error={!!errors.years}>
+									{#each vehicle.years as y (y)}
+										<span class="chip">
+											<span class="chip__label">{y}</span>
+											<button type="button" class="chip__remove" aria-label="Remove {y}" onclick={() => { vehicle.years = vehicle.years.filter(x => x !== y); }}>×</button>
+										</span>
+									{/each}
+									<input
+										id="year-input"
+										class="year-input"
+										type="text"
+										placeholder={vehicle.years.length ? "Add year or range…" : "2024 or 2020-2024"}
+										bind:value={yearInput}
+										onkeydown={onYearKeydown}
+										onblur={commitYear}
+									/>
+								</div>
+								{#if errors.years}<span class="field__error">{errors.years}</span>{/if}
+							</div>
+							<div class="field">
+								<label class="field__label" for="bodyStyle">Body Style</label>
+								<select id="bodyStyle" class="field__select" bind:value={vehicle.bodyStyle}>
+									<option value="sedan">Sedan</option>
+									<option value="coupe">Coupe</option>
+									<option value="suv">SUV / Crossover</option>
+									<option value="truck">Truck</option>
+									<option value="convertible">Convertible</option>
+									<option value="wagon">Wagon</option>
+									<option value="hatchback">Hatchback</option>
+								</select>
+							</div>
+						</div>
+
+					{:else if projectType === "custom"}
+						<div class="field" class:field--error={!!errors.customName}>
+							<label class="field__label" for="customName">Pattern Name</label>
+							<input id="customName" class="field__input" type="text" bind:value={customName} placeholder="Custom cut project"/>
+							{#if errors.customName}<span class="field__error">{errors.customName}</span>{/if}
+						</div>
+
+					{:else}
+						<div class="field-row field-row--2">
+							<div class="field" class:field--error={!!errors.address}>
+								<label class="field__label" for="address">Address</label>
+								<input id="address" class="field__input" type="text" bind:value={address} placeholder="123 Main St, Springfield"/>
+								{#if errors.address}<span class="field__error">{errors.address}</span>{/if}
+							</div>
+							<div class="field">
+								<label class="field__label" for="propertyLabel">
+									{projectType === "residential" ? "Property Name" : "Business Name"}
+									<span class="field__hint">Optional</span>
+								</label>
+								<input id="propertyLabel" class="field__input" type="text" bind:value={propertyLabel} placeholder={projectType === "residential" ? "Smith Residence" : "Main St Storefront"}/>
+							</div>
+						</div>
 					{/if}
 				</section>
 
 				<!-- Pattern Details -->
 				<section class="form-section">
 					<h2 class="section-title">
-						<span class="section-num">2</span>
+						<span class="section-num">3</span>
 						Pattern Details
+						
 					</h2>
 
 					<div class="field">
@@ -467,8 +581,33 @@
 						</div>
 					</div>
 
+					{#if pattern.category !== "window-tint"}
+						<div class="field field--half">
+							<label class="field__label" for="coverage">
+								Coverage
+								<InfoTip text="How much of the panel this pattern covers — Full wraps the whole surface, Partial covers a defined portion, Edge Only traces just the border." />
+							</label>
+							<select id="coverage" class="field__select" bind:value={pattern.coverage}>
+								<option value="full">Full</option>
+								<option value="partial">Partial</option>
+								<option value="edge-only">Edge Only</option>
+							</select>
+						</div>
+					{/if}
+				</section>
+
+				<!-- Zones & Dimensions -->
+				<section class="form-section">
+					<h2 class="section-title">
+						<span class="section-num">4</span>
+						Zones & Dimensions
+					</h2>
+
 					<div class="field" class:field--error={!!errors.zones}>
-						<span class="field__label">Zones</span>
+						<span class="field__label">
+							Zones
+							<InfoTip text="The specific panels or sections this pattern applies to — add every zone this single pattern should be assigned to." />
+						</span>
 						<div class="multitag" class:multitag--error={!!errors.zones}>
 							{#each pattern.zones as z, i (`${z}-${i}`)}
 								{@const mirror = mirrorOf(z)}
@@ -483,21 +622,20 @@
 							{#if addingCustom}
 								<span class="custom-zone-entry">
 									<input
-										class="year-input"
 										type="text"
-										placeholder="Name this zone…"
-										aria-label="Custom zone name"
+										class="custom-zone-entry__input"
 										bind:value={pendingCustomLabel}
-										onkeydown={(e) => { if (e.key === "Enter") { e.preventDefault(); commitCustomZone(); } else if (e.key === "Escape") { addingCustom = false; } }}
+										placeholder="Name this zone…"
+										onkeydown={(e) => { if (e.key === "Enter") { e.preventDefault(); commitCustomZone(); } else if (e.key === "Escape") { addingCustom = false; pendingCustomLabel = ""; } }}
 									/>
-									<button type="button" class="chip__mirror" onclick={commitCustomZone} disabled={!pendingCustomLabel.trim()}>Add</button>
+									<button type="button" class="custom-zone-entry__confirm" disabled={!pendingCustomLabel.trim()} onclick={commitCustomZone} aria-label="Add custom zone">✓</button>
+									<button type="button" class="custom-zone-entry__cancel" onclick={() => { addingCustom = false; pendingCustomLabel = ""; }} aria-label="Cancel">×</button>
 								</span>
-							{/if}
-							{#if availableZones.length}
+							{:else if availableZones.length}
 								<select class="zone-add-select" onchange={onZoneAdd} aria-label="Add zone">
 									<option value="">+ Add zone</option>
 									{#each availableZones as z}
-										<option value={z.value}>{z.label}</option>
+										<option value={z.value}>{z.value === "custom" ? "Custom…" : z.label}</option>
 									{/each}
 								</select>
 							{/if}
@@ -505,28 +643,18 @@
 						{#if errors.zones}<span class="field__error">{errors.zones}</span>{/if}
 					</div>
 
-					{#if pattern.category !== "window-tint"}
-						<div class="field field--half">
-							<label class="field__label" for="coverage">Coverage</label>
-							<select id="coverage" class="field__select" bind:value={pattern.coverage}>
-								<option value="full">Full</option>
-								<option value="partial">Partial</option>
-								<option value="edge-only">Edge Only</option>
-							</select>
-						</div>
-					{/if}
-
 					<div class="field-row field-row--2">
 						<div class="field" class:field--error={errors.width}>
-							<label class="field__label" for="width">Width (inches)</label>
-							<input id="width" class="field__input" type="number" min="0" step="any"
-								bind:value={pattern.widthInches} oninput={() => deriveHeight(pattern, pattern.svgPath)}/>
+							<label class="field__label" for="width">
+								Width (inches)
+								<InfoTip text="The bounding box of the flattened pattern, not the vehicle or panel — measure the actual traced shape." />
+							</label>
+							<input id="width" class="field__input" type="number" min="0" step="any" bind:value={pattern.widthInches} oninput={() => deriveHeight(pattern, pattern.svgPath)} placeholder="60.5"/>
 							{#if errors.width}<span class="field__error">{errors.width}</span>{/if}
 						</div>
 						<div class="field" class:field--error={errors.height}>
 							<label class="field__label" for="height">Height (inches)</label>
-							<input id="height" class="field__input" type="number" min="0" step="any"
-								bind:value={pattern.heightInches} oninput={() => deriveWidth(pattern, pattern.svgPath)}/>
+							<input id="height" class="field__input" type="number" min="0" step="any" bind:value={pattern.heightInches} oninput={() => deriveWidth(pattern, pattern.svgPath)} placeholder="48.0"/>
 							{#if errors.height}<span class="field__error">{errors.height}</span>{/if}
 						</div>
 					</div>
@@ -535,20 +663,32 @@
 					{:else}
 						<p class="field__hint">Enter the width <em>or</em> the height — the other is calculated from the outline so the pattern keeps its exact proportions.</p>
 					{/if}
+				</section>
 
+				<!-- Pattern Importer -->
+				<section class="form-section">
+					<h2 class="section-title">
+						<span class="section-num">5</span>
+						Pattern Importer
+					</h2>
 					<div class="field" class:field--error={errors.svgPath}>
-						<label class="field__label" for="svgPath">Pattern Importer</label>
 						<SvgPathInput id="svgPath" bind:value={pattern.svgPath} widthInches={pattern.widthInches} heightInches={pattern.heightInches} onFileSize={(sz) => Promise.resolve().then(() => applyFileSize(pattern, pattern.svgPath, sz))} error={!!errors.svgPath} showMirror={hasMirrorPair} mirrorOrigLabel={mirrorZoneLabels?.orig} mirrorFlipLabel={mirrorZoneLabels?.flip}/>
 						{#if errors.svgPath}<span class="field__error">{errors.svgPath}</span>{/if}
 					</div>
+				</section>
 
+				<!-- Notes -->
+				<section class="form-section">
+					<h2 class="section-title">
+						<span class="section-num">6</span>
+						Notes
+					</h2>
 					<div class="field">
 						<label class="field__label" for="notes">
 							Notes
 							<span class="field__hint">Optional — fitment tips, measurement source, caveats</span>
 						</label>
-						<textarea id="notes" class="field__textarea" bind:value={pattern.notes} rows="3"
-							placeholder="Measured from physical vehicle. Verify before cutting."></textarea>
+						<textarea id="notes" class="field__textarea" bind:value={pattern.notes} rows="3" placeholder="Measured from physical vehicle 2026-06-01. Verify before cutting."></textarea>
 					</div>
 				</section>
 
@@ -632,7 +772,7 @@
 		display: flex;
 		align-items: center;
 		gap: 14px;
-		padding: 20px 24px 0;
+		padding: 20px clamp(16px, 3vw, 40px) 0;
 		flex-wrap: wrap;
 	}
 
@@ -758,9 +898,9 @@
 
 	/* ─── Form wrap ─── */
 	.form-wrap {
-		max-width: 720px;
-		margin: 0 auto;
-		padding: 24px 16px 64px;
+		width: 100%;
+		box-sizing: border-box;
+		padding: 24px clamp(16px, 3vw, 40px) 64px;
 	}
 
 	.edit-form {
@@ -774,10 +914,11 @@
 		background: var(--bg-surface);
 		border: 1px solid var(--border-default);
 		border-radius: var(--radius-lg);
-		padding: 20px 24px 24px;
+		padding: 20px clamp(16px, 2.5vw, 32px) 24px;
 		display: flex;
 		flex-direction: column;
 		gap: 16px;
+		min-width: 0;
 	}
 
 	.section-title {
@@ -805,9 +946,9 @@
 
 	/* ─── Fields ─── */
 	.field-row { display: grid; gap: 14px; }
-	.field-row--2 { grid-template-columns: 1fr 1fr; }
+	.field-row--2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 
-	.field { display: flex; flex-direction: column; gap: 6px; }
+	.field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 	.field--half { max-width: 280px; }
 
 	.field__label {
@@ -844,10 +985,11 @@
 	/* ─── Category cards ─── */
 	.category-cards {
 		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+		grid-template-columns: repeat(auto-fill, minmax(min(100%, 170px), 1fr));
 		gap: 8px;
 	}
 	.category-card {
+		--cat-accent: var(--color-brand);
 		display: flex;
 		align-items: flex-start;
 		gap: 9px;
@@ -966,13 +1108,184 @@
 	.confirm-card__actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 
 	/* ─── Responsive ─── */
+	@media (max-width: 1024px) {
+		.category-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+	}
 	@media (max-width: 640px) {
-		.edit-header { padding: 16px 16px 0; }
+		.edit-header { padding-top: 16px; }
+		.form-wrap { padding-top: 16px; padding-bottom: 40px; }
 		.form-section { padding: 16px; }
 		.field-row--2 { grid-template-columns: 1fr; }
 		.field--half { max-width: 100%; }
 		.category-cards { grid-template-columns: 1fr 1fr; }
 		.form-actions { flex-wrap: wrap; }
+		.form-actions .btn { flex: 1 1 auto; justify-content: center; }
 		.actions-spacer { display: none; }
+	}
+	@media (max-width: 400px) {
+		.category-cards { grid-template-columns: 1fr; }
+	}
+	/* --- Ported from the upload page so both forms look identical --- */
+	.mode-bar {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 0;
+		border-bottom: 1px solid var(--border-subtle);
+	}
+	.mode-card {
+		display: flex;
+		align-items: flex-start;
+		gap: 16px;
+		padding: 24px 28px;
+		background: var(--bg-surface);
+		border: none;
+		border-right: 1px solid var(--border-subtle);
+		cursor: pointer;
+		text-align: left;
+		transition: background 0.12s;
+	}
+	.mode-card:last-child { border-right: none; }
+	.mode-card:hover { background: var(--bg-surface-2); }
+	.mode-card--active {
+		background: radial-gradient(140% 140% at 8% 42%,
+			color-mix(in srgb, var(--color-brand) 20%, var(--bg-surface)) 0%,
+			color-mix(in srgb, var(--color-brand) 7%, var(--bg-surface)) 45%,
+			var(--bg-surface) 100%);
+		border-bottom: 3px solid var(--color-brand);
+	}
+	.mode-card__icon {
+		width: 44px;
+		height: 44px;
+		border-radius: var(--radius-lg);
+		background: var(--bg-surface-2);
+		border: 1px solid var(--border-default);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		color: var(--text-tertiary);
+		flex-shrink: 0;
+		transition: background 0.12s, color 0.12s, border-color 0.12s;
+	}
+	.mode-card--active .mode-card__icon {
+		background: color-mix(in srgb, var(--color-brand) 14%, var(--bg-surface-2));
+		border-color: color-mix(in srgb, var(--color-brand) 35%, transparent);
+		color: var(--color-brand);
+	}
+	.mode-card__body {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		gap: 5px;
+	}
+	.mode-card__title {
+		font-size: 1rem;
+		font-weight: 700;
+		color: var(--text-primary);
+	}
+	.mode-card__sub {
+		font-size: 0.8125rem;
+		color: var(--text-secondary);
+		line-height: 1.5;
+	}
+	.mode-card__check {
+		width: 20px;
+		height: 20px;
+		border-radius: 50%;
+		border: 2px solid var(--border-default);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		flex-shrink: 0;
+		margin-top: 2px;
+		color: var(--color-brand);
+		transition: border-color 0.12s, background 0.12s;
+	}
+	.mode-card--active .mode-card__check {
+		border-color: var(--color-brand);
+		background: color-mix(in srgb, var(--color-brand) 14%, transparent);
+	}
+	.custom-zone-entry {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		background: color-mix(in srgb, var(--color-brand) 10%, var(--bg-surface-2));
+		border: 1px dashed color-mix(in srgb, var(--color-brand) 35%, transparent);
+		border-radius: 5px;
+		padding: 3px 4px 3px 8px;
+	}
+	.custom-zone-entry__input {
+		background: transparent;
+		border: none;
+		outline: none;
+		color: var(--text-primary);
+		font-size: 0.875rem;
+		font-family: var(--font-body);
+		min-width: 130px;
+		padding: 3px 2px;
+	}
+	.custom-zone-entry__confirm, .custom-zone-entry__cancel {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: none;
+		border: none;
+		cursor: pointer;
+		padding: 2px 4px;
+		font-size: 0.8125rem;
+		line-height: 1;
+		border-radius: 3px;
+	}
+	.custom-zone-entry__confirm { color: var(--color-brand); }
+	.custom-zone-entry__confirm:disabled { color: var(--text-tertiary); cursor: not-allowed; }
+	.custom-zone-entry__confirm:not(:disabled):hover { background: color-mix(in srgb, var(--color-brand) 20%, transparent); }
+	.custom-zone-entry__cancel { color: var(--text-tertiary); }
+	.custom-zone-entry__cancel:hover { background: color-mix(in srgb, var(--color-danger, #f44) 15%, transparent); color: var(--color-danger, #f44); }
+	.type-grid {
+		display: grid;
+		grid-template-columns: repeat(4, 1fr);
+		gap: 10px;
+	}
+	.type-card {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 6px;
+		padding: 14px;
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-md);
+		background: var(--bg-surface);
+		cursor: pointer;
+		text-align: left;
+		transition: border-color 0.12s, background 0.12s;
+	}
+	.type-card:hover { background: var(--bg-surface-2); }
+	.type-card--active {
+		border-color: var(--color-brand);
+		background: radial-gradient(130% 130% at 18% 22%,
+			color-mix(in srgb, var(--color-brand) 20%, var(--bg-surface-2)) 0%,
+			color-mix(in srgb, var(--color-brand) 8%, var(--bg-surface-2)) 45%,
+			var(--bg-surface-2) 100%);
+	}
+	.type-card__icon {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 34px;
+		height: 34px;
+		border-radius: var(--radius-md);
+		color: var(--text-secondary);
+		background: var(--bg-surface-2);
+	}
+	.type-card--active .type-card__icon { color: var(--color-brand); }
+	.type-card__title { font-size: 0.9375rem; font-weight: 600; color: var(--text-primary); }
+	.type-card__sub { font-size: 0.8125rem; color: var(--text-tertiary); line-height: 1.3; }
+	@media (max-width: 1024px) {
+		.type-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+	}
+	@media (max-width: 640px) {
+		.mode-bar { grid-template-columns: 1fr; }
+		.mode-card { border-right: none; border-bottom: 1px solid var(--border-subtle); padding: 16px; }
+		.mode-card--active { border-bottom: 3px solid var(--color-brand); }
+		.type-grid { grid-template-columns: 1fr 1fr; }
 	}
 </style>
