@@ -198,7 +198,10 @@
 		submissionsLoading = true;
 		try {
 			submissions = await getSubmissions();
-		} catch { toastStore.error("Load failed", "Could not fetch submissions."); }
+		} catch (err) {
+			console.error("[admin/patterns] loadSubmissions", err);
+			toastStore.error("Load failed", "Could not fetch submissions.");
+		}
 		finally { submissionsLoading = false; }
 	}
 
