@@ -6,7 +6,7 @@
 	import Button from "$lib/components/ui/Button.svelte";
 	import Badge from "$lib/components/ui/Badge.svelte";
 	import PromoBanner from "$lib/components/ui/PromoBanner.svelte";
-	import { MARKETING_NAV } from "$lib/config";
+	import { MARKETING_NAV, SOLUTIONS_NAV } from "$lib/config";
 	import { userStore, shopStore, uiStore } from "$lib/stores";
 	import { signOutUser } from "$lib/firebase/auth";
 	import { page } from "$app/state";
@@ -59,7 +59,38 @@
 	}
 
 	function closeMenu() { menuOpen = false; }
+
+	// ─── Mobile menu ──────────────────────────────
+	let solutionsOpen = $state(false);
+	function closeMobile() { mobileMenuOpen = false; }
+
+	// Close on any navigation (incl. back/forward)
+	$effect(() => {
+		currentPath;
+		mobileMenuOpen = false;
+		menuOpen = false;
+	});
+	$effect(() => {
+		if (mobileMenuOpen) solutionsOpen = currentPath.startsWith("/solutions");
+	});
+	// Lock page scroll while the mobile menu is open
+	$effect(() => {
+		if (!mobileMenuOpen) return;
+		const prev = document.body.style.overflow;
+		document.body.style.overflow = "hidden";
+		return () => { document.body.style.overflow = prev; };
+	});
+
+	function onKeydown(e: KeyboardEvent) {
+		if (e.key !== "Escape") return;
+		mobileMenuOpen = false;
+		menuOpen = false;
+	}
+
+	const initials = $derived((user?.displayName ?? user?.email ?? "?").slice(0, 2).toUpperCase());
 </script>
+
+<svelte:window onkeydown={onKeydown} />
 
 <div class="marketing-shell">
 	<!-- ─── Promo banner (public only, hidden for authed users) ─── -->
@@ -143,9 +174,9 @@
 
 								<hr class="user-menu__sep" />
 
-								<a href="/studio"   role="menuitem" class="user-menu__item" onclick={closeMenu}>
-									<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4L8.12 15.88M14.47 14.48L20 20M8.12 8.12L12 12"/></svg>
-									Studio
+								<a href="/dashboard" role="menuitem" class="user-menu__item" onclick={closeMenu}>
+									<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
+									Dashboard
 								</a>
 								<a href="/settings" role="menuitem" class="user-menu__item" onclick={closeMenu}>
 									<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
@@ -193,8 +224,9 @@
 			<button
 				class="mkt-header__hamburger"
 				onclick={() => (mobileMenuOpen = !mobileMenuOpen)}
-				aria-label="Toggle menu"
+				aria-label={mobileMenuOpen ? "Close menu" : "Open menu"}
 				aria-expanded={mobileMenuOpen}
+				aria-controls="mkt-mobile-menu"
 			>
 				<svg
 					width="18"
@@ -217,24 +249,95 @@
 
 		<!-- Mobile menu -->
 		{#if mobileMenuOpen}
-			<div class="mkt-mobile-menu animate-slide-down">
-				{#each MARKETING_NAV as item}
-					<a
-						href={item.href}
-						class="mkt-mobile-link"
-						onclick={() => (mobileMenuOpen = false)}
-					>
-						{item.label}
-					</a>
-				{/each}
-				<div class="mkt-mobile-actions">
-					<ThemeToggle />
-					<Button variant="secondary" size="sm" href="/login"
-						>Sign in</Button
-					>
-					<Button variant="primary" size="sm" href="/signup"
-						>Start free</Button
-					>
+			<button class="mkt-mobile-backdrop" aria-label="Close menu" tabindex="-1" onclick={closeMobile}></button>
+			<div class="mkt-mobile-menu animate-slide-down" id="mkt-mobile-menu">
+				{#if userStore.loading}
+					<div class="mm-account mm-account--skeleton" aria-hidden="true"></div>
+				{:else if user}
+					<div class="mm-account">
+						<div class="mm-account__avatar">
+							{#if user.photoURL}
+								<img src={user.photoURL} alt="" class="mm-account__img" />
+							{:else}
+								<span aria-hidden="true">{initials}</span>
+							{/if}
+						</div>
+						<div class="mm-account__id">
+							<span class="mm-account__name">{user.displayName || "Account"}</span>
+							{#if user.email}<span class="mm-account__email">{user.email}</span>{/if}
+						</div>
+						<Badge variant={tierVariant()} size="sm">{tierLabel()}</Badge>
+					</div>
+					<Button variant="primary" size="md" href="/dashboard" class="mm-cta">Go to Dashboard</Button>
+				{:else}
+					<Button variant="primary" size="md" href="/signup" class="mm-cta">Start free</Button>
+					<Button variant="secondary" size="md" href="/login" class="mm-cta">Sign in</Button>
+				{/if}
+
+				<p class="mm-label">Explore</p>
+				<nav class="mm-list" aria-label="Mobile navigation">
+					{#each MARKETING_NAV as item}
+						{#if item.label === "Solutions"}
+							<button
+								class="mm-link mm-link--toggle"
+								class:active={currentPath.startsWith("/solutions")}
+								aria-expanded={solutionsOpen}
+								aria-controls="mm-solutions"
+								onclick={() => (solutionsOpen = !solutionsOpen)}
+							>
+								{item.label}
+								<svg class="mm-chevron" class:mm-chevron--open={solutionsOpen} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+							</button>
+							{#if solutionsOpen}
+								<div class="mm-sub" id="mm-solutions">
+									{#each SOLUTIONS_NAV as sol}
+										<a
+											href={sol.href}
+											class="mm-chip"
+											class:active={currentPath === sol.href}
+											onclick={closeMobile}>{sol.label}</a
+										>
+									{/each}
+								</div>
+							{/if}
+						{:else}
+							<a
+								href={item.href}
+								class="mm-link"
+								class:active={currentPath === item.href}
+								onclick={closeMobile}
+							>
+								{item.label}
+								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+							</a>
+						{/if}
+					{/each}
+				</nav>
+
+				{#if user}
+					<p class="mm-label">Account</p>
+					<div class="mm-list">
+						<a href="/settings" class="mm-link" onclick={closeMobile}>Settings
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+						</a>
+						{#if user.tier !== "free" && user.tier !== "admin"}
+							<a href="/settings?tab=billing" class="mm-link" onclick={closeMobile}>Billing
+								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+							</a>
+						{/if}
+						{#if user.tier === "admin"}
+							<a href="/admin" class="mm-link mm-link--admin" onclick={closeMobile}>Admin panel
+								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+							</a>
+						{/if}
+					</div>
+				{/if}
+
+				<div class="mm-footer">
+					<div class="mm-theme"><span>Theme</span><ThemeToggle /></div>
+					{#if user}
+						<button class="mm-signout" onclick={() => { closeMobile(); signOutUser(); }}>Sign out</button>
+					{/if}
 				</div>
 			</div>
 		{/if}
@@ -463,37 +566,82 @@
 		cursor: pointer;
 	}
 
+	/* ─── Mobile menu (v2) ─────────────────── */
+	.mkt-mobile-backdrop {
+		position: fixed; inset: 0; z-index: 40;
+		background: rgba(0, 0, 0, 0.45); border: none; padding: 0; cursor: default;
+	}
 	.mkt-mobile-menu {
+		position: absolute; left: 0; right: 0; top: 100%; z-index: 51;
+		display: flex; flex-direction: column; gap: 6px;
+		max-height: calc(100dvh - 60px); overflow-y: auto; overscroll-behavior: contain;
+		padding: 16px 24px max(20px, env(safe-area-inset-bottom));
 		background: var(--bg-surface);
-		border-top: 1px solid var(--border-subtle);
-		padding: 16px 24px;
-		display: flex;
-		flex-direction: column;
-		gap: 4px;
+		border-bottom: 1px solid var(--border-default);
+		box-shadow: var(--shadow-lg);
 	}
+	:global(.mm-cta) { width: 100%; justify-content: center; }
 
-	.mkt-mobile-link {
-		padding: 10px 12px;
-		font-size: 0.9375rem;
-		font-weight: 500;
-		color: var(--text-secondary);
-		text-decoration: none;
-		border-radius: var(--radius-md);
-		transition: background 0.12s;
+	.mm-account {
+		display: flex; align-items: center; gap: 12px;
+		padding: 12px; margin-bottom: 4px;
+		background: var(--bg-surface-3); border: 1px solid var(--border-subtle);
+		border-radius: var(--radius-lg);
 	}
+	.mm-account--skeleton { height: 64px; }
+	.mm-account__avatar {
+		width: 40px; height: 40px; border-radius: 50%; flex-shrink: 0; overflow: hidden;
+		background: var(--color-brand); color: #fff;
+		display: flex; align-items: center; justify-content: center;
+		font-family: var(--font-display); font-size: 0.8125rem; font-weight: 700;
+	}
+	.mm-account__img { width: 100%; height: 100%; object-fit: cover; }
+	.mm-account__id { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+	.mm-account__name { font-size: 0.9375rem; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+	.mm-account__email { font-size: 0.75rem; color: var(--text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-	.mkt-mobile-link:hover {
-		background: var(--interactive-hover);
-		color: var(--text-primary);
+	.mm-label {
+		margin: 10px 4px 2px;
+		font-family: var(--font-display); font-size: 0.6875rem; font-weight: 700;
+		letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-tertiary);
 	}
+	.mm-list { display: flex; flex-direction: column; }
+	.mm-link {
+		display: flex; align-items: center; justify-content: space-between;
+		min-height: 46px; padding: 0 12px;
+		font-size: 1rem; font-weight: 500; color: var(--text-secondary);
+		text-decoration: none; border-radius: var(--radius-md);
+		transition: background 0.12s, color 0.12s;
+	}
+	.mm-link svg { opacity: 0.45; flex-shrink: 0; }
+	.mm-link:hover, .mm-link:active { background: var(--interactive-hover); color: var(--text-primary); }
+	.mm-link.active { color: var(--text-primary); background: var(--interactive-hover); }
+	.mm-link--toggle { width: 100%; background: none; border: none; cursor: pointer; font-family: var(--font-body); text-align: left; }
+	.mm-chevron { transition: transform 0.15s; }
+	.mm-chevron--open { transform: rotate(180deg); }
+	.mm-link--admin { color: var(--color-danger); }
 
-	.mkt-mobile-actions {
-		display: flex;
-		gap: 8px;
-		margin-top: 12px;
-		padding-top: 12px;
-		border-top: 1px solid var(--border-subtle);
+	.mm-sub { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 12px 10px; }
+	.mm-chip {
+		padding: 6px 12px; font-size: 0.8125rem; font-weight: 500;
+		color: var(--text-secondary); text-decoration: none;
+		background: var(--bg-surface-3); border: 1px solid var(--border-subtle);
+		border-radius: 999px; transition: border-color 0.12s, color 0.12s;
 	}
+	.mm-chip:hover, .mm-chip.active { color: var(--text-primary); border-color: var(--border-default); }
+
+	.mm-footer {
+		display: flex; flex-direction: column; gap: 8px;
+		margin-top: 10px; padding-top: 12px; border-top: 1px solid var(--border-subtle);
+	}
+	.mm-theme { display: flex; align-items: center; justify-content: space-between; padding: 0 12px; font-size: 0.875rem; color: var(--text-secondary); }
+	.mm-signout {
+		min-height: 44px; border-radius: var(--radius-md); cursor: pointer;
+		background: none; border: 1px solid var(--border-default);
+		font-family: var(--font-body); font-size: 0.9375rem; font-weight: 500;
+		color: var(--color-danger);
+	}
+	.mm-signout:hover { background: color-mix(in srgb, var(--color-danger) 10%, transparent); }
 
 	/* Main */
 	.mkt-main {
@@ -577,11 +725,17 @@
 		gap: 16px;
 	}
 
-	/* Responsive — collapse the full nav + actions into the hamburger menu
-	   well before the links run out of room, so the desktop nav never
-	   crowds or wraps. Threshold accounts for brand + 7 nav links + actions
-	   at their comfortable (non-cramped) sizes. */
-	@media (max-width: 1120px) {
+	/* Responsive — the desktop nav compacts first (tighter links), and only
+	   collapses into the hamburger menu once even the compact layout would
+	   crowd (brand + 7 links + actions need ~900px at compact sizes). */
+	@media (max-width: 1200px) {
+		.mkt-header__nav { margin-left: 12px; }
+		.mkt-nav-link { padding: 8px 10px; font-size: 0.875rem; }
+	}
+	@media (min-width: 1025px) {
+		.mkt-mobile-menu, .mkt-mobile-backdrop { display: none; }
+	}
+	@media (max-width: 1024px) {
 		.mkt-header__nav {
 			display: none;
 		}
@@ -600,10 +754,7 @@
 			padding: 0 16px;
 		}
 		.mkt-mobile-menu {
-			padding: 16px;
-		}
-		.mkt-mobile-actions {
-			flex-wrap: wrap;
+			padding: 16px 16px max(20px, env(safe-area-inset-bottom));
 		}
 	}
 

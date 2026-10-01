@@ -39,6 +39,16 @@ export const PENDING_INVITE_KEY = "omniplot_pending_invite";
 
 // ─── Internal state ───────────────────────────
 let unsubProfile: (() => void) | null = null;
+
+// A signed-in Firebase user whose profile snapshot comes back empty is usually
+// transient (cache miss, doc mid-write). Hold the loading state this long
+// before treating it as "no profile" so the UI doesn't flash the guest state.
+const EMPTY_PROFILE_GRACE_MS = 5000;
+let emptyProfileTimer: ReturnType<typeof setTimeout> | null = null;
+function clearEmptyProfileTimer(): void {
+	if (emptyProfileTimer) clearTimeout(emptyProfileTimer);
+	emptyProfileTimer = null;
+}
 let localSessionId: string | null = null;
 
 // Returns the browser-local session ID, creating it once per browser profile.
@@ -60,6 +70,7 @@ function forceSignOut(reason: SignOutReason): void {
 	sessionStorage.removeItem('omniplot_session_logged');
 	unsubProfile?.();
 	unsubProfile = null;
+	clearEmptyProfileTimer();
 	userStore.set(null);
 	signOut(auth).catch(() => {});
 	if (typeof window !== "undefined") {
@@ -81,6 +92,7 @@ export function initAuth(): () => void {
 		// Tear down previous profile subscription
 		unsubProfile?.();
 		unsubProfile = null;
+		clearEmptyProfileTimer();
 
 		if (!firebaseUser) {
 			localSessionId = null;
@@ -146,10 +158,16 @@ export function initAuth(): () => void {
 		// Subscribe to live Firestore updates; detect session kicks
 		unsubProfile = subscribeToUser(firebaseUser.uid, (profile) => {
 			if (!profile) {
-				userStore.set(null);
-				userStore.setLoading(false);
+				if (!emptyProfileTimer) {
+					emptyProfileTimer = setTimeout(() => {
+						emptyProfileTimer = null;
+						userStore.set(null);
+						userStore.setLoading(false);
+					}, EMPTY_PROFILE_GRACE_MS);
+				}
 				return;
 			}
+			clearEmptyProfileTimer();
 
 			// Suspended by an admin while signed in
 			if (profile.status === "suspended") {
