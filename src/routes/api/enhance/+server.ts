@@ -5,7 +5,7 @@ import { checkRateLimit, rateLimitedResponse } from '$lib/server/rate-limit';
 import { logServerError } from '$lib/server/log-error';
 
 export const config = {
-	runtime:     'nodejs20.x',
+	runtime:     'nodejs24.x',
 	maxDuration: 30,
 };
 

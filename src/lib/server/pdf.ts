@@ -27,9 +27,9 @@ import * as pdfjsWorker from 'pdfjs-dist/legacy/build/pdf.worker.mjs';
 (globalThis as unknown as { pdfjsWorker: typeof pdfjsWorker }).pdfjsWorker = pdfjsWorker;
 
 // pdfjs-dist (as of v6) uses Promise.withResolvers, which landed in V8/Node 22 —
-// the api routes here run on the nodejs20.x runtime, so it's missing there.
-// Polyfilling once at module load keeps every route on the pinned Node 20
-// runtime instead of needing a version bump just for this one dependency.
+// older runtimes (nodejs20.x) lack it, so it can be missing there.
+// Polyfilling once at module load keeps the routes working on any
+// runtime without depending on a specific Node version.
 if (typeof Promise.withResolvers !== 'function') {
 	(Promise as unknown as { withResolvers: <T>() => { promise: Promise<T>; resolve: (v: T) => void; reject: (e?: unknown) => void } }).withResolvers = function withResolvers<T>() {
 		let resolve!: (v: T) => void;
