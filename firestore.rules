@@ -76,6 +76,12 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // ─── Vehicle media (make logos / model images for the library browser) ──
+    match /vehicleMedia/{mediaId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
     // ─── Patterns (public catalog) ────────────────────────────────────────
     match /patterns/{patternId} {
       allow read: if true;

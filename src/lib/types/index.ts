@@ -529,6 +529,8 @@ export interface VehicleEntry {
 	projectType?: ProjectType;
 	make?: string;
 	model?: string;
+	/** Trim / variant ("Sport", "Crew Cab"). Absent = the base / unspecified trim. */
+	trim?: string;
 	year?: number;
 	bodyStyle?: "sedan" | "coupe" | "suv" | "truck" | "convertible" | "wagon" | "hatchback";
 	// Residential/commercial/custom subjects use these instead of make/model/year.
@@ -541,6 +543,21 @@ export interface VehicleEntry {
 	// uid of the community member whose approved submission created this
 	// subject. Absent for subjects an admin added by hand.
 	contributedBy?: string;
+}
+
+/**
+ * Imagery for the vehicle browser, keyed by `vehicleMediaId`. One doc per make
+ * (logo + cover image), per model (image) and — later — per trim (image).
+ * Every field is optional: the UI falls back to a monogram / silhouette.
+ */
+export interface VehicleMedia {
+	id: string;
+	kind: "make" | "model" | "trim";
+	make: string;
+	model?: string;
+	trim?: string;
+	logoUrl?: string;
+	imageUrl?: string;
 }
 
 export interface PatternRequest {
@@ -604,6 +621,8 @@ export interface UserPattern {
 	vehicleId?: string;        // set if linking to existing public vehicle
 	make: string;
 	models: string[];
+	/** Trim / variant, applied to every model in `models`. Absent = base. */
+	trim?: string;
 	years: string[];   // e.g. ["2018", "2020-2024"]
 	bodyStyle: "sedan" | "coupe" | "suv" | "truck" | "convertible" | "wagon" | "hatchback";
 	// Pattern geometry

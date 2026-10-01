@@ -34,6 +34,7 @@ import type {
 	CutJob,
 	AdminStats,
 	VehicleEntry,
+	VehicleMedia,
 	PatternRequest,
 	Shop,
 	ShopMember,
@@ -66,6 +67,7 @@ export const Collections = {
 	PLOTTER_ERRORS: "plotterErrors",
 	USER_PATTERNS: "userPatterns",
 	PATTERN_ADJUSTMENTS: "patternAdjustments",
+	VEHICLE_MEDIA: "vehicleMedia",
 } as const;
 
 // ─── Authenticated server-route helper ────────
@@ -383,6 +385,7 @@ export function toVehicleEntry(id: string, data: DocumentData): VehicleEntry {
 		projectType: data.projectType ?? "vehicle",
 		make: data.make,
 		model: data.model,
+		trim: data.trim || undefined,
 		year: data.year,
 		bodyStyle: data.bodyStyle,
 		address: data.address,
@@ -448,6 +451,48 @@ export function subscribeRequests(
 		(snap) => onNext(snap.docs.map((d) => toPatternRequest(d.id, d.data()))),
 		onError,
 	);
+}
+
+// ─── Vehicle media (logos + imagery for the vehicle browser) ──
+export function subscribeVehicleMedia(
+	onNext: (media: VehicleMedia[]) => void,
+	onError?: (err: Error) => void,
+): Unsubscribe {
+	return onSnapshot(
+		collection(db, Collections.VEHICLE_MEDIA),
+		(snap) =>
+			onNext(
+				snap.docs.map((d) => {
+					const x = d.data();
+					return {
+						id: d.id,
+						kind: x.kind ?? "make",
+						make: x.make ?? "",
+						model: x.model || undefined,
+						trim: x.trim || undefined,
+						logoUrl: x.logoUrl || undefined,
+						imageUrl: x.imageUrl || undefined,
+					} satisfies VehicleMedia;
+				}),
+			),
+		onError,
+	);
+}
+
+export async function setVehicleMediaDoc(m: VehicleMedia): Promise<void> {
+	await setDoc(doc(db, Collections.VEHICLE_MEDIA, m.id), {
+		kind: m.kind,
+		make: m.make,
+		model: m.model ?? null,
+		trim: m.trim ?? null,
+		logoUrl: m.logoUrl ?? null,
+		imageUrl: m.imageUrl ?? null,
+		updatedAt: serverTimestamp(),
+	});
+}
+
+export async function deleteVehicleMediaDoc(id: string): Promise<void> {
+	await deleteDoc(doc(db, Collections.VEHICLE_MEDIA, id));
 }
 
 // ─── VehicleEntry CRUD ────────────────────────
@@ -572,6 +617,7 @@ function toUserPattern(id: string, data: DocumentData): UserPattern {
 		propertyLabel:     data.propertyLabel || undefined,
 		vehicleId:         data.vehicleId,
 		make:              data.make                                          ?? "",
+		trim:              data.trim || undefined,
 		models:            Array.isArray(data.models) ? data.models
 		                   : data.model ? [data.model as string] : [],
 		years:             Array.isArray(data.years) ? data.years
@@ -650,7 +696,7 @@ export async function updateUserPattern(
 	patch: Partial<Pick<UserPattern,
 		| "submitToCommunity" | "name" | "notes" | "svgPath"
 		| "widthInches" | "heightInches" | "coverage"
-		| "category" | "zones" | "customZoneLabels" | "make" | "models" | "years" | "bodyStyle"
+		| "category" | "zones" | "customZoneLabels" | "make" | "models" | "trim" | "years" | "bodyStyle"
 		| "projectType" | "patternName" | "address" | "propertyLabel"
 	>>,
 ): Promise<void> {
@@ -789,6 +835,7 @@ export async function batchSeedData(
 				projectType: v.projectType ?? "vehicle",
 				make: v.make ?? null,
 				model: v.model ?? null,
+				trim: v.trim ?? null,
 				year: v.year ?? null,
 				bodyStyle: v.bodyStyle ?? null,
 				address: v.address ?? null,

@@ -7,7 +7,7 @@
 	import Badge from "$lib/components/ui/Badge.svelte";
 	import PatternPreview from "$lib/components/ui/PatternPreview.svelte";
 	import Button from "$lib/components/ui/Button.svelte";
-	import { uid, getItemColor } from "$lib/utils";
+	import { uid, getItemColor, formatMeasure } from "$lib/utils";
 	import { bestNest } from "$lib/utils/nesting";
 	import { getUserPatterns, updateUserPattern, deleteUserPattern, addPatternAdjustmentRequest } from "$lib/firebase/firestore";
 	import { tooltip } from "$lib/actions/tooltip";
@@ -17,6 +17,13 @@
 	import { page } from "$app/state";
 	import { goto } from "$app/navigation";
 	import type { VehicleEntry } from "$lib/stores/patternStore.svelte";
+	import VehicleTile from "$lib/components/library/VehicleTile.svelte";
+	import VehicleHero from "$lib/components/library/VehicleHero.svelte";
+	import VehicleTreeFilter, { type TreePath } from "$lib/components/library/VehicleTreeFilter.svelte";
+	import {
+		buildTree, entriesUnder, mediaFor, yearSpan, trimFilter,
+		BASE_TRIM_LABEL, TRIM_BASE, TRIM_ALL,
+	} from "$lib/utils/vehicleCatalog";
 
 	// ─── Subject types ────────────────────────────
 	const PROJECT_TYPES: { value: ProjectType; label: string; noun: string; nounPlural: string }[] = [
@@ -30,7 +37,7 @@
 
 	function subjectName(v: VehicleEntry): string {
 		if (typeOf(v) !== "vehicle") return v.propertyLabel || v.model || v.address || "Untitled";
-		return [v.year, v.make, v.model].filter(Boolean).join(" ");
+		return [v.year, v.make, v.model, v.trim].filter(Boolean).join(" ");
 	}
 
 	// ─── State ────────────────────────────────────
@@ -45,10 +52,39 @@
 	let projectType    = $state<ProjectType>("vehicle");
 	let category       = $state<PatternCategory>("ppf");
 	let search         = $state("");
-	let activeMake     = $state("All");
 	let activeYear     = $state("All");
 	let activeZone     = $state("All zones");
+	// Non-vehicle subjects (property / custom) still open one subject at a time.
+	// Vehicles drill down by URL instead — see `path` below.
 	let selectedVehicle = $state<VehicleEntry | null>(null);
+	let browseOpen     = $state(false);
+
+	// ─── Vehicle drill-down: ?make=&model=&trim= ──
+	// In the URL so Back, deep links and breadcrumbs all work. Values are the
+	// grouping keys from vehicleCatalog; trim is TRIM_BASE / TRIM_ALL / a trim key.
+	const path = $derived.by<TreePath>(() => {
+		const q = page.url.searchParams;
+		const make = q.get("make") || undefined;
+		const model = make ? q.get("model") || undefined : undefined;
+		const trim = model ? q.get("trim") || undefined : undefined;
+		return { make, model, trim };
+	});
+	function go(p: TreePath) {
+		const url = new URL(page.url);
+		for (const k of ["make", "model", "trim"] as const) {
+			const val = p[k];
+			if (val) url.searchParams.set(k, val); else url.searchParams.delete(k);
+		}
+		search = "";
+		browseOpen = false;
+		goto(url, { noScroll: true, keepFocus: true });
+	}
+	// Any move (including browser Back) starts the new level with a clean slate.
+	$effect(() => {
+		void `${path.make}/${path.model}/${path.trim}`;
+		activeZone = "All zones";
+		selectedPatternIds = new Set();
+	});
 	let view           = $state<"grid" | "list">("grid");
 	let selectedPatternIds = $state<Set<string>>(new Set());
 
@@ -115,28 +151,21 @@
 	}
 	const inZone = (p: Pattern) => activeZone === "All zones" || zoneGroup(p) === activeZone;
 
-	// ─── Vehicle filters (vehicle subjects only, never blank) ──
-	const MAKES = $derived(
-		["All", ...new Set(
-			inScope.filter((x) => typeOf(x.v) === "vehicle" && x.v.make).map((x) => x.v.make!).sort((a, b) => a.localeCompare(b)),
-		)],
-	);
-	const YEARS = $derived(
-		["All", ...new Set(
-			inScope
-				.filter((x) => typeOf(x.v) === "vehicle" && x.v.year)
-				.filter((x) => activeMake === "All" || x.v.make === activeMake)
-				.map((x) => String(x.v.year))
-				.sort((a, b) => Number(b) - Number(a)),
-		)],
-	);
+	// ─── Vehicle catalog (make → model → trim) ────
+	const isVeh = $derived(projectType === "vehicle");
+	const vehScope = $derived(inScope.filter((x) => typeOf(x.v) === "vehicle" && x.v.make && x.v.model));
+	// Unfiltered tree — names, logos and year options come from here, so a
+	// search or year filter can never make the current breadcrumb lose its label.
+	const catalogTree = $derived(buildTree(vehScope.map((x) => ({ v: x.v, count: x.pats.length }))));
+	const trimArg = $derived(trimFilter(path.trim));
+	const pathEntries = $derived(entriesUnder(vehScope, { make: path.make, model: path.model, trim: trimArg }));
 
-	// Year options are scoped to the make; a make with no such year resets it.
+	const YEARS = $derived(
+		["All", ...new Set(pathEntries.filter((x) => x.v.year).map((x) => String(x.v.year)).sort((a, b) => Number(b) - Number(a)))],
+	);
+	// A year that isn't in the current branch resets it.
 	$effect(() => {
 		if (!YEARS.includes(activeYear)) activeYear = "All";
-	});
-	$effect(() => {
-		if (!MAKES.includes(activeMake)) activeMake = "All";
 	});
 	$effect(() => {
 		if (!ZONES.includes(activeZone)) activeZone = "All zones";
@@ -149,13 +178,55 @@
 		inScope.filter((x) => {
 			const v = x.v;
 			const q = search.trim().toLowerCase();
-			const matchSearch = !q || `${v.year ?? ""} ${v.make ?? ""} ${v.model ?? ""} ${v.propertyLabel ?? ""} ${v.address ?? ""}`.toLowerCase().includes(q);
-			const isVehicle = typeOf(v) === "vehicle";
-			const matchMake = !isVehicle || activeMake === "All" || v.make === activeMake;
-			const matchYear = !isVehicle || activeYear === "All" || String(v.year) === activeYear;
-			return matchSearch && matchMake && matchYear;
+			const matchSearch = !q || `${v.year ?? ""} ${v.make ?? ""} ${v.model ?? ""} ${v.trim ?? ""} ${v.propertyLabel ?? ""} ${v.address ?? ""}`.toLowerCase().includes(q);
+			const matchYear = typeOf(v) !== "vehicle" || activeYear === "All" || String(v.year) === activeYear;
+			return matchSearch && matchYear;
 		}),
 	);
+
+	// Tree the tiles and sidebar render: search + year applied, zone not (zone
+	// is a pattern-level filter, offered once a trim's patterns are showing).
+	const vehBase = $derived(baseFiltered.filter((x) => typeOf(x.v) === "vehicle" && x.v.make && x.v.model));
+	const tree = $derived(buildTree(vehBase.map((x) => ({ v: x.v, count: x.pats.length }))));
+	const treeTotal = $derived(tree.reduce((n, m) => n + m.count, 0));
+
+	const makeNode = $derived(path.make ? tree.find((m) => m.key === path.make) : undefined);
+	const modelNode = $derived(path.model ? makeNode?.models.find((o) => o.key === path.model) : undefined);
+	const makeLabel = $derived(catalogTree.find((m) => m.key === path.make)?.label ?? "");
+	const modelLabel = $derived(catalogTree.find((m) => m.key === path.make)?.models.find((o) => o.key === path.model)?.label ?? "");
+	const trimLabel = $derived.by(() => {
+		if (!path.trim || path.trim === TRIM_ALL) return "";
+		if (path.trim === TRIM_BASE) return BASE_TRIM_LABEL;
+		return catalogTree.find((m) => m.key === path.make)?.models.find((o) => o.key === path.model)?.trims.find((t) => t.key === path.trim)?.label ?? "";
+	});
+
+	// A model with a single trim skips the trim level and opens its patterns.
+	const effTrim = $derived.by(() => {
+		if (!path.model) return undefined;
+		if (path.trim) return path.trim;
+		const only = catalogTree.find((m) => m.key === path.make)?.models.find((o) => o.key === path.model)?.trims;
+		return only?.length === 1 ? (only[0].key === "" ? TRIM_BASE : only[0].key) : undefined;
+	});
+	type Level = "makes" | "models" | "trims" | "patterns";
+	const level = $derived<Level>(!path.make ? "makes" : !path.model ? "models" : effTrim === undefined ? "trims" : "patterns");
+
+	const mediaOf = (make: string, model?: string, trim?: string) => mediaFor(patternStore.media, make, model, trim);
+	const logoFor = (makeLabel: string) => mediaOf(makeLabel)?.logoUrl;
+
+	// Flat matches while searching from the top: every model across makes.
+	const searching = $derived(isVeh && search.trim() !== "" && !path.make);
+	const searchHits = $derived(tree.flatMap((m) => m.models.map((o) => ({ m, o }))));
+
+	// Leaf: the patterns under the chosen make / model / trim, across years.
+	const leafEntries = $derived(
+		level === "patterns"
+			? entriesUnder(vehBase, { make: path.make, model: path.model, trim: trimFilter(effTrim) })
+					.sort((a, b) => (b.v.year ?? 0) - (a.v.year ?? 0))
+			: [],
+	);
+	const entryOf = $derived(new Map(leafEntries.flatMap((x) => x.pats.map((p) => [p.id, x.v] as const))));
+
+	const leafActive = $derived(isVeh ? level === "patterns" : !!selectedVehicle);
 
 	const filtered = $derived(
 		baseFiltered
@@ -163,12 +234,14 @@
 			.filter((x) => x.shown.length > 0),
 	);
 
-	// Zone pills + counts: the open subject's patterns, else every subject the
-	// other filters leave.
+	// Zone pills + counts: the patterns on screen, else every subject the
+	// other filters leave (non-vehicle types).
 	const zoneSource = $derived(
-		selectedVehicle
-			? patternStore.getPatterns(selectedVehicle.id, category, true)
-			: baseFiltered.flatMap((x) => x.pats),
+		isVeh
+			? leafEntries.flatMap((x) => x.pats)
+			: selectedVehicle
+				? patternStore.getPatterns(selectedVehicle.id, category, true)
+				: baseFiltered.flatMap((x) => x.pats),
 	);
 	const zoneCounts = $derived(
 		zoneSource.reduce((acc, p) => {
@@ -187,15 +260,21 @@
 	});
 
 	// Stats reflect exactly what the filters above leave visible.
-	const stats = $derived({
-		patterns: filtered.reduce((n, x) => n + x.shown.length, 0),
-		subjects: filtered.length,
+	const stats = $derived.by(() => {
+		if (!isVeh) return { patterns: filtered.reduce((n, x) => n + x.shown.length, 0), subjects: filtered.length, subjectLabel: "" };
+		if (leafActive) return { patterns: visibleStorePatterns.length, subjects: leafEntries.length, subjectLabel: "model years" };
+		const scope = path.make ? (makeNode ? [makeNode] : []) : tree;
+		return {
+			patterns: scope.reduce((n, m) => n + m.count, 0),
+			subjects: scope.reduce((n, m) => n + m.models.length, 0),
+			subjectLabel: "models",
+		};
 	});
 
 	function switchProjectType(p: ProjectType) {
 		projectType = p;
 		selectedVehicle = null;
-		activeMake = "All";
+		if (path.make) go({});
 		activeYear = "All";
 		activeZone = "All zones";
 		search = "";
@@ -215,7 +294,9 @@
 
 	// ─── Selected subject's patterns ──────────────
 	const vehiclePatterns = $derived(
-		selectedVehicle ? patternStore.getPatterns(selectedVehicle.id, category, true) : [],
+		isVeh
+			? leafEntries.flatMap((x) => x.pats)
+			: selectedVehicle ? patternStore.getPatterns(selectedVehicle.id, category, true) : [],
 	);
 	const visibleStorePatterns = $derived(vehiclePatterns.filter(inZone));
 	const useStorePatterns = $derived(vehiclePatterns.length > 0);
@@ -240,7 +321,9 @@
 		const m = MIRROR_PAIRS[p.zone];
 		if (!m) return null;
 		const t = p.projectType ?? (selectedVehicle ? typeOf(selectedVehicle) : projectType);
-		const partner = vehiclePatterns.find((x) => x.zone === m && x.id !== p.id) ?? null;
+		// Prefer the same model year's own pattern — a leaf spans several years.
+		const partner = vehiclePatterns.find((x) => x.zone === m && x.id !== p.id && x.vehicleId === p.vehicleId)
+			?? vehiclePatterns.find((x) => x.zone === m && x.id !== p.id) ?? null;
 		return { zone: m, label: zoneLabel(m, p.category, t), partner };
 	});
 
@@ -303,7 +386,7 @@
 
 	function mySubjectLabel(p: UserPattern): string {
 		if ((p.projectType ?? "vehicle") !== "vehicle") return p.propertyLabel || p.patternName || p.address || "";
-		return [p.years.join(", "), p.make, p.models.join(" / ")].filter(Boolean).join(" ");
+		return [p.years.join(", "), p.make, p.models.join(" / "), p.trim].filter(Boolean).join(" ");
 	}
 
 	const shownMine = $derived(
@@ -350,7 +433,7 @@
 			message: "It's removed from your library for good. Anything already placed in Studio stays there.",
 			details: [
 				{ label: "Zones", value: compactZones(p) || "—" },
-				{ label: "Size", value: `${p.widthInches}" × ${p.heightInches}"` },
+				{ label: "Size", value: `${formatMeasure(p.widthInches)}" × ${formatMeasure(p.heightInches)}"` },
 			],
 			variant: "danger",
 			confirmLabel: "Delete pattern",
@@ -528,14 +611,14 @@
 		} else {
 			toastStore.success(
 				"Added to canvas",
-				`${pattern.name}${suffix} — ${pattern.widthInches}" × ${pattern.heightInches}"${placed?.rotation ? " (rotated)" : ""}`,
+				`${pattern.name}${suffix} — ${formatMeasure(pattern.widthInches)}" × ${formatMeasure(pattern.heightInches)}"${placed?.rotation ? " (rotated)" : ""}`,
 			);
 		}
 	}
 
 	// ─── Batch add (selected patterns) ──────────
 	function addAllSelected() {
-		if (!selectedVehicle || !useStorePatterns) return;
+		if (!leafActive || !useStorePatterns) return;
 		const toAdd = vehiclePatterns.filter((p) => selectedPatternIds.has(p.id));
 		toAdd.forEach((pattern) => addPatternToCanvas(pattern));
 		if (toAdd.length > 1) {
@@ -573,15 +656,6 @@
 		requestForm = { year: new Date().getFullYear(), make: "", model: "", title: "", notes: "" };
 	}
 
-	const BODY_STYLE_ICON: Record<string, string> = {
-		sedan:       "M2 14 L6 8 L18 8 L22 14 Z",
-		coupe:       "M3 14 L7 7 L17 7 L21 14 Z",
-		suv:         "M2 14 L4 6 L20 6 L22 14 Z",
-		truck:       "M2 14 L4 8 L12 8 L12 6 L20 6 L22 14 Z",
-		hatchback:   "M2 14 L5 8 L19 8 L22 11 L22 14 Z",
-		wagon:       "M2 14 L4 7 L20 7 L22 14 Z",
-		convertible: "M3 14 L8 10 L16 10 L21 14 Z",
-	};
 </script>
 
 <svelte:head>
@@ -597,22 +671,25 @@
 				<input
 					type="search"
 					class="lib-search"
-					placeholder={projectType === "vehicle" ? "Search make, model, year…" : "Search by name or address…"}
+					placeholder={projectType === "vehicle" ? "Search make, model, trim, year…" : "Search by name or address…"}
 					bind:value={search}
 					aria-label="Search {typeMeta(projectType).nounPlural}"
 				/>
 			</div>
 
-			{#if projectType === "vehicle" && MAKES.length > 2}
-				<div class="lib-section-label">Make</div>
-				<div class="lib-filter-pills">
-					{#each MAKES as make}
-						<button class="lib-pill" class:active={activeMake === make} onclick={() => (activeMake = make)} aria-pressed={activeMake === make}>{make}</button>
-					{/each}
+			{#if isVeh && tree.length}
+				<!-- Desktop: the tree lives here. ≤768px it moves into a sheet. -->
+				<div class="lib-tree">
+					<div class="lib-section-label">Browse</div>
+					<VehicleTreeFilter {tree} {path} total={treeTotal} {logoFor} onselect={go} trimBase={TRIM_BASE} />
 				</div>
+				<button class="lib-pill lib-browse-btn" onclick={() => (browseOpen = true)}>
+					<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+					{makeLabel ? [makeLabel, modelLabel].filter(Boolean).join(" › ") : "Browse makes"}
+				</button>
 			{/if}
 
-			{#if projectType === "vehicle" && YEARS.length > 2}
+			{#if isVeh && YEARS.length > 2}
 				<div class="lib-section-label">Year</div>
 				<div class="lib-filter-pills">
 					{#each YEARS as year}
@@ -640,7 +717,7 @@
 				</div>
 				<div class="lib-stat">
 					<span class="lib-stat__val">{stats.subjects}</span>
-					<span class="lib-stat__label">{stats.subjects === 1 ? typeMeta(projectType).noun : typeMeta(projectType).nounPlural}</span>
+					<span class="lib-stat__label">{isVeh ? (stats.subjects === 1 ? stats.subjectLabel.replace(/s$/, "") : stats.subjectLabel) : stats.subjects === 1 ? typeMeta(projectType).noun : typeMeta(projectType).nounPlural}</span>
 				</div>
 			</div>
 
@@ -745,8 +822,12 @@
 					{categoriesForType.length ? `${categoryLabel(category)} · ${typeMeta(projectType).label}` : `${typeMeta(projectType).label} library`}
 				</h1>
 				<p class="library__sub">
-					{#if selectedVehicle}
+					{#if leafActive}
 						Select patterns below
+					{:else if isVeh}
+						{#if level === "makes"}{tree.length} {tree.length === 1 ? "make" : "makes"} · choose one to see its models
+						{:else if level === "models"}Choose a model
+						{:else}Choose a trim or variant{/if}
 					{:else}
 						{filtered.length} {filtered.length === 1 ? typeMeta(projectType).noun : typeMeta(projectType).nounPlural} · select one to view its patterns
 					{/if}
@@ -757,7 +838,7 @@
 					<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
 					Upload Pattern
 				</a>
-				{#if !selectedVehicle}
+				{#if !isVeh && !selectedVehicle}
 					<div class="view-divider" aria-hidden="true"></div>
 					<button class="view-btn" class:active={view === "grid"} onclick={() => (view = "grid")} aria-label="Grid view" aria-pressed={view === "grid"}>
 						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
@@ -769,48 +850,173 @@
 			</div>
 		</div>
 
-		<!-- Subject grid -->
-		{#if !selectedVehicle}
+		{#snippet crumbs()}
+			<nav class="crumbs" aria-label="Breadcrumb">
+				<button class="crumb" onclick={() => go({})}>All makes</button>
+				{#if path.make}
+					<span class="crumb-sep" aria-hidden="true">/</span>
+					{#if path.model}
+						<button class="crumb" onclick={() => go({ make: path.make })}>{makeLabel || path.make}</button>
+						<span class="crumb-sep" aria-hidden="true">/</span>
+						{#if level === "patterns" && path.trim}
+							<button class="crumb" onclick={() => go({ make: path.make, model: path.model })}>{modelLabel}</button>
+							<span class="crumb-sep" aria-hidden="true">/</span>
+							<span class="crumb crumb--current" aria-current="page">{path.trim === TRIM_ALL ? "All trims" : trimLabel || path.trim}</span>
+						{:else}
+							<span class="crumb crumb--current" aria-current="page">{modelLabel || path.model}</span>
+						{/if}
+					{:else}
+						<span class="crumb crumb--current" aria-current="page">{makeLabel || path.make}</span>
+					{/if}
+				{/if}
+			</nav>
+		{/snippet}
+
+		{#snippet emptyState()}
+			<div class="lib-empty">
+				{#if patternStore.loading}
+					<p class="lib-empty__title">Loading the pattern library…</p>
+				{:else if patternStore.catalogError && !visible.length}
+					<p class="lib-empty__title">Couldn't load the pattern library</p>
+					<p class="lib-empty__sub">Check your connection and reload the page. Your own uploads under "My patterns" are unaffected.</p>
+				{:else if !typeCounts[projectType]}
+					<p class="lib-empty__title">No {typeMeta(projectType).label.toLowerCase()} patterns yet</p>
+					<p class="lib-empty__sub">The community library doesn't have any {typeMeta(projectType).noun} patterns yet. <button class="lib-empty__request" onclick={() => openRequest()}>Request one</button>, or upload your own to use right away.</p>
+				{:else}
+					<p class="lib-empty__title">Nothing matches these filters</p>
+					<p class="lib-empty__sub">
+						Try a different search or filter{#if isVeh && (path.make || activeYear !== "All")}, <button class="lib-empty__request" onclick={() => { activeYear = "All"; go({}); }}>start over</button>{/if}, or <button class="lib-empty__request" onclick={() => openRequest()}>request {projectType === "vehicle" ? "a vehicle" : "a pattern"}</button>.
+					</p>
+				{/if}
+				<a href="/library/upload" class="lib-empty__upload">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+					Upload Pattern
+				</a>
+			</div>
+		{/snippet}
+
+		<!-- ─── Vehicles: make → model → trim ─── -->
+		{#if isVeh && !leafActive}
+			<div class="vb">
+				{#if path.make}{@render crumbs()}{/if}
+
+				{#if searching}
+					{#if searchHits.length}
+						<div class="vb-grid vb-grid--model">
+							{#each searchHits as { m, o } (m.key + "/" + o.key)}
+								<VehicleTile
+									variant="model"
+									title={o.label}
+									eyebrow={m.label}
+									years={yearSpan(o.years)}
+									bodyStyle={o.bodyStyle}
+									imageUrl={mediaOf(m.label, o.label)?.imageUrl}
+									meta={[...(o.trims.length > 1 ? [`${o.trims.length} trims`] : []), `${o.count} ${o.count === 1 ? pieceWord.replace(/s$/, "") : pieceWord}`]}
+									onclick={() => go({ make: m.key, model: o.key })}
+								/>
+							{/each}
+						</div>
+					{:else}
+						{@render emptyState()}
+					{/if}
+
+				{:else if level === "makes"}
+					{#if tree.length}
+						<div class="vb-grid vb-grid--make">
+							{#each tree as m (m.key)}
+								{@const md = mediaOf(m.label)}
+								<VehicleTile
+									variant="make"
+									title={m.label}
+									logoUrl={md?.logoUrl}
+									imageUrl={md?.imageUrl}
+									meta={[`${m.models.length} ${m.models.length === 1 ? "model" : "models"}`, `${m.count} ${m.count === 1 ? pieceWord.replace(/s$/, "") : pieceWord}`]}
+									onclick={() => go({ make: m.key })}
+								/>
+							{/each}
+						</div>
+					{:else}
+						{@render emptyState()}
+					{/if}
+
+				{:else if level === "models"}
+					{#if makeNode}
+						{@const md = mediaOf(makeNode.label)}
+						<VehicleHero
+							title={makeNode.label}
+							eyebrow="Make"
+							logoUrl={md?.logoUrl}
+							imageUrl={md?.imageUrl}
+							stats={[`${makeNode.models.length} ${makeNode.models.length === 1 ? "model" : "models"}`, `${makeNode.count} ${makeNode.count === 1 ? pieceWord.replace(/s$/, "") : pieceWord}`]}
+						/>
+						<div class="vb-grid vb-grid--model">
+							{#each makeNode.models as o (o.key)}
+								<VehicleTile
+									variant="model"
+									title={o.label}
+									years={yearSpan(o.years)}
+									bodyStyle={o.bodyStyle}
+									imageUrl={mediaOf(makeNode.label, o.label)?.imageUrl}
+									meta={[...(o.trims.length > 1 ? [`${o.trims.length} trims`] : []), `${o.count} ${o.count === 1 ? pieceWord.replace(/s$/, "") : pieceWord}`]}
+									onclick={() => go({ make: makeNode.key, model: o.key })}
+								/>
+							{/each}
+						</div>
+					{:else}
+						{@render emptyState()}
+					{/if}
+
+				{:else}
+					{#if modelNode && makeNode}
+						{@const md = mediaOf(makeNode.label, modelNode.label)}
+						<VehicleHero
+							title={modelNode.label}
+							eyebrow={makeNode.label}
+							logoUrl={mediaOf(makeNode.label)?.logoUrl}
+							imageUrl={md?.imageUrl}
+							stats={[`${modelNode.trims.length} trims & variants`, `${modelNode.count} ${modelNode.count === 1 ? pieceWord.replace(/s$/, "") : pieceWord}`, yearSpan(modelNode.years)].filter(Boolean)}
+						/>
+						<div class="vb-grid vb-grid--trim">
+							<VehicleTile
+								variant="trim"
+								title="All {modelNode.label} patterns"
+								meta={[`${modelNode.count} ${modelNode.count === 1 ? pieceWord.replace(/s$/, "") : pieceWord}`]}
+								years={yearSpan(modelNode.years)}
+								onclick={() => go({ make: makeNode.key, model: modelNode.key, trim: TRIM_ALL })}
+							/>
+							{#each modelNode.trims as t (t.key)}
+								<VehicleTile
+									variant="trim"
+									title={t.label}
+									years={yearSpan(t.years)}
+									imageUrl={mediaOf(makeNode.label, modelNode.label, t.key ? t.label : undefined)?.imageUrl}
+									meta={[`${t.count} ${t.count === 1 ? pieceWord.replace(/s$/, "") : pieceWord}`]}
+									onclick={() => go({ make: makeNode.key, model: modelNode.key, trim: t.key === "" ? TRIM_BASE : t.key })}
+								/>
+							{/each}
+						</div>
+					{:else}
+						{@render emptyState()}
+					{/if}
+				{/if}
+			</div>
+
+		<!-- Subject grid (property / custom) -->
+		{:else if !isVeh && !selectedVehicle}
 			<div class="vehicle-grid" class:vehicle-grid--list={view === "list"}>
 				{#each filtered as { v: vehicle, shown } (vehicle.id)}
 					<button class="vehicle-card" onclick={() => openSubject(vehicle)} aria-label="Open {subjectName(vehicle)} — {shown.length} {pieceWord}">
 						<div class="vehicle-card__thumb">
-							{#if projectType === "vehicle"}
-							<svg width="80" height="40" viewBox="0 0 24 14" fill="none" stroke="var(--color-brand)" stroke-width="0.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-								<path d={BODY_STYLE_ICON[vehicle.bodyStyle ?? "sedan"] ?? BODY_STYLE_ICON.sedan}/>
-								<ellipse cx="6.5" cy="14" rx="2" ry="1.5"/>
-								<ellipse cx="17.5" cy="14" rx="2" ry="1.5"/>
-							</svg>
-							{:else}
 							<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--color-brand)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
 								{#if projectType === "residential"}<path d="M3 11l9-7 9 7v9a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><path d="M9 22V12h6v10"/>
 								{:else if projectType === "commercial"}<path d="M4 21V7l8-4 8 4v14"/><path d="M9 9h1M14 9h1M9 13h1M14 13h1M9 17h1M14 17h1"/>
 								{:else}<path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 16.8l-6.2 4.5 2.4-7.4L2 9.4h7.6z"/>{/if}
 							</svg>
-							{/if}
 						</div>
 						<div class="vehicle-card__body">
-							{#if projectType === "vehicle"}
-							<div class="vehicle-card__year-make">{vehicle.make}</div>
-							<div class="vehicle-card__model">{vehicle.model}</div>
-							{:else}
 							<div class="vehicle-card__year-make">{subjectName(vehicle)}</div>
 							{#if vehicle.address}<div class="vehicle-card__model">{vehicle.address}</div>{/if}
-							{/if}
 							<div class="vehicle-card__meta">
-								{#if projectType === "vehicle" && vehicle.year}
-								<span
-									class="year-badge"
-									class:year-badge--active={activeYear === String(vehicle.year)}
-									role="button"
-									tabindex="0"
-									aria-pressed={activeYear === String(vehicle.year)}
-									aria-label="Filter by {vehicle.year}"
-									use:tooltip={`Filter by ${vehicle.year}`}
-									onclick={(e) => { e.stopPropagation(); activeYear = activeYear === String(vehicle.year) ? "All" : String(vehicle.year); }}
-									onkeydown={(e: KeyboardEvent) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); activeYear = activeYear === String(vehicle.year) ? "All" : String(vehicle.year); } }}
-								>{vehicle.year}</span>
-								{/if}
 								<Badge variant="default" size="sm">{shown.length} {shown.length === 1 ? pieceWord.replace(/s$/, "") : pieceWord}</Badge>
 								{#if vehicle.popular}
 									<Badge variant="brand" size="sm">Popular</Badge>
@@ -820,39 +1026,30 @@
 					</button>
 				{/each}
 
-				{#if filtered.length === 0}
-					<div class="lib-empty">
-						{#if patternStore.loading}
-							<p class="lib-empty__title">Loading the pattern library…</p>
-						{:else if patternStore.catalogError && !visible.length}
-							<p class="lib-empty__title">Couldn't load the pattern library</p>
-							<p class="lib-empty__sub">Check your connection and reload the page. Your own uploads under "My patterns" are unaffected.</p>
-						{:else if !typeCounts[projectType]}
-							<p class="lib-empty__title">No {typeMeta(projectType).label.toLowerCase()} patterns yet</p>
-							<p class="lib-empty__sub">The community library doesn't have any {typeMeta(projectType).noun} patterns yet. <button class="lib-empty__request" onclick={() => openRequest()}>Request one</button>, or upload your own to use right away.</p>
-						{:else}
-							<p class="lib-empty__title">Nothing matches these filters</p>
-							<p class="lib-empty__sub">
-								Try a different search or filter, or <button class="lib-empty__request" onclick={() => openRequest()}>request {projectType === "vehicle" ? "a vehicle" : "a pattern"}</button>.
-							</p>
-						{/if}
-						<a href="/library/upload" class="lib-empty__upload">
-							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-							Upload Pattern
-						</a>
-					</div>
-				{/if}
+				{#if filtered.length === 0}{@render emptyState()}{/if}
 			</div>
 
-		<!-- Pattern browser for one subject -->
+		<!-- Pattern browser: one trim's patterns (vehicles) or one subject's -->
 		{:else}
 			<div class="zone-browser">
+				{#if isVeh}
+					{@render crumbs()}
+					<VehicleHero
+						title={[modelLabel, trimLabel && trimLabel !== BASE_TRIM_LABEL ? trimLabel : ""].filter(Boolean).join(" ")}
+						eyebrow={makeLabel}
+						logoUrl={mediaOf(makeLabel)?.logoUrl}
+						imageUrl={mediaOf(makeLabel, modelLabel)?.imageUrl}
+						stats={[yearSpan(leafEntries.map((x) => x.v.year ?? 0).filter(Boolean)), `${leafEntries.length} model ${leafEntries.length === 1 ? "year" : "years"}`].filter(Boolean)}
+					/>
+				{/if}
 				<div class="zone-browser__header">
-					<button class="back-btn" onclick={() => (selectedVehicle = null)}>
-						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
-						All {typeMeta(projectType).nounPlural}
-					</button>
-					<h2 class="zone-browser__title">{subjectName(selectedVehicle)}</h2>
+					{#if !isVeh && selectedVehicle}
+						<button class="back-btn" onclick={() => (selectedVehicle = null)}>
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+							All {typeMeta(projectType).nounPlural}
+						</button>
+						<h2 class="zone-browser__title">{subjectName(selectedVehicle)}</h2>
+					{/if}
 					<div class="zone-browser__actions">
 						{#if useStorePatterns}
 							<Badge variant="success" size="sm" dot>
@@ -889,47 +1086,55 @@
 									</div>
 								{/if}
 
+								<!-- Full-bleed preview. fitPattern sets the viewBox to the real W × H,
+								     so the shape is only ever scaled uniformly to fill the card. -->
 								<div class="zone-card__preview">
-									<svg width="60" height="50" viewBox="0 0 100 100" fill="none" aria-hidden="true">
+									<svg width="100%" height="100%" viewBox="0 0 100 100" fill="none" aria-hidden="true">
 										<path
 											d={pattern.svgPath}
 											use:fitPattern={{ w: pattern.widthInches, h: pattern.heightInches, d: pattern.svgPath }}
-											fill={category === "window-tint" ? "rgba(0,112,255,0.08)" : "rgba(0,229,255,0.06)"}
+											fill={category === "window-tint" ? "rgba(0,112,255,0.10)" : "rgba(0,229,255,0.08)"}
 											stroke={category === "window-tint" ? "var(--color-brand-dim)" : "var(--color-brand)"}
-											stroke-width="2"
+											stroke-width="1"
 											stroke-linecap="round"
+											stroke-linejoin="round"
 										/>
 									</svg>
 								</div>
 
-								<div class="zone-card__info">
-									<div class="zone-card__name">{pattern.name}</div>
-									<div class="zone-card__meta">
-										{zoneLabel(pattern.zone, pattern.category, pattern.projectType ?? typeOf(selectedVehicle), pattern.customZoneLabel)} · {pattern.widthInches}" × {pattern.heightInches}"
-									</div>
+								{#if isVeh}
+									{@const ent = entryOf.get(pattern.id)}
+									{@const yr = [ent?.year, level === "patterns" && ent?.trim].filter(Boolean).join(" ")}
+									{#if yr}<span class="zone-card__year">{yr}</span>{/if}
+								{/if}
+
+								<!-- Quick view: short zone + coverage only. Full title, size and notes live in Details. -->
+								<div class="zone-card__bar">
 									<div class="zone-card__badges">
+										<Badge variant="brand" size="sm">{zoneGroup(pattern, pattern.projectType ?? projectType)}</Badge>
 										<Badge variant={pattern.coverage === "full" ? "success" : "warning"} size="sm">
 											{pattern.coverage === "edge-only" ? "edge only" : pattern.coverage}
 										</Badge>
+									</div>
+									<div class="zone-card__actions">
 										<button
-											class="details-btn"
+											class="zone-card__icon"
 											onclick={(e) => { e.stopPropagation(); detailPattern = pattern; }}
 											aria-label="Details for {pattern.name}"
+											use:tooltip={pattern.notes ? "Details & notes" : "Details"}
 										>
-											<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
-											Details{pattern.notes ? " & notes" : ""}
+											<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+										</button>
+										<button
+											class="zone-card__icon zone-card__add"
+											onclick={(e) => { e.stopPropagation(); addPatternToCanvas(pattern); }}
+											aria-label="Add {pattern.name} to canvas"
+											use:tooltip={"Add to canvas"}
+										>
+											<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
 										</button>
 									</div>
 								</div>
-
-								<button
-									class="zone-card__add"
-									onclick={(e) => { e.stopPropagation(); addPatternToCanvas(pattern); }}
-									aria-label="Add {pattern.name} to canvas"
-									use:tooltip={"Add to canvas"}
-								>
-									<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-								</button>
 							</div>
 						{/each}
 
@@ -1073,10 +1278,32 @@
 	</div>
 </div>
 
+<!-- ─── Mobile: browse makes / models / trims ─── -->
+<svelte:window onkeydown={(e) => { if (e.key === "Escape" && browseOpen) browseOpen = false; }} />
+{#if browseOpen}
+	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+	<div class="sheet-backdrop" onclick={() => (browseOpen = false)}>
+		<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+		<div class="sheet" role="dialog" aria-modal="true" aria-label="Browse vehicles" tabindex="-1" onclick={(e) => e.stopPropagation()}>
+			<div class="sheet__grab" aria-hidden="true"></div>
+			<div class="sheet__head">
+				Browse vehicles
+				<button class="sheet__close" onclick={() => (browseOpen = false)} aria-label="Close">
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>
+				</button>
+			</div>
+			<div class="sheet__body">
+				<VehicleTreeFilter {tree} {path} total={treeTotal} {logoFor} onselect={go} trimBase={TRIM_BASE} />
+			</div>
+		</div>
+	</div>
+{/if}
+
 <!-- ─── Pattern detail dialog ─────────────────── -->
 {#if detailPattern}
 	{@const p = detailPattern}
-	{@const t = p.projectType ?? (selectedVehicle ? typeOf(selectedVehicle) : projectType)}
+	{@const ent = entryOf.get(p.id) ?? selectedVehicle}
+	{@const t = p.projectType ?? (ent ? typeOf(ent) : projectType)}
 	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 	<div class="modal-overlay" onclick={() => (detailPattern = null)}>
 		<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
@@ -1085,7 +1312,7 @@
 				<div>
 					<h2 class="modal__title" id="pd-title">{p.name}</h2>
 					<p class="modal__sub">
-						{#if selectedVehicle}{subjectName(selectedVehicle)} · {/if}{categoryLabel(p.category)}
+						{#if ent}{subjectName(ent)} · {/if}{categoryLabel(p.category)}
 					</p>
 				</div>
 				<button class="modal__close" onclick={() => (detailPattern = null)} aria-label="Close">
@@ -1100,7 +1327,7 @@
 
 				<dl class="pd__facts">
 					<div><dt>Zone</dt><dd>{zoneLabel(p.zone, p.category, t, p.customZoneLabel)}</dd></div>
-					<div><dt>Size</dt><dd>{p.widthInches}" × {p.heightInches}" <span class="pd__muted">({cm(p.widthInches)} × {cm(p.heightInches)} cm)</span></dd></div>
+					<div><dt>Size</dt><dd>{formatMeasure(p.widthInches)}" × {formatMeasure(p.heightInches)}" <span class="pd__muted">({cm(p.widthInches)} × {cm(p.heightInches)} cm)</span></dd></div>
 					<div><dt>Coverage</dt><dd>{p.coverage === "edge-only" ? "Edge only" : p.coverage === "full" ? "Full" : "Partial"}</dd></div>
 					{#if p.revision}<div><dt>Revision</dt><dd>{p.revision}</dd></div>{/if}
 				</dl>
@@ -1633,32 +1860,6 @@
 	.vehicle-card__model { font-size: 0.9375rem; font-weight: 600; color: var(--text-primary); margin-bottom: 6px; font-family: var(--font-display); }
 	.vehicle-card__meta { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
 
-	.year-badge {
-		display: inline-flex;
-		align-items: center;
-		padding: 2px 7px;
-		border-radius: 5px;
-		font-size: 0.6875rem;
-		font-weight: 700;
-		font-family: var(--font-mono);
-		background: var(--bg-surface-3);
-		color: var(--text-tertiary);
-		border: 1px solid var(--border-subtle);
-		cursor: pointer;
-		transition: background 0.12s, color 0.12s, border-color 0.12s;
-		user-select: none;
-	}
-	.year-badge:hover {
-		background: color-mix(in srgb, var(--color-brand) 12%, var(--bg-surface-3));
-		border-color: color-mix(in srgb, var(--color-brand) 35%, transparent);
-		color: var(--color-brand);
-	}
-	.year-badge--active {
-		background: color-mix(in srgb, var(--color-brand) 15%, var(--bg-surface-2));
-		border-color: color-mix(in srgb, var(--color-brand) 50%, transparent);
-		color: var(--color-brand);
-	}
-
 	/* Empty */
 	.lib-empty { grid-column: 1 / -1; display: flex; flex-direction: column; align-items: center; text-align: center; padding: 48px 0; color: var(--text-tertiary); }
 	.lib-empty__title { font-size: 1rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; }
@@ -1746,8 +1947,8 @@
 
 	.zone-grid {
 		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-		gap: 10px;
+		grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+		gap: 12px;
 	}
 
 	.zone-card {
@@ -1755,16 +1956,15 @@
 		background: var(--bg-surface);
 		border: 1px solid var(--border-subtle);
 		border-radius: var(--radius-lg);
-		padding: 14px;
+		aspect-ratio: 1 / 0.92;
+		overflow: hidden;
 		cursor: pointer;
 		text-align: left;
-		transition: border-color 0.15s, box-shadow 0.15s;
-		display: flex;
-		flex-direction: column;
-		gap: 8px;
+		transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
 	}
 
-	.zone-card:hover { border-color: var(--border-strong); }
+	.zone-card:hover { border-color: var(--border-strong); box-shadow: 0 8px 22px -14px rgba(0, 0, 0, 0.4); }
+	.zone-card:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
 
 	.zone-card.selected {
 		border-color: var(--color-brand-dim);
@@ -1776,6 +1976,7 @@
 
 	.zone-card__check {
 		position: absolute;
+		z-index: 2;
 		top: 10px;
 		right: 10px;
 		width: 18px;
@@ -1788,38 +1989,43 @@
 		color: #fff;
 	}
 
+	/* The pattern fills the whole card; the bar floats over its bottom edge. */
 	.zone-card__preview {
+		position: absolute;
+		inset: 0;
+		padding: 6px 6px 40px;
+		background: var(--bg-surface-2);
+	}
+	.zone-card__preview svg { display: block; width: 100%; height: 100%; }
+
+	.zone-card__bar {
+		position: absolute;
+		left: 0; right: 0; bottom: 0;
+		z-index: 1;
 		display: flex;
 		align-items: center;
-		justify-content: center;
-		height: 60px;
-		background: var(--bg-surface-2);
-		border-radius: var(--radius-md);
+		justify-content: space-between;
+		gap: 6px;
+		padding: 8px 8px 8px 10px;
+		background: linear-gradient(to top, color-mix(in srgb, var(--bg-surface) 92%, transparent) 55%, transparent);
 	}
-
-	.zone-card__name { font-size: 0.875rem; font-weight: 600; color: var(--text-primary); }
-	.zone-card__meta { font-family: var(--font-mono); font-size: 0.625rem; color: var(--text-tertiary); margin-bottom: 2px; }
-	.zone-card__badges { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
-
-	.zone-card__add {
-		position: absolute;
-		bottom: 10px;
-		right: 10px;
+	.zone-card__badges { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; min-width: 0; }
+	.zone-card__actions { display: flex; gap: 4px; flex: none; }
+	.zone-card__icon {
 		width: 26px;
 		height: 26px;
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		background: var(--bg-surface-3);
+		background: var(--bg-surface);
 		border: 1px solid var(--border-default);
 		border-radius: var(--radius-md);
 		color: var(--text-secondary);
 		cursor: pointer;
-		opacity: 0;
-		transition: opacity 0.12s, background 0.12s;
+		transition: background 0.12s, color 0.12s, border-color 0.12s;
 	}
-
-	.zone-card:hover .zone-card__add { opacity: 1; }
+	.zone-card__icon:hover { color: var(--text-primary); border-color: var(--color-brand-dim); }
+	.zone-card__icon:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 1px; }
 	.zone-card__add:hover { background: var(--color-brand-dim); color: #fff; border-color: transparent; }
 
 	/* ─── Modal ───── */
@@ -1937,9 +2143,129 @@
 	}
 	.btn-ghost:hover { background: var(--bg-surface-3); color: var(--text-primary); }
 
+	/* ─── Vehicle drill-down ─── */
+	.vb { display: flex; flex-direction: column; gap: 16px; }
+
+	.vb-grid { display: grid; gap: 14px; }
+	.vb-grid--make  { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+	.vb-grid--model { grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+	.vb-grid--trim  { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+
+	.crumbs {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 2px 4px;
+		font-size: 0.8125rem;
+	}
+	.crumb {
+		padding: 4px 8px;
+		background: transparent;
+		border: none;
+		border-radius: var(--radius-md);
+		font: inherit;
+		font-weight: 500;
+		color: var(--text-secondary);
+		cursor: pointer;
+		transition: background 0.12s, color 0.12s;
+	}
+	button.crumb:hover { background: var(--bg-surface-2); color: var(--color-brand-dim); }
+	button.crumb:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 1px; }
+	.crumb--current { color: var(--text-primary); cursor: default; }
+	.crumb-sep { color: var(--text-tertiary); }
+
+	.zone-card__year {
+		position: absolute;
+		z-index: 1;
+		top: 10px;
+		left: 10px;
+		padding: 1px 7px;
+		border-radius: 999px;
+		font-family: var(--font-mono);
+		font-size: 0.6875rem;
+		background: var(--bg-surface-3);
+		color: var(--text-primary);
+	}
+	.zone-card__year:empty { display: none; }
+
+	/* Sidebar tree is a desktop affordance; ≤768px it opens as a sheet. */
+	.lib-browse-btn { display: none; }
+
+	.sheet-backdrop {
+		position: fixed;
+		inset: 0;
+		z-index: 80;
+		background: rgba(0, 0, 0, 0.5);
+		display: flex;
+		align-items: flex-end;
+		animation: sheet-fade 0.15s ease-out;
+	}
+	.sheet {
+		width: 100%;
+		max-height: 82dvh;
+		display: flex;
+		flex-direction: column;
+		background: var(--bg-surface);
+		border-radius: var(--radius-2xl) var(--radius-2xl) 0 0;
+		border-top: 1px solid var(--border-default);
+		padding-bottom: env(safe-area-inset-bottom);
+		animation: sheet-up 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+	}
+	.sheet__grab { width: 36px; height: 4px; border-radius: 2px; background: var(--border-default); margin: 8px auto 0; }
+	.sheet__head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 10px 16px;
+		font-family: var(--font-display);
+		font-weight: 600;
+	}
+	.sheet__close {
+		width: 32px; height: 32px;
+		display: grid; place-items: center;
+		background: var(--bg-surface-2);
+		border: 1px solid var(--border-subtle);
+		border-radius: 50%;
+		color: var(--text-secondary);
+		cursor: pointer;
+	}
+	.sheet__body { overflow-y: auto; padding: 4px 12px 16px; }
+	@keyframes sheet-up { from { transform: translateY(100%); } to { transform: none; } }
+	@keyframes sheet-fade { from { opacity: 0; } to { opacity: 1; } }
+
+	/* Wider screens: roomier sidebar for the tree, bigger tiles. */
+	@media (min-width: 1200px) {
+		.library { grid-template-columns: 260px 1fr; }
+	}
+	@media (min-width: 1600px) {
+		.library { grid-template-columns: 300px 1fr; }
+		.library__main { padding: 28px 36px; }
+		.vb-grid--make  { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+		.vb-grid--model { grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); }
+		.vb-grid--trim  { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+	}
+	/* Ultrawide: keep the content a readable width instead of stretching forever. */
+	@media (min-width: 2200px) {
+		.library { grid-template-columns: 320px 1fr; }
+		.library__main { padding-inline: max(36px, calc((100% - 2000px) / 2)); }
+	}
+
 	/* Responsive */
 	@media (max-width: 768px) {
 		.library { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+		.lib-tree { display: none; }
+		.lib-browse-btn {
+			display: inline-flex;
+			align-items: center;
+			gap: 6px;
+			flex-shrink: 0;
+			max-width: 220px;
+			overflow: hidden;
+			text-overflow: ellipsis;
+		}
+		.vb-grid--make  { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+		.vb-grid--model { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; }
+		.vb-grid--trim  { grid-template-columns: 1fr; gap: 10px; }
 
 		/* Sidebar becomes a horizontally-scrollable filter strip instead of
 		   vanishing — hiding it outright removed search/filters/request on mobile. */
@@ -2359,13 +2685,4 @@
 	.pd__flip { display: inline-flex; transform: scaleX(-1); }
 	.pd__mirror-text { margin: 0; font-size: 0.8125rem; color: var(--text-secondary); line-height: 1.45; }
 	.pd__mirror-text strong { color: var(--text-primary); }
-
-	.details-btn {
-		display: inline-flex; align-items: center; gap: 4px;
-		padding: 2px 7px; border-radius: var(--radius-sm);
-		border: 1px solid var(--border-subtle); background: transparent;
-		font-size: 0.6875rem; font-family: var(--font-body); color: var(--text-secondary); cursor: pointer;
-	}
-	.details-btn:hover { color: var(--text-primary); border-color: var(--border-default); background: var(--interactive-hover); }
-	.details-btn:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 1px; }
 </style>

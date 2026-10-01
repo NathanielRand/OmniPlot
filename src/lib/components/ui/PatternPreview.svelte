@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { fitPattern } from "$lib/actions/fitPattern";
+	import { formatMeasure } from "$lib/utils";
 
 	// Draws a pattern at its real proportions (widthInches × heightInches —
 	// the same stretch the cutter applies), zoomed to fit the frame.
@@ -40,7 +41,7 @@
 		{/if}
 	</div>
 	{#if size === "large" && widthInches && heightInches}
-		<figcaption class="pp__caption">{widthInches}" × {heightInches}"</figcaption>
+		<figcaption class="pp__caption">{formatMeasure(widthInches!)}" × {formatMeasure(heightInches!)}"</figcaption>
 	{/if}
 </figure>
 

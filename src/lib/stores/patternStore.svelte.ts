@@ -12,6 +12,7 @@ import type {
 	PatternZone,
 	ProjectType,
 	VehicleEntry,
+	VehicleMedia,
 	PatternRequest,
 	PatternStatus,
 	RequestStatus,
@@ -20,6 +21,7 @@ import {
 	subscribeVehicles,
 	subscribePatterns,
 	subscribeRequests,
+	subscribeVehicleMedia,
 	setVehicleDoc,
 	updateVehicleDoc,
 	deleteVehicleDoc,
@@ -296,6 +298,7 @@ function createPatternStore() {
 	let patterns  = $state<Record<string, Pattern[]>>({});
 	let requests  = $state<PatternRequest[]>(INITIAL_REQUESTS);
 	let loading   = $state(true);
+	let media     = $state<Record<string, VehicleMedia>>({});
 	let firestoreReady = false;
 	// True while Firestore has no catalog yet (empty or failed to load).
 	// Admin catalog edits are blocked in that state until the catalog is
@@ -388,7 +391,14 @@ function createPatternStore() {
 			() => { rReady = true; checkReady(); },
 		);
 
-		return () => { unsubV(); unsubP(); unsubR(); firestoreReady = false; };
+		// Imagery is decoration only — it never gates `loading`, and a failure
+		// (rules not deployed yet, offline) just leaves the fallbacks showing.
+		const unsubM = subscribeVehicleMedia(
+			(list) => { media = Object.fromEntries(list.map((m) => [m.id, m])); },
+			() => {},
+		);
+
+		return () => { unsubV(); unsubP(); unsubR(); unsubM(); firestoreReady = false; };
 	}
 
 	// Create-only: writes seed docs that don't exist yet and leaves existing
@@ -511,6 +521,7 @@ function createPatternStore() {
 	return {
 		get vehicles() { return vehicles; },
 		get requests() { return requests; },
+		get media() { return media; },
 		get loading() { return loading; },
 		get usingSeed() { return usingSeed; },
 		get catalogError() { return catalogError; },

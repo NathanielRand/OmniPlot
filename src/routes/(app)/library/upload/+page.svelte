@@ -96,6 +96,7 @@
 	let vehicle = $state({
 		make:      "",
 		models:    [] as string[],
+		trim:      "",
 		years:     [] as string[],
 		bodyStyle: "sedan" as BodyStyle,
 	});
@@ -141,6 +142,17 @@
 					.map((v) => v.model!),
 			)].sort()
 			: [],
+	);
+
+	// Trim / variant suggestions for the chosen make + models.
+	const makeTrims = $derived(
+		[...new Set(
+			catalogVehicles
+				.filter((v) => v.trim
+					&& v.make!.toLowerCase() === vehicle.make.trim().toLowerCase()
+					&& (!vehicle.models.length || vehicle.models.some((m) => m.toLowerCase() === (v.model ?? "").toLowerCase())))
+				.map((v) => v.trim!),
+		)].sort(),
 	);
 
 	const zoneList = $derived(
@@ -356,6 +368,7 @@
 				projectType,
 				make:      vehicle.make.trim(),
 				models:    vehicle.models,
+				trim:      vehicle.trim.trim() || undefined,
 				years:     vehicle.years,
 				bodyStyle: vehicle.bodyStyle,
 			};
@@ -462,7 +475,7 @@
 		customName = d.customName ?? "";
 		propertyAddress = d.propertyAddress ?? "";
 		propertyLabel = d.propertyLabel ?? "";
-		if (d.vehicle) vehicle = d.vehicle;
+		if (d.vehicle) vehicle = { ...d.vehicle, trim: d.vehicle.trim ?? "" };
 		if (d.pattern) pattern = { ...pattern, ...d.pattern, zones: [], customZoneLabels: [] };
 		uploadMode = d.uploadMode ?? uploadMode;
 		multiMethod = d.multiMethod ?? multiMethod;
@@ -641,7 +654,7 @@
 		customName       = "";
 		propertyAddress  = "";
 		propertyLabel    = "";
-		vehicle    = { make: "", models: [], years: [], bodyStyle: "sedan" };
+		vehicle    = { make: "", models: [], trim: "", years: [], bodyStyle: "sedan" };
 		pattern    = { category: "ppf", zones: [], customZoneLabels: [], coverage: "full", widthInches: 0, heightInches: 0, svgPath: "", notes: "" };
 		pendingCustomZone  = false;
 		pendingCustomLabel = "";
@@ -860,6 +873,14 @@
 								/>
 							</div>
 							{#if errors.models}<span class="field__error">{errors.models}</span>{/if}
+						</div>
+
+						<div class="field">
+							<label class="field__label" for="trim-input">
+								Trim / variant
+								<span class="field__hint">Optional — e.g. Sport, Crew Cab. Leave blank if it fits every trim.</span>
+							</label>
+							<VehicleCombobox id="trim-input" bind:value={vehicle.trim} placeholder="Base / all trims" options={makeTrims} />
 						</div>
 
 						<div class="field-row field-row--2">

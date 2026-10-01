@@ -32,6 +32,7 @@
 	let vehicle = $state({
 		make:      "",
 		models:    [] as string[],
+		trim:      "",
 		years:     [] as string[],
 		bodyStyle: "sedan" as BodyStyle,
 	});
@@ -74,6 +75,17 @@
 					.map((v) => v.model!),
 			)].sort()
 			: [],
+	);
+
+	// Trim / variant suggestions for the chosen make + models.
+	const makeTrims = $derived(
+		[...new Set(
+			catalogVehicles
+				.filter((v) => v.trim
+					&& v.make!.toLowerCase() === vehicle.make.trim().toLowerCase()
+					&& (!vehicle.models.length || vehicle.models.some((m) => m.toLowerCase() === (v.model ?? "").toLowerCase())))
+				.map((v) => v.trim!),
+		)].sort(),
 	);
 
 	const zoneList = $derived(zonesFor(pattern.category, projectType));
@@ -174,7 +186,7 @@
 			original    = p;
 			mode        = p.submitToCommunity ? "community" : "private";
 			projectType = p.projectType ?? "vehicle";
-			vehicle     = { make: p.make, models: [...p.models], years: [...p.years], bodyStyle: p.bodyStyle };
+			vehicle = { make: p.make, models: [...p.models], trim: p.trim ?? "", years: [...p.years], bodyStyle: p.bodyStyle };
 			const isProperty = projectType === "residential" || projectType === "commercial";
 			propertyLabel = p.propertyLabel ?? (isProperty ? p.models[0] ?? "" : "");
 			address       = p.address ?? "";
@@ -263,13 +275,13 @@
 	function identity(): Partial<UserPattern> {
 		if (projectType === "vehicle") {
 			return {
-				projectType, make: vehicle.make.trim(), models: vehicle.models, years: vehicle.years, bodyStyle: vehicle.bodyStyle,
+				projectType, make: vehicle.make.trim(), models: vehicle.models, trim: vehicle.trim.trim() || undefined, years: vehicle.years, bodyStyle: vehicle.bodyStyle,
 				patternName: undefined, address: undefined, propertyLabel: undefined,
 			};
 		}
 		if (projectType === "custom") {
 			return {
-				projectType, make: "Custom", models: [customName.trim()], years: [], bodyStyle: "sedan", patternName: customName.trim(),
+				projectType, make: "Custom", models: [customName.trim()], trim: undefined, years: [], bodyStyle: "sedan", patternName: customName.trim(),
 				address: undefined, propertyLabel: undefined,
 			};
 		}
@@ -277,6 +289,7 @@
 			projectType,
 			make: projectType === "residential" ? "Residential" : "Commercial",
 			models: [propertyLabel.trim() || address.trim()],
+			trim: undefined,
 			years: [],
 			bodyStyle: "sedan",
 			address: address.trim() || undefined,
@@ -488,6 +501,14 @@
 								/>
 							</div>
 							{#if errors.models}<span class="field__error">{errors.models}</span>{/if}
+						</div>
+
+						<div class="field">
+							<label class="field__label" for="trim-input">
+								Trim / variant
+								<span class="field__hint">Optional — e.g. Sport, Crew Cab.</span>
+							</label>
+							<VehicleCombobox id="trim-input" bind:value={vehicle.trim} placeholder="Base / all trims" options={makeTrims} />
 						</div>
 
 						<div class="field-row field-row--2">

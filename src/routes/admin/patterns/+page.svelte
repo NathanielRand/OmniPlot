@@ -2,6 +2,8 @@
 	import { onMount } from "svelte";
 	import Badge from "$lib/components/ui/Badge.svelte";
 	import Button from "$lib/components/ui/Button.svelte";
+	import { formatMeasure } from "$lib/utils";
+	import VehicleMediaManager from "$lib/components/admin/VehicleMediaManager.svelte";
 	import {
 		patternStore,
 		PATTERN_CATEGORIES,
@@ -150,7 +152,7 @@
 		if ((v.projectType ?? "vehicle") !== "vehicle") {
 			return v.propertyLabel || v.model || v.address || "Untitled";
 		}
-		return `${v.year} ${v.make} ${v.model}`;
+		return [v.year, v.make, v.model, v.trim].filter(Boolean).join(" ");
 	}
 
 	const filteredVehicles = $derived(
@@ -158,7 +160,7 @@
 			.filter((v) => {
 				const q = search.toLowerCase();
 				const mq = !q ||
-					`${v.make ?? ""} ${v.model ?? ""} ${v.year ?? ""} ${v.propertyLabel ?? ""} ${v.address ?? ""}`
+					`${v.make ?? ""} ${v.model ?? ""} ${v.trim ?? ""} ${v.year ?? ""} ${v.propertyLabel ?? ""} ${v.address ?? ""}`
 						.toLowerCase().includes(q);
 				const ms = filterStatus === "all" || v.status === filterStatus;
 				const mu = !filterUser || subjectContributors(v.id, v.contributedBy).includes(filterUser);
@@ -209,7 +211,7 @@
 		if ((sub.projectType ?? "vehicle") !== "vehicle") {
 			return sub.propertyLabel || sub.patternName || sub.name;
 		}
-		return `${sub.years.join("/")} ${sub.make} ${sub.models.join(", ")}`;
+		return [sub.years.join("/"), sub.make, sub.models.join(", "), sub.trim].filter(Boolean).join(" ");
 	}
 
 	function submissionZoneLabels(sub: UserPattern): string {
@@ -232,7 +234,7 @@
 			message: "Customers will be able to cut it right away. The submitter's copy is locked as approved.",
 			details: [
 				{ label: "Subject", value: submissionSubjectLabel(reviewTarget) },
-				{ label: "Size", value: `${reviewEdits.widthInches}" × ${reviewEdits.heightInches}"` },
+				{ label: "Size", value: `${formatMeasure(reviewEdits.widthInches)}" × ${formatMeasure(reviewEdits.heightInches)}"` },
 				{ label: "Submitted by", value: userLabel(reviewTarget.ownerId) },
 			],
 			confirmLabel: "Approve & publish",
@@ -255,13 +257,14 @@
 						(v) => (v.projectType ?? "vehicle") === "vehicle" &&
 						       (v.make ?? "").toLowerCase() === sub.make.toLowerCase() &&
 						       (v.model ?? "").toLowerCase() === subModel.toLowerCase() &&
+						       (v.trim ?? "").toLowerCase() === (sub.trim ?? "").toLowerCase() &&
 						       v.year === subYear,
 					);
 					vehicleId = existing
 						? existing.id
 						: patternStore.addVehicle({
 								projectType: "vehicle",
-								make: sub.make, model: subModel, year: subYear,
+								make: sub.make, model: subModel, trim: sub.trim || undefined, year: subYear,
 								bodyStyle: sub.bodyStyle, status: "published",
 								tags: [], updatedAt: new Date().toISOString().split("T")[0],
 								contributedBy: sub.ownerId || undefined,
@@ -482,9 +485,10 @@
 
 	// ─── Add subject ──────────────────────────────
 	let showAddModal = $state(false);
+	let showMedia = $state(false);
 	const blankSubject = () => ({
 		projectType: "vehicle" as NonNullable<VehicleEntry["projectType"]>,
-		year: new Date().getFullYear(), make: "", model: "",
+		year: new Date().getFullYear(), make: "", model: "", trim: "",
 		bodyStyle: "sedan" as NonNullable<VehicleEntry["bodyStyle"]>,
 		address: "", propertyLabel: "",
 		status: "draft" as PatternStatus,
@@ -501,6 +505,7 @@
 			projectType: f.projectType,
 			make: isVehicle ? f.make.trim() : undefined,
 			model: isVehicle ? f.model.trim() : (f.model.trim() || undefined),
+			trim: isVehicle ? f.trim.trim() || undefined : undefined,
 			year: isVehicle ? Number(f.year) : undefined,
 			bodyStyle: isVehicle ? f.bodyStyle : undefined,
 			address: isVehicle ? undefined : f.address.trim() || undefined,
@@ -522,7 +527,7 @@
 	}
 
 	const SUBJECT_LABELS: Record<string, string> = {
-		projectType: "Type", year: "Year", make: "Make", model: "Model", bodyStyle: "Body style",
+		projectType: "Type", year: "Year", make: "Make", model: "Model", trim: "Trim", bodyStyle: "Body style",
 		propertyLabel: "Label", address: "Address", status: "Status", tags: "Tags", popular: "Popular",
 	};
 	const subjectRow = (v: Partial<VehicleEntry>) => ({ ...v, projectType: v.projectType ?? "vehicle", tags: (v.tags ?? []).join(", "), popular: v.popular ? "Yes" : "No" });
@@ -559,6 +564,7 @@
 			year: v.year ?? new Date().getFullYear(),
 			make: v.make ?? "",
 			model: v.model ?? "",
+			trim: v.trim ?? "",
 			bodyStyle: v.bodyStyle ?? "sedan",
 			address: v.address ?? "",
 			propertyLabel: v.propertyLabel ?? "",
@@ -660,7 +666,7 @@
 			details: [
 				{ label: "Category", value: categoryLabel(editPanelTab) },
 				{ label: "Zone", value: zoneLabel(editPanelTab, newPattern.zone, newPattern.customZoneLabel, v.projectType) },
-				{ label: "Size", value: `${newPattern.widthInches}" × ${newPattern.heightInches}"` },
+				{ label: "Size", value: `${formatMeasure(newPattern.widthInches)}" × ${formatMeasure(newPattern.heightInches)}"` },
 				{ label: "Coverage", value: newPattern.coverage },
 			],
 			confirmLabel: "Add pattern",
@@ -765,7 +771,7 @@
 				: "This can't be undone.",
 			details: [
 				{ label: "Zone", value: zoneLabel(p.category, p.zone, p.customZoneLabel, p.projectType) },
-				{ label: "Size", value: `${p.widthInches}" × ${p.heightInches}"` },
+				{ label: "Size", value: `${formatMeasure(p.widthInches)}" × ${formatMeasure(p.heightInches)}"` },
 			],
 			variant: "danger",
 			confirmLabel: "Delete pattern",
@@ -860,6 +866,8 @@ onMount(() => {
 	{/if}
 {/snippet}
 
+{#if showMedia}<VehicleMediaManager onclose={() => (showMedia = false)} />{/if}
+
 <div class="patterns-page">
 	<div class="page-header">
 		<div>
@@ -867,6 +875,7 @@ onMount(() => {
 			<p class="page-sub">Manage subject templates, community submissions, and adjustment requests.</p>
 		</div>
 		<div class="page-header__actions">
+			<Button variant="secondary" size="sm" onclick={() => (showMedia = true)}>Vehicle images</Button>
 			<Button variant="primary" size="sm" onclick={() => (showAddModal = true)} disabled={seeding}>
 				<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
 				Add subject
@@ -982,7 +991,7 @@ onMount(() => {
 										{categoryShortLabel(sub.category)}
 									</span>
 								</td>
-								<td class="td-mono">{sub.widthInches}" × {sub.heightInches}"</td>
+								<td class="td-mono">{formatMeasure(sub.widthInches)}" × {formatMeasure(sub.heightInches)}"</td>
 								<td class="td-date">{sub.createdAt.toLocaleDateString()}</td>
 								<td>
 									<Badge
@@ -1301,7 +1310,7 @@ onMount(() => {
 				<dt>Category</dt><dd>{categoryLabel(sub.category)}</dd>
 				<dt>Zones</dt><dd>{sub.zones.map((z, i) => zoneLabel(sub.category, z, sub.customZoneLabels?.[i], sub.projectType)).join(", ") || "—"}</dd>
 				<dt>Coverage</dt><dd>{sub.coverage}</dd>
-				<dt>Size</dt><dd class="dv-mono">{sub.widthInches}" × {sub.heightInches}"</dd>
+				<dt>Size</dt><dd class="dv-mono">{formatMeasure(sub.widthInches)}" × {formatMeasure(sub.heightInches)}"</dd>
 				<dt>Status</dt><dd><Badge variant={sub.status === "approved" ? "success" : sub.status === "rejected" ? "danger" : sub.status === "pending" ? "warning" : "default"} size="sm">{sub.status}</Badge></dd>
 				<dt>In public library</dt><dd>{sub.isPublished ? "Yes" : "No"}</dd>
 				<dt>Submitted to community</dt><dd>{sub.submitToCommunity ? "Yes" : "No"}</dd>
@@ -1420,6 +1429,7 @@ onMount(() => {
 							<dt>Year</dt><dd>{v.year ?? "—"}</dd>
 							<dt>Make</dt><dd>{v.make || "—"}</dd>
 							<dt>Model</dt><dd>{v.model || "—"}</dd>
+							<dt>Trim</dt><dd>{v.trim || "—"}</dd>
 							<dt>Body style</dt><dd>{v.bodyStyle ?? "—"}</dd>
 						{:else}
 							<dt>Label</dt><dd>{v.propertyLabel || "—"}</dd>
@@ -1582,7 +1592,10 @@ onMount(() => {
 					<div class="form-group"><label class="form-label" for="av-year">Year</label><input id="av-year" type="number" class="form-input" bind:value={newVehicle.year} min="1990" max="2030" required /></div>
 					<div class="form-group" style="flex:2"><label class="form-label" for="av-make">Make</label><input id="av-make" type="text" class="form-input" bind:value={newVehicle.make} placeholder="e.g. Toyota" required /></div>
 				</div>
-				<div class="form-group"><label class="form-label" for="av-model">Model</label><input id="av-model" type="text" class="form-input" bind:value={newVehicle.model} placeholder="e.g. GR86" required /></div>
+				<div class="form-row">
+					<div class="form-group" style="flex:2"><label class="form-label" for="av-model">Model</label><input id="av-model" type="text" class="form-input" bind:value={newVehicle.model} placeholder="e.g. GR86" required /></div>
+					<div class="form-group" style="flex:2"><label class="form-label" for="av-trim">Trim / variant</label><input id="av-trim" type="text" class="form-input" bind:value={newVehicle.trim} placeholder="Optional — e.g. Sport" /></div>
+				</div>
 				<div class="form-row">
 					<div class="form-group"><label class="form-label" for="av-body">Body Style</label><select id="av-body" class="form-input" bind:value={newVehicle.bodyStyle}>{#each ["sedan","coupe","suv","truck","hatchback","wagon","convertible"] as s}<option value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>{/each}</select></div>
 					<div class="form-group"><label class="form-label" for="av-status">Status</label><select id="av-status" class="form-input" bind:value={newVehicle.status}><option value="draft">Draft</option><option value="review">Review</option><option value="published">Published</option></select></div>
@@ -1633,7 +1646,10 @@ onMount(() => {
 					<div class="form-group"><label class="form-label" for="ev-year">Year</label><input id="ev-year" type="number" class="form-input" bind:value={editVehicleForm.year} min="1990" max="2030" required /></div>
 					<div class="form-group" style="flex:2"><label class="form-label" for="ev-make">Make</label><input id="ev-make" type="text" class="form-input" bind:value={editVehicleForm.make} placeholder="e.g. Toyota" required /></div>
 				</div>
-				<div class="form-group"><label class="form-label" for="ev-model">Model</label><input id="ev-model" type="text" class="form-input" bind:value={editVehicleForm.model} placeholder="e.g. GR86" required /></div>
+				<div class="form-row">
+					<div class="form-group" style="flex:2"><label class="form-label" for="ev-model">Model</label><input id="ev-model" type="text" class="form-input" bind:value={editVehicleForm.model} placeholder="e.g. GR86" required /></div>
+					<div class="form-group" style="flex:2"><label class="form-label" for="ev-trim">Trim / variant</label><input id="ev-trim" type="text" class="form-input" bind:value={editVehicleForm.trim} placeholder="Optional — e.g. Sport" /></div>
+				</div>
 				<div class="form-row">
 					<div class="form-group"><label class="form-label" for="ev-body">Body Style</label><select id="ev-body" class="form-input" bind:value={editVehicleForm.bodyStyle}>{#each ["sedan","coupe","suv","truck","hatchback","wagon","convertible"] as s}<option value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>{/each}</select></div>
 					<div class="form-group"><label class="form-label" for="ev-status">Status</label><select id="ev-status" class="form-input" bind:value={editVehicleForm.status}><option value="draft">Draft</option><option value="review">Review</option><option value="published">Published</option></select></div>
@@ -1969,7 +1985,7 @@ onMount(() => {
 						</div>
 						<div class="pattern-row__info">
 							<div class="pattern-row__name">{pat.name}</div>
-							<div class="pattern-row__meta">{pat.widthInches}" × {pat.heightInches}" · {zoneLabel(pat.category, pat.zone, pat.customZoneLabel, editingVehicle.projectType)}{pat.isPublished ? "" : " · draft"}</div>
+							<div class="pattern-row__meta">{formatMeasure(pat.widthInches)}" × {formatMeasure(pat.heightInches)}" · {zoneLabel(pat.category, pat.zone, pat.customZoneLabel, editingVehicle.projectType)}{pat.isPublished ? "" : " · draft"}</div>
 						</div>
 						<div class="ep-row-right">
 							<button class="ep-toggle" class:ep-toggle--on={pat.isPublished} onclick={() => togglePatternPublished(pat)} use:tooltip={pat.isPublished ? "Unpublish" : "Publish"} aria-label={pat.isPublished ? "Unpublish" : "Publish"}>

@@ -19,6 +19,15 @@ export function formatDimensions(
 	return `${w.toFixed(2)}" × ${h.toFixed(2)}"`;
 }
 
+/**
+ * DISPLAY ONLY — one decimal, trailing ".0" dropped (24.04 → "24", 24.46 → "24.5").
+ * Stored widthInches/heightInches are never rounded; never feed this back into
+ * geometry, sizing or cutting.
+ */
+export function formatMeasure(n: number): string {
+	return Number.isFinite(n) ? String(Math.round(n * 10) / 10) : "—";
+}
+
 export function formatEfficiency(ratio: number): string {
 	return `${(ratio * 100).toFixed(1)}%`;
 }
