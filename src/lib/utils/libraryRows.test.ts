@@ -113,6 +113,29 @@ describe("sources", () => {
 	});
 });
 
+describe("per-year community copies", () => {
+	const veh = (id: string, year: number): VehicleEntry => ({
+		id, projectType: "vehicle", make: "Ford", model: "F-150", year, tags: [], status: "published", updatedAt: "2026-01-01",
+	});
+	const pat = (id: string, vehicleId: string, svgPath = "M0 0L9 9") =>
+		({ id, vehicleId, category: "ppf", zone: "hood", name: "Hood", coverage: "full", svgPath, widthInches: 9, heightInches: 9, revision: "2026-01" });
+	const catalog: Record<string, unknown[]> = {
+		v21: [pat("p21", "v21")], v22: [pat("p22", "v22")], v23: [pat("p23", "v23", "M0 0L9 8")],
+	};
+	const rows = communityRows([veh("v21", 2021), veh("v22", 2022), veh("v23", 2023)], (id) => (catalog[id] ?? []) as never);
+
+	it("shows an identical outline once and keeps differing ones apart", () => {
+		expect(distinctCount(rows)).toBe(2);
+		expect(uniquePatterns(rows.flatMap((r) => r.pats))).toHaveLength(2);
+	});
+
+	it("keeps every year reachable for filtering", () => {
+		const leaf = entriesUnder(rows, { make: "ford", model: "f-150" });
+		const in2022 = leaf.filter((r) => r.v.year === 2022);
+		expect(uniquePatterns(in2022.flatMap((r) => r.pats)).map((p) => p.id)).toEqual(["p22"]);
+	});
+});
+
 describe("shareStatusOf", () => {
 	it("maps the record to a status", () => {
 		expect(shareStatusOf({ isPublished: true, status: "approved" })).toBe("published");

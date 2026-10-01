@@ -21,11 +21,11 @@
 	import VehicleHero from "$lib/components/library/VehicleHero.svelte";
 	import VehicleTreeFilter, { type TreePath } from "$lib/components/library/VehicleTreeFilter.svelte";
 	import {
-		buildTree, entriesUnder, mediaFor, yearSpan, trimFilter,
+		buildTree, entriesUnder, mediaFor, yearSpan, trimFilter, matchesQuery,
 		BASE_TRIM_LABEL, TRIM_BASE, TRIM_ALL,
 	} from "$lib/utils/vehicleCatalog";
 	import {
-		communityRows, privateRows, rowsForSource, uniquePatterns, distinctCount, shareStatusOf, userPatternToPattern,
+		communityRows, privateRows, rowsForSource, uniquePatterns, distinctCount, patternKey, shareStatusOf, userPatternToPattern,
 		type LibPattern, type LibRow, type LibrarySource, type ShareStatus,
 	} from "$lib/utils/libraryRows";
 
@@ -220,7 +220,7 @@
 	// ─── Vehicle catalog (make → model → trim) ────
 	const isVeh = $derived(projectType === "vehicle");
 	const vehScope = $derived(inScope.filter((x) => typeOf(x.v) === "vehicle" && x.v.make && x.v.model));
-	const toRow = (x: { v: VehicleEntry; pats: LibPattern[] }) => ({ v: x.v, count: x.pats.length, ids: x.pats.map((p) => p.id) });
+	const toRow = (x: { v: VehicleEntry; pats: LibPattern[] }) => ({ v: x.v, count: x.pats.length, ids: x.pats.map(patternKey) });
 	// Unfiltered tree — names, logos and year options come from here, so a
 	// search or year filter can never make the current breadcrumb lose its label.
 	const catalogTree = $derived(buildTree(vehScope.map(toRow)));
@@ -246,7 +246,7 @@
 		inScope.filter((x) => {
 			const v = x.v;
 			const q = search.trim().toLowerCase();
-			const matchSearch = !q || `${v.year ?? ""} ${v.make ?? ""} ${v.model ?? ""} ${v.trim ?? ""} ${v.propertyLabel ?? ""} ${v.address ?? ""} ${x.pats.map((p) => `${p.name} ${zoneGroups(p).join(" ")}`).join(" ")}`.toLowerCase().includes(q);
+			const matchSearch = !q || matchesQuery(`${v.year ?? ""} ${v.make ?? ""} ${v.model ?? ""} ${v.trim ?? ""} ${v.bodyStyle ?? ""} ${v.propertyLabel ?? ""} ${v.address ?? ""} ${x.pats.map((p) => `${p.name} ${zoneGroups(p).join(" ")}`).join(" ")}`, q);
 			const matchYear = typeOf(v) !== "vehicle" || activeYear === "All" || String(v.year) === activeYear;
 			return matchSearch && matchYear;
 		}),
@@ -288,6 +288,38 @@
 	const searching = $derived(isVeh && search.trim() !== "" && !path.make);
 	const searchHits = $derived(tree.flatMap((m) => m.models.map((o) => ({ m, o }))));
 
+	// Example queries drawn from the catalog itself, so the placeholder shows
+	// real makes, models, trims and years that will find something.
+	const searchExamples = $derived.by<string[]>(() => {
+		if (!isVeh) {
+			const names = inScope.map((x) => subjectName(x.v)).filter((n) => n && n !== "Untitled");
+			return [...new Set([...names.slice(0, 4), "Storefront glass", "Lobby windows", "Skylight"])].slice(0, 6);
+		}
+		const out: string[] = [];
+		const makes = catalogTree.length > 6 ? catalogTree.filter((_, i) => i % Math.ceil(catalogTree.length / 6) === 0) : catalogTree;
+		for (const m of makes.slice(0, 6)) {
+			const o = m.models[0];
+			if (!o) continue;
+			out.push(`${m.label} ${o.label}`);
+			const trim = o.trims.find((t) => t.key !== "");
+			if (trim) out.push(`${o.label} ${trim.label}`);
+			else if (o.years[0]) out.push(`${o.years[0]} ${o.label}`);
+		}
+		const fallback = ["Ford F-150 Raptor", "Tesla Model 3", "2023 Honda Civic Type R", "Silverado", "Porsche 911 GT3", "Hood", "Windshield"];
+		return (out.length >= 4 ? out : [...out, ...fallback]).slice(0, 10);
+	});
+	let exampleIdx = $state(0);
+	let searchFocused = $state(false);
+	$effect(() => {
+		const n = searchExamples.length;
+		if (n < 2 || search || searchFocused || typeof window === "undefined" || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+		const t = setInterval(() => (exampleIdx = (exampleIdx + 1) % n), 2400);
+		return () => clearInterval(t);
+	});
+	const searchPlaceholder = $derived(
+		`Search ${isVeh ? "make, model, trim, year or pattern" : "name, address or pattern"} — try “${searchExamples[exampleIdx % Math.max(1, searchExamples.length)] ?? ""}”`,
+	);
+
 	// Leaf: the patterns under the chosen make / model / trim, across years.
 	const leafEntries = $derived(
 		level === "patterns"
@@ -296,12 +328,16 @@
 			: [],
 	);
 	// Years and trims each pattern fits, for the chip on its card. A private
-	// upload spans several entries; it still gets ONE card.
+	// upload spans several entries and a community outline is stored once per
+	// model year; either way it gets ONE card. Taken from the branch before the
+	// year filter, so picking 2021 still shows the card's full "2019–2024".
 	const patMeta = $derived.by(() => {
 		const m = new Map<string, { years: number[]; trims: string[] }>();
-		for (const x of leafEntries) {
+		const entries = level === "patterns" ? entriesUnder(vehScope, { make: path.make, model: path.model, trim: trimFilter(effTrim) }) : [];
+		for (const x of entries) {
 			for (const p of x.pats) {
-				const e = m.get(p.id) ?? m.set(p.id, { years: [], trims: [] }).get(p.id)!;
+				const k = patternKey(p);
+				const e = m.get(k) ?? m.set(k, { years: [], trims: [] }).get(k)!;
 				if (x.v.year && !e.years.includes(x.v.year)) e.years.push(x.v.year);
 				if (x.v.trim && !e.trims.includes(x.v.trim)) e.trims.push(x.v.trim);
 			}
@@ -309,7 +345,7 @@
 		return m;
 	});
 	function chipFor(p: LibPattern): string {
-		const e = patMeta.get(p.id);
+		const e = patMeta.get(patternKey(p));
 		if (!e) return "";
 		const trims = e.trims.length === 1 ? e.trims[0] : e.trims.length > 1 ? `${e.trims.length} trims` : "";
 		return [yearSpan(e.years), trims].filter(Boolean).join(" ");
@@ -804,17 +840,6 @@
 <div class="library">
 	<!-- ─── Sidebar: one set of filters for every source ─── -->
 	<aside class="library__sidebar">
-		<div class="lib-search-wrap">
-			<svg class="lib-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-			<input
-				type="search"
-				class="lib-search"
-				placeholder={projectType === "vehicle" ? "Search make, model, trim, pattern…" : "Search by name, address, pattern…"}
-				bind:value={search}
-				aria-label="Search {typeMeta(projectType).nounPlural}"
-			/>
-		</div>
-
 			{#if hasFilterGroups}
 				<button class="lib-pill lib-filter-btn" class:has-filters={filterCount > 0} onclick={() => (filtersOpen = true)} aria-haspopup="dialog">
 					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h8M18 6h2M4 12h2M12 12h8M4 18h10M20 18h0"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></svg>
@@ -944,6 +969,32 @@
 			</div>
 		{/if}
 
+		<!-- Search: one bar for makes, models, trims, years and patterns -->
+		<div class="lib-search-block">
+			<div class="lib-search-wrap">
+				<svg class="lib-search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+				<input
+					type="search"
+					class="lib-search"
+					placeholder={searchPlaceholder}
+					bind:value={search}
+					onfocus={() => (searchFocused = true)}
+					onblur={() => (searchFocused = false)}
+					autocomplete="off"
+					spellcheck="false"
+					aria-label="Search {isVeh ? "makes, models, trims, years and patterns" : typeMeta(projectType).nounPlural}"
+				/>
+			</div>
+			{#if !search.trim() && searchExamples.length}
+				<div class="lib-search-tries" aria-label="Search examples">
+					<span class="lib-search-tries__lead">Try</span>
+					{#each searchExamples as ex (ex)}
+						<button type="button" class="lib-search-try" onclick={() => (search = ex)}>{ex}</button>
+					{/each}
+				</div>
+			{/if}
+		</div>
+
 		{#snippet crumbs()}
 			<nav class="crumbs" aria-label="Breadcrumb">
 				{#if path.make}<button class="crumb" onclick={() => go({})}>All makes</button>{:else}<span class="crumb crumb--current" aria-current="page">All makes</span>{/if}
@@ -1025,7 +1076,7 @@
 									bodyStyle={o.bodyStyle}
 									imageUrl={mediaOf(m.label, o.label)?.imageUrl}
 									meta={[...(o.trims.length > 1 ? [`${o.trims.length} trims`] : o.trims.length === 1 && o.trims[0].key !== "" ? [o.trims[0].label] : []), `${o.count} ${o.count === 1 ? pieceWord.replace(/s$/, "") : pieceWord}`]}
-									onclick={() => go({ make: m.key, model: o.key })}
+									onclick={() => go(o.trims.length === 1 && o.trims[0].key !== "" ? { make: m.key, model: o.key, trim: o.trims[0].key } : { make: m.key, model: o.key })}
 								/>
 							{/each}
 						</div>
@@ -1673,14 +1724,30 @@
 		gap: 4px;
 	}
 
-	.lib-search-wrap {
-		position: relative;
-		margin-bottom: 16px;
+	.lib-search-block { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 14px; width: 100%; }
+	.lib-search-wrap { position: relative; width: 100%; }
+	.lib-search-tries { display: flex; align-items: center; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+	.lib-search-tries::-webkit-scrollbar { display: none; }
+	.lib-search-tries__lead { flex: none; font-family: var(--font-mono); font-size: 0.6875rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-tertiary); }
+	.lib-search-try {
+		flex: none;
+		padding: 3px 10px;
+		background: var(--bg-surface);
+		border: 1px solid var(--border-subtle);
+		border-radius: 999px;
+		font: inherit;
+		font-size: 0.75rem;
+		color: var(--text-secondary);
+		cursor: pointer;
+		white-space: nowrap;
+		transition: background 0.12s, color 0.12s, border-color 0.12s;
 	}
+	.lib-search-try:hover { background: var(--bg-surface-2); color: var(--text-primary); border-color: var(--border-default); }
+	.lib-search-try:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 1px; }
 
 	.lib-search-icon {
 		position: absolute;
-		left: 9px;
+		left: 13px;
 		top: 50%;
 		transform: translateY(-50%);
 		color: var(--text-tertiary);
@@ -1689,11 +1756,12 @@
 
 	.lib-search {
 		width: 100%;
-		padding: 7px 10px 7px 30px;
+		height: 44px;
+		padding: 0 14px 0 40px;
 		background: var(--bg-surface-2);
 		border: 1px solid var(--border-default);
 		border-radius: var(--radius-md);
-		font-size: 0.8125rem;
+		font-size: 0.9375rem;
 		font-family: var(--font-body);
 		color: var(--text-primary);
 		outline: none;
@@ -2609,9 +2677,7 @@
 			padding: 10px 12px;
 			gap: 8px;
 		}
-		.lib-search-wrap { margin-bottom: 0; flex: 1 1 0; min-width: 0; }
-		.lib-search { height: 40px; padding: 0 12px 0 34px; font-size: 1rem; }
-		.lib-search-icon { left: 11px; }
+		.lib-search { height: 42px; font-size: 1rem; }
 		.lib-filter-btn {
 			display: inline-flex;
 			align-items: center;

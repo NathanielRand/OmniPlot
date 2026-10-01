@@ -202,15 +202,31 @@ export function rowsForSource(source: LibrarySource, community: LibRow[], priv: 
 	return [...community, ...unpublished];
 }
 
-/** Each pattern once, in first-seen order. */
-export function uniquePatterns<T extends { id: string }>(pats: T[]): T[] {
+type KeyedPattern = { id: string } & Partial<Pick<LibPattern, "category" | "zone" | "name" | "coverage" | "svgPath" | "widthInches" | "heightInches" | "up">>;
+
+/**
+ * Identity of a pattern for display. The community catalog stores a separate
+ * pattern per model year, so the same outline can exist under many ids; those
+ * share a key and show once. Owner records and anything without geometry key on
+ * their id.
+ */
+export function patternKey(p: KeyedPattern): string {
+	if (p.up || !p.svgPath) return p.id;
+	return [p.category, p.zone, p.name, p.coverage, p.widthInches, p.heightInches, p.svgPath].join("|");
+}
+
+/** Each distinct pattern once, in first-seen order. */
+export function uniquePatterns<T extends KeyedPattern>(pats: T[]): T[] {
 	const seen = new Set<string>();
-	return pats.filter((p) => (seen.has(p.id) ? false : (seen.add(p.id), true)));
+	return pats.filter((p) => {
+		const k = patternKey(p);
+		return seen.has(k) ? false : (seen.add(k), true);
+	});
 }
 
 /** Distinct patterns across rows. */
-export function distinctCount(rows: { pats: { id: string }[] }[]): number {
+export function distinctCount(rows: { pats: KeyedPattern[] }[]): number {
 	const seen = new Set<string>();
-	for (const r of rows) for (const p of r.pats) seen.add(p.id);
+	for (const r of rows) for (const p of r.pats) seen.add(patternKey(p));
 	return seen.size;
 }

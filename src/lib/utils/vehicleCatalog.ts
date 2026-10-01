@@ -33,6 +33,22 @@ const MAKE_ALIASES: Record<string, string> = {
 	alfa: "alfa-romeo",
 };
 
+const words = (s: string) => slug(s).split("-").filter(Boolean);
+
+/**
+ * Library search. Every word of the query must appear somewhere in the text,
+ * in any order, ignoring case, accents and punctuation — "ford raptor", "f150"
+ * and "F-150 Ford" all find a Ford F-150 Raptor. Make nicknames count ("chevy").
+ */
+export function matchesQuery(text: string, query: string): boolean {
+	const terms = words(query).map((t) => (MAKE_ALIASES[t] ? words(MAKE_ALIASES[t]).join("") : t));
+	if (!terms.length) return true;
+	const hay = words(text);
+	const spaced = hay.join(" ");
+	const joined = hay.join("");
+	return terms.every((t) => spaced.includes(t) || joined.includes(t));
+}
+
 /** Grouping key for a make — "Chevy", "chevrolet " and "Chevrolet" share one. */
 export function makeKey(make: string | undefined | null): string {
 	const s = slug(make);

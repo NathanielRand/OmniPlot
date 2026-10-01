@@ -1,9 +1,25 @@
 import { describe, it, expect } from "vitest";
 import type { VehicleEntry } from "$lib/types";
-import { buildTree, entriesUnder, makeKey, mediaId, monogram, yearSpan, BASE_TRIM_LABEL } from "./vehicleCatalog";
+import { buildTree, entriesUnder, makeKey, matchesQuery, mediaId, monogram, yearSpan, BASE_TRIM_LABEL } from "./vehicleCatalog";
 
 const v = (id: string, make: string, model: string, year: number, trim?: string): VehicleEntry => ({
 	id, make, model, year, trim, tags: [], status: "published", updatedAt: "",
+});
+
+describe("matchesQuery", () => {
+	const text = "2022 Ford F-150 Raptor truck Hood";
+	it("matches words in any order, ignoring punctuation and case", () => {
+		for (const q of ["ford raptor", "F150", "f-150 FORD", "2022 hood", "  RAPTOR ", ""]) expect(matchesQuery(text, q), q).toBe(true);
+	});
+	it("requires every word", () => {
+		expect(matchesQuery(text, "ford tundra")).toBe(false);
+		expect(matchesQuery(text, "2021")).toBe(false);
+	});
+	it("understands make nicknames and accents", () => {
+		expect(matchesQuery("Chevrolet Silverado", "chevy silverado")).toBe(true);
+		expect(matchesQuery("Mercedes-Benz C-Class", "merc c class")).toBe(true);
+		expect(matchesQuery("Citroën C3", "citroen")).toBe(true);
+	});
 });
 
 describe("vehicleCatalog", () => {
