@@ -68,8 +68,15 @@
 			await uploadBytes(r, file, { contentType: file.type, cacheControl: "public,max-age=31536000" });
 			await save(id, base, { [field]: await getDownloadURL(r) });
 			toastStore.success("Saved", file.name);
-		} catch {
-			toastStore.error("Upload failed", "Check the Storage rules allow admin writes to vehicle-media/.");
+		} catch (e) {
+			// Say what actually failed: "unauthorized" is rules, "retry-limit"/"unknown"
+			// with no HTTP status is the bucket missing or the request blocked.
+			const code = (e as { code?: string })?.code ?? "unknown";
+			console.error("[vehicle-media upload]", e);
+			toastStore.error("Upload failed", `${code} — ${
+				code === "storage/unauthorized" ? "Storage rules don't allow this account to write vehicle-media/. Deploy storage.rules."
+				: "couldn't reach the Storage bucket. Check it exists in the Firebase console and that no browser extension is blocking firebasestorage.googleapis.com."
+			}`);
 		} finally {
 			busy = null;
 		}
