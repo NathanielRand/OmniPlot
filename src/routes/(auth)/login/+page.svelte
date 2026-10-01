@@ -49,7 +49,7 @@
 
 	// Redirect once signed in
 	$effect(() => {
-		if (userStore.isAuth) goto("/studio", { replaceState: true });
+		if (userStore.isAuth) goto("/dashboard", { replaceState: true });
 	});
 
 	// ─── Google ───────────────────────────────

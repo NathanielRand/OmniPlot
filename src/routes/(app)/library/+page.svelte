@@ -49,7 +49,11 @@
 		if (t === "mine") url.searchParams.set("tab", "mine"); else url.searchParams.delete("tab");
 		goto(url, { replaceState: true, noScroll: true, keepFocus: true });
 	}
-	let projectType    = $state<ProjectType>("vehicle");
+	// ?type= deep-links to a subject type (the dashboard's community counts use it).
+	const urlType = page.url.searchParams.get("type");
+	let projectType    = $state<ProjectType>(
+		urlType === "residential" || urlType === "commercial" || urlType === "custom" ? urlType : "vehicle",
+	);
 	let category       = $state<PatternCategory>("ppf");
 	let search         = $state("");
 	let activeYear     = $state("All");

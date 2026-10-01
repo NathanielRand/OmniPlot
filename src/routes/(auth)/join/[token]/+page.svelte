@@ -99,7 +99,7 @@
 			localStorage.removeItem(PENDING_INVITE_KEY);
 			stage = "done";
 			toastStore.success("Welcome to the team!", `You've joined ${invite.shopName}.`);
-			setTimeout(() => goto("/studio", { replaceState: true }), 900);
+			setTimeout(() => goto("/dashboard", { replaceState: true }), 900);
 		} catch (err) {
 			_inviteHandled = false;
 			toastStore.error("Couldn't join", err instanceof Error ? err.message : "Please try again.");
@@ -230,8 +230,8 @@
 		{#if alreadyMember}
 			<h1 class="title">You're already on this team</h1>
 			<p class="sub">You're already a member of {invite.shopName}.</p>
-			<Button variant="primary" size="lg" onclick={() => goto("/studio", { replaceState: true })} class="full-btn">
-				Go to studio
+			<Button variant="primary" size="lg" onclick={() => goto("/dashboard", { replaceState: true })} class="full-btn">
+				Go to dashboard
 			</Button>
 		{:else}
 			<h1 class="title">You've been invited</h1>
@@ -242,7 +242,7 @@
 			<Button variant="primary" size="lg" onclick={doAccept} loading={loading} class="full-btn">
 				Accept &amp; join {invite.shopName}
 			</Button>
-			<a href="/studio" class="btn-ghost">No thanks, go to my account</a>
+			<a href="/dashboard" class="btn-ghost">No thanks, go to my account</a>
 		{/if}
 
 	<!-- ── Auth (sign in to accept) ─────────────── -->

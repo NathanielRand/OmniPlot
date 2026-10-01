@@ -51,7 +51,7 @@
 	$effect(() => {
 		if (!userStore.isAuth) return;
 		const wantsPaid = plan === "lite" || plan === "pro";
-		goto("/studio", { replaceState: true }).then(() => {
+		goto("/dashboard", { replaceState: true }).then(() => {
 			if (wantsPaid && userStore.user?.tier === "free") uiStore.openPricing();
 		});
 	});

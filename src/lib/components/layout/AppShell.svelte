@@ -120,24 +120,6 @@
 			</div>
 		</div>
 
-		<nav class="topbar__nav" aria-label="Main navigation">
-			{#each navItems as item}
-				<a
-					href={item.href}
-					class="topbar__nav-item"
-					class:active={currentPath === item.href}
-					aria-current={currentPath === item.href
-						? "page"
-						: undefined}
-				>
-					{item.label}
-					{#if item.href === "/studio/agent" && agentStore.needsUpdate}
-						<span class="nav-update-dot" use:tooltip={"Agent update available"} aria-label="Update available"></span>
-					{/if}
-				</a>
-			{/each}
-		</nav>
-
 		<div class="topbar__right">
 			<!-- Plotter status + Connect -->
 			<PlotterStatusBadge variant="topbar" />
@@ -349,7 +331,9 @@
 						onclick={uiStore.closeMobileMenu}
 					>
 						<span class="sidebar__icon" aria-hidden="true">
-							{#if item.icon === "scissors"}
+							{#if item.icon === "dashboard"}
+								<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
+							{:else if item.icon === "scissors"}
 								<svg
 									width="16"
 									height="16"
@@ -512,6 +496,7 @@
 <style>
 	.app-shell {
 		display: grid;
+		grid-template-columns: minmax(0, 1fr);
 		grid-template-rows: 52px 1fr;
 		height: 100vh;
 		height: 100dvh;
@@ -564,47 +549,6 @@
 	.topbar__menu-btn:hover {
 		background: var(--interactive-hover);
 		color: var(--text-primary);
-	}
-
-	.topbar__nav {
-		display: flex;
-		gap: 2px;
-		flex: 1;
-	}
-
-	.topbar__nav-item {
-		padding: 5px 12px;
-		font-size: 0.8125rem;
-		font-weight: 500;
-		color: var(--text-tertiary);
-		text-decoration: none;
-		border-radius: var(--radius-md);
-		transition:
-			background 0.12s,
-			color 0.12s;
-		white-space: nowrap;
-	}
-
-	.topbar__nav-item:hover {
-		background: var(--interactive-hover);
-		color: var(--text-primary);
-	}
-	.topbar__nav-item.active {
-		background: var(--bg-surface-3);
-		color: var(--text-primary);
-	}
-
-	/* Update dot shown next to "Agent" in topbar when a new version is available */
-	.nav-update-dot {
-		display: inline-block;
-		width: 6px;
-		height: 6px;
-		border-radius: 50%;
-		background: var(--color-warning, #f59e0b);
-		margin-left: 4px;
-		flex-shrink: 0;
-		vertical-align: middle;
-		animation: update-pulse 2s ease-in-out infinite;
 	}
 
 	@keyframes update-pulse {
@@ -829,13 +773,13 @@
 	/* ─── Body / Sidebar ────── */
 	.app-body {
 		display: grid;
-		grid-template-columns: 200px 1fr;
+		grid-template-columns: 200px minmax(0, 1fr);
 		overflow: hidden;
 		transition: grid-template-columns 0.22s var(--ease-smooth);
 	}
 
 	.sidebar-collapsed .app-body {
-		grid-template-columns: 52px 1fr;
+		grid-template-columns: 52px minmax(0, 1fr);
 	}
 
 	.sidebar {
@@ -1103,6 +1047,7 @@
 	}
 
 	.app-main {
+		min-width: 0;
 		overflow-y: auto;
 		display: flex;
 		flex-direction: column;
@@ -1114,7 +1059,6 @@
 	}
 
 	@media (max-width: 768px) {
-		.topbar__nav { display: none; }
 
 		.app-body {
 			grid-template-columns: 1fr;

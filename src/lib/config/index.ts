@@ -751,6 +751,7 @@ export const HPGL_UNITS_PER_MM = 40; // 40 plotter units = 1 mm
 
 // ─── Navigation ───────────────────────────────
 export const APP_NAV = [
+	{ label: "Overview", href: "/dashboard",    icon: "dashboard"},
 	{ label: "Studio",   href: "/studio",        icon: "scissors" },
 	{ label: "Library",  href: "/library",        icon: "library"  },
 	{ label: "Jobs",     href: "/jobs",           icon: "briefcase"},

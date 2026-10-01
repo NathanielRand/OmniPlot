@@ -58,10 +58,10 @@
 					// Non-fatal — invite may have been accepted elsewhere
 				})
 				.finally(() => {
-					setTimeout(() => goto("/studio", { replaceState: true }), 800);
+					setTimeout(() => goto("/dashboard", { replaceState: true }), 800);
 				});
 		} else {
-			setTimeout(() => goto("/studio", { replaceState: true }), 800);
+			setTimeout(() => goto("/dashboard", { replaceState: true }), 800);
 		}
 	});
 </script>
