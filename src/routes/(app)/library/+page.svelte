@@ -75,6 +75,7 @@
 	// Vehicles drill down by URL instead — see `path` below.
 	let selectedVehicle = $state<VehicleEntry | null>(null);
 	let browseOpen     = $state(false);
+	let filtersOpen    = $state(false);
 
 	// ─── Vehicle drill-down: ?make=&model=&trim= ──
 	// In the URL so Back, deep links and breadcrumbs all work. Values are the
@@ -730,25 +731,35 @@
 						: "filters",
 	);
 
+
+	// ─── Mobile filter sheet ──────────────────────
+	const filterCount = $derived(
+		(isVeh && activeYear !== "All" ? 1 : 0) +
+		(activeZone !== "All zones" ? 1 : 0) +
+		(showStatus && shareFilter !== "all" ? 1 : 0),
+	);
+	const hasFilterGroups = $derived((isVeh && YEARS.length > 1) || ZONES.length > 2 || showStatus);
+	function resetFilters() {
+		activeYear = "All";
+		activeZone = "All zones";
+		shareFilter = "all";
+	}
+
+	// Keep the active tab of a horizontally scrolling switcher in view.
+	function revealActive(node: HTMLElement, _key?: unknown) {
+		const run = () =>
+			requestAnimationFrame(() =>
+				node.querySelector<HTMLElement>(".active")?.scrollIntoView({ inline: "center", block: "nearest" }),
+			);
+		run();
+		return { update: run };
+	}
 </script>
 <svelte:head>
 	<title>Pattern Library — OmniPlot</title>
 </svelte:head>
 
-<div class="library">
-	<!-- ─── Sidebar: one set of filters for every source ─── -->
-	<aside class="library__sidebar">
-		<div class="lib-search-wrap">
-			<svg class="lib-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-			<input
-				type="search"
-				class="lib-search"
-				placeholder={projectType === "vehicle" ? "Search make, model, trim, pattern…" : "Search by name, address, pattern…"}
-				bind:value={search}
-				aria-label="Search {typeMeta(projectType).nounPlural}"
-			/>
-		</div>
-
+{#snippet filterGroups()}
 		{#if isVeh && YEARS.length > 1}
 			<div class="lib-section-label">Year</div>
 			<div class="lib-filter-pills lib-filter-pills--years">
@@ -779,6 +790,44 @@
 			</div>
 		{/if}
 
+{/snippet}
+
+{#snippet requestBtn(inSheet: boolean)}
+	{#if source !== "private"}
+		<button class="lib-request-btn" class:lib-request-btn--in-sheet={inSheet} onclick={() => { filtersOpen = false; openRequest(); }}>
+			<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+			{projectType === "vehicle" ? "Request a vehicle" : projectType === "custom" ? "Request a pattern" : "Request a property pattern"}
+		</button>
+	{/if}
+{/snippet}
+
+<div class="library">
+	<!-- ─── Sidebar: one set of filters for every source ─── -->
+	<aside class="library__sidebar">
+		<div class="lib-search-wrap">
+			<svg class="lib-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+			<input
+				type="search"
+				class="lib-search"
+				placeholder={projectType === "vehicle" ? "Search make, model, trim, pattern…" : "Search by name, address, pattern…"}
+				bind:value={search}
+				aria-label="Search {typeMeta(projectType).nounPlural}"
+			/>
+		</div>
+
+			{#if hasFilterGroups}
+				<button class="lib-pill lib-filter-btn" class:has-filters={filterCount > 0} onclick={() => (filtersOpen = true)} aria-haspopup="dialog">
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h8M18 6h2M4 12h2M12 12h8M4 18h10M20 18h0"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></svg>
+					Filters
+					{#if filterCount}<span class="lib-filter-btn__n">{filterCount}</span>{/if}
+				</button>
+			{/if}
+
+			<!-- Desktop: filters live in the sidebar. ≤768px they open in a sheet. -->
+			<div class="lib-filters-desktop">
+				{@render filterGroups()}
+			</div>
+
 		{#if isVeh && tree.length}
 			<!-- Desktop: the tree lives here. ≤768px it moves into a sheet. -->
 			<div class="lib-tree">
@@ -804,12 +853,7 @@
 			</div>
 		</div>
 
-		{#if source !== "private"}
-			<button class="lib-request-btn" onclick={() => openRequest()}>
-				<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-				{projectType === "vehicle" ? "Request a vehicle" : projectType === "custom" ? "Request a pattern" : "Request a property pattern"}
-			</button>
-		{/if}
+		{@render requestBtn(hasFilterGroups)}
 		</div>
 	</aside>
 
@@ -846,9 +890,9 @@
 						</button>
 					{/each}
 				</div>
-				<a href="/library/upload" class="upload-cta" use:tooltip={"Add a pattern to your private library"}>
+				<a href="/library/upload" class="upload-cta" aria-label="Upload pattern" use:tooltip={"Add a pattern to your private library"}>
 					<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-					Upload pattern
+					<span class="upload-cta__text">Upload pattern</span>
 				</a>
 				<div class="view-toggle" class:view-toggle--off={isVeh || !!selectedVehicle} aria-hidden={isVeh || !!selectedVehicle}>
 					<div class="view-divider" aria-hidden="true"></div>
@@ -863,7 +907,7 @@
 		</div>
 
 		<!-- Subject type -->
-		<div class="mode-switcher mode-switcher--full" role="group" aria-label="Subject type">
+		<div class="mode-switcher mode-switcher--full" role="group" aria-label="Subject type" use:revealActive={projectType}>
 			{#each PROJECT_TYPES as t (t.value)}
 				<button
 					class="mode-btn mode-btn--lg"
@@ -881,7 +925,7 @@
 		<!-- Category (only categories this type actually has) -->
 		<div class="cat-row">
 		{#if categoriesForType.length > 0}
-			<div class="mode-switcher" role="group" aria-label="Pattern category">
+			<div class="mode-switcher" role="group" aria-label="Pattern category" use:revealActive={category}>
 				{#each categoriesForType as c (c.value)}
 					<button class="mode-btn" class:active={category === c.value} onclick={() => switchCategory(c.value)} aria-pressed={category === c.value}>
 						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d={c.icon}/></svg>
@@ -1259,7 +1303,7 @@
 </div>
 
 <!-- ─── Mobile: browse makes / models / trims ─── -->
-<svelte:window onkeydown={(e) => { if (e.key === "Escape" && browseOpen) browseOpen = false; }} />
+<svelte:window onkeydown={(e) => { if (e.key !== "Escape") return; if (browseOpen) browseOpen = false; if (filtersOpen) filtersOpen = false; }} />
 {#if browseOpen}
 	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 	<div class="sheet-backdrop" onclick={() => (browseOpen = false)}>
@@ -1274,6 +1318,32 @@
 			</div>
 			<div class="sheet__body">
 				<VehicleTreeFilter {tree} {path} total={treeTotal} {logoFor} onselect={go} trimBase={TRIM_BASE} />
+			</div>
+		</div>
+	</div>
+{/if}
+
+{#if filtersOpen}
+	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+	<div class="sheet-backdrop" onclick={() => (filtersOpen = false)}>
+		<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+		<div class="sheet" role="dialog" aria-modal="true" aria-label="Filters" tabindex="-1" onclick={(e) => e.stopPropagation()}>
+			<div class="sheet__grab" aria-hidden="true"></div>
+			<div class="sheet__head">
+				Filters
+				<span class="sheet__head-right">
+					{#if filterCount}<button class="sheet__reset" onclick={resetFilters}>Reset</button>{/if}
+					<button class="sheet__close" onclick={() => (filtersOpen = false)} aria-label="Close">
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>
+					</button>
+				</span>
+			</div>
+			<div class="sheet__body">
+				{@render filterGroups()}
+				{@render requestBtn(false)}
+			</div>
+			<div class="sheet__foot">
+				<button class="sheet__done" onclick={() => (filtersOpen = false)}>Done</button>
 			</div>
 		</div>
 	</div>
@@ -2294,26 +2364,6 @@
 		.vb-grid--model { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; }
 		.vb-grid--trim  { grid-template-columns: 1fr; gap: 10px; }
 
-		/* Sidebar becomes a horizontally-scrollable filter strip instead of
-		   vanishing — hiding it outright removed search/filters/request on mobile. */
-		.library__sidebar {
-			flex-direction: row;
-			align-items: center;
-			overflow-x: auto;
-			overflow-y: hidden;
-			border-right: none;
-			border-bottom: 1px solid var(--border-subtle);
-			padding: 10px 12px;
-			gap: 8px;
-			-webkit-overflow-scrolling: touch;
-		}
-		.lib-search-wrap { margin-bottom: 0; flex: 0 0 150px; }
-		.lib-section-label { display: none; }
-		.lib-filter-pills { flex-wrap: nowrap; margin-bottom: 0; flex-shrink: 0; }
-		.lib-stats { display: none; }
-		.lib-filter-pills--years { max-height: none; overflow-y: visible; }
-		.lib-request-btn { margin-top: 0; width: auto; flex-shrink: 0; white-space: nowrap; }
-
 		.library__main { padding: 14px; }
 		.library__header { flex-direction: column; align-items: stretch; gap: 10px; }
 		.library__header-actions { justify-content: space-between; }
@@ -2527,5 +2577,114 @@
 		.view-toggle--off { display: none; }
 		.lib-side-foot { display: contents; }
 		.cat-row { min-height: 0; }
+	}
+
+	/* ─── Mobile v2: toolbar, header and nav controls ─── */
+	.lib-filters-desktop { display: contents; }
+	.lib-filter-btn { display: none; }
+
+	.sheet__head-right { display: flex; align-items: center; gap: 8px; }
+	.sheet__reset { background: none; border: none; padding: 6px 8px; font: inherit; font-size: 0.875rem; color: var(--text-brand); cursor: pointer; }
+	.sheet__foot { padding: 10px 16px 14px; border-top: 1px solid var(--border-subtle); }
+	.sheet__done {
+		width: 100%; height: 44px; border: none; border-radius: var(--radius-md);
+		background: var(--color-brand-dim); color: #fff;
+		font: inherit; font-weight: 600; cursor: pointer;
+	}
+	.sheet__body .lib-pill { padding: 8px 14px; min-height: 38px; font-size: 0.875rem; }
+	.sheet__body .lib-filter-pills--years { max-height: none; overflow: visible; }
+	.sheet__body .lib-section-label { padding-top: 14px; }
+	.sheet__body .lib-request-btn { margin-top: 18px; padding: 11px 12px; }
+
+	@media (max-width: 768px) {
+		/* Toolbar: search + Filters on one row, vehicle browse on the next */
+		.lib-filters-desktop { display: none; }
+		.library__sidebar {
+			flex-direction: row;
+			flex-wrap: wrap;
+			align-items: center;
+			overflow: visible;
+			border-right: none;
+			border-bottom: 1px solid var(--border-subtle);
+			padding: 10px 12px;
+			gap: 8px;
+		}
+		.lib-search-wrap { margin-bottom: 0; flex: 1 1 0; min-width: 0; }
+		.lib-search { height: 40px; padding: 0 12px 0 34px; font-size: 1rem; }
+		.lib-search-icon { left: 11px; }
+		.lib-filter-btn {
+			display: inline-flex;
+			align-items: center;
+			gap: 6px;
+			flex: none;
+			height: 40px;
+			padding: 0 12px;
+			font-size: 0.875rem;
+		}
+		.lib-filter-btn.has-filters { border-color: var(--color-brand-dim); color: var(--text-primary); }
+		.lib-filter-btn__n {
+			display: inline-grid;
+			place-items: center;
+			min-width: 18px;
+			height: 18px;
+			padding: 0 5px;
+			border-radius: 9px;
+			background: var(--color-brand);
+			color: #0a0a0a;
+			font-family: var(--font-mono);
+			font-size: 0.6875rem;
+			font-weight: 700;
+		}
+		.lib-browse-btn {
+			flex: 1 1 100%;
+			max-width: none;
+			height: 40px;
+			padding: 0 12px;
+			font-size: 0.875rem;
+			justify-content: flex-start;
+		}
+		.lib-side-foot .lib-section-label,
+		.lib-stats { display: none; }
+
+		/* Scrollable (overflow ≠ visible) flex items can shrink to 0 height inside
+		   the scrolling column and overlap their neighbours — never let them. */
+		.library__main > * { flex-shrink: 0; }
+		.lib-request-btn--in-sheet { display: none; }
+		.library__sidebar .lib-request-btn { margin-top: 0; width: auto; flex: none; height: 40px; white-space: nowrap; }
+
+		/* Header: title + upload + view toggle, then the source switch full width */
+		.library__title { font-size: 1.5rem; margin-bottom: 1px; }
+		.library__header {
+			display: grid;
+			grid-template-columns: minmax(0, 1fr) auto auto;
+			align-items: center;
+			gap: 10px 8px;
+		}
+		.library__header-actions { display: contents; }
+		.library__heading { grid-column: 1; grid-row: 1; }
+		.upload-cta { grid-column: 2; grid-row: 1; height: 36px; padding: 0 12px; }
+		.view-toggle { grid-column: 3; grid-row: 1; }
+		.view-divider { display: none; }
+		.view-btn { width: 36px; height: 36px; }
+		.src-switch { grid-column: 1 / -1; grid-row: 2; width: 100%; }
+		.src-btn { flex: 1; justify-content: center; min-height: 36px; }
+
+		/* Type + category switchers scroll sideways instead of cramming */
+		.mode-switcher {
+			max-width: 100%;
+			overflow-x: auto;
+			scrollbar-width: none;
+			-webkit-overflow-scrolling: touch;
+		}
+		.mode-switcher::-webkit-scrollbar { display: none; }
+		.mode-btn { flex: 0 0 auto; min-height: 38px; }
+		.mode-switcher--full .mode-btn--lg { flex: 1 0 auto; padding: 9px 14px; font-size: 0.875rem; }
+
+		.crumb { padding: 7px 10px; }
+	}
+
+	@media (max-width: 400px) {
+		.upload-cta__text { display: none; }
+		.upload-cta { width: 36px; padding: 0; justify-content: center; }
 	}
 </style>
