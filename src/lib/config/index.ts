@@ -1015,6 +1015,10 @@ export const CHANGELOG = [
 				text: "Switching between types, categories and sources no longer shifts the buttons and filters around.",
 			},
 			{
+				type: "improvement",
+				text: "Accounts without a profile photo now show a person icon in the account menu instead of initials.",
+			},
+			{
 				type: "fix",
 				text: "Community patterns now cover every model, year and trim that was submitted. Previously only the first year of a range such as 2014–2018 was published, so the community copy could show fewer years than the original.",
 			},

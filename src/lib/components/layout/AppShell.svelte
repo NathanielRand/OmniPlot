@@ -163,7 +163,7 @@
 						<img src={user.photoURL} alt={user.displayName ?? "Avatar"} class="avatar__img" />
 					{:else}
 						<span class="avatar__initials" aria-hidden="true">
-							{(user?.displayName ?? user?.email ?? "?").slice(0, 2).toUpperCase()}
+							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
 						</span>
 					{/if}
 				</button>
@@ -184,8 +184,8 @@
 								{#if user?.photoURL}
 									<img src={user.photoURL} alt="" class="user-menu__avatar-img" />
 								{:else}
-									<span class="user-menu__avatar-initials">
-										{(user?.displayName ?? user?.email ?? "?").slice(0, 2).toUpperCase()}
+									<span class="user-menu__avatar-initials" aria-hidden="true">
+										<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
 									</span>
 								{/if}
 							</div>

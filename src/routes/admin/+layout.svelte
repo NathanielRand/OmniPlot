@@ -192,7 +192,7 @@
       <div class="admin-topbar__breadcrumb">
         <span class="admin-topbar__section">Admin</span>
         <span class="admin-topbar__sep" aria-hidden="true">/</span>
-        <span class="admin-topbar__page">{currentPath.split('/').pop() || 'Overview'}</span>
+        <span class="admin-topbar__page">{currentPath.replace(/\/+$/, '') === '/admin' ? 'Overview' : currentPath.split('/').pop()}</span>
       </div>
       <div class="admin-topbar__right">
         <Badge variant="danger" size="sm">Admin</Badge>
@@ -249,6 +249,10 @@
 
               <hr class="user-menu__sep" />
 
+              <a href="/dashboard" role="menuitem" class="user-menu__item" onclick={closeMenu}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
+                Overview
+              </a>
               <a href="/studio"   role="menuitem" class="user-menu__item" onclick={closeMenu}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4L8.12 15.88M14.47 14.48L20 20M8.12 8.12L12 12"/></svg>
                 Back to Studio
