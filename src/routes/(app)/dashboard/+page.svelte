@@ -168,7 +168,7 @@
 		const rows = feedTab === "popular"
 			? visible.filter((x) => x.v.popular).sort((a, b) => b.pats.length - a.pats.length)
 			: [...visible].sort((a, b) => (b.v.updatedAt ?? "").localeCompare(a.v.updatedAt ?? ""));
-		return rows.slice(0, 8);
+		return rows.slice(0, 4);
 	});
 	const typeLabel = (t: ProjectType) => TYPES.find((x) => x.value === t)?.label ?? "Vehicle";
 
@@ -415,6 +415,58 @@
 		</section>
 	</div>
 
+	<!-- ─── Get set up + your contributions ─── -->
+	<div class="row row--setup" class:row--solo={!showSteps}>
+		{#if showSteps}
+			<section class="panel" aria-labelledby="steps-h">
+				<div class="panel__head">
+					<h2 id="steps-h" class="panel__title">Get set up</h2>
+					<span class="panel__sub">{stepsDone} of {steps.length}</span>
+				</div>
+				<div class="bar"><span class="bar__fill" style:width="{(stepsDone / steps.length) * 100}%"></span></div>
+				<ul class="steps">
+					{#each steps as s (s.id)}
+						<li>
+							<a class="step" class:step--done={s.done} href={s.href}>
+								<span class="step__box" aria-hidden="true">
+									{#if s.done}<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>{/if}
+								</span>
+								{s.label}
+							</a>
+						</li>
+					{/each}
+				</ul>
+			</section>
+		{/if}
+
+		<section class="panel" aria-labelledby="mine-h">
+			<div class="panel__head">
+				<h2 id="mine-h" class="panel__title">Your contributions</h2>
+				<a class="panel__link" href="/library?source=private">My patterns</a>
+			</div>
+			{#if mine === null}
+				<p class="muted">Loading…</p>
+			{:else if mine.length === 0}
+				<p class="muted">Upload a pattern you've measured and share it with the community.</p>
+				<div><Button variant="secondary" size="sm" href="/library/upload">Upload a pattern</Button></div>
+			{:else}
+				<div class="mini-stats">
+					<div><b>{mine.length}</b><span>uploaded</span></div>
+					<div><b>{mineCounts.pending}</b><span>in review</span></div>
+					<div><b>{mineCounts.published}</b><span>published</span></div>
+				</div>
+				<ul class="mine">
+					{#each mineLatest as p (p.id)}
+						<li>
+							<span class="mine__name">{p.propertyLabel || p.patternName || [p.make, ...(p.models ?? [])].filter(Boolean).join(" ") || p.name}</span>
+							<Badge variant={MINE_VARIANT[mineStatus(p)]}>{MINE_LABEL[mineStatus(p)]}</Badge>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		</section>
+	</div>
+
 	<!-- ─── Community library ─── -->
 	<section class="panel community" aria-labelledby="comm-h">
 		<div class="panel__head">
@@ -530,55 +582,6 @@
 		</div>
 
 		<div class="col col--side">
-			{#if showSteps}
-				<section class="panel" aria-labelledby="steps-h">
-					<div class="panel__head">
-						<h2 id="steps-h" class="panel__title">Get set up</h2>
-						<span class="panel__sub">{stepsDone} of {steps.length}</span>
-					</div>
-					<div class="bar"><span class="bar__fill" style:width="{(stepsDone / steps.length) * 100}%"></span></div>
-					<ul class="steps">
-						{#each steps as s (s.id)}
-							<li>
-								<a class="step" class:step--done={s.done} href={s.href}>
-									<span class="step__box" aria-hidden="true">
-										{#if s.done}<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>{/if}
-									</span>
-									{s.label}
-								</a>
-							</li>
-						{/each}
-					</ul>
-				</section>
-			{/if}
-
-			<section class="panel" aria-labelledby="mine-h">
-				<div class="panel__head">
-					<h2 id="mine-h" class="panel__title">Your contributions</h2>
-					<a class="panel__link" href="/library?source=private">My patterns</a>
-				</div>
-				{#if mine === null}
-					<p class="muted">Loading…</p>
-				{:else if mine.length === 0}
-					<p class="muted">Upload a pattern you've measured and share it with the community.</p>
-					<div><Button variant="secondary" size="sm" href="/library/upload">Upload a pattern</Button></div>
-				{:else}
-					<div class="mini-stats">
-						<div><b>{mine.length}</b><span>uploaded</span></div>
-						<div><b>{mineCounts.pending}</b><span>in review</span></div>
-						<div><b>{mineCounts.published}</b><span>published</span></div>
-					</div>
-					<ul class="mine">
-						{#each mineLatest as p (p.id)}
-							<li>
-								<span class="mine__name">{p.propertyLabel || p.patternName || [p.make, ...(p.models ?? [])].filter(Boolean).join(" ") || p.name}</span>
-								<Badge variant={MINE_VARIANT[mineStatus(p)]}>{MINE_LABEL[mineStatus(p)]}</Badge>
-							</li>
-						{/each}
-					</ul>
-				{/if}
-			</section>
-
 			{#if topRequests.length}
 				<section class="panel" aria-labelledby="req-h">
 					<div class="panel__head">
@@ -705,8 +708,12 @@
 	/* ─── Rows ─── */
 	.row { display: grid; gap: 14px; align-items: start; }
 	.row--2 { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); align-items: stretch; }
-	.row--main { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); }
+	.row--main { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); align-items: stretch; }
+	.row--setup { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; }
+	.row--setup.row--solo { grid-template-columns: minmax(0, 1fr); }
 	.col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+	/* Side-by-side columns end on the same line: the last real panel of each takes the slack. */
+	.col:not(.col--side) > .panel:last-child, .col--side > .panel:not(.whatsnew):nth-last-child(2), .col--side > .whatsnew:only-child { flex: 1; }
 
 	.panel {
 		min-width: 0;
@@ -835,7 +842,7 @@
 
 	.feed {
 		list-style: none; margin: 0; padding: 0;
-		display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px;
+		display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px;
 	}
 	.card {
 		display: flex; flex-direction: column; height: 100%; min-width: 0; text-decoration: none; color: inherit;
@@ -915,7 +922,10 @@
 
 	@container dash (max-width: 900px) {
 		.row--2, .row--main { grid-template-columns: minmax(0, 1fr); }
-		.col--side { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+		.col--side { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; }
+		/* the feed shows one row: as many cards as there are columns */
+		.feed { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+		.feed > :nth-child(n + 4) { display: none; }
 		.types { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 	}
 
@@ -923,6 +933,9 @@
 		.hero { grid-template-columns: minmax(0, 1fr); padding: 20px; }
 		.stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 		.col--side { grid-template-columns: minmax(0, 1fr); }
+		.row--setup { grid-template-columns: minmax(0, 1fr); }
+		.feed { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+		.feed > :nth-child(n + 3) { display: none; }
 	}
 
 	@container dash (max-width: 520px) {
@@ -939,6 +952,7 @@
 		.types { gap: 8px; }
 		.type { padding: 12px; }
 		.feed { grid-template-columns: minmax(0, 1fr); }
+		.feed > :nth-child(n + 3) { display: revert; }
 		.card { flex-direction: row; }
 		.card__thumb { width: 92px; height: auto; flex-shrink: 0; }
 		.kv { grid-template-columns: minmax(0, 1fr); }
