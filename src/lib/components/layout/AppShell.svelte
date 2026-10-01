@@ -1164,9 +1164,24 @@
 			box-shadow: 0 0 0 2px var(--bg-surface);
 		}
 	}
-	/* Small phones: Upgrade lives in the drawer + avatar menu; icon-only logo */
+	/* Phones: shrink the wordmark + mark so the title fits and the right-hand
+	   controls aren't pushed off-screen. */
+	@media (max-width: 640px) {
+		.topbar__left { gap: 6px; }
+		.topbar__brand :global(.logo-link) { gap: 6px; }
+		.topbar__brand :global(.logo-link svg) { width: 24px; height: 24px; }
+		.topbar__brand :global(.wordmark) { font-size: 0.9375rem; }
+	}
+	@media (max-width: 480px) {
+		.topbar__brand :global(.wordmark) { font-size: 0.8125rem; }
+		.topbar__brand :global(.logo-link svg) { width: 22px; height: 22px; }
+	}
+	/* Small phones: Upgrade lives in the drawer + avatar menu */
 	@media (max-width: 400px) {
 		.upgrade-btn { display: none; }
+	}
+	/* Last resort on very narrow screens: icon-only logo */
+	@media (max-width: 340px) {
 		.topbar__brand :global(.wordmark) { display: none; }
 	}
 </style>
