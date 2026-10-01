@@ -555,7 +555,7 @@
 			<section class="panel" aria-labelledby="mine-h">
 				<div class="panel__head">
 					<h2 id="mine-h" class="panel__title">Your contributions</h2>
-					<a class="panel__link" href="/library?tab=mine">My patterns</a>
+					<a class="panel__link" href="/library?source=private">My patterns</a>
 				</div>
 				{#if mine === null}
 					<p class="muted">Loading…</p>
@@ -583,7 +583,7 @@
 				<section class="panel" aria-labelledby="req-h">
 					<div class="panel__head">
 						<h2 id="req-h" class="panel__title">Most wanted</h2>
-						<a class="panel__link" href="/library">Vote</a>
+						<a class="panel__link" href="/library">Open library</a>
 					</div>
 					<ul class="reqs">
 						{#each topRequests as r (r.id)}

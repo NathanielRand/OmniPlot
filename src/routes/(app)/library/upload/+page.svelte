@@ -728,7 +728,7 @@
 					</p>
 				{/if}
 				<div class="success-actions">
-					<button class="btn btn--primary" onclick={() => goto("/library?tab=mine")}>View My Patterns</button>
+					<button class="btn btn--primary" onclick={() => goto("/library?source=private")}>View My Patterns</button>
 					<button class="btn btn--ghost" onclick={resetForm}>Save Another</button>
 				</div>
 			</div>

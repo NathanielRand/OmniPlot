@@ -24,6 +24,10 @@
 		buildTree, entriesUnder, mediaFor, yearSpan, trimFilter,
 		BASE_TRIM_LABEL, TRIM_BASE, TRIM_ALL,
 	} from "$lib/utils/vehicleCatalog";
+	import {
+		communityRows, privateRows, rowsForSource, uniquePatterns, distinctCount, shareStatusOf, userPatternToPattern,
+		type LibPattern, type LibRow, type LibrarySource, type ShareStatus,
+	} from "$lib/utils/libraryRows";
 
 	// ─── Subject types ────────────────────────────
 	const PROJECT_TYPES: { value: ProjectType; label: string; noun: string; nounPlural: string }[] = [
@@ -40,15 +44,22 @@
 		return [v.year, v.make, v.model, v.trim].filter(Boolean).join(" ");
 	}
 
-	// ─── State ────────────────────────────────────
-	// ?tab=mine deep-links to My patterns (the upload/edit pages return here).
-	let tab            = $state<"library" | "mine">(page.url.searchParams.get("tab") === "mine" ? "mine" : "library");
-	function setTab(t: "library" | "mine") {
-		tab = t;
-		const url = new URL(page.url);
-		if (t === "mine") url.searchParams.set("tab", "mine"); else url.searchParams.delete("tab");
-		goto(url, { replaceState: true, noScroll: true, keepFocus: true });
+	// ─── Source: community, private, or both ──────
+	// ?source=all|community|private. Older links used ?tab=mine → private.
+	const SOURCES: { value: LibrarySource; label: string }[] = [
+		{ value: "all", label: "All" },
+		{ value: "community", label: "Community" },
+		{ value: "private", label: "Private" },
+	];
+	function sourceFromUrl(): LibrarySource {
+		const q = page.url.searchParams;
+		const s = q.get("source");
+		if (s === "all" || s === "community" || s === "private") return s;
+		return q.get("tab") === "mine" ? "private" : "all";
 	}
+	let source = $state<LibrarySource>(sourceFromUrl());
+
+	// ─── State ────────────────────────────────────
 	// ?type= deep-links to a subject type (the dashboard's community counts use it).
 	const urlType = page.url.searchParams.get("type");
 	let projectType    = $state<ProjectType>(
@@ -58,6 +69,8 @@
 	let search         = $state("");
 	let activeYear     = $state("All");
 	let activeZone     = $state("All zones");
+	// Where a private pattern stands (not shared / in review / in community / not approved).
+	let shareFilter    = $state<"all" | ShareStatus>("all");
 	// Non-vehicle subjects (property / custom) still open one subject at a time.
 	// Vehicles drill down by URL instead — see `path` below.
 	let selectedVehicle = $state<VehicleEntry | null>(null);
@@ -92,36 +105,77 @@
 	let view           = $state<"grid" | "list">("grid");
 	let selectedPatternIds = $state<Set<string>>(new Set());
 
+	// ─── The user's own uploads ───────────────────
+	let myPatterns       = $state<UserPattern[]>([]);
+	let myPatternsLoading = $state(false);
+	let myPatternsError  = $state("");
+
+	// Reactive on userStore.user so patterns load once auth resolves,
+	// even if it resolves after this component mounts.
+	let loadedForUid = $state<string | null>(null);
+	function loadMyPatterns(uidToLoad: string) {
+		myPatternsLoading = true;
+		myPatternsError = "";
+		getUserPatterns(uidToLoad)
+			.then((patterns) => { myPatterns = patterns; })
+			.catch(() => { myPatternsError = "Could not load your private patterns."; })
+			.finally(() => { myPatternsLoading = false; });
+	}
+	$effect(() => {
+		const id = userStore.user?.uid;
+		if (!id || id === loadedForUid) return;
+		loadedForUid = id;
+		loadMyPatterns(id);
+	});
+
+	const STATUS_LABEL: Record<ShareStatus, string> = {
+		unshared: "Not shared", pending: "In review", published: "In community", rejected: "Not approved",
+	};
+	const STATUS_VARIANT: Record<ShareStatus, "default" | "warning" | "success" | "danger"> = {
+		unshared: "default", pending: "warning", published: "success", rejected: "danger",
+	};
+
 	// ─── What this account can see ────────────────
-	// The community library is published subjects and their published
-	// patterns — nothing else. Every count, filter option and list on this
-	// tab derives from `visible`, so a number can never promise a pattern
-	// that isn't actually shown.
-	const visible = $derived(
-		patternStore.vehicles
-			.filter((v) => v.status === "published")
-			.map((v) => ({ v, pats: patternStore.getPatterns(v.id, undefined, true) }))
-			.filter((x) => x.pats.length > 0),
+	// ONE list of { subject, patterns } rows, each pattern tagged community or
+	// private. Every count, filter option and list below derives from `visible`,
+	// so a number can never promise a pattern that isn't actually shown.
+	const communityAll = $derived(
+		communityRows(patternStore.vehicles, (id) => patternStore.getPatterns(id, undefined, true)),
+	);
+	const privateAll = $derived(privateRows(myPatterns));
+	const sourceRows = $derived(rowsForSource(source, communityAll, privateAll));
+	const sourceCounts = $derived({
+		all: distinctCount(rowsForSource("all", communityAll, privateAll)),
+		community: distinctCount(communityAll),
+		private: distinctCount(privateAll),
+	});
+
+	const statusOf = (p: LibPattern): ShareStatus => (p.up ? shareStatusOf(p.up) : "published");
+	const statusCounts = $derived(
+		myPatterns.reduce((acc, p) => { const s = shareStatusOf(p); acc[s] = (acc[s] ?? 0) + 1; return acc; }, {} as Record<string, number>),
+	);
+	const statusKinds = $derived((["unshared", "pending", "published", "rejected"] as const).filter((s) => statusCounts[s]));
+	const showStatus = $derived(source !== "community" && myPatterns.length > 0 && statusKinds.length > 1);
+
+	const visible = $derived<LibRow[]>(
+		source === "community" || shareFilter === "all"
+			? sourceRows
+			: sourceRows
+				.map((r) => ({ v: r.v, pats: r.pats.filter((p) => p.source === "community" || statusOf(p) === shareFilter) }))
+				.filter((r) => r.pats.length > 0),
 	);
 
 	const typeCounts = $derived(
-		visible.reduce((acc, x) => {
-			acc[typeOf(x.v)] = (acc[typeOf(x.v)] ?? 0) + x.pats.length;
-			return acc;
-		}, {} as Record<string, number>),
+		Object.fromEntries(PROJECT_TYPES.map((t) => [t.value, distinctCount(visible.filter((x) => typeOf(x.v) === t.value))])) as Record<string, number>,
 	);
 
 	// Categories that actually have patterns for the chosen subject type.
-	const categoriesForType = $derived(
-		PATTERN_CATEGORIES
-			.map((c) => ({
-				...c,
-				count: visible
-					.filter((x) => typeOf(x.v) === projectType)
-					.reduce((n, x) => n + x.pats.filter((p) => p.category === c.value).length, 0),
-			}))
-			.filter((c) => c.count > 0),
-	);
+	const categoriesForType = $derived.by(() => {
+		const inType = uniquePatterns(visible.filter((x) => typeOf(x.v) === projectType).flatMap((x) => x.pats));
+		return PATTERN_CATEGORIES
+			.map((c) => ({ ...c, count: inType.filter((p) => p.category === c.value).length }))
+			.filter((c) => c.count > 0);
+	});
 
 	// Keep the category valid for the type (a residential catalog may only have tint).
 	$effect(() => {
@@ -140,27 +194,35 @@
 
 	// ─── Zone groups ──────────────────────────────
 	// Vehicle PPF/tint zones roll up into familiar groups ("Doors", "Side
-	// Windows"); everything else groups by its own zone name.
+	// Windows"); everything else groups by its own zone name. A private upload
+	// can cover several zones with one outline, so a pattern has several groups.
 	const ZONE_GROUP_ORDER: Record<string, string[]> = {
 		ppf: ["Hood", "Fenders", "Bumpers", "Doors", "Mirrors", "Rocker Panels", "Roof", "Trunk"],
 		"window-tint": ["Windshield", "Side Windows", "Rear Window", "Sunroof", "Quarter / Vent"],
 	};
-	function zoneGroup(p: Pattern, t: ProjectType = projectType): string {
+	function groupOfZone(zone: PatternZone, cat: PatternCategory, t: ProjectType, customLabel?: string): string {
 		if (t === "vehicle") {
-			const map: Partial<Record<PatternZone, string>> = p.category === "ppf" ? PPF_ZONE_GROUP : p.category === "window-tint" ? TINT_ZONE_GROUP : {};
-			const g = map[p.zone];
+			const map: Partial<Record<PatternZone, string>> = cat === "ppf" ? PPF_ZONE_GROUP : cat === "window-tint" ? TINT_ZONE_GROUP : {};
+			const g = map[zone];
 			if (g) return g;
 		}
-		return zoneLabel(p.zone, p.category, t, p.customZoneLabel);
+		return zoneLabel(zone, cat, t, customLabel);
 	}
-	const inZone = (p: Pattern) => activeZone === "All zones" || zoneGroup(p) === activeZone;
+	function zoneGroups(p: LibPattern, t: ProjectType = p.projectType ?? projectType): string[] {
+		if (p.zones?.length) {
+			return [...new Set(p.zones.map((z, i) => groupOfZone(z, p.category, t, p.customZoneLabels?.[i])))];
+		}
+		return [groupOfZone(p.zone, p.category, t, p.customZoneLabel)];
+	}
+	const inZone = (p: LibPattern) => activeZone === "All zones" || zoneGroups(p).includes(activeZone);
 
 	// ─── Vehicle catalog (make → model → trim) ────
 	const isVeh = $derived(projectType === "vehicle");
 	const vehScope = $derived(inScope.filter((x) => typeOf(x.v) === "vehicle" && x.v.make && x.v.model));
+	const toRow = (x: { v: VehicleEntry; pats: LibPattern[] }) => ({ v: x.v, count: x.pats.length, ids: x.pats.map((p) => p.id) });
 	// Unfiltered tree — names, logos and year options come from here, so a
 	// search or year filter can never make the current breadcrumb lose its label.
-	const catalogTree = $derived(buildTree(vehScope.map((x) => ({ v: x.v, count: x.pats.length }))));
+	const catalogTree = $derived(buildTree(vehScope.map(toRow)));
 	const trimArg = $derived(trimFilter(path.trim));
 	const pathEntries = $derived(entriesUnder(vehScope, { make: path.make, model: path.model, trim: trimArg }));
 
@@ -177,12 +239,13 @@
 
 	// ─── Subjects shown ───────────────────────────
 	// Everything except the zone filter — zone counts are taken from here so a
-	// pill's number is exactly what clicking it will show.
+	// pill's number is exactly what clicking it will show. Search matches the
+	// subject AND its pattern names, the same for both sources.
 	const baseFiltered = $derived(
 		inScope.filter((x) => {
 			const v = x.v;
 			const q = search.trim().toLowerCase();
-			const matchSearch = !q || `${v.year ?? ""} ${v.make ?? ""} ${v.model ?? ""} ${v.trim ?? ""} ${v.propertyLabel ?? ""} ${v.address ?? ""}`.toLowerCase().includes(q);
+			const matchSearch = !q || `${v.year ?? ""} ${v.make ?? ""} ${v.model ?? ""} ${v.trim ?? ""} ${v.propertyLabel ?? ""} ${v.address ?? ""} ${x.pats.map((p) => `${p.name} ${zoneGroups(p).join(" ")}`).join(" ")}`.toLowerCase().includes(q);
 			const matchYear = typeOf(v) !== "vehicle" || activeYear === "All" || String(v.year) === activeYear;
 			return matchSearch && matchYear;
 		}),
@@ -191,25 +254,28 @@
 	// Tree the tiles and sidebar render: search + year applied, zone not (zone
 	// is a pattern-level filter, offered once a trim's patterns are showing).
 	const vehBase = $derived(baseFiltered.filter((x) => typeOf(x.v) === "vehicle" && x.v.make && x.v.model));
-	const tree = $derived(buildTree(vehBase.map((x) => ({ v: x.v, count: x.pats.length }))));
+	const tree = $derived(buildTree(vehBase.map(toRow)));
 	const treeTotal = $derived(tree.reduce((n, m) => n + m.count, 0));
 
 	const makeNode = $derived(path.make ? tree.find((m) => m.key === path.make) : undefined);
 	const modelNode = $derived(path.model ? makeNode?.models.find((o) => o.key === path.model) : undefined);
 	const makeLabel = $derived(catalogTree.find((m) => m.key === path.make)?.label ?? "");
 	const modelLabel = $derived(catalogTree.find((m) => m.key === path.make)?.models.find((o) => o.key === path.model)?.label ?? "");
-	const trimLabel = $derived.by(() => {
-		if (!path.trim || path.trim === TRIM_ALL) return "";
-		if (path.trim === TRIM_BASE) return BASE_TRIM_LABEL;
-		return catalogTree.find((m) => m.key === path.make)?.models.find((o) => o.key === path.model)?.trims.find((t) => t.key === path.trim)?.label ?? "";
-	});
-
 	// A model with a single trim skips the trim level and opens its patterns.
 	const effTrim = $derived.by(() => {
 		if (!path.model) return undefined;
 		if (path.trim) return path.trim;
 		const only = catalogTree.find((m) => m.key === path.make)?.models.find((o) => o.key === path.model)?.trims;
 		return only?.length === 1 ? (only[0].key === "" ? TRIM_BASE : only[0].key) : undefined;
+	});
+	// The trim being shown: the chosen one, or the model's only one. A model with a
+	// single trim skips the trim level, so this is what keeps "Crew Cab" visible in
+	// the breadcrumb and title instead of vanishing.
+	const trimLabel = $derived.by(() => {
+		const t = effTrim;
+		if (!t || t === TRIM_ALL) return "";
+		if (t === TRIM_BASE) return BASE_TRIM_LABEL;
+		return catalogTree.find((m) => m.key === path.make)?.models.find((o) => o.key === path.model)?.trims.find((x) => x.key === t)?.label ?? "";
 	});
 	type Level = "makes" | "models" | "trims" | "patterns";
 	const level = $derived<Level>(!path.make ? "makes" : !path.model ? "models" : effTrim === undefined ? "trims" : "patterns");
@@ -228,7 +294,25 @@
 					.sort((a, b) => (b.v.year ?? 0) - (a.v.year ?? 0))
 			: [],
 	);
-	const entryOf = $derived(new Map(leafEntries.flatMap((x) => x.pats.map((p) => [p.id, x.v] as const))));
+	// Years and trims each pattern fits, for the chip on its card. A private
+	// upload spans several entries; it still gets ONE card.
+	const patMeta = $derived.by(() => {
+		const m = new Map<string, { years: number[]; trims: string[] }>();
+		for (const x of leafEntries) {
+			for (const p of x.pats) {
+				const e = m.get(p.id) ?? m.set(p.id, { years: [], trims: [] }).get(p.id)!;
+				if (x.v.year && !e.years.includes(x.v.year)) e.years.push(x.v.year);
+				if (x.v.trim && !e.trims.includes(x.v.trim)) e.trims.push(x.v.trim);
+			}
+		}
+		return m;
+	});
+	function chipFor(p: LibPattern): string {
+		const e = patMeta.get(p.id);
+		if (!e) return "";
+		const trims = e.trims.length === 1 ? e.trims[0] : e.trims.length > 1 ? `${e.trims.length} trims` : "";
+		return [yearSpan(e.years), trims].filter(Boolean).join(" ");
+	}
 
 	const leafActive = $derived(isVeh ? level === "patterns" : !!selectedVehicle);
 
@@ -238,19 +322,25 @@
 			.filter((x) => x.shown.length > 0),
 	);
 
+	// ─── Selected subject's patterns ──────────────
+	const vehiclePatterns = $derived<LibPattern[]>(
+		isVeh
+			? uniquePatterns(leafEntries.flatMap((x) => x.pats))
+			: selectedVehicle
+				? uniquePatterns(inScope.filter((x) => x.v.id === selectedVehicle!.id).flatMap((x) => x.pats))
+				: [],
+	);
+	const visibleStorePatterns = $derived(vehiclePatterns.filter(inZone));
+	const useStorePatterns = $derived(vehiclePatterns.length > 0);
+
 	// Zone pills + counts: the patterns on screen, else every subject the
 	// other filters leave (non-vehicle types).
-	const zoneSource = $derived(
-		isVeh
-			? leafEntries.flatMap((x) => x.pats)
-			: selectedVehicle
-				? patternStore.getPatterns(selectedVehicle.id, category, true)
-				: baseFiltered.flatMap((x) => x.pats),
+	const zoneSource = $derived<LibPattern[]>(
+		isVeh || selectedVehicle ? vehiclePatterns : uniquePatterns(baseFiltered.flatMap((x) => x.pats)),
 	);
 	const zoneCounts = $derived(
 		zoneSource.reduce((acc, p) => {
-			const g = zoneGroup(p);
-			acc[g] = (acc[g] ?? 0) + 1;
+			for (const g of zoneGroups(p)) acc[g] = (acc[g] ?? 0) + 1;
 			return acc;
 		}, {} as Record<string, number>),
 	);
@@ -265,7 +355,7 @@
 
 	// Stats reflect exactly what the filters above leave visible.
 	const stats = $derived.by(() => {
-		if (!isVeh) return { patterns: filtered.reduce((n, x) => n + x.shown.length, 0), subjects: filtered.length, subjectLabel: "" };
+		if (!isVeh) return { patterns: distinctCount(filtered.map((x) => ({ pats: x.shown }))), subjects: filtered.length, subjectLabel: "" };
 		if (leafActive) return { patterns: visibleStorePatterns.length, subjects: leafEntries.length, subjectLabel: "model years" };
 		const scope = path.make ? (makeNode ? [makeNode] : []) : tree;
 		return {
@@ -296,18 +386,39 @@
 		selectedPatternIds = new Set();
 	}
 
-	// ─── Selected subject's patterns ──────────────
-	const vehiclePatterns = $derived(
-		isVeh
-			? leafEntries.flatMap((x) => x.pats)
-			: selectedVehicle ? patternStore.getPatterns(selectedVehicle.id, category, true) : [],
-	);
-	const visibleStorePatterns = $derived(vehiclePatterns.filter(inZone));
-	const useStorePatterns = $derived(vehiclePatterns.length > 0);
+	function setSource(s: LibrarySource) {
+		if (s === source) return;
+		source = s;
+		if (s === "community") shareFilter = "all";
+		selectedVehicle = null;
+		selectedPatternIds = new Set();
+		activeZone = "All zones";
+		activeYear = "All";
+		search = "";
+		autoPick = !urlType;
+		const url = new URL(page.url);
+		if (s === "all") url.searchParams.delete("source"); else url.searchParams.set("source", s);
+		url.searchParams.delete("tab");
+		for (const k of ["make", "model", "trim"]) url.searchParams.delete(k);
+		goto(url, { replaceState: true, noScroll: true, keepFocus: true });
+	}
 
-	// Leaving a subject that no longer has patterns in this category.
+	// When the source (or a deep link) lands on a subject type that has nothing,
+	// move to the first type that does once the data is in — once only, so a
+	// user who clicks an empty type on purpose isn't bounced back.
+	let autoPick = $state(!urlType);
 	$effect(() => {
-		if (selectedVehicle && !patternStore.vehicles.some((v) => v.id === selectedVehicle!.id && v.status === "published")) {
+		if (!autoPick || patternStore.loading) return;
+		if (source !== "community" && (myPatternsLoading || (!!userStore.user && loadedForUid !== userStore.user.uid))) return;
+		autoPick = false;
+		if (typeCounts[projectType]) return;
+		const first = PROJECT_TYPES.find((t) => typeCounts[t.value]);
+		if (first) switchProjectType(first.value);
+	});
+
+	// Leaving a subject that no longer has patterns in this view.
+	$effect(() => {
+		if (selectedVehicle && !visible.some((x) => x.v.id === selectedVehicle!.id)) {
 			selectedVehicle = null;
 		}
 	});
@@ -315,13 +426,14 @@
 	const pieceWord = $derived(category === "window-tint" ? "windows" : "patterns");
 
 	// ─── Pattern detail dialog ────────────────────
-	let detailPattern = $state<Pattern | null>(null);
+	let detailPattern = $state<LibPattern | null>(null);
 
 	// "Add both sides": the subject's own pattern for the opposite zone when it
-	// has one, otherwise a mirrored copy of this one.
+	// has one, otherwise a mirrored copy of this one. Private uploads carry
+	// their own mirror pair and go through the mirror dialog instead.
 	const detailMirror = $derived.by(() => {
 		const p = detailPattern;
-		if (!p) return null;
+		if (!p || p.source !== "community") return null;
 		const m = MIRROR_PAIRS[p.zone];
 		if (!m) return null;
 		const t = p.projectType ?? (selectedVehicle ? typeOf(selectedVehicle) : projectType);
@@ -334,80 +446,31 @@
 	function addDetail(both: boolean) {
 		const p = detailPattern;
 		if (!p) return;
-		addPatternToCanvas(p);
-		if (both && detailMirror) {
-			if (detailMirror.partner) addPatternToCanvas(detailMirror.partner);
-			else addPatternToCanvas({ ...p, zone: detailMirror.zone, name: detailMirror.label }, true);
+		if (p.up) {
+			addMine(p.up);
+		} else {
+			addPatternToCanvas(p);
+			if (both && detailMirror) {
+				if (detailMirror.partner) addPatternToCanvas(detailMirror.partner);
+				else addPatternToCanvas({ ...p, zone: detailMirror.zone, name: detailMirror.label }, true);
+			}
 		}
 		detailPattern = null;
 	}
 
 	const cm = (inches: number) => (inches * 2.54).toFixed(1);
 
-	// ─── My Patterns ──────────────────────────────
-	let myPatterns       = $state<UserPattern[]>([]);
-	let myPatternsLoading = $state(false);
-	let myPatternsError  = $state("");
-
-	// Reactive on userStore.user so patterns load once auth resolves,
-	// even if it resolves after this component mounts.
-	let loadedForUid = $state<string | null>(null);
-	function loadMyPatterns(uidToLoad: string) {
-		myPatternsLoading = true;
-		myPatternsError = "";
-		getUserPatterns(uidToLoad)
-			.then((patterns) => { myPatterns = patterns; })
-			.catch(() => { myPatternsError = "Could not load your patterns."; })
-			.finally(() => { myPatternsLoading = false; });
-	}
-	$effect(() => {
-		const id = userStore.user?.uid;
-		if (!id || id === loadedForUid) return;
-		loadedForUid = id;
-		loadMyPatterns(id);
-	});
-
-	type MineStatus = "all" | "private" | "pending" | "published" | "rejected";
-	let mineStatus   = $state<MineStatus>("all");
-	let mineCategory = $state<"all" | PatternCategory>("all");
-	let mineSearch   = $state("");
-	let mineType     = $state<"all" | ProjectType>("all");
-
-	function mineStatusOf(p: UserPattern): Exclude<MineStatus, "all"> {
-		if (p.isPublished) return "published";
-		if (p.status === "pending") return "pending";
-		if (p.status === "rejected") return "rejected";
-		return "private";
-	}
-	const MINE_STATUS_LABEL: Record<Exclude<MineStatus, "all">, string> = {
-		private: "Private", pending: "In review", published: "Published", rejected: "Not approved",
-	};
-	const mineStatusCounts = $derived(
-		myPatterns.reduce((acc, p) => { const s = mineStatusOf(p); acc[s] = (acc[s] ?? 0) + 1; return acc; }, {} as Record<string, number>),
-	);
-	const mineTypes = $derived(PROJECT_TYPES.map((x) => x.value).filter((t) => myPatterns.some((p) => (p.projectType ?? "vehicle") === t)));
-	const mineCategories = $derived(PATTERN_CATEGORIES.filter((c) => myPatterns.some((p) => p.category === c.value)));
-
+	// ─── Private pattern actions ──────────────────
 	function mySubjectLabel(p: UserPattern): string {
 		if ((p.projectType ?? "vehicle") !== "vehicle") return p.propertyLabel || p.patternName || p.address || "";
 		return [p.years.join(", "), p.make, p.models.join(" / "), p.trims?.join(" / ")].filter(Boolean).join(" ");
 	}
 
-	const shownMine = $derived(
-		myPatterns.filter((p) => {
-			if (mineStatus !== "all" && mineStatusOf(p) !== mineStatus) return false;
-			if (mineCategory !== "all" && p.category !== mineCategory) return false;
-			if (mineType !== "all" && (p.projectType ?? "vehicle") !== mineType) return false;
-			const q = mineSearch.trim().toLowerCase();
-			return !q || `${p.name} ${mySubjectLabel(p)} ${compactZones(p)}`.toLowerCase().includes(q);
-		}),
-	);
-
 	async function toggleCommunitySubmit(p: UserPattern) {
 		const next = !p.submitToCommunity;
 		if (next) {
 			const ok = await confirmStore.ask({
-				title: `Submit "${p.name}" to the community library?`,
+				title: `Share "${p.name}" with the community library?`,
 				message: "An admin reviews it first. If it's approved, everyone can cut it and your copy becomes read-only — you'd request changes instead of editing.",
 				confirmLabel: "Submit for review",
 			});
@@ -447,6 +510,7 @@
 		try {
 			await deleteUserPattern(p.id);
 			myPatterns = myPatterns.filter((m) => m.id !== p.id);
+			if (detailPattern?.id === p.id) detailPattern = null;
 			toastStore.success("Pattern deleted", p.name);
 		} catch {
 			toastStore.error("Delete failed", "Could not delete the pattern. Please try again.");
@@ -476,28 +540,8 @@
 		return parts.join(" · ");
 	}
 
-	// Convert a UserPattern to a Pattern for canvas
-	function userPatternToPattern(up: UserPattern): Pattern {
-		const zone = up.zones[0] ?? "custom";
-		return {
-			id:           up.id,
-			vehicleId:    up.vehicleId ?? `user_${up.ownerId}`,
-			projectType:  up.projectType,
-			category:     up.category,
-			zone,
-			customZoneLabel: zone === "custom" ? up.customZoneLabels?.[0] : undefined,
-			name:         up.name,
-			coverage:     up.coverage,
-			svgPath:      up.svgPath,
-			widthInches:  up.widthInches,
-			heightInches: up.heightInches,
-			revision:     new Date(up.createdAt).toISOString().slice(0, 7),
-			notes:        up.notes,
-			isPublished:  up.isPublished,
-			createdAt:    up.createdAt,
-			updatedAt:    up.updatedAt,
-		};
-	}
+	/** The zone badge on a card: a community pattern's group, a private one's full zone list. */
+	const zoneBadge = (p: LibPattern) => (p.up ? compactZones(p.up) : zoneGroups(p)[0]);
 
 	// ─── Mirror-add dialog ───────────────────────
 	let mirrorTarget  = $state<UserPattern | null>(null);
@@ -537,6 +581,12 @@
 		}
 	}
 
+	/** Card "+": a private pattern with a left/right pair opens the mirror dialog. */
+	function addLib(p: LibPattern) {
+		if (p.up) addMine(p.up); else addPatternToCanvas(p);
+	}
+	const addBlocked = (p: LibPattern) => (p.up ? sizeError(p, p.svgPath) : null);
+
 	// ─── Adjustment request modal ────────────────
 	let adjustTarget = $state<UserPattern | null>(null);
 	let adjustNotes  = $state("");
@@ -570,11 +620,14 @@
 		showRequestModal = true;
 	}
 
-	// ─── Add store pattern to canvas ─────────────
+	// ─── Add pattern to canvas ───────────────────
 	// PRECISION: the pattern goes onto the canvas exactly as stored — same
 	// svgPath, same widthInches × heightInches. The packer may only choose
 	// position and rotation; it never resizes or re-proportions a piece.
-	function addPatternToCanvas(pattern: Pattern, flippedH = false) {
+	// The library's own bookkeeping (source, owner record, zone list) is
+	// stripped so none of it is carried into the canvas state.
+	function addPatternToCanvas(input: Pattern | LibPattern, flippedH = false) {
+		const { source: _s, zones: _z, customZoneLabels: _c, up: _u, ...pattern } = input as LibPattern;
 		// PRECISION: a pattern whose W × H doesn't match its outline would be
 		// cut stretched. It never reaches the canvas until its owner fixes it.
 		const problem = sizeError(pattern, pattern.svgPath);
@@ -660,136 +713,155 @@
 		requestForm = { year: new Date().getFullYear(), make: "", model: "", title: "", notes: "" };
 	}
 
-</script>
+	// ─── Header copy ──────────────────────────────
+	const privateLoading = $derived(source !== "community" && (myPatternsLoading || (!!userStore.user && loadedForUid !== userStore.user.uid)));
+	const hasPrivate = $derived(myPatterns.length > 0);
 
+	// "Nothing here" copy depends on which library the user is looking at.
+	const emptyKind = $derived<"loading" | "error" | "none-source" | "none-type" | "filters">(
+		patternStore.loading && source !== "private" || privateLoading
+			? "loading"
+			: patternStore.catalogError && source !== "private" && !communityAll.length
+				? "error"
+				: sourceCounts[source] === 0
+					? "none-source"
+					: !typeCounts[projectType]
+						? "none-type"
+						: "filters",
+	);
+
+</script>
 <svelte:head>
 	<title>Pattern Library — OmniPlot</title>
 </svelte:head>
 
 <div class="library">
-	<!-- ─── Sidebar ─── -->
+	<!-- ─── Sidebar: one set of filters for every source ─── -->
 	<aside class="library__sidebar">
-		{#if tab === "library"}
-			<div class="lib-search-wrap">
-				<svg class="lib-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-				<input
-					type="search"
-					class="lib-search"
-					placeholder={projectType === "vehicle" ? "Search make, model, trim, year…" : "Search by name or address…"}
-					bind:value={search}
-					aria-label="Search {typeMeta(projectType).nounPlural}"
-				/>
+		<div class="lib-search-wrap">
+			<svg class="lib-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+			<input
+				type="search"
+				class="lib-search"
+				placeholder={projectType === "vehicle" ? "Search make, model, trim, pattern…" : "Search by name, address, pattern…"}
+				bind:value={search}
+				aria-label="Search {typeMeta(projectType).nounPlural}"
+			/>
+		</div>
+
+		{#if isVeh && YEARS.length > 1}
+			<div class="lib-section-label">Year</div>
+			<div class="lib-filter-pills lib-filter-pills--years">
+				{#each YEARS as year}
+					<button class="lib-pill" class:active={activeYear === year} onclick={() => (activeYear = year)} aria-pressed={activeYear === year}>{year}</button>
+				{/each}
 			</div>
+		{/if}
 
-			{#if isVeh && tree.length}
-				<!-- Desktop: the tree lives here. ≤768px it moves into a sheet. -->
-				<div class="lib-tree">
-					<div class="lib-section-label">Browse</div>
-					<VehicleTreeFilter {tree} {path} total={treeTotal} {logoFor} onselect={go} trimBase={TRIM_BASE} />
-				</div>
-				<button class="lib-pill lib-browse-btn" onclick={() => (browseOpen = true)}>
-					<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
-					{makeLabel ? [makeLabel, modelLabel].filter(Boolean).join(" › ") : "Browse makes"}
-				</button>
-			{/if}
-
-			{#if isVeh && YEARS.length > 2}
-				<div class="lib-section-label">Year</div>
-				<div class="lib-filter-pills">
-					{#each YEARS as year}
-						<button class="lib-pill" class:active={activeYear === year} onclick={() => (activeYear = year)} aria-pressed={activeYear === year}>{year}</button>
-					{/each}
-				</div>
-			{/if}
-
-			{#if ZONES.length > 2}
-				<div class="lib-section-label">Zone</div>
-				<div class="lib-filter-pills">
-					{#each ZONES as zone}
-						<button class="lib-pill" class:active={activeZone === zone} onclick={() => (activeZone = zone)} aria-pressed={activeZone === zone}>
-							{zone} <span class="lib-pill__count">{zone === "All zones" ? zoneSource.length : zoneCounts[zone] ?? 0}</span>
-						</button>
-					{/each}
-				</div>
-			{/if}
-
-			<div class="lib-section-label">Showing</div>
-			<div class="lib-stats">
-				<div class="lib-stat">
-					<span class="lib-stat__val">{stats.patterns}</span>
-					<span class="lib-stat__label">{categoryShortLabel(category)} {pieceWord}</span>
-				</div>
-				<div class="lib-stat">
-					<span class="lib-stat__val">{stats.subjects}</span>
-					<span class="lib-stat__label">{isVeh ? (stats.subjects === 1 ? stats.subjectLabel.replace(/s$/, "") : stats.subjectLabel) : stats.subjects === 1 ? typeMeta(projectType).noun : typeMeta(projectType).nounPlural}</span>
-				</div>
+		{#if ZONES.length > 2}
+			<div class="lib-section-label">Zone</div>
+			<div class="lib-filter-pills">
+				{#each ZONES as zone}
+					<button class="lib-pill" class:active={activeZone === zone} onclick={() => (activeZone = zone)} aria-pressed={activeZone === zone}>
+						{zone} <span class="lib-pill__count">{zone === "All zones" ? zoneSource.length : zoneCounts[zone] ?? 0}</span>
+					</button>
+				{/each}
 			</div>
+		{/if}
 
+		{#if showStatus}
+			<div class="lib-section-label">Your patterns</div>
+			<div class="lib-filter-pills">
+				<button class="lib-pill" class:active={shareFilter === "all"} aria-pressed={shareFilter === "all"} onclick={() => (shareFilter = "all")}>Any <span class="lib-pill__count">{myPatterns.length}</span></button>
+				{#each statusKinds as s (s)}
+					<button class="lib-pill" class:active={shareFilter === s} aria-pressed={shareFilter === s} onclick={() => (shareFilter = s)}>{STATUS_LABEL[s]} <span class="lib-pill__count">{statusCounts[s]}</span></button>
+				{/each}
+			</div>
+		{/if}
+
+		{#if isVeh && tree.length}
+			<!-- Desktop: the tree lives here. ≤768px it moves into a sheet. -->
+			<div class="lib-tree">
+				<div class="lib-section-label">Browse</div>
+				<VehicleTreeFilter {tree} {path} total={treeTotal} {logoFor} onselect={go} trimBase={TRIM_BASE} />
+			</div>
+			<button class="lib-pill lib-browse-btn" onclick={() => (browseOpen = true)}>
+				<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+				{makeLabel ? [makeLabel, modelLabel].filter(Boolean).join(" › ") : "Browse makes"}
+			</button>
+		{/if}
+
+		<div class="lib-side-foot">
+		<div class="lib-section-label">Showing</div>
+		<div class="lib-stats">
+			<div class="lib-stat">
+				<span class="lib-stat__val">{stats.patterns}</span>
+				<span class="lib-stat__label">{categoryShortLabel(category)} {pieceWord}</span>
+			</div>
+			<div class="lib-stat">
+				<span class="lib-stat__val">{stats.subjects}</span>
+				<span class="lib-stat__label">{isVeh ? (stats.subjects === 1 ? stats.subjectLabel.replace(/s$/, "") : stats.subjectLabel) : stats.subjects === 1 ? typeMeta(projectType).noun : typeMeta(projectType).nounPlural}</span>
+			</div>
+		</div>
+
+		{#if source !== "private"}
 			<button class="lib-request-btn" onclick={() => openRequest()}>
 				<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
 				{projectType === "vehicle" ? "Request a vehicle" : projectType === "custom" ? "Request a pattern" : "Request a property pattern"}
 			</button>
-		{:else}
-			<div class="lib-search-wrap">
-				<svg class="lib-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-				<input type="search" class="lib-search" placeholder="Search your patterns…" bind:value={mineSearch} aria-label="Search your patterns" />
-			</div>
-
-			<div class="lib-section-label">Status</div>
-			<div class="lib-filter-pills">
-				<button class="lib-pill" class:active={mineStatus === "all"} aria-pressed={mineStatus === "all"} onclick={() => (mineStatus = "all")}>All <span class="lib-pill__count">{myPatterns.length}</span></button>
-				{#each (["private", "pending", "published", "rejected"] as const) as s}
-					{#if mineStatusCounts[s]}
-						<button class="lib-pill" class:active={mineStatus === s} aria-pressed={mineStatus === s} onclick={() => (mineStatus = s)}>{MINE_STATUS_LABEL[s]} <span class="lib-pill__count">{mineStatusCounts[s]}</span></button>
-					{/if}
-				{/each}
-			</div>
-
-			{#if mineCategories.length > 1}
-				<div class="lib-section-label">Category</div>
-				<div class="lib-filter-pills">
-					<button class="lib-pill" class:active={mineCategory === "all"} aria-pressed={mineCategory === "all"} onclick={() => (mineCategory = "all")}>All</button>
-					{#each mineCategories as c (c.value)}
-						<button class="lib-pill" class:active={mineCategory === c.value} aria-pressed={mineCategory === c.value} onclick={() => (mineCategory = c.value)}>{c.shortLabel}</button>
-					{/each}
-				</div>
-			{/if}
-
-			{#if mineTypes.length > 1}
-				<div class="lib-section-label">Type</div>
-				<div class="lib-filter-pills">
-					<button class="lib-pill" class:active={mineType === "all"} aria-pressed={mineType === "all"} onclick={() => (mineType = "all")}>All</button>
-					{#each mineTypes as t (t)}
-						<button class="lib-pill" class:active={mineType === t} aria-pressed={mineType === t} onclick={() => (mineType = t)}>{typeMeta(t).label}</button>
-					{/each}
-				</div>
-			{/if}
-
-			<a href="/library/upload" class="lib-request-btn">
-				<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-				Upload a pattern
-			</a>
 		{/if}
+		</div>
 	</aside>
 
 	<!-- ─── Main ─── -->
 	<div class="library__main">
 
-		<!-- Community / Private tab bar -->
-		<div class="lib-tabs" role="tablist">
-			<button class="lib-tab" class:lib-tab--active={tab === "library"} role="tab" aria-selected={tab === "library"} onclick={() => setTab("library")}>
-				<svg class="lib-tab__icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
-				Community
-				{#if visible.length}<span class="lib-tab__badge">{visible.reduce((n, x) => n + x.pats.length, 0)}</span>{/if}
-			</button>
-			<button class="lib-tab" class:lib-tab--active={tab === "mine"} role="tab" aria-selected={tab === "mine"} onclick={() => setTab("mine")}>
-				<svg class="lib-tab__icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
-				My patterns
-				{#if myPatterns.length}<span class="lib-tab__badge">{myPatterns.length}</span>{/if}
-			</button>
+		<!-- Header: title + which library you're looking at -->
+		<div class="library__header">
+			<div class="library__heading">
+				<h1 class="library__title">Library</h1>
+				<p class="library__sub">
+					{#if leafActive}
+						Select patterns below
+					{:else if isVeh}
+						{#if level === "makes"}{tree.length} {tree.length === 1 ? "make" : "makes"} · choose one to see its models
+						{:else if level === "models"}Choose a model
+						{:else}Choose a trim or variant{/if}
+					{:else}
+						{filtered.length} {filtered.length === 1 ? typeMeta(projectType).noun : typeMeta(projectType).nounPlural} · select one to view its patterns
+					{/if}
+				</p>
+			</div>
+			<div class="library__header-actions">
+				<div class="src-switch" role="group" aria-label="Library source">
+					{#each SOURCES as s (s.value)}
+						<button class="src-btn" class:active={source === s.value} onclick={() => setSource(s.value)} aria-pressed={source === s.value}>
+							{#if s.value === "private"}
+								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+							{:else if s.value === "community"}
+								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+							{/if}
+							{s.label}
+							<span class="mode-count">{s.value === "private" && myPatternsLoading ? "…" : sourceCounts[s.value]}</span>
+						</button>
+					{/each}
+				</div>
+				<a href="/library/upload" class="upload-cta" use:tooltip={"Add a pattern to your private library"}>
+					<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+					Upload pattern
+				</a>
+				<div class="view-toggle" class:view-toggle--off={isVeh || !!selectedVehicle} aria-hidden={isVeh || !!selectedVehicle}>
+					<div class="view-divider" aria-hidden="true"></div>
+					<button class="view-btn" class:active={view === "grid"} onclick={() => (view = "grid")} aria-label="Grid view" aria-pressed={view === "grid"}>
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+					</button>
+					<button class="view-btn" class:active={view === "list"} onclick={() => (view = "list")} aria-label="List view" aria-pressed={view === "list"}>
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+					</button>
+				</div>
+			</div>
 		</div>
 
-		{#if tab === "library"}
 		<!-- Subject type -->
 		<div class="mode-switcher mode-switcher--full" role="group" aria-label="Subject type">
 			{#each PROJECT_TYPES as t (t.value)}
@@ -807,6 +879,7 @@
 		</div>
 
 		<!-- Category (only categories this type actually has) -->
+		<div class="cat-row">
 		{#if categoriesForType.length > 0}
 			<div class="mode-switcher" role="group" aria-label="Pattern category">
 				{#each categoriesForType as c (c.value)}
@@ -818,51 +891,24 @@
 				{/each}
 			</div>
 		{/if}
-
-		<!-- Header -->
-		<div class="library__header">
-			<div>
-				<h1 class="library__title">
-					{categoriesForType.length ? `${categoryLabel(category)} · ${typeMeta(projectType).label}` : `${typeMeta(projectType).label} library`}
-				</h1>
-				<p class="library__sub">
-					{#if leafActive}
-						Select patterns below
-					{:else if isVeh}
-						{#if level === "makes"}{tree.length} {tree.length === 1 ? "make" : "makes"} · choose one to see its models
-						{:else if level === "models"}Choose a model
-						{:else}Choose a trim or variant{/if}
-					{:else}
-						{filtered.length} {filtered.length === 1 ? typeMeta(projectType).noun : typeMeta(projectType).nounPlural} · select one to view its patterns
-					{/if}
-				</p>
-			</div>
-			<div class="library__header-actions">
-				<a href="/library/upload" class="upload-cta" use:tooltip={"Save a pattern to your library"}>
-					<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-					Upload Pattern
-				</a>
-				{#if !isVeh && !selectedVehicle}
-					<div class="view-divider" aria-hidden="true"></div>
-					<button class="view-btn" class:active={view === "grid"} onclick={() => (view = "grid")} aria-label="Grid view" aria-pressed={view === "grid"}>
-						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
-					</button>
-					<button class="view-btn" class:active={view === "list"} onclick={() => (view = "list")} aria-label="List view" aria-pressed={view === "list"}>
-						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
-					</button>
-				{/if}
-			</div>
 		</div>
+
+		{#if myPatternsError && source !== "community"}
+			<div class="lib-banner" role="alert">
+				{myPatternsError}
+				<button class="lib-empty__request" onclick={() => userStore.user && loadMyPatterns(userStore.user.uid)}>Try again</button>
+			</div>
+		{/if}
 
 		{#snippet crumbs()}
 			<nav class="crumbs" aria-label="Breadcrumb">
-				<button class="crumb" onclick={() => go({})}>All makes</button>
+				{#if path.make}<button class="crumb" onclick={() => go({})}>All makes</button>{:else}<span class="crumb crumb--current" aria-current="page">All makes</span>{/if}
 				{#if path.make}
 					<span class="crumb-sep" aria-hidden="true">/</span>
 					{#if path.model}
 						<button class="crumb" onclick={() => go({ make: path.make })}>{makeLabel || path.make}</button>
 						<span class="crumb-sep" aria-hidden="true">/</span>
-						{#if level === "patterns" && path.trim}
+						{#if level === "patterns" && (path.trim || (trimLabel && trimLabel !== BASE_TRIM_LABEL))}
 							<button class="crumb" onclick={() => go({ make: path.make, model: path.model })}>{modelLabel}</button>
 							<span class="crumb-sep" aria-hidden="true">/</span>
 							<span class="crumb crumb--current" aria-current="page">{path.trim === TRIM_ALL ? "All trims" : trimLabel || path.trim}</span>
@@ -878,31 +924,50 @@
 
 		{#snippet emptyState()}
 			<div class="lib-empty">
-				{#if patternStore.loading}
+				{#if emptyKind === "loading"}
 					<p class="lib-empty__title">Loading the pattern library…</p>
-				{:else if patternStore.catalogError && !visible.length}
-					<p class="lib-empty__title">Couldn't load the pattern library</p>
-					<p class="lib-empty__sub">Check your connection and reload the page. Your own uploads under "My patterns" are unaffected.</p>
-				{:else if !typeCounts[projectType]}
-					<p class="lib-empty__title">No {typeMeta(projectType).label.toLowerCase()} patterns yet</p>
-					<p class="lib-empty__sub">The community library doesn't have any {typeMeta(projectType).noun} patterns yet. <button class="lib-empty__request" onclick={() => openRequest()}>Request one</button>, or upload your own to use right away.</p>
+				{:else if emptyKind === "error"}
+					<p class="lib-empty__title">Couldn't load the community library</p>
+					<p class="lib-empty__sub">Check your connection and reload the page. Your private patterns are unaffected.</p>
+				{:else if emptyKind === "none-source"}
+					{#if source === "private"}
+						<p class="lib-empty__title">Your private library is empty</p>
+						<p class="lib-empty__sub">Upload a pattern from an SVG, a photo or a scan. It's organised here the same way as the community library, and only you can see and cut it.</p>
+					{:else if source === "community"}
+						<p class="lib-empty__title">The community library is empty</p>
+						<p class="lib-empty__sub">No patterns have been published yet.</p>
+					{:else}
+						<p class="lib-empty__title">No patterns yet</p>
+						<p class="lib-empty__sub">Upload one to your private library to get started.</p>
+					{/if}
+				{:else if emptyKind === "none-type"}
+					<p class="lib-empty__title">No {source === "private" ? "private " : ""}{typeMeta(projectType).label.toLowerCase()} patterns yet</p>
+					<p class="lib-empty__sub">
+						{#if source === "private"}
+							Upload one and it will show up here, ready to cut.
+						{:else}
+							There aren't any {typeMeta(projectType).noun} patterns here yet. <button class="lib-empty__request" onclick={() => openRequest()}>Request one</button>, or upload your own to use right away.
+						{/if}
+					</p>
 				{:else}
 					<p class="lib-empty__title">Nothing matches these filters</p>
 					<p class="lib-empty__sub">
-						Try a different search or filter{#if isVeh && (path.make || activeYear !== "All")}, <button class="lib-empty__request" onclick={() => { activeYear = "All"; go({}); }}>start over</button>{/if}, or <button class="lib-empty__request" onclick={() => openRequest()}>request {projectType === "vehicle" ? "a vehicle" : "a pattern"}</button>.
+						Try a different search or filter{#if isVeh && (path.make || activeYear !== "All")}, <button class="lib-empty__request" onclick={() => { activeYear = "All"; go({}); }}>start over</button>{/if}{#if source !== "private"}, or <button class="lib-empty__request" onclick={() => openRequest()}>request {projectType === "vehicle" ? "a vehicle" : "a pattern"}</button>{/if}.
 					</p>
 				{/if}
-				<a href="/library/upload" class="lib-empty__upload">
-					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-					Upload Pattern
-				</a>
+				{#if emptyKind !== "loading" && emptyKind !== "error"}
+					<a href="/library/upload" class="lib-empty__upload">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+						Upload pattern
+					</a>
+				{/if}
 			</div>
 		{/snippet}
 
 		<!-- ─── Vehicles: make → model → trim ─── -->
 		{#if isVeh && !leafActive}
 			<div class="vb">
-				{#if path.make}{@render crumbs()}{/if}
+				{@render crumbs()}
 
 				{#if searching}
 					{#if searchHits.length}
@@ -915,7 +980,7 @@
 									years={yearSpan(o.years)}
 									bodyStyle={o.bodyStyle}
 									imageUrl={mediaOf(m.label, o.label)?.imageUrl}
-									meta={[...(o.trims.length > 1 ? [`${o.trims.length} trims`] : []), `${o.count} ${o.count === 1 ? pieceWord.replace(/s$/, "") : pieceWord}`]}
+									meta={[...(o.trims.length > 1 ? [`${o.trims.length} trims`] : o.trims.length === 1 && o.trims[0].key !== "" ? [o.trims[0].label] : []), `${o.count} ${o.count === 1 ? pieceWord.replace(/s$/, "") : pieceWord}`]}
 									onclick={() => go({ make: m.key, model: o.key })}
 								/>
 							{/each}
@@ -961,7 +1026,7 @@
 									years={yearSpan(o.years)}
 									bodyStyle={o.bodyStyle}
 									imageUrl={mediaOf(makeNode.label, o.label)?.imageUrl}
-									meta={[...(o.trims.length > 1 ? [`${o.trims.length} trims`] : []), `${o.count} ${o.count === 1 ? pieceWord.replace(/s$/, "") : pieceWord}`]}
+									meta={[...(o.trims.length > 1 ? [`${o.trims.length} trims`] : o.trims.length === 1 && o.trims[0].key !== "" ? [o.trims[0].label] : []), `${o.count} ${o.count === 1 ? pieceWord.replace(/s$/, "") : pieceWord}`]}
 									onclick={() => go({ make: makeNode.key, model: o.key })}
 								/>
 							{/each}
@@ -1007,6 +1072,7 @@
 
 		<!-- Subject grid (property / custom) -->
 		{:else if !isVeh && !selectedVehicle}
+			<nav class="crumbs" aria-label="Breadcrumb"><span class="crumb crumb--current" aria-current="page">All {typeMeta(projectType).nounPlural}</span></nav>
 			<div class="vehicle-grid" class:vehicle-grid--list={view === "list"}>
 				{#each filtered as { v: vehicle, shown } (vehicle.id)}
 					<button class="vehicle-card" onclick={() => openSubject(vehicle)} aria-label="Open {subjectName(vehicle)} — {shown.length} {pieceWord}">
@@ -1022,6 +1088,9 @@
 							{#if vehicle.address}<div class="vehicle-card__model">{vehicle.address}</div>{/if}
 							<div class="vehicle-card__meta">
 								<Badge variant="default" size="sm">{shown.length} {shown.length === 1 ? pieceWord.replace(/s$/, "") : pieceWord}</Badge>
+								{#if source === "all" && shown.every((p) => p.source === "private")}
+									<Badge variant="default" size="sm">Private</Badge>
+								{/if}
 								{#if vehicle.popular}
 									<Badge variant="brand" size="sm">Popular</Badge>
 								{/if}
@@ -1057,7 +1126,7 @@
 					<div class="zone-browser__actions">
 						{#if useStorePatterns}
 							<Badge variant="success" size="sm" dot>
-								{visibleStorePatterns.length}{activeZone !== "All zones" ? ` of ${vehiclePatterns.length}` : ""} {pieceWord} · verified
+								{visibleStorePatterns.length}{activeZone !== "All zones" ? ` of ${vehiclePatterns.length}` : ""} {pieceWord}{source === "community" ? " · verified" : ""}
 							</Badge>
 							<button class="lib-pill" class:active={allVisibleSelected} onclick={toggleSelectAll}>{allVisibleSelected ? "Clear selection" : "Select all"}</button>
 						{/if}
@@ -1073,6 +1142,9 @@
 					{#if visibleStorePatterns.length}
 						{#each visibleStorePatterns as pattern (pattern.id)}
 							{@const selected = selectedPatternIds.has(pattern.id)}
+							{@const st = pattern.up ? shareStatusOf(pattern.up) : null}
+							{@const blocked = addBlocked(pattern)}
+							{@const chip = isVeh ? chipFor(pattern) : ""}
 							<div
 								class="zone-card"
 								class:selected
@@ -1106,16 +1178,26 @@
 									</svg>
 								</div>
 
-								{#if isVeh}
-									{@const ent = entryOf.get(pattern.id)}
-									{@const yr = [ent?.year, level === "patterns" && ent?.trim].filter(Boolean).join(" ")}
-									{#if yr}<span class="zone-card__year">{yr}</span>{/if}
-								{/if}
+								<div class="zone-card__tags">
+									{#if chip}<span class="zc-tag zc-tag--mono">{chip}</span>{/if}
+									{#if pattern.up && source === "all"}
+										<span class="zc-tag" use:tooltip={"In your private library"}>
+											<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+											Private
+										</span>
+									{/if}
+									{#if st && st !== "unshared"}
+										<span class="zc-tag zc-tag--{st}">{STATUS_LABEL[st]}</span>
+									{/if}
+									{#if blocked}
+										<span class="zc-tag zc-tag--rejected" use:tooltip={"Its saved width × height doesn't match its outline, so it would cut stretched. Edit it and re-enter the width or height."}>Size mismatch</span>
+									{/if}
+								</div>
 
 								<!-- Quick view: short zone + coverage only. Full title, size and notes live in Details. -->
 								<div class="zone-card__bar">
 									<div class="zone-card__badges">
-										<Badge variant="brand" size="sm">{zoneGroup(pattern, pattern.projectType ?? projectType)}</Badge>
+										<Badge variant="brand" size="sm">{zoneBadge(pattern)}</Badge>
 										<Badge variant={pattern.coverage === "full" ? "success" : "warning"} size="sm">
 											{pattern.coverage === "edge-only" ? "edge only" : pattern.coverage}
 										</Badge>
@@ -1125,15 +1207,27 @@
 											class="zone-card__icon"
 											onclick={(e) => { e.stopPropagation(); detailPattern = pattern; }}
 											aria-label="Details for {pattern.name}"
-											use:tooltip={pattern.notes ? "Details & notes" : "Details"}
+											use:tooltip={pattern.up ? "Details & manage" : pattern.notes ? "Details & notes" : "Details"}
 										>
 											<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
 										</button>
+										{#if pattern.up && st !== "published"}
+											<a
+												class="zone-card__icon"
+												href="/library/edit/{pattern.id}"
+												onclick={(e) => e.stopPropagation()}
+												aria-label="Edit {pattern.name}"
+												use:tooltip={"Edit this pattern"}
+											>
+												<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4z"/></svg>
+											</a>
+										{/if}
 										<button
 											class="zone-card__icon zone-card__add"
-											onclick={(e) => { e.stopPropagation(); addPatternToCanvas(pattern); }}
+											onclick={(e) => { e.stopPropagation(); addLib(pattern); }}
+											disabled={!!blocked}
 											aria-label="Add {pattern.name} to canvas"
-											use:tooltip={"Add to canvas"}
+											use:tooltip={blocked ? "Fix this pattern's size before adding it" : "Add to canvas"}
 										>
 											<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
 										</button>
@@ -1149,7 +1243,7 @@
 								<p>No {categoryShortLabel(category)} patterns in “{activeZone}” for this {typeMeta(projectType).noun}.</p>
 								<button class="zone-empty__cta" onclick={() => (activeZone = "All zones")}>Show all zones</button>
 							{:else}
-								<p>No verified {categoryLabel(category)} patterns for this {typeMeta(projectType).noun} yet.</p>
+								<p>No {categoryLabel(category)} patterns for this {typeMeta(projectType).noun} yet.</p>
 								<a href="/library/upload" class="zone-empty__cta">
 									<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
 									Upload a pattern
@@ -1159,124 +1253,6 @@
 					{/if}
 				</div>
 			</div>
-		{/if}
-
-		{:else}
-
-		<!-- ─── My patterns tab ─── -->
-		<div class="my-patterns">
-			{#if myPatternsLoading}
-				<div class="my-patterns__empty">
-					<span class="ai-spinner" style="width:18px;height:18px" aria-hidden="true"></span>
-				</div>
-			{:else if myPatternsError}
-				<div class="my-patterns__empty">
-					<p>{myPatternsError}</p>
-					<button class="lib-pill" onclick={() => userStore.user && loadMyPatterns(userStore.user.uid)}>Try again</button>
-				</div>
-			{:else if myPatterns.length === 0}
-				<div class="my-patterns__empty my-patterns__empty--intro">
-					<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-					<p class="my-patterns__intro-title">Your own patterns live here</p>
-					<p>Upload a pattern from an SVG, a photo or a scan. It's private to you until you choose to submit it to the community library.</p>
-					<a href="/library/upload" class="upload-cta">Upload your first pattern</a>
-				</div>
-			{:else}
-				<div class="my-patterns__summary">
-					{shownMine.length === myPatterns.length ? `${myPatterns.length} pattern${myPatterns.length === 1 ? "" : "s"}` : `${shownMine.length} of ${myPatterns.length} patterns`}
-					{#if mineStatus !== "all" || mineCategory !== "all" || mineType !== "all" || mineSearch}
-						<button class="lib-empty__request" onclick={() => { mineStatus = "all"; mineCategory = "all"; mineType = "all"; mineSearch = ""; }}>Clear filters</button>
-					{/if}
-				</div>
-				{#if shownMine.length === 0}
-					<p class="my-patterns__empty">No patterns match these filters.</p>
-				{/if}
-				<div class="my-patterns__list">
-					{#each shownMine as p (p.id)}
-						{@const st = mineStatusOf(p)}
-						<article class="my-pattern-card">
-							<div class="my-pattern-card__preview" aria-hidden="true">
-								<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet">
-									<path d={p.svgPath} use:fitPattern={{ w: p.widthInches, h: p.heightInches, d: p.svgPath }} fill="none" stroke="var(--color-brand)" stroke-width="2"/>
-								</svg>
-							</div>
-							<div class="my-pattern-card__body">
-								<div class="my-pattern-card__name">{p.name || compactZones(p)}</div>
-								<div class="my-pattern-card__meta">
-									{#if mySubjectLabel(p)}{mySubjectLabel(p)} · {/if}{compactZones(p)}
-								</div>
-								<div class="my-pattern-card__badges">
-									<span class="mpbadge mpbadge--type">{typeMeta(p.projectType ?? "vehicle").label}</span>
-									<span class="mpbadge" style="--cat-accent: {categoryMeta(p.category).accent}">{categoryShortLabel(p.category)}</span>
-									<span class="mpbadge mpbadge--{st}">{MINE_STATUS_LABEL[st]}</span>
-									<span class="my-pattern-card__size">{p.widthInches.toFixed(2)}" × {p.heightInches.toFixed(2)}"</span>
-									{#if sizeError(p, p.svgPath)}
-										<span class="mpbadge mpbadge--rejected" use:tooltip={"Its saved width × height doesn't match its outline, so it would cut stretched. Edit it and re-enter the width or height."}>Size doesn't match outline</span>
-									{/if}
-									<span class="my-pattern-card__date">Added {p.createdAt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>
-								</div>
-								{#if st === "rejected"}
-									<div class="my-pattern-card__note my-pattern-card__note--rejected">
-										{#if p.rejectionReason}
-											<strong>Not approved:</strong> {p.rejectionReason}
-										{:else}
-											Not approved for the community library.
-										{/if}
-										<span class="my-pattern-card__note-sub">It's still yours to use — edit it and resubmit anytime.</span>
-									</div>
-								{:else if st === "pending"}
-									<p class="my-pattern-card__note">Waiting for admin review. You can keep using it meanwhile.</p>
-								{/if}
-							</div>
-							<div class="my-pattern-card__actions">
-								<button class="my-pattern-card__add" onclick={() => addMine(p)} disabled={!!sizeError(p, p.svgPath)} use:tooltip={sizeError(p, p.svgPath) ? "Fix this pattern's size before adding it" : "Add to canvas"} aria-label="Add {p.name} to canvas">
-									<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-									Add
-								</button>
-
-								{#if p.isPublished}
-									<!-- Locked — approved community pattern -->
-									<button class="my-pattern-card__locked" onclick={() => { adjustTarget = p; adjustNotes = ""; }} use:tooltip={"It's in the community library, so changes go through a request"} aria-label="Request changes to {p.name}">
-										<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-										Request changes
-									</button>
-								{:else}
-									<a href="/library/edit/{p.id}" class="my-pattern-card__edit" use:tooltip={"Edit this pattern"} aria-label="Edit {p.name}">
-										<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4z"/></svg>
-										Edit
-									</a>
-									<button
-										class="my-pattern-card__share"
-										class:my-pattern-card__share--on={p.submitToCommunity}
-										onclick={() => toggleCommunitySubmit(p)}
-										use:tooltip={p.submitToCommunity ? "Withdraw from community review" : "Submit for community review"}
-										aria-label={p.submitToCommunity ? "Withdraw from community review" : "Submit for community review"}
-									>
-										<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-										{p.submitToCommunity ? "Withdraw" : st === "rejected" ? "Resubmit" : "Submit"}
-									</button>
-									<button
-										class="my-pattern-card__delete"
-										onclick={() => confirmDelete(p)}
-										disabled={deleting.has(p.id)}
-										use:tooltip={"Delete this pattern"}
-										aria-label="Delete {p.name}"
-									>
-										<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
-										{deleting.has(p.id) ? "Deleting…" : "Delete"}
-									</button>
-								{/if}
-							</div>
-						</article>
-					{/each}
-				</div>
-				<a href="/library/upload" class="my-patterns__upload-cta">
-					<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-					Upload another pattern
-				</a>
-			{/if}
-		</div>
-
 		{/if}
 
 	</div>
@@ -1306,8 +1282,11 @@
 <!-- ─── Pattern detail dialog ─────────────────── -->
 {#if detailPattern}
 	{@const p = detailPattern}
-	{@const ent = entryOf.get(p.id) ?? selectedVehicle}
+	{@const own = p.up ?? null}
+	{@const st = own ? shareStatusOf(own) : null}
+	{@const ent = own ? null : (leafEntries.find((x) => x.pats.some((q) => q.id === p.id))?.v ?? selectedVehicle)}
 	{@const t = p.projectType ?? (ent ? typeOf(ent) : projectType)}
+	{@const blocked = addBlocked(p)}
 	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 	<div class="modal-overlay" onclick={() => (detailPattern = null)}>
 		<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
@@ -1316,7 +1295,7 @@
 				<div>
 					<h2 class="modal__title" id="pd-title">{p.name}</h2>
 					<p class="modal__sub">
-						{#if ent}{subjectName(ent)} · {/if}{categoryLabel(p.category)}
+						{#if own}{mySubjectLabel(own) || "Your pattern"} · {:else if ent}{subjectName(ent)} · {/if}{categoryLabel(p.category)}
 					</p>
 				</div>
 				<button class="modal__close" onclick={() => (detailPattern = null)} aria-label="Close">
@@ -1330,9 +1309,11 @@
 				</div>
 
 				<dl class="pd__facts">
-					<div><dt>Zone</dt><dd>{zoneLabel(p.zone, p.category, t, p.customZoneLabel)}</dd></div>
+					<div><dt>Zone</dt><dd>{own ? compactZones(own) : zoneLabel(p.zone, p.category, t, p.customZoneLabel)}</dd></div>
 					<div><dt>Size</dt><dd>{formatMeasure(p.widthInches)}" × {formatMeasure(p.heightInches)}" <span class="pd__muted">({cm(p.widthInches)} × {cm(p.heightInches)} cm)</span></dd></div>
 					<div><dt>Coverage</dt><dd>{p.coverage === "edge-only" ? "Edge only" : p.coverage === "full" ? "Full" : "Partial"}</dd></div>
+					<div><dt>Library</dt><dd>{own ? "Private" : "Community"}</dd></div>
+					{#if own}<div><dt>Added</dt><dd>{own.createdAt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</dd></div>{/if}
 					{#if p.revision}<div><dt>Revision</dt><dd>{p.revision}</dd></div>{/if}
 				</dl>
 
@@ -1340,6 +1321,47 @@
 					<div class="pd__notes">
 						<div class="pd__notes-title">Notes & disclosure</div>
 						<p>{p.notes}</p>
+					</div>
+				{/if}
+
+				{#if own && st}
+					<div class="pd__own">
+						<Badge variant={STATUS_VARIANT[st]} size="sm">{STATUS_LABEL[st]}</Badge>
+						<p>
+							{#if st === "rejected"}
+								{#if own.rejectionReason}<strong>Not approved:</strong> {own.rejectionReason}{:else}Not approved for the community library.{/if}
+								It's still yours to use — edit it and resubmit anytime.
+							{:else if st === "pending"}
+								Waiting for admin review. You can keep using it meanwhile.
+							{:else if st === "published"}
+								Shared with the community. Changes go through a request.
+							{:else}
+								Only you can see and cut this pattern.
+							{/if}
+						</p>
+						{#if blocked}
+							<p class="pd__warn">{blocked} Edit the pattern to fix it before adding it to the canvas.</p>
+						{/if}
+					</div>
+
+					<div class="pd__manage">
+						{#if st === "published"}
+							<button type="button" class="pd__mbtn" onclick={() => { adjustTarget = own; adjustNotes = ""; detailPattern = null; }}>
+								<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+								Request changes
+							</button>
+						{:else}
+							<a href="/library/edit/{own.id}" class="pd__mbtn">
+								<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4z"/></svg>
+								Edit
+							</a>
+							<button type="button" class="pd__mbtn" onclick={() => toggleCommunitySubmit(own)}>
+								{own.submitToCommunity ? "Withdraw from review" : st === "rejected" ? "Resubmit to community" : "Share with community"}
+							</button>
+							<button type="button" class="pd__mbtn pd__mbtn--danger" onclick={() => confirmDelete(own)} disabled={deleting.has(own.id)}>
+								{deleting.has(own.id) ? "Deleting…" : "Delete"}
+							</button>
+						{/if}
 					</div>
 				{/if}
 
@@ -1366,7 +1388,7 @@
 						<button type="button" class="btn-ghost" onclick={() => addDetail(false)}>Add this side</button>
 						<button type="button" class="btn-primary" onclick={() => addDetail(true)}>Add both sides</button>
 					{:else}
-						<button type="button" class="btn-primary" onclick={() => addDetail(false)}>Add to canvas</button>
+						<button type="button" class="btn-primary" onclick={() => addDetail(false)} disabled={!!blocked}>Add to canvas</button>
 					{/if}
 				</div>
 			</div>
@@ -1772,8 +1794,8 @@
 		gap: 12px;
 	}
 
-	.library__title { font-size: 1.25rem; margin-bottom: 3px; }
-	.library__sub   { font-size: 0.8125rem; color: var(--text-secondary); }
+	.library__title { font-size: 1.875rem; font-weight: 800; letter-spacing: -0.03em; line-height: 1.15; margin-bottom: 3px; }
+	.library__sub   { font-size: 0.8125rem; color: var(--text-secondary); min-height: 1.2em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 	.library__header-actions { display: flex; align-items: center; gap: 4px; }
 
@@ -2156,6 +2178,7 @@
 	.vb-grid--trim  { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
 
 	.crumbs {
+		min-height: 32px;
 		display: flex;
 		align-items: center;
 		flex-wrap: wrap;
@@ -2288,6 +2311,7 @@
 		.lib-section-label { display: none; }
 		.lib-filter-pills { flex-wrap: nowrap; margin-bottom: 0; flex-shrink: 0; }
 		.lib-stats { display: none; }
+		.lib-filter-pills--years { max-height: none; overflow-y: visible; }
 		.lib-request-btn { margin-top: 0; width: auto; flex-shrink: 0; white-space: nowrap; }
 
 		.library__main { padding: 14px; }
@@ -2305,273 +2329,13 @@
 		.zone-card__add { opacity: 1; }
 	}
 
-	@media (max-width: 640px) {
-		.my-pattern-card { flex-wrap: wrap; }
-		.my-pattern-card__body { flex-basis: 100%; order: 1; }
-		.my-pattern-card__actions { flex-wrap: wrap; order: 2; width: 100%; justify-content: flex-end; }
-	}
 
 	/* ─── Library / My Patterns tab bar ─── */
-	.lib-tabs {
-		display: flex;
-		gap: 2px;
-		border-bottom: 1px solid var(--border-subtle);
-		margin-bottom: 16px;
-	}
-	.lib-tab {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		padding: 10px 18px;
-		font-size: 1rem;
-		font-weight: 600;
-		color: var(--text-tertiary);
-		background: transparent;
-		border: none;
-		border-bottom: 2px solid transparent;
-		margin-bottom: -1px;
-		cursor: pointer;
-		transition: color 0.12s, border-color 0.12s;
-	}
-	.lib-tab__icon { flex-shrink: 0; opacity: 0.8; }
-	.lib-tab:hover { color: var(--text-secondary); }
-	.lib-tab--active {
-		color: var(--color-brand);
-		border-bottom-color: var(--color-brand);
-	}
-	.lib-tab--active .lib-tab__icon { opacity: 1; }
-	.lib-tab__badge {
-		background: var(--bg-surface-3);
-		color: var(--text-primary);
-		font-size: 0.6875rem;
-		font-weight: 700;
-		padding: 1px 6px;
-		border-radius: 10px;
-		line-height: 1.4;
-	}
 
 	/* ─── My Patterns panel ─── */
-	.my-patterns {
-		display: flex;
-		flex-direction: column;
-		gap: 12px;
-	}
-	.my-patterns__empty {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 12px;
-		padding: 48px 24px;
-		color: var(--text-tertiary);
-		font-size: 0.9375rem;
-		text-align: center;
-	}
-	.my-patterns__empty a {
-		color: var(--color-brand);
-		text-decoration: none;
-	}
-	.my-patterns__list {
-		display: flex;
-		flex-direction: column;
-		gap: 8px;
-	}
-	.my-patterns__upload-cta {
-		display: flex;
-		align-items: center;
-		gap: 7px;
-		padding: 10px 14px;
-		border: 1px dashed var(--border-default);
-		border-radius: var(--radius-md);
-		font-size: 0.8125rem;
-		color: var(--text-tertiary);
-		text-decoration: none;
-		transition: border-color 0.12s, color 0.12s;
-	}
-	.my-patterns__upload-cta:hover {
-		border-color: var(--color-brand);
-		color: var(--color-brand);
-	}
 
 	/* ─── My Pattern card ─── */
-	.my-pattern-card {
-		display: flex;
-		align-items: center;
-		gap: 12px;
-		padding: 10px 12px;
-		background: var(--bg-surface);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
-	}
-	.my-pattern-card__preview {
-		width: 48px;
-		height: 48px;
-		border-radius: var(--radius-sm);
-		background: var(--bg-surface-2);
-		border: 1px solid var(--border-subtle);
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		flex-shrink: 0;
-		padding: 6px;
-	}
-	.my-pattern-card__preview svg { width: 100%; height: 100%; }
-	.my-pattern-card__body {
-		flex: 1;
-		min-width: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 3px;
-	}
-	.my-pattern-card__name {
-		font-size: 0.875rem;
-		font-weight: 600;
-		color: var(--text-primary);
-		display: -webkit-box;
-		-webkit-line-clamp: 2;
-		line-clamp: 2;
-		-webkit-box-orient: vertical;
-		overflow: hidden;
-		line-height: 1.35;
-	}
-	.my-pattern-card__meta {
-		font-size: 0.75rem;
-		color: var(--text-tertiary);
-	}
-	.my-pattern-card__badges {
-		display: flex;
-		gap: 5px;
-		flex-wrap: wrap;
-	}
-	.mpbadge {
-		font-size: 0.6875rem;
-		font-weight: 600;
-		padding: 1px 6px;
-		border-radius: 4px;
-		background: color-mix(in srgb, var(--cat-accent, var(--text-tertiary)) 14%, transparent);
-		color: var(--cat-accent, var(--text-tertiary));
-	}
-	.mpbadge--published { background: color-mix(in srgb, #22c55e 12%, transparent); color: #4ade80; }
-	.mpbadge--pending   { background: color-mix(in srgb, #f59e0b 12%, transparent); color: #fbbf24; }
-	.mpbadge--type { background: color-mix(in srgb, var(--color-brand) 12%, transparent); color: var(--color-brand); }
-	.mpbadge--private   { background: var(--bg-surface-3); color: var(--text-tertiary); }
-	.my-pattern-card__actions {
-		display: flex;
-		gap: 6px;
-		flex-shrink: 0;
-	}
-	.my-pattern-card__add,
-	.my-pattern-card__edit,
-	.my-pattern-card__share {
-		display: flex;
-		align-items: center;
-		gap: 5px;
-		padding: 5px 10px;
-		font-size: 0.75rem;
-		font-weight: 600;
-		font-family: var(--font-body);
-		border-radius: var(--radius-md);
-		border: 1px solid var(--border-default);
-		background: var(--bg-surface-2);
-		color: var(--text-secondary);
-		cursor: pointer;
-		transition: background 0.12s, color 0.12s, border-color 0.12s;
-		white-space: nowrap;
-	}
-	.my-pattern-card__add:disabled { opacity: 0.45; cursor: not-allowed; }
-	.my-pattern-card__add:hover:not(:disabled) {
-		background: var(--color-brand);
-		border-color: var(--color-brand);
-		color: #fff;
-	}
-	.my-pattern-card__edit:hover {
-		background: var(--bg-surface-3);
-		border-color: var(--border-strong, var(--border-default));
-		color: var(--text-primary);
-	}
-	.my-pattern-card__share--on {
-		border-color: color-mix(in srgb, var(--color-brand) 50%, transparent);
-		color: var(--color-brand);
-		background: color-mix(in srgb, var(--color-brand) 10%, var(--bg-surface-2));
-	}
-	.my-pattern-card__share:hover {
-		border-color: var(--color-brand);
-		color: var(--color-brand);
-	}
-	.my-pattern-card__delete {
-		display: flex;
-		align-items: center;
-		gap: 5px;
-		padding: 5px 10px;
-		font-size: 0.75rem;
-		font-weight: 600;
-		font-family: var(--font-body);
-		border-radius: var(--radius-md);
-		border: 1px solid var(--border-default);
-		background: var(--bg-surface-2);
-		color: var(--text-tertiary);
-		cursor: pointer;
-		transition: background 0.12s, color 0.12s, border-color 0.12s;
-		white-space: nowrap;
-	}
-	.my-pattern-card__delete:hover {
-		border-color: color-mix(in srgb, #ef4444 50%, transparent);
-		color: #f87171;
-		background: color-mix(in srgb, #ef4444 10%, var(--bg-surface-2));
-	}
-	.my-pattern-card__del-confirm {
-		padding: 5px 10px;
-		font-size: 0.75rem;
-		font-weight: 700;
-		font-family: var(--font-body);
-		border-radius: var(--radius-md);
-		border: 1px solid color-mix(in srgb, #ef4444 60%, transparent);
-		background: color-mix(in srgb, #ef4444 15%, var(--bg-surface-2));
-		color: #f87171;
-		cursor: pointer;
-		transition: background 0.12s, border-color 0.12s;
-		white-space: nowrap;
-	}
-	.my-pattern-card__del-confirm:hover:not(:disabled) {
-		background: color-mix(in srgb, #ef4444 25%, var(--bg-surface-2));
-		border-color: #ef4444;
-	}
-	.my-pattern-card__del-confirm:disabled { opacity: 0.6; cursor: not-allowed; }
-	.my-pattern-card__del-cancel {
-		padding: 5px 10px;
-		font-size: 0.75rem;
-		font-weight: 500;
-		font-family: var(--font-body);
-		border-radius: var(--radius-md);
-		border: 1px solid var(--border-default);
-		background: transparent;
-		color: var(--text-tertiary);
-		cursor: pointer;
-		transition: background 0.12s, color 0.12s;
-		white-space: nowrap;
-	}
-	.my-pattern-card__del-cancel:hover { background: var(--bg-surface-3); color: var(--text-secondary); }
 
-	.my-pattern-card__locked {
-		display: flex;
-		align-items: center;
-		gap: 5px;
-		padding: 5px 10px;
-		font-size: 0.75rem;
-		font-weight: 600;
-		font-family: var(--font-body);
-		border-radius: var(--radius-md);
-		border: 1px solid var(--border-default);
-		background: var(--bg-surface-2);
-		color: var(--text-tertiary);
-		cursor: pointer;
-		transition: background 0.12s, color 0.12s, border-color 0.12s;
-		white-space: nowrap;
-	}
-	.my-pattern-card__locked:hover {
-		border-color: color-mix(in srgb, #f59e0b 50%, transparent);
-		color: #fbbf24;
-		background: color-mix(in srgb, #f59e0b 10%, var(--bg-surface-2));
-	}
 
 	/* ─── Mirror pair add dialog ─── */
 	.mirror-opts {
@@ -2631,25 +2395,6 @@
 	button.zone-empty__cta { background: transparent; color: var(--text-brand); cursor: pointer; font-family: var(--font-body); }
 	button.zone-card__add { border: none; font: inherit; }
 
-	.my-patterns__summary {
-		display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
-		font-size: 0.8125rem; color: var(--text-tertiary);
-	}
-	.my-patterns__empty--intro { max-width: 440px; margin: 0 auto; }
-	.my-patterns__empty--intro p { margin: 0; font-size: 0.875rem; line-height: 1.5; }
-	.my-patterns__intro-title { font-size: 1rem !important; font-weight: 600; color: var(--text-primary); }
-	.mpbadge--rejected { background: color-mix(in srgb, var(--color-danger) 12%, transparent); color: var(--color-danger); }
-	.my-pattern-card__badges { align-items: center; }
-	.my-pattern-card__size,
-	.my-pattern-card__date { font-size: 0.6875rem; color: var(--text-tertiary); font-family: var(--font-mono); }
-	.my-pattern-card__note { margin: 6px 0 0; font-size: 0.75rem; color: var(--text-secondary); line-height: 1.4; }
-	.my-pattern-card__note--rejected {
-		padding: 7px 9px; border-radius: var(--radius-md);
-		background: color-mix(in srgb, var(--color-danger) 7%, transparent);
-		border: 1px solid color-mix(in srgb, var(--color-danger) 25%, transparent);
-	}
-	.my-pattern-card__note--rejected strong { color: var(--color-danger); font-weight: 600; }
-	.my-pattern-card__note-sub { display: block; margin-top: 3px; color: var(--text-tertiary); }
 
 	/* Request modal: subject type picker */
 	.req-types { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
@@ -2689,4 +2434,98 @@
 	.pd__flip { display: inline-flex; transform: scaleX(-1); }
 	.pd__mirror-text { margin: 0; font-size: 0.8125rem; color: var(--text-secondary); line-height: 1.45; }
 	.pd__mirror-text strong { color: var(--text-primary); }
+	/* ─── Source switch (All / Community / Private) ─── */
+	.library__heading { min-width: 0; }
+	.library__header-actions { flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+	.src-switch {
+		display: inline-flex;
+		background: var(--bg-surface);
+		border: 1px solid var(--border-subtle);
+		border-radius: var(--radius-lg);
+		padding: 3px;
+	}
+	.src-btn {
+		display: inline-flex; align-items: center; gap: 6px;
+		padding: 5px 11px; font: inherit; font-size: 0.8125rem; font-weight: 500;
+		background: transparent; border: none; border-radius: var(--radius-md);
+		color: var(--text-tertiary); cursor: pointer; white-space: nowrap;
+		transition: background 0.15s, color 0.15s;
+	}
+	.src-btn:hover { color: var(--text-primary); }
+	.src-btn.active { background: var(--bg-surface-3); color: var(--text-primary); box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
+	.src-btn.active .mode-count { background: var(--color-brand); color: #0a0a0a; }
+
+	.lib-banner {
+		display: flex; align-items: center; justify-content: space-between; gap: 12px;
+		padding: 10px 14px; font-size: 0.8125rem; color: var(--color-danger);
+		background: color-mix(in srgb, var(--color-danger) 8%, transparent);
+		border: 1px solid color-mix(in srgb, var(--color-danger) 25%, transparent);
+		border-radius: var(--radius-md);
+	}
+
+	/* Chips over a card's preview: years/trim, Private, status */
+	.zone-card__tags {
+		position: absolute; z-index: 1; top: 10px; left: 10px; right: 36px;
+		display: flex; flex-wrap: wrap; gap: 4px; pointer-events: none;
+	}
+	.zc-tag {
+		display: inline-flex; align-items: center; gap: 4px; padding: 1px 7px;
+		border-radius: 999px; font-size: 0.6875rem; line-height: 1.5;
+		background: var(--bg-surface-3); color: var(--text-secondary); pointer-events: auto;
+	}
+	.zc-tag--mono { font-family: var(--font-mono); color: var(--text-primary); }
+	.zc-tag--pending   { background: color-mix(in srgb, var(--color-warning) 16%, transparent); color: var(--color-warning); }
+	.zc-tag--published { background: color-mix(in srgb, var(--color-success) 16%, transparent); color: var(--color-success); }
+	.zc-tag--rejected  { background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger); }
+	a.zone-card__icon { text-decoration: none; }
+	.zone-card__icon:disabled { opacity: 0.4; cursor: not-allowed; }
+
+	/* Detail dialog: the owner's own status + manage row */
+	.pd__own { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+	.pd__own p { margin: 0; font-size: 0.8125rem; color: var(--text-secondary); line-height: 1.45; }
+	.pd__warn { color: var(--color-danger) !important; }
+	.pd__manage { display: flex; flex-wrap: wrap; gap: 6px; }
+	.pd__mbtn {
+		display: inline-flex; align-items: center; gap: 6px; padding: 6px 11px;
+		font: inherit; font-size: 0.8125rem; font-weight: 500; text-decoration: none;
+		background: var(--bg-surface-2); color: var(--text-secondary);
+		border: 1px solid var(--border-default); border-radius: var(--radius-md); cursor: pointer;
+	}
+	.pd__mbtn:hover { color: var(--text-primary); border-color: var(--color-brand-dim); }
+	.pd__mbtn--danger:hover { color: var(--color-danger); border-color: var(--color-danger); }
+	.pd__mbtn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+	@media (max-width: 768px) {
+		.library__header-actions { justify-content: space-between; }
+		.src-switch { width: 100%; }
+		.src-btn { flex: 1; justify-content: center; }
+	}
+
+	/* ─── Stable layout: switching type / category / source never moves the controls ─── */
+	.library__main, .library__sidebar { scrollbar-gutter: stable; }
+	.library__header { min-height: 64px; }
+	.library__header-actions { flex-wrap: nowrap; }
+	.view-toggle { display: inline-flex; align-items: center; gap: 4px; }
+	.view-toggle--off { visibility: hidden; }
+	.cat-row { min-height: 42px; }
+	.mode-count, .lib-pill__count, .lib-stat__val, .src-btn .mode-count { font-variant-numeric: tabular-nums; }
+	.mode-btn--lg { min-width: 0; }
+	.lib-side-foot {
+		margin-top: auto; position: sticky; bottom: -16px; z-index: 1;
+		display: flex; flex-direction: column; gap: 4px;
+		padding: 8px 0 0; background: var(--bg-surface);
+	}
+	.lib-stats { min-height: 52px; }
+	.lib-filter-pills--years { max-height: 112px; overflow-y: auto; }
+	.lib-tree { margin-top: 4px; }
+	@media (max-width: 1100px) {
+		.library__header-actions { flex-wrap: wrap; }
+	}
+	@media (max-width: 768px) {
+		.library__header { min-height: 0; }
+		.library__header-actions { flex-wrap: wrap; }
+		.view-toggle--off { display: none; }
+		.lib-side-foot { display: contents; }
+		.cat-row { min-height: 0; }
+	}
 </style>

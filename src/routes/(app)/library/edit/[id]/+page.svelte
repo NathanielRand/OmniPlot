@@ -14,7 +14,7 @@
 	import type { PatternCategory, PatternZone, PatternCoverage, ProjectType, UserPattern } from "$lib/types";
 
 	type BodyStyle = UserPattern["bodyStyle"];
-	const MINE = "/library?tab=mine";
+	const MINE = "/library?source=private";
 
 	// ─── Load ─────────────────────────────────────
 	let loading  = $state(true);

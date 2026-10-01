@@ -73,6 +73,23 @@ export interface CatalogRow {
 	v: VehicleEntry;
 	/** Patterns that count toward this entry (already scoped to category etc.). */
 	count: number;
+	/**
+	 * Ids of those patterns. When given, node totals count DISTINCT ids — one
+	 * pattern that fits several models/years/trims is expanded into several
+	 * rows but must still count once. Rows without ids just add `count`.
+	 */
+	ids?: string[];
+}
+
+/** Total patterns across rows: distinct ids where known, else summed counts. */
+export function countRows(rows: CatalogRow[]): number {
+	const seen = new Set<string>();
+	let n = 0;
+	for (const r of rows) {
+		if (r.ids) for (const id of r.ids) seen.add(id);
+		else n += r.count;
+	}
+	return n + seen.size;
 }
 
 export interface TrimNode {
@@ -139,7 +156,7 @@ export function buildTree(rows: CatalogRow[]): MakeNode[] {
 			const trimNodes: TrimNode[] = [...trims].map(([tk, tRows]) => ({
 				key: tk,
 				label: tk ? mode(tRows.map((r) => r.v.trim?.trim())) ?? tk : BASE_TRIM_LABEL,
-				count: tRows.reduce((n, r) => n + r.count, 0),
+				count: countRows(tRows),
 				entries: tRows.length,
 				years: yearsOf(tRows),
 			}));
@@ -149,7 +166,7 @@ export function buildTree(rows: CatalogRow[]): MakeNode[] {
 			modelNodes.push({
 				key: ok,
 				label: mode(oRows.map((r) => r.v.model?.trim())) ?? ok,
-				count: oRows.reduce((n, r) => n + r.count, 0),
+				count: countRows(oRows),
 				entries: oRows.length,
 				years: yearsOf(oRows),
 				bodyStyle: mode(oRows.map((r) => r.v.bodyStyle)),
@@ -161,7 +178,7 @@ export function buildTree(rows: CatalogRow[]): MakeNode[] {
 		out.push({
 			key: mk,
 			label: mode(mRows.map((r) => r.v.make?.trim())) ?? mk,
-			count: mRows.reduce((n, r) => n + r.count, 0),
+			count: countRows(mRows),
 			entries: mRows.length,
 			models: modelNodes,
 		});
