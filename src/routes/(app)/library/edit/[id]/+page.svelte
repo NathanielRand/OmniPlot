@@ -7,6 +7,7 @@
 	import SvgPathInput from "$lib/components/ui/SvgPathInput.svelte";
 	import InfoTip from "$lib/components/ui/InfoTip.svelte";
 	import VehicleCombobox from "$lib/components/ui/VehicleCombobox.svelte";
+	import TagInput from "$lib/components/ui/TagInput.svelte";
 	import { tooltip } from "$lib/actions/tooltip";
 	import { untrack } from "svelte";
 	import { deriveHeight, deriveWidth, relinkSize, applyFileSize, sizeError } from "$lib/utils/patternSize";
@@ -32,7 +33,7 @@
 	let vehicle = $state({
 		make:      "",
 		models:    [] as string[],
-		trim:      "",
+		trims:     [] as string[],
 		years:     [] as string[],
 		bodyStyle: "sedan" as BodyStyle,
 	});
@@ -52,8 +53,6 @@
 		notes:        "",
 	});
 
-	let modelInput = $state("");
-	let yearInput  = $state("");
 	let pendingCustomLabel = $state("");
 	let addingCustom = $state(false);
 	let errors   = $state<Record<string, string>>({});
@@ -186,7 +185,7 @@
 			original    = p;
 			mode        = p.submitToCommunity ? "community" : "private";
 			projectType = p.projectType ?? "vehicle";
-			vehicle = { make: p.make, models: [...p.models], trim: p.trim ?? "", years: [...p.years], bodyStyle: p.bodyStyle };
+			vehicle = { make: p.make, models: [...p.models], trims: [...(p.trims ?? [])], years: [...p.years], bodyStyle: p.bodyStyle };
 			const isProperty = projectType === "residential" || projectType === "commercial";
 			propertyLabel = p.propertyLabel ?? (isProperty ? p.models[0] ?? "" : "");
 			address       = p.address ?? "";
@@ -238,18 +237,6 @@
 		}
 		return null;
 	}
-	function commitYear() {
-		const parsed = parseYear(yearInput);
-		if (parsed && !vehicle.years.includes(parsed))
-			vehicle.years = [...vehicle.years, parsed];
-		yearInput = "";
-	}
-	function onYearKeydown(e: KeyboardEvent) {
-		if (e.key === "Enter" || e.key === ",") { e.preventDefault(); commitYear(); }
-		else if (e.key === "Backspace" && yearInput === "" && vehicle.years.length)
-			vehicle.years = vehicle.years.slice(0, -1);
-	}
-
 	// ─── Validation ───────────────────────────────
 	function validate(): boolean {
 		const e: Record<string, string> = {};
@@ -275,13 +262,13 @@
 	function identity(): Partial<UserPattern> {
 		if (projectType === "vehicle") {
 			return {
-				projectType, make: vehicle.make.trim(), models: vehicle.models, trim: vehicle.trim.trim() || undefined, years: vehicle.years, bodyStyle: vehicle.bodyStyle,
+				projectType, make: vehicle.make.trim(), models: vehicle.models, trims: vehicle.trims.length ? [...vehicle.trims] : undefined, years: vehicle.years, bodyStyle: vehicle.bodyStyle,
 				patternName: undefined, address: undefined, propertyLabel: undefined,
 			};
 		}
 		if (projectType === "custom") {
 			return {
-				projectType, make: "Custom", models: [customName.trim()], trim: undefined, years: [], bodyStyle: "sedan", patternName: customName.trim(),
+				projectType, make: "Custom", models: [customName.trim()], trims: undefined, years: [], bodyStyle: "sedan", patternName: customName.trim(),
 				address: undefined, propertyLabel: undefined,
 			};
 		}
@@ -289,7 +276,7 @@
 			projectType,
 			make: projectType === "residential" ? "Residential" : "Commercial",
 			models: [propertyLabel.trim() || address.trim()],
-			trim: undefined,
+			trims: undefined,
 			years: [],
 			bodyStyle: "sedan",
 			address: address.trim() || undefined,
@@ -485,52 +472,24 @@
 									<span class="field__hint">Matches narrow to {vehicle.make.trim()}</span>
 								{/if}
 							</label>
-							<div class="multitag" class:multitag--error={!!errors.models}>
-								{#each vehicle.models as m (m)}
-									<span class="chip">
-										<span class="chip__label">{m}</span>
-										<button type="button" class="chip__remove" aria-label="Remove {m}" onclick={() => { vehicle.models = vehicle.models.filter(x => x !== m); }}>×</button>
-									</span>
-								{/each}
-								<VehicleCombobox
-									id="model-input"
-									bind:value={modelInput}
-									placeholder={vehicle.models.length ? "Add another…" : "Silverado 1500 Crew Cab"}
-									options={makeModels.filter(m => !vehicle.models.includes(m))}
-									oncommit={(m) => { if (!vehicle.models.includes(m)) vehicle.models = [...vehicle.models, m]; }}
-								/>
-							</div>
+							<TagInput id="model-input" bind:values={vehicle.models} suggestions={makeModels} placeholder="Silverado 1500" noun="model" error={!!errors.models} />
 							{#if errors.models}<span class="field__error">{errors.models}</span>{/if}
 						</div>
 
 						<div class="field">
 							<label class="field__label" for="trim-input">
 								Trim / variant
-								<span class="field__hint">Optional — e.g. Sport, Crew Cab.</span>
+								<span class="field__hint">Optional — type one and press Enter to add several (Sport, Crew Cab…). Blank = fits every trim.</span>
 							</label>
-							<VehicleCombobox id="trim-input" bind:value={vehicle.trim} placeholder="Base / all trims" options={makeTrims} />
+							<TagInput id="trim-input" bind:values={vehicle.trims} suggestions={makeTrims} placeholder="Base / all trims" noun="trim" />
 						</div>
 
 						<div class="field-row field-row--2">
 							<div class="field" class:field--error={!!errors.years}>
 								<label class="field__label" for="year-input">Year(s)</label>
-								<div class="multitag" class:multitag--error={!!errors.years}>
-									{#each vehicle.years as y (y)}
-										<span class="chip">
-											<span class="chip__label">{y}</span>
-											<button type="button" class="chip__remove" aria-label="Remove {y}" onclick={() => { vehicle.years = vehicle.years.filter(x => x !== y); }}>×</button>
-										</span>
-									{/each}
-									<input
-										id="year-input"
-										class="year-input"
-										type="text"
-										placeholder={vehicle.years.length ? "Add year or range…" : "2024 or 2020-2024"}
-										bind:value={yearInput}
-										onkeydown={onYearKeydown}
-										onblur={commitYear}
-									/>
-								</div>
+								<TagInput id="year-input" bind:values={vehicle.years} placeholder="2024 or 2020-2024" noun="year" normalize={parseYear}
+									invalidMessage="Use a year (2024) or a range (2020-2024) between 1950 and next year+1."
+									onreject={(m) => (errors.years = m)} error={!!errors.years} />
 								{#if errors.years}<span class="field__error">{errors.years}</span>{/if}
 							</div>
 							<div class="field">
@@ -846,18 +805,6 @@
 	}
 	.multitag--error { border-color: var(--color-danger, #f44); }
 
-	.year-input {
-		flex: 1;
-		min-width: 120px;
-		background: transparent;
-		border: none;
-		outline: none;
-		color: var(--text-primary);
-		font-size: 0.9375rem;
-		font-family: var(--font-body);
-		padding: 4px 6px;
-	}
-	.year-input::placeholder { color: var(--text-tertiary); }
 
 	.multitag :global(.vcb) { flex: 1; min-width: 140px; }
 	.multitag :global(.vcb__input) {

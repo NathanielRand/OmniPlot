@@ -6,9 +6,11 @@
 	import { addUserPattern } from "$lib/firebase/firestore";
 	import SvgPathInput, { type SvgInputSource } from "$lib/components/ui/SvgPathInput.svelte";
 	import VehicleCombobox from "$lib/components/ui/VehicleCombobox.svelte";
+	import TagInput from "$lib/components/ui/TagInput.svelte";
 	import InfoTip from "$lib/components/ui/InfoTip.svelte";
 	import { tooltip } from "$lib/actions/tooltip";
 	import { uid } from "$lib/utils";
+	import { mirrorOutline } from "$lib/utils/pathGeometry";
 	import type { PatternCategory, PatternZone, PatternCoverage, PatternUploadFlow } from "$lib/types";
 	import type { VehicleEntry } from "$lib/stores/patternStore.svelte";
 	import { fitPattern } from "$lib/actions/fitPattern";
@@ -96,7 +98,7 @@
 	let vehicle = $state({
 		make:      "",
 		models:    [] as string[],
-		trim:      "",
+		trims:     [] as string[],
 		years:     [] as string[],
 		bodyStyle: "sedan" as BodyStyle,
 	});
@@ -122,8 +124,6 @@
 	let pendingCustomZone = $state(false);
 	let pendingCustomLabel = $state("");
 
-	let modelInput = $state("");
-	let yearInput  = $state("");
 	let errors = $state<Record<string, string>>({});
 
 	// ─── Derived ──────────────────────────────────
@@ -167,6 +167,15 @@
 
 	$effect(() => {
 		if (pattern.category === "window-tint") pattern.coverage = "full";
+	});
+
+	// Per-zone slots keep a zone from the previous category/type otherwise, and
+	// would save a "hood" pattern into a window-tint upload.
+	$effect(() => {
+		const valid = new Set<string>(zoneList.map((z) => z.value));
+		untrack(() => {
+			for (const s of [...individualSlots, ...multiSlots]) if (s.zone && !valid.has(s.zone)) s.zone = "";
+		});
 	});
 
 	// "custom" stays available for repeated selection so a submission can carry
@@ -244,6 +253,7 @@
 			const e: Record<string, string> = {};
 			if (!slot.zone)                                    e.zone    = "Select a zone";
 			else if (slot.zone === "custom" && !slot.customZoneLabel.trim()) e.zone = "Name this custom zone";
+				else if (slot.zone !== "custom" && individualSlots.some((o, j) => j < i && o.zone === slot.zone)) e.zone = "Another piece already uses this zone";
 			if (!slot.svgPath.trim())                          e.svgPath = "Import a pattern first";
 			else { const se = sizeError(slot, slot.svgPath); if (se) e.width = se; }
 			if (Object.keys(e).length) errs[i] = e;
@@ -270,18 +280,6 @@
 		}
 		return null;
 	}
-	function commitYear() {
-		const parsed = parseYear(yearInput);
-		if (parsed && !vehicle.years.includes(parsed))
-			vehicle.years = [...vehicle.years, parsed];
-		yearInput = "";
-	}
-	function onYearKeydown(e: KeyboardEvent) {
-		if (e.key === "Enter" || e.key === ",") { e.preventDefault(); commitYear(); }
-		else if (e.key === "Backspace" && yearInput === "" && vehicle.years.length)
-			vehicle.years = vehicle.years.slice(0, -1);
-	}
-
 	// PRECISION: a pattern's W × H always keeps its outline's exact
 	// proportions. Whenever an outline changes, re-derive the size from it.
 	$effect(() => {
@@ -318,7 +316,8 @@
 		} else {
 			if (!propertyAddress.trim()) e.propertyAddress = "Address is required";
 		}
-		errors = { ...errors, ...e };
+		const identityKeys = ["make", "models", "years", "customName", "propertyAddress"];
+		errors = { ...Object.fromEntries(Object.entries(errors).filter(([k]) => !identityKeys.includes(k))), ...e };
 		return Object.keys(e).length === 0;
 	}
 
@@ -354,6 +353,7 @@
 			const e: Record<string, string> = {};
 			if (!slot.zone) e.zone = "Select a zone";
 			else if (slot.zone === "custom" && !slot.customZoneLabel.trim()) e.zone = "Name this custom zone";
+				else if (slot.zone !== "custom" && multiSlots.some((o, j) => j < i && !o.skip && o.zone === slot.zone)) e.zone = "Another piece already uses this zone";
 			{ const se = sizeError(slot, slot.svgPath); if (se) e.width = se; }
 			if (Object.keys(e).length) errs[i] = e;
 		});
@@ -368,7 +368,7 @@
 				projectType,
 				make:      vehicle.make.trim(),
 				models:    vehicle.models,
-				trim:      vehicle.trim.trim() || undefined,
+				trims:     vehicle.trims.length ? [...vehicle.trims] : undefined,
 				years:     vehicle.years,
 				bodyStyle: vehicle.bodyStyle,
 			};
@@ -439,7 +439,7 @@
 		return {
 			savedAt: Date.now(),
 			mode, projectType, customName, propertyAddress, propertyLabel,
-			vehicle: { ...vehicle, models: [...vehicle.models], years: [...vehicle.years] },
+			vehicle: { ...vehicle, models: [...vehicle.models], trims: [...vehicle.trims], years: [...vehicle.years] },
 			pattern: { ...pattern, zones: [...pattern.zones], customZoneLabels: [...pattern.customZoneLabels] },
 			uploadMode, multiMethod, multiFileSvgPath, patternSource, multiSource,
 			individualSlots: individualSlots.map((s) => ({ ...s })),
@@ -475,7 +475,7 @@
 		customName = d.customName ?? "";
 		propertyAddress = d.propertyAddress ?? "";
 		propertyLabel = d.propertyLabel ?? "";
-		if (d.vehicle) vehicle = { ...d.vehicle, trim: d.vehicle.trim ?? "" };
+		if (d.vehicle) vehicle = { ...d.vehicle, trims: d.vehicle.trims ?? ((d.vehicle as { trim?: string }).trim ? [(d.vehicle as { trim?: string }).trim!] : []) };
 		if (d.pattern) pattern = { ...pattern, ...d.pattern, zones: [], customZoneLabels: [] };
 		uploadMode = d.uploadMode ?? uploadMode;
 		multiMethod = d.multiMethod ?? multiMethod;
@@ -535,118 +535,123 @@
 		errorEls[0].querySelector<HTMLElement>("input, select, textarea")?.focus();
 	}
 
+	// ─── Saving: every piece is its own record ───
+	// A "piece" is one outline for one zone. Individual slots, extracted contours
+	// and a single outline assigned to several zones all end up as separate
+	// userPatterns docs (one zone each) that share a batchId — never one doc
+	// holding several zones. When one outline covers a left/right pair, the
+	// second hand is saved mirrored (exact isometry: same size, other hand).
+	interface Piece {
+		/** Index in the form list it came from, so failures stay in the form. */
+		idx: number;
+		zone: PatternZone;
+		customLabel: string;
+		name: string;
+		svgPath: string;
+		widthInches: number;
+		heightInches: number;
+		source?: SvgInputSource | null;
+		flow: PatternUploadFlow;
+		input: SvgInputSource | null | undefined;
+	}
+
+	function collectPieces(): Piece[] {
+		if (uploadMode === "multi" && multiMethod === "individual") {
+			return individualSlots.map((s, idx) => ({
+				idx, zone: s.zone as PatternZone, customLabel: s.customZoneLabel.trim(), name: slotZoneLabel(s),
+				svgPath: s.svgPath.trim(), widthInches: s.widthInches, heightInches: s.heightInches,
+				flow: "multi-individual" as const, input: s.source,
+			}));
+		}
+		if (multiMode) {
+			return multiSlots.flatMap((s, idx) => (s.skip || !s.zone ? [] : [{
+				idx, zone: s.zone as PatternZone, customLabel: s.customZoneLabel.trim(), name: slotZoneLabel(s),
+				svgPath: s.svgPath, widthInches: s.widthInches, heightInches: s.heightInches,
+				flow: "multi-extract" as const, input: multiSource,
+			}]));
+		}
+		return pattern.zones.map((z, idx) => {
+			const partner = MIRROR_PAIRS[z];
+			const secondHand = partner !== undefined && pattern.zones.slice(0, idx).includes(partner);
+			return {
+				idx, zone: z, customLabel: z === "custom" ? (pattern.customZoneLabels[idx] ?? "").trim() : "",
+				name: zoneLabel(z, idx),
+				svgPath: secondHand ? mirrorOutline(pattern.svgPath.trim()) : pattern.svgPath.trim(),
+				widthInches: pattern.widthInches, heightInches: pattern.heightInches,
+				flow: "single" as const, input: patternSource,
+			};
+		});
+	}
+
 	async function handleSubmit(e: SubmitEvent) {
 		e.preventDefault();
 		if (!userStore.user) { toastStore.error("Not signed in", "Please log in first."); return; }
 		if (isFreeLocked) { toastStore.error("Upgrade required", `Custom pattern uploads need a ${uploadPlanNames} plan.`); return; }
 
-		if (uploadMode === "multi" && multiMethod === "individual") {
-			if (!validateIdentity() || !validateIndividual()) { focusValidationErrors(); return; }
-			submitting = true;
-			try {
-				let saved = 0;
-				const batch = { id: uid("batch_"), size: individualSlots.length };
-				for (const slot of individualSlots) {
-					const zone = slot.zone as PatternZone;
-					await addUserPattern({
-						...trackingFields("multi-individual", slot.source, batch),
-						ownerId:           userStore.user.uid,
-						submitToCommunity: mode === "community",
-						...identityPayload(),
-						category:          pattern.category,
-						zones:             [zone],
-						customZoneLabels:  zone === "custom" ? [slot.customZoneLabel.trim()] : undefined,
-						name:              slotZoneLabel(slot),
-						coverage:          pattern.coverage,
-						widthInches:       slot.widthInches,
-						heightInches:      slot.heightInches,
-						svgPath:           slot.svgPath.trim(),
-						notes:             pattern.notes.trim() || undefined,
-					});
-					saved++;
-				}
-				multiSavedCount = saved;
-				clearDraft();
-				step = "success";
-			} catch (err) {
-				console.error(err);
-				toastStore.error("Submission failed", "Could not save patterns. Please try again.");
-			} finally {
-				submitting = false;
-			}
-			return;
-		}
-
+		const individual = uploadMode === "multi" && multiMethod === "individual";
 		if (uploadMode === "multi" && multiMethod === "single-file" && !multiMode) {
 			toastStore.error("Extract patterns first", "Upload a combined image and split it into patterns before saving.");
 			return;
 		}
+		const ok = individual ? validateIdentity() && validateIndividual()
+			: multiMode ? validateIdentity() && validateMulti()
+			: validate();
+		if (!ok) { focusValidationErrors(); return; }
 
-		if (multiMode) {
-			if (!validateIdentity() || !validateMulti()) { focusValidationErrors(); return; }
-			submitting = true;
-			try {
-				const active = multiSlots.filter(s => !s.skip && s.zone);
-				let saved = 0;
-				const batch = { id: uid("batch_"), size: active.length };
-				for (const slot of active) {
-					const zone = slot.zone as PatternZone;
+		const pieces = collectPieces();
+		if (!pieces.length) { toastStore.error("Nothing to save", "Add at least one pattern."); return; }
+
+		submitting = true;
+		const batch = pieces.length > 1 ? { id: uid("batch_"), size: pieces.length } : undefined;
+		const failed: Piece[] = [];
+		let saved = 0;
+		try {
+			for (const p of pieces) {
+				try {
 					await addUserPattern({
-						...trackingFields("multi-extract", multiSource, batch),
+						...trackingFields(p.flow, p.input, batch),
 						ownerId:           userStore.user.uid,
 						submitToCommunity: mode === "community",
 						...identityPayload(),
 						category:          pattern.category,
-						zones:             [zone],
-						customZoneLabels:  zone === "custom" ? [slot.customZoneLabel.trim()] : undefined,
-						name:              slotZoneLabel(slot),
+						zones:             [p.zone],
+						customZoneLabels:  p.zone === "custom" ? [p.customLabel] : undefined,
+						name:              p.name,
 						coverage:          pattern.coverage,
-						widthInches:       slot.widthInches,
-						heightInches:      slot.heightInches,
-						svgPath:           slot.svgPath,
+						widthInches:       p.widthInches,
+						heightInches:      p.heightInches,
+						svgPath:           p.svgPath,
 						notes:             pattern.notes.trim() || undefined,
 					});
 					saved++;
+				} catch (err) {
+					console.error(err);
+					failed.push(p);
 				}
-				multiSavedCount = saved;
-				clearDraft();
-				step = "success";
-			} catch (err) {
-				console.error(err);
-				toastStore.error("Submission failed", "Could not save patterns. Please try again.");
-			} finally {
-				submitting = false;
 			}
-			return;
-		}
-
-		if (!validate()) { focusValidationErrors(); return; }
-		submitting = true;
-		try {
-			const name = pattern.zones.map((z, i) => zoneLabel(z, i)).join(" + ");
-			await addUserPattern({
-				...trackingFields("single", patternSource),
-				ownerId:           userStore.user.uid,
-				submitToCommunity: mode === "community",
-				...identityPayload(),
-				category:          pattern.category,
-				zones:             pattern.zones,
-				customZoneLabels:  pattern.zones.includes("custom") ? pattern.customZoneLabels : undefined,
-				name,
-				coverage:          pattern.coverage,
-				widthInches:       pattern.widthInches,
-				heightInches:      pattern.heightInches,
-				svgPath:           pattern.svgPath.trim(),
-				notes:             pattern.notes.trim() || undefined,
-			});
-			clearDraft();
-			step = "success";
-		} catch (err) {
-			console.error(err);
-			toastStore.error("Submission failed", "Could not save your pattern. Please try again.");
 		} finally {
 			submitting = false;
 		}
+
+		multiSavedCount = saved;
+		if (!failed.length) {
+			clearDraft();
+			step = "success";
+			return;
+		}
+
+		// Keep only what didn't save, so pressing Save again can't duplicate the rest.
+		const failedIdx = new Set(failed.map((p) => p.idx));
+		if (individual) individualSlots = individualSlots.filter((_, i) => failedIdx.has(i));
+		else if (multiMode) multiSlots = multiSlots.filter((s, i) => s.skip || failedIdx.has(i));
+		else {
+			pattern.customZoneLabels = pattern.customZoneLabels.filter((_, i) => failedIdx.has(i));
+			pattern.zones = pattern.zones.filter((_, i) => failedIdx.has(i));
+		}
+		toastStore.error(
+			saved ? `Saved ${saved} of ${pieces.length}` : "Submission failed",
+			`Couldn't save ${failed.map((p) => p.name).join(", ")}. Those are still in the form — try again.`,
+		);
 	}
 
 	function resetForm() {
@@ -654,12 +659,10 @@
 		customName       = "";
 		propertyAddress  = "";
 		propertyLabel    = "";
-		vehicle    = { make: "", models: [], trim: "", years: [], bodyStyle: "sedan" };
+		vehicle    = { make: "", models: [], trims: [], years: [], bodyStyle: "sedan" };
 		pattern    = { category: "ppf", zones: [], customZoneLabels: [], coverage: "full", widthInches: 0, heightInches: 0, svgPath: "", notes: "" };
 		pendingCustomZone  = false;
 		pendingCustomLabel = "";
-		modelInput = "";
-		yearInput  = "";
 		errors     = {};
 		mode       = "private";
 		step       = "form";
@@ -857,52 +860,24 @@
 									<span class="field__hint">Matches narrow to {vehicle.make.trim()}</span>
 								{/if}
 							</label>
-							<div class="multitag" class:multitag--error={!!errors.models}>
-								{#each vehicle.models as m (m)}
-									<span class="chip">
-										<span class="chip__label">{m}</span>
-										<button type="button" class="chip__remove" aria-label="Remove {m}" onclick={() => { vehicle.models = vehicle.models.filter(x => x !== m); }}>×</button>
-									</span>
-								{/each}
-								<VehicleCombobox
-									id="model-input"
-									bind:value={modelInput}
-									placeholder={vehicle.models.length ? "Add another…" : "Silverado 1500 Crew Cab"}
-									options={makeModels.filter(m => !vehicle.models.includes(m))}
-									oncommit={(m) => { if (!vehicle.models.includes(m)) vehicle.models = [...vehicle.models, m]; }}
-								/>
-							</div>
+							<TagInput id="model-input" bind:values={vehicle.models} suggestions={makeModels} placeholder="Silverado 1500" noun="model" error={!!errors.models} />
 							{#if errors.models}<span class="field__error">{errors.models}</span>{/if}
 						</div>
 
 						<div class="field">
 							<label class="field__label" for="trim-input">
 								Trim / variant
-								<span class="field__hint">Optional — e.g. Sport, Crew Cab. Leave blank if it fits every trim.</span>
+								<span class="field__hint">Optional — type one and press Enter to add several (Sport, Crew Cab…). Blank = fits every trim.</span>
 							</label>
-							<VehicleCombobox id="trim-input" bind:value={vehicle.trim} placeholder="Base / all trims" options={makeTrims} />
+							<TagInput id="trim-input" bind:values={vehicle.trims} suggestions={makeTrims} placeholder="Base / all trims" noun="trim" />
 						</div>
 
 						<div class="field-row field-row--2">
 							<div class="field" class:field--error={!!errors.years}>
 								<label class="field__label" for="upload-year-input">Year(s)</label>
-								<div class="multitag" class:multitag--error={!!errors.years}>
-									{#each vehicle.years as y (y)}
-										<span class="chip">
-											<span class="chip__label">{y}</span>
-											<button type="button" class="chip__remove" aria-label="Remove {y}" onclick={() => { vehicle.years = vehicle.years.filter(x => x !== y); }}>×</button>
-										</span>
-									{/each}
-									<input
-										id="upload-year-input"
-										class="year-input"
-										type="text"
-										placeholder={vehicle.years.length ? "Add year or range…" : "2024 or 2020-2024"}
-										bind:value={yearInput}
-										onkeydown={onYearKeydown}
-										onblur={commitYear}
-									/>
-								</div>
+								<TagInput id="upload-year-input" bind:values={vehicle.years} placeholder="2024 or 2020-2024" noun="year" normalize={parseYear}
+									invalidMessage="Use a year (2024) or a range (2020-2024) between 1950 and next year+1."
+									onreject={(m) => (errors.years = m)} error={!!errors.years} />
 								{#if errors.years}<span class="field__error">{errors.years}</span>{/if}
 							</div>
 							<div class="field">
@@ -1425,18 +1400,6 @@
 		box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-brand) 20%, transparent);
 	}
 	.multitag--error { border-color: var(--color-danger, #f44); }
-	.year-input {
-		flex: 1;
-		min-width: 120px;
-		background: transparent;
-		border: none;
-		outline: none;
-		color: var(--text-primary);
-		font-size: 0.9375rem;
-		font-family: var(--font-body);
-		padding: 4px 6px;
-	}
-	.year-input::placeholder { color: var(--text-tertiary); }
 
 	.multitag :global(.vcb) { flex: 1; min-width: 140px; }
 	.multitag :global(.vcb__input) {

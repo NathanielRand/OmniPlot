@@ -621,8 +621,8 @@ export interface UserPattern {
 	vehicleId?: string;        // set if linking to existing public vehicle
 	make: string;
 	models: string[];
-	/** Trim / variant, applied to every model in `models`. Absent = base. */
-	trim?: string;
+	/** Trims / variants the pattern fits, e.g. ["Sport", "Crew Cab"]. Empty/absent = base. */
+	trims?: string[];
 	years: string[];   // e.g. ["2018", "2020-2024"]
 	bodyStyle: "sedan" | "coupe" | "suv" | "truck" | "convertible" | "wagon" | "hatchback";
 	// Pattern geometry

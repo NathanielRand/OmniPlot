@@ -386,7 +386,7 @@
 
 	function mySubjectLabel(p: UserPattern): string {
 		if ((p.projectType ?? "vehicle") !== "vehicle") return p.propertyLabel || p.patternName || p.address || "";
-		return [p.years.join(", "), p.make, p.models.join(" / "), p.trim].filter(Boolean).join(" ");
+		return [p.years.join(", "), p.make, p.models.join(" / "), p.trims?.join(" / ")].filter(Boolean).join(" ");
 	}
 
 	const shownMine = $derived(

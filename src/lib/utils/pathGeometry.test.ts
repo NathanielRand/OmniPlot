@@ -3,7 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import {
 	parsePath, serializePath, transformSegs, pathBBox, flattenSegs, splitIntoPieces,
-	pathToInchSegs, sizeMatchesOutline, heightForWidth, normalizeOutline, rectSegs, ellipseSegs,
+	pathToInchSegs, sizeMatchesOutline, heightForWidth, normalizeOutline, rectSegs, ellipseSegs, mirrorOutline,
 	type Seg, type Pt,
 } from './pathGeometry';
 
@@ -151,5 +151,25 @@ describe('splitIntoPieces', () => {
 		const pieces = splitIntoPieces(d);
 		expect(pieces).toHaveLength(2);
 		expect(parsePath(pieces[0]).filter((s) => s.t === 'M')).toHaveLength(2); // square + its hole
+	});
+});
+
+describe("mirrorOutline", () => {
+	const d = "M10 20 C30 0 50 40 70 20 L60 60 A10 12 0 0 1 20 55 Z";
+	it("keeps the bounding box exactly (same size, other hand)", () => {
+		const a = pathBBox(parsePath(d)), b = pathBBox(parsePath(mirrorOutline(d)));
+		close(b.x, a.x); close(b.y, a.y); close(b.width, a.width); close(b.height, a.height);
+	});
+	it("is its own inverse and keeps the proportions check passing", () => {
+		const twice = mirrorOutline(mirrorOutline(d));
+		const a = pathBBox(parsePath(d)), c = pathBBox(parsePath(twice));
+		close(c.width, a.width); close(c.height, a.height);
+		const w = 30, h = heightForWidth(d, w);
+		expect(sizeMatchesOutline(mirrorOutline(d), w, h)).toBe(true);
+	});
+	it("actually flips (first point moves to the far side)", () => {
+		const a = pathBBox(parsePath(d));
+		const m = parsePath(mirrorOutline(d))[0] as { x: number };
+		close(m.x, a.x + a.width - (10 - a.x));
 	});
 });

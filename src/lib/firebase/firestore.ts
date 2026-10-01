@@ -617,7 +617,9 @@ function toUserPattern(id: string, data: DocumentData): UserPattern {
 		propertyLabel:     data.propertyLabel || undefined,
 		vehicleId:         data.vehicleId,
 		make:              data.make                                          ?? "",
-		trim:              data.trim || undefined,
+		// Older docs stored a single `trim` string.
+		trims:             Array.isArray(data.trims) ? data.trims.filter(Boolean)
+		                   : data.trim ? [data.trim as string] : undefined,
 		models:            Array.isArray(data.models) ? data.models
 		                   : data.model ? [data.model as string] : [],
 		years:             Array.isArray(data.years) ? data.years
@@ -696,7 +698,7 @@ export async function updateUserPattern(
 	patch: Partial<Pick<UserPattern,
 		| "submitToCommunity" | "name" | "notes" | "svgPath"
 		| "widthInches" | "heightInches" | "coverage"
-		| "category" | "zones" | "customZoneLabels" | "make" | "models" | "trim" | "years" | "bodyStyle"
+		| "category" | "zones" | "customZoneLabels" | "make" | "models" | "trims" | "years" | "bodyStyle"
 		| "projectType" | "patternName" | "address" | "propertyLabel"
 	>>,
 ): Promise<void> {

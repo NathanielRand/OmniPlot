@@ -36,7 +36,13 @@
 		 *  saved with the pattern for Admin → Uploads. Null until there's a value. */
 		source?: SvgInputSource | null;
 	}
-	let { value = $bindable(""), id = "svgPath", error = false, showMirror = false, mirrorOrigLabel, mirrorFlipLabel, onMultiExtract, autoExtract = false, onVectorizingChange, widthInches, heightInches, onFileSize, source = $bindable(null) }: Props = $props();
+	let { value = $bindable(""), id: idProp, error = false, showMirror = false, mirrorOrigLabel, mirrorFlipLabel, onMultiExtract, autoExtract = false, onVectorizingChange, widthInches, heightInches, onFileSize, source = $bindable(null) }: Props = $props();
+
+	// Several importers can share a page (one per zone in multi-upload), so every
+	// SVG <defs> id and the input id must be unique per instance — fixed ids made
+	// later instances resolve their grid/mask against the first one in the DOM.
+	const sid = $props.id();
+	const id = $derived(idProp ?? `svgPath-${sid}`);
 
 	// ─── Resolution rating (shared by the Input / Output info bars) ─────────
 	interface ImgDims { w: number; h: number }
@@ -1382,18 +1388,18 @@
 				<div class="spi__mirror-panel">
 					<svg bind:this={mirrorSvgEl} viewBox={previewViewBox} preserveAspectRatio="xMidYMid meet" class="spi__pview-svg" aria-label="Original path orientation">
 						<defs>
-							<pattern id="spi-grid-l" width="10" height="10" patternUnits="userSpaceOnUse">
+							<pattern id="{sid}-grid-l" width="10" height="10" patternUnits="userSpaceOnUse">
 								<path d="M 10 0 L 0 0 0 10" fill="none" stroke="var(--border-default)" stroke-width="0.3" opacity="0.5"/>
 							</pattern>
-							<filter id="spi-fade-blur-l" x="-50%" y="-50%" width="200%" height="200%">
+							<filter id="{sid}-fade-blur-l" x="-50%" y="-50%" width="200%" height="200%">
 								<feGaussianBlur stdDeviation="2"/>
 							</filter>
-							<mask id="spi-fade-mask-l" maskUnits="userSpaceOnUse" x="-9999" y="-9999" width="19998" height="19998">
-								<path d={previewPath} fill="none" stroke="#fff" stroke-width="10" stroke-linejoin="round" stroke-linecap="round" filter="url(#spi-fade-blur-l)"/>
+							<mask id="{sid}-fade-mask-l" maskUnits="userSpaceOnUse" x="-9999" y="-9999" width="19998" height="19998">
+								<path d={previewPath} fill="none" stroke="#fff" stroke-width="10" stroke-linejoin="round" stroke-linecap="round" filter="url(#{sid}-fade-blur-l)"/>
 							</mask>
 						</defs>
-						<rect x="-9999" y="-9999" width="19998" height="19998" fill="url(#spi-grid-l)"/>
-						<path d={previewPath} transform={ratioTransform} fill="var(--color-brand)" opacity="1" mask="url(#spi-fade-mask-l)"/>
+						<rect x="-9999" y="-9999" width="19998" height="19998" fill="url(#{sid}-grid-l)"/>
+						<path d={previewPath} transform={ratioTransform} fill="var(--color-brand)" opacity="1" mask="url(#{sid}-fade-mask-l)"/>
 						<path d={previewPath} transform={ratioTransform} fill="none" stroke="var(--color-brand)" stroke-width={unitsToPx(1.1, mirrorSize)} stroke-linecap="round" vector-effect="non-scaling-stroke"/>
 					</svg>
 					<span class="spi__mirror-lbl">{mirrorOrigLabel ?? "As uploaded"}</span>
@@ -1402,20 +1408,20 @@
 				<div class="spi__mirror-panel">
 					<svg viewBox={previewViewBox} preserveAspectRatio="xMidYMid meet" class="spi__pview-svg" aria-label="Mirrored path orientation">
 						<defs>
-							<pattern id="spi-grid-r" width="10" height="10" patternUnits="userSpaceOnUse">
+							<pattern id="{sid}-grid-r" width="10" height="10" patternUnits="userSpaceOnUse">
 								<path d="M 10 0 L 0 0 0 10" fill="none" stroke="var(--border-default)" stroke-width="0.3" opacity="0.5"/>
 							</pattern>
-							<filter id="spi-fade-blur-r" x="-50%" y="-50%" width="200%" height="200%">
+							<filter id="{sid}-fade-blur-r" x="-50%" y="-50%" width="200%" height="200%">
 								<feGaussianBlur stdDeviation="2"/>
 							</filter>
-							<mask id="spi-fade-mask-r" maskUnits="userSpaceOnUse" x="-9999" y="-9999" width="19998" height="19998">
+							<mask id="{sid}-fade-mask-r" maskUnits="userSpaceOnUse" x="-9999" y="-9999" width="19998" height="19998">
 								<!-- Mask content is drawn in the referencing path's own (already transformed) space -->
-								<path d={previewPath} fill="none" stroke="#fff" stroke-width="10" stroke-linejoin="round" stroke-linecap="round" filter="url(#spi-fade-blur-r)"/>
+								<path d={previewPath} fill="none" stroke="#fff" stroke-width="10" stroke-linejoin="round" stroke-linecap="round" filter="url(#{sid}-fade-blur-r)"/>
 							</mask>
 						</defs>
-						<rect x="-9999" y="-9999" width="19998" height="19998" fill="url(#spi-grid-r)"/>
+						<rect x="-9999" y="-9999" width="19998" height="19998" fill="url(#{sid}-grid-r)"/>
 						<g transform={ratioTransform}>
-							<path d={previewPath} transform={flipTransform} fill="var(--color-brand)" opacity="1" mask="url(#spi-fade-mask-r)"/>
+							<path d={previewPath} transform={flipTransform} fill="var(--color-brand)" opacity="1" mask="url(#{sid}-fade-mask-r)"/>
 							<path d={previewPath} transform={flipTransform} fill="none" stroke="var(--color-brand)" stroke-width={unitsToPx(1.1, mirrorSize)} stroke-linecap="round" vector-effect="non-scaling-stroke"/>
 						</g>
 					</svg>
@@ -1450,18 +1456,18 @@
 				role="img"
 			>
 				<defs>
-					<pattern id="spi-grid" width="10" height="10" patternUnits="userSpaceOnUse">
+					<pattern id="{sid}-grid" width="10" height="10" patternUnits="userSpaceOnUse">
 						<path d="M 10 0 L 0 0 0 10" fill="none" stroke="var(--border-default)" stroke-width="0.3" opacity="0.5"/>
 					</pattern>
-					<filter id="spi-fade-blur" x="-50%" y="-50%" width="200%" height="200%">
+					<filter id="{sid}-fade-blur" x="-50%" y="-50%" width="200%" height="200%">
 						<feGaussianBlur stdDeviation={2 / zoom}/>
 					</filter>
-					<mask id="spi-fade-mask" maskUnits="userSpaceOnUse" x="-9999" y="-9999" width="19998" height="19998">
-						<path d={previewPath} fill="none" stroke="#fff" stroke-width={10 / zoom} stroke-linejoin="round" stroke-linecap="round" filter="url(#spi-fade-blur)"/>
+					<mask id="{sid}-fade-mask" maskUnits="userSpaceOnUse" x="-9999" y="-9999" width="19998" height="19998">
+						<path d={previewPath} fill="none" stroke="#fff" stroke-width={10 / zoom} stroke-linejoin="round" stroke-linecap="round" filter="url(#{sid}-fade-blur)"/>
 					</mask>
 				</defs>
-				<rect x="-9999" y="-9999" width="19998" height="19998" fill="url(#spi-grid)"/>
-				<path d={previewPath} transform={ratioTransform} fill="var(--color-brand)" opacity="1" mask="url(#spi-fade-mask)"/>
+				<rect x="-9999" y="-9999" width="19998" height="19998" fill="url(#{sid}-grid)"/>
+				<path d={previewPath} transform={ratioTransform} fill="var(--color-brand)" opacity="1" mask="url(#{sid}-fade-mask)"/>
 				<path d={previewPath} transform={ratioTransform} fill="none" stroke="var(--color-brand)" stroke-width={ratioTransform ? unitsToPx(1.1, mainSize) : 1.1 / zoom} stroke-linecap="round" vector-effect={ratioTransform ? "non-scaling-stroke" : undefined}/>
 			</svg>
 		{:else}

@@ -630,3 +630,14 @@ export function splitIntoPieces(d: string): string[] {
 	});
 	return pieces.map((idx) => serializePath(idx.flatMap((i) => subs[i])));
 }
+
+/**
+ * Horizontal mirror of an outline about its own bounding-box centre. An exact
+ * isometry: the bounding box, and so the W × H proportions, are unchanged —
+ * a mirrored pattern is the same size as the original, just the other hand.
+ */
+export function mirrorOutline(d: string): string {
+	const segs = parsePath(d);
+	const b = pathBBox(segs);
+	return serializePath(transformSegs(segs, { a: -1, b: 0, c: 0, d: 1, e: b.x + (b.x + b.width), f: 0 }));
+}

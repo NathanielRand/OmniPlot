@@ -211,7 +211,19 @@
 		if ((sub.projectType ?? "vehicle") !== "vehicle") {
 			return sub.propertyLabel || sub.patternName || sub.name;
 		}
-		return [sub.years.join("/"), sub.make, sub.models.join(", "), sub.trim].filter(Boolean).join(" ");
+		return [sub.years.join("/"), sub.make, sub.models.join(", "), sub.trims?.join(" / ")].filter(Boolean).join(" ");
+	}
+
+	/** What approving does NOT carry over — the catalog takes one model/year/trim/zone per publish. */
+	function unpublishedNote(sub: UserPattern): string | null {
+		const extra: string[] = [];
+		if ((sub.projectType ?? "vehicle") === "vehicle") {
+			if (sub.models.length > 1) extra.push(`models after ${sub.models[0]}`);
+			if (sub.years.length > 1 || /[-–—]/.test(sub.years[0] ?? "")) extra.push("years beyond the first");
+			if ((sub.trims?.length ?? 0) > 1) extra.push(`trims after ${sub.trims![0]}`);
+		}
+		if (sub.zones.length > 1) extra.push(`zones after ${sub.zones[0]}`);
+		return extra.length ? extra.join(", ") : null;
 	}
 
 	function submissionZoneLabels(sub: UserPattern): string {
@@ -236,6 +248,7 @@
 				{ label: "Subject", value: submissionSubjectLabel(reviewTarget) },
 				{ label: "Size", value: `${formatMeasure(reviewEdits.widthInches)}" × ${formatMeasure(reviewEdits.heightInches)}"` },
 				{ label: "Submitted by", value: userLabel(reviewTarget.ownerId) },
+				...(unpublishedNote(reviewTarget) ? [{ label: "Not published", value: unpublishedNote(reviewTarget)! }] : []),
 			],
 			confirmLabel: "Approve & publish",
 		});
@@ -252,19 +265,21 @@
 					// A submission can carry multiple models/years; the vehicle
 					// catalog wants one of each, so use the first as representative.
 					const subModel = sub.models[0] ?? "";
-					const subYear  = Number(sub.years[0]) || new Date().getFullYear();
+					const subTrim  = sub.trims?.[0] ?? "";
+					// "2020-2024" is a range — Number() of it is NaN, which used to publish under the current year.
+					const subYear  = Number.parseInt(sub.years[0] ?? "", 10) || new Date().getFullYear();
 					const existing = patternStore.vehicles.find(
 						(v) => (v.projectType ?? "vehicle") === "vehicle" &&
 						       (v.make ?? "").toLowerCase() === sub.make.toLowerCase() &&
 						       (v.model ?? "").toLowerCase() === subModel.toLowerCase() &&
-						       (v.trim ?? "").toLowerCase() === (sub.trim ?? "").toLowerCase() &&
+						       (v.trim ?? "").toLowerCase() === subTrim.toLowerCase() &&
 						       v.year === subYear,
 					);
 					vehicleId = existing
 						? existing.id
 						: patternStore.addVehicle({
 								projectType: "vehicle",
-								make: sub.make, model: subModel, trim: sub.trim || undefined, year: subYear,
+								make: sub.make, model: subModel, trim: subTrim || undefined, year: subYear,
 								bodyStyle: sub.bodyStyle, status: "published",
 								tags: [], updatedAt: new Date().toISOString().split("T")[0],
 								contributedBy: sub.ownerId || undefined,
