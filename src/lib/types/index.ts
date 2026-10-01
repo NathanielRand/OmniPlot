@@ -293,6 +293,13 @@ export interface Pattern {
 	widthInches: number;
 	heightInches: number;
 	revision: string; // e.g. "2024-11"
+	/**
+	 * The community submission (UserPattern id) this catalog pattern was
+	 * published from. Lets an admin revoke it, and lets deleting it return the
+	 * submitter's copy to private. Absent on admin-authored patterns and on
+	 * approvals made before this link existed.
+	 */
+	sourcePatternId?: string;
 	notes?: string;
 	isPublished: boolean;
 	createdAt: Date;

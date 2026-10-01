@@ -192,6 +192,7 @@ export function toPattern(id: string, data: DocumentData): Pattern {
 		revision: data.revision ?? "",
 		notes: data.notes,
 		isPublished: data.isPublished ?? true,
+		sourcePatternId: data.sourcePatternId || undefined,
 		createdAt: fromTimestamp(data.createdAt),
 		updatedAt: fromTimestamp(data.updatedAt),
 	};
@@ -392,6 +393,7 @@ export function toVehicleEntry(id: string, data: DocumentData): VehicleEntry {
 		propertyLabel: data.propertyLabel,
 		tags: data.tags ?? [],
 		popular: data.popular ?? false,
+		contributedBy: data.contributedBy || undefined,
 		status: data.status ?? "draft",
 		updatedAt:
 			data.updatedAt instanceof Timestamp
@@ -496,25 +498,27 @@ export async function deleteVehicleMediaDoc(id: string): Promise<void> {
 }
 
 // ─── VehicleEntry CRUD ────────────────────────
+/** The Firestore fields of a catalog subject — one builder for single and batched writes. */
+function vehicleDocData(v: VehicleEntry): Record<string, unknown> {
+	return {
+		projectType: v.projectType ?? "vehicle",
+		make: v.make ?? null,
+		model: v.model ?? null,
+		trim: v.trim ?? null,
+		year: v.year ?? null,
+		bodyStyle: v.bodyStyle ?? null,
+		address: v.address ?? null,
+		propertyLabel: v.propertyLabel ?? null,
+		tags: v.tags,
+		popular: v.popular ?? false,
+		status: v.status,
+		updatedAt: v.updatedAt,
+		...(v.contributedBy ? { contributedBy: v.contributedBy } : {}),
+	};
+}
+
 export async function setVehicleDoc(v: VehicleEntry): Promise<void> {
-	await setDoc(
-		doc(db, Collections.VEHICLES, v.id),
-		{
-			projectType: v.projectType ?? "vehicle",
-			make: v.make ?? null,
-			model: v.model ?? null,
-			year: v.year ?? null,
-			bodyStyle: v.bodyStyle ?? null,
-			address: v.address ?? null,
-			propertyLabel: v.propertyLabel ?? null,
-			tags: v.tags,
-			popular: v.popular ?? false,
-			status: v.status,
-			updatedAt: v.updatedAt,
-			...(v.contributedBy ? { contributedBy: v.contributedBy } : {}),
-		},
-		{ merge: true },
-	);
+	await setDoc(doc(db, Collections.VEHICLES, v.id), vehicleDocData(v), { merge: true });
 }
 
 // updateDoc rejects `undefined` — a cleared optional field (a subject's make
@@ -555,33 +559,32 @@ function assertExactSize(
 }
 
 // ─── Pattern CRUD ─────────────────────────────
+/** The Firestore fields of a catalog pattern — one builder for single and batched writes. */
+function patternDocData(p: Pattern): Record<string, unknown> {
+	return {
+		vehicleId: p.vehicleId,
+		projectType: p.projectType ?? "vehicle",
+		category: p.category,
+		zone: p.zone,
+		customZoneLabel: p.customZoneLabel ?? null,
+		name: p.name,
+		coverage: p.coverage,
+		svgPath: p.svgPath,
+		svgUrl: p.svgUrl ?? null,
+		widthInches: p.widthInches,
+		heightInches: p.heightInches,
+		revision: p.revision,
+		notes: p.notes ?? null,
+		isPublished: p.isPublished,
+		...(p.sourcePatternId ? { sourcePatternId: p.sourcePatternId } : {}),
+		createdAt: p.createdAt instanceof Date ? Timestamp.fromDate(p.createdAt) : serverTimestamp(),
+		updatedAt: serverTimestamp(),
+	};
+}
+
 export async function setPatternDoc(p: Pattern): Promise<void> {
 	assertExactSize(p, `Pattern "${p.name}"`);
-	await setDoc(
-		doc(db, Collections.PATTERNS, p.id),
-		{
-			vehicleId: p.vehicleId,
-			projectType: p.projectType ?? "vehicle",
-			category: p.category,
-			zone: p.zone,
-			customZoneLabel: p.customZoneLabel ?? null,
-			name: p.name,
-			coverage: p.coverage,
-			svgPath: p.svgPath,
-			svgUrl: p.svgUrl ?? null,
-			widthInches: p.widthInches,
-			heightInches: p.heightInches,
-			revision: p.revision,
-			notes: p.notes ?? null,
-			isPublished: p.isPublished,
-			createdAt:
-				p.createdAt instanceof Date
-					? Timestamp.fromDate(p.createdAt)
-					: serverTimestamp(),
-			updatedAt: serverTimestamp(),
-		},
-		{ merge: true },
-	);
+	await setDoc(doc(db, Collections.PATTERNS, p.id), patternDocData(p), { merge: true });
 }
 
 export async function updatePatternDoc(
@@ -746,6 +749,70 @@ export async function getSubmissions(): Promise<UserPattern[]> {
 		.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 }
 
+/**
+ * Everything the admin review queue shows: patterns flagged for the community
+ * AND anything already decided. Rejecting clears the flag, so the flag alone
+ * would lose rejected submissions; status alone would miss older documents.
+ */
+export async function getReviewQueue(): Promise<UserPattern[]> {
+	const col = collection(db, Collections.USER_PATTERNS);
+	const [flagged, decided] = await Promise.all([
+		getDocs(query(col, where("submitToCommunity", "==", true))),
+		getDocs(query(col, where("status", "in", ["pending", "approved", "rejected"]))),
+	]);
+	const byId = new Map<string, UserPattern>();
+	for (const d of [...flagged.docs, ...decided.docs]) byId.set(d.id, toUserPattern(d.id, d.data()));
+	return [...byId.values()].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+}
+
+/** One atomic catalog change: publishing, revoking and deleting never half-apply. */
+export interface CatalogCommit {
+	/** New subjects to create. */
+	subjects?: VehicleEntry[];
+	/** Existing subjects whose `updatedAt` to bump. */
+	touchSubjectIds?: string[];
+	/** New patterns to create. */
+	patterns?: Pattern[];
+	/** Field changes to existing patterns (e.g. publish / unpublish). */
+	patternUpdates?: { id: string; patch: Partial<Pattern> }[];
+	deletePatternIds?: string[];
+	deleteSubjectIds?: string[];
+	/** Submitters' own copies to update (approve, revoke, reset). */
+	userPatterns?: { id: string; patch: Partial<UserPattern> }[];
+}
+
+const MAX_COMMIT_OPS = 500;
+
+export async function commitCatalogChange(c: CatalogCommit): Promise<number> {
+	const subjects = c.subjects ?? [];
+	const patterns = c.patterns ?? [];
+	const ops =
+		subjects.length + (c.touchSubjectIds?.length ?? 0) + patterns.length + (c.patternUpdates?.length ?? 0) +
+		(c.deletePatternIds?.length ?? 0) + (c.deleteSubjectIds?.length ?? 0) + (c.userPatterns?.length ?? 0);
+	if (ops === 0) return 0;
+	if (ops > MAX_COMMIT_OPS) throw new Error(`This change touches ${ops} documents; the limit is ${MAX_COMMIT_OPS}.`);
+	// PRECISION: the same size guard as every other write path — a batch must not skip it.
+	for (const p of patterns) assertExactSize(p, `Pattern "${p.name}"`);
+	for (const u of c.patternUpdates ?? []) assertExactSize(u.patch, "Pattern update");
+	for (const u of c.userPatterns ?? []) assertExactSize(u.patch, "Submission update");
+
+	const day = new Date().toISOString().split("T")[0];
+	const batch = writeBatch(db);
+	for (const v of subjects) batch.set(doc(db, Collections.VEHICLES, v.id), vehicleDocData(v), { merge: true });
+	for (const id of c.touchSubjectIds ?? []) batch.update(doc(db, Collections.VEHICLES, id), { updatedAt: day });
+	for (const p of patterns) batch.set(doc(db, Collections.PATTERNS, p.id), patternDocData(p), { merge: true });
+	for (const u of c.patternUpdates ?? []) {
+		batch.update(doc(db, Collections.PATTERNS, u.id), { ...withDeletes(u.patch), updatedAt: serverTimestamp() });
+	}
+	for (const id of c.deletePatternIds ?? []) batch.delete(doc(db, Collections.PATTERNS, id));
+	for (const id of c.deleteSubjectIds ?? []) batch.delete(doc(db, Collections.VEHICLES, id));
+	for (const u of c.userPatterns ?? []) {
+		batch.update(doc(db, Collections.USER_PATTERNS, u.id), { ...withDeletes(u.patch), updatedAt: serverTimestamp() });
+	}
+	await batch.commit();
+	return ops;
+}
+
 export async function getAdjustmentRequests(): Promise<PatternAdjustmentRequest[]> {
 	const q = query(collection(db, Collections.PATTERN_ADJUSTMENTS));
 	const snap = await getDocs(q);
@@ -846,6 +913,7 @@ export async function batchSeedData(
 				popular: v.popular ?? false,
 				status: v.status,
 				updatedAt: v.updatedAt,
+				...(v.contributedBy ? { contributedBy: v.contributedBy } : {}),
 			},
 		})),
 		...allPatterns.map((p) => ({
@@ -855,6 +923,7 @@ export async function batchSeedData(
 				projectType: p.projectType ?? "vehicle",
 				category: p.category,
 				zone: p.zone,
+				customZoneLabel: p.customZoneLabel ?? null,
 				name: p.name,
 				coverage: p.coverage,
 				svgPath: p.svgPath,
