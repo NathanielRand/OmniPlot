@@ -982,9 +982,48 @@ export const FAQ_ITEMS = [
 // ─── Changelog ────────────────────────────────
 // Newest first. `LATEST_VERSION` drives the sidebar "what's new" badge —
 // bump it whenever a release entry is added below.
-export const LATEST_VERSION = "1.14.0";
+export const LATEST_VERSION = "1.15.0";
 
 export const CHANGELOG = [
+	{
+		version: "1.15.0",
+		date: "2026-10-01",
+		label: "A new Overview, one pattern library & fuller community patterns",
+		changes: [
+			{
+				type: "feature",
+				text: "A new Overview page is the first thing you see after signing in. It shows your cuts, plan usage and a six-month activity chart, any cut running right now, your cutter's connection, status and stats, a getting-started checklist, and your own contributions.",
+			},
+			{
+				type: "feature",
+				text: "The Overview also shows the growing community library: how many patterns there are for vehicles, residential, commercial and custom projects, plus a feed of recently added and popular patterns and the most-requested ones.",
+			},
+			{
+				type: "improvement",
+				text: "The pattern library is now one library instead of two tabs. Switch between All, Community and Private, and every source gets the same search, type and category filters, make → model → trim browsing, year and zone filters, and pattern cards. Your private patterns are organised just like the community ones.",
+			},
+			{
+				type: "improvement",
+				text: "Private patterns that fit several models, years or trims now show up under every one of them, counted once. Edit, delete and share-with-community actions moved into each pattern's details, and sharing is no longer pushed on you.",
+			},
+			{
+				type: "improvement",
+				text: "A model's only trim (for example Crew Cab) now shows in the title and breadcrumb. The Year filter shows whenever years are available, filters sit above the make list so they're easy to find, and search also matches zone and pattern names.",
+			},
+			{
+				type: "improvement",
+				text: "Switching between types, categories and sources no longer shifts the buttons and filters around.",
+			},
+			{
+				type: "fix",
+				text: "Community patterns now cover every model, year and trim that was submitted. Previously only the first year of a range such as 2014–2018 was published, so the community copy could show fewer years than the original.",
+			},
+			{
+				type: "fix",
+				text: "Trims on community subjects are now saved and shown, and cards reflect who contributed them.",
+			},
+		],
+	},
 	{
 		version: "1.14.0",
 		date: "2026-09-30",
