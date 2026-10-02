@@ -982,9 +982,52 @@ export const FAQ_ITEMS = [
 // ─── Changelog ────────────────────────────────
 // Newest first. `LATEST_VERSION` drives the sidebar "what's new" badge —
 // bump it whenever a release entry is added below.
-export const LATEST_VERSION = "1.15.0";
+export const LATEST_VERSION = "1.16.0";
 
 export const CHANGELOG = [
+	{
+		version: "1.16.0",
+		date: "2026-10-02",
+		label: "Coming soon vehicles, votes that count once & a faster library",
+		changes: [
+			{
+				type: "feature",
+				text: "Vehicles we're still building patterns for now appear in the library as Coming soon. Open one to vote for it, either for any year or for the specific years you need, and the most-wanted vehicles move up our list. They go live on their own the moment the first pattern is published.",
+			},
+			{
+				type: "improvement",
+				text: "Requesting a pattern and voting for a coming-soon one are now the same thing, counted once per person for each make and model, so the numbers you see are real people. The request form suggests makes and models from the catalog, and the year is optional.",
+			},
+			{
+				type: "improvement",
+				text: "Search is now a full-width bar under the category tabs, with example searches drawn from real vehicles. It matches words in any order and ignores case, accents and punctuation, understands nicknames like chevy, vw and merc, and also searches body style. A search that matches a single trim opens it directly.",
+			},
+			{
+				type: "improvement",
+				text: "A pattern that is identical across several model years is now shown once instead of once per year. Every year is still reachable from the year filter and search, and counts are no longer inflated.",
+			},
+			{
+				type: "improvement",
+				text: "The library works better on phones: search and filters sit in a compact toolbar, year, zone and status filters open in a bottom sheet, and the type and category bars scroll sideways and keep the active tab in view.",
+			},
+			{
+				type: "improvement",
+				text: "A new Available only filter hides coming-soon vehicles when you only want patterns you can cut today.",
+			},
+			{
+				type: "improvement",
+				text: "The mobile menu on the marketing site now knows whether you're signed in, with your account, Dashboard, Settings, Billing and Sign out one tap away, and the navbar no longer flashes Sign in while your profile loads. The app's top bar also fits phone screens.",
+			},
+			{
+				type: "improvement",
+				text: "The Overview now puts getting set up and your contributions above the community library, and its feed and cards line up cleanly on every screen size.",
+			},
+			{
+				type: "fix",
+				text: "Votes are tied to your account and protected on our servers, so one person can't be counted twice, and who made a request and what they wrote stay private.",
+			},
+		],
+	},
 	{
 		version: "1.15.0",
 		date: "2026-10-01",
