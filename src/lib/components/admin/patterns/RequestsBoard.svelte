@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Spinner from "$lib/components/ui/Spinner.svelte";
 	// Requests: one row per make/model (or project) customers asked for or voted
 	// on, most-wanted first — requests and votes are the same thing and are counted
 	// once per person. Shows whether the catalog has it yet (a Coming soon
@@ -109,7 +110,7 @@
 	{#if legacy && legacy.groups.length}
 		<div class="merge">
 			<span><b>{legacy.groups.reduce((n, g) => n + g.requests, 0)}</b> older requests aren't merged yet — they'd become <b>{legacy.groups.length}</b> {legacy.groups.length === 1 ? "record" : "records"}, so votes for the same car add up.</span>
-			<button class="btn btn--sm btn--primary" disabled={merging} onclick={mergeLegacy}>{merging ? "Merging…" : "Merge duplicates"}</button>
+			<button class="btn btn--sm btn--primary" disabled={merging} onclick={mergeLegacy}>{#if merging}<Spinner />{/if}{merging ? "Merging…" : "Merge duplicates"}</button>
 		</div>
 	{/if}
 	<div class="rb__bar">

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Spinner from "$lib/components/ui/Spinner.svelte";
 	import Badge from "$lib/components/ui/Badge.svelte";
 	import TicketThread from "./TicketThread.svelte";
 	import { REPLY_STARTERS, type ReplyIntent } from "$lib/support/responses";
@@ -152,7 +153,7 @@
 					>Mark resolved</button>
 				{/if}
 				<button type="submit" class="btn btn--primary" disabled={busy || !body.trim()}>
-					{busy ? "Sending…" : "Send"}
+					{#if busy}<Spinner />{/if}{busy ? "Sending…" : "Send"}
 				</button>
 			</div>
 		</form>

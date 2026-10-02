@@ -19,7 +19,8 @@ export interface VehiclePlanInput {
 	yearTo: number;
 	/** Comma / newline separated. Empty = the base (all-trims) subject only. */
 	trims: string;
-	bodyStyle: NonNullable<VehicleEntry["bodyStyle"]>;
+	/** Optional — a make spans body styles; each model inherits one already in the catalog, else none. */
+	bodyStyle?: VehicleEntry["bodyStyle"];
 	status: VehicleEntry["status"];
 	tags: string[];
 	popular: boolean;
@@ -59,7 +60,10 @@ export function planVehicles(input: VehiclePlanInput, existing: VehicleEntry[], 
 	for (const m of models) {
 		const mk = demandModelKey(make, m);
 		if (!mk) continue;
-		const modelName = sameMake.find((v) => demandModelKey(v.make, v.model) === mk)?.model ?? m;
+		const known = sameMake.filter((v) => demandModelKey(v.make, v.model) === mk);
+			const modelName = known[0]?.model ?? m;
+			// A make spans body styles, so none is asked for; a model already in the catalog lends its own.
+			const bodyStyle = input.bodyStyle ?? known.find((v) => v.bodyStyle)?.bodyStyle;
 		for (const year of years) {
 			for (const trim of trimList) {
 				const key = `${mk}|${year}|${trimKey(trim)}`;
@@ -67,7 +71,7 @@ export function planVehicles(input: VehiclePlanInput, existing: VehicleEntry[], 
 				have.add(key); // the same model typed twice creates once
 				create.push({
 					id: newId("v_"), projectType: "vehicle", make: makeName, model: modelName, year,
-					...(trim ? { trim } : {}), bodyStyle: input.bodyStyle, tags: input.tags, popular: input.popular,
+					...(trim ? { trim } : {}), ...(bodyStyle ? { bodyStyle } : {}), tags: input.tags, popular: input.popular,
 					status: input.status, updatedAt: today,
 				});
 			}

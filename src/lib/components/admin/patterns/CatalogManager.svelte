@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Spinner from "$lib/components/ui/Spinner.svelte";
 	// Catalog: the public library as admins manage it. Pick a subject on the
 	// left; its patterns (grouped by category, with publish toggles and the
 	// community submission each came from) are on the right.
@@ -15,7 +16,8 @@
 	} from "$lib/admin/patternForms";
 	import type { Pattern, PatternCategory, ProjectType, VehicleEntry } from "$lib/types";
 	import type { PatternStatus } from "$lib/stores/patternStore.svelte";
-	import { demandId, votesForYear } from "$lib/utils/demand";
+	import { demandId, demandModelKey, votesForYear } from "$lib/utils/demand";
+	import { makeKey } from "$lib/utils/vehicleCatalog";
 	import { splitList, type VehiclePlanInput } from "$lib/admin/vehiclePlan";
 
 	interface Props {
@@ -78,6 +80,66 @@
 			})
 			.sort((a, b) => (statusFilter === "soon" ? b.want - a.want : 0) || subjectName(a.v).localeCompare(subjectName(b.v), undefined, { numeric: true, sensitivity: "base" })),
 	);
+
+	// Vehicles fold into make → model → years so the list stays short; every
+	// other subject type stays a flat row beneath them.
+	type Row = (typeof rows)[number];
+	const grouped = $derived.by(() => {
+		const makes = new Map<string, { key: string; name: string; models: Map<string, { key: string; name: string; rows: Row[] }> }>();
+		const other: Row[] = [];
+		for (const r of rows) {
+			const { v } = r;
+			if (typeOf(v) !== "vehicle" || !v.make || !v.model) { other.push(r); continue; }
+			const mk = makeKey(v.make);
+			const make = makes.get(mk) ?? { key: mk, name: v.make, models: new Map() };
+			makes.set(mk, make);
+			const dk = `${mk}|${demandModelKey(v.make, v.model)}`;
+			const model = make.models.get(dk) ?? { key: dk, name: v.model, rows: [] };
+			make.models.set(dk, model);
+			model.rows.push(r);
+		}
+		const sum = (rs: Row[]) => ({
+			total: rs.reduce((n, r) => n + r.total, 0),
+			live: rs.reduce((n, r) => n + r.live, 0),
+			soon: rs.filter((r) => r.soon).length,
+			want: rs.reduce((n, r) => Math.max(n, r.want), 0),
+		});
+		const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
+		const list = [...makes.values()].map((m) => {
+			const models = [...m.models.values()].map((md) => {
+				const rs = md.rows.slice().sort((a, b) => (b.v.year ?? 0) - (a.v.year ?? 0) || (a.v.trim ?? "").localeCompare(b.v.trim ?? ""));
+				const yrs = rs.map((r) => r.v.year).filter((y): y is number => !!y);
+				const lo = Math.min(...yrs), hi = Math.max(...yrs);
+				const range = yrs.length ? (lo === hi ? `${lo}` : `${lo}–${hi}`) : "";
+				return { ...md, rows: rs, range, ...sum(rs) };
+			}).sort(byName);
+			return { ...m, models, ...sum(models.flatMap((md) => md.rows)) };
+		}).sort(byName);
+		return { makes: list, other };
+	});
+
+	// Open/closed state for the tree. A search forces every branch open so
+	// nothing hides behind a collapsed row.
+	let openKeys = $state(new Set<string>());
+	const searching = $derived(search.trim().length > 0);
+	const selectedKeys = $derived.by(() => {
+		const v = patternStore.vehicles.find((x) => x.id === selectedId);
+		if (!v || typeOf(v) !== "vehicle" || !v.make || !v.model) return [] as string[];
+		const mk = makeKey(v.make);
+		return [mk, `${mk}|${demandModelKey(v.make, v.model)}`];
+	});
+	const isOpen = (k: string) => searching || openKeys.has(k);
+	function toggle(k: string) {
+		const next = new Set(openKeys);
+		if (next.has(k)) next.delete(k); else next.add(k);
+		openKeys = next;
+	}
+	// Reveal the branch of whatever just became selected (jump-ins, new subjects).
+	$effect(() => {
+		const need = selectedKeys.filter((k) => !openKeys.has(k));
+		if (need.length) openKeys = new Set([...openKeys, ...need]);
+	});
+	const yearLabel = (v: VehicleEntry) => `${v.year ?? "—"}${v.trim ? ` ${v.trim}` : ""}`;
 
 	const typeCounts = $derived(
 		patternStore.vehicles.reduce((acc, v) => { acc[typeOf(v)] = (acc[typeOf(v)] ?? 0) + 1; return acc; }, {} as Record<string, number>),
@@ -173,7 +235,7 @@
 	// ─── Bulk add vehicles ───────────────────────
 	const blankBulk = (): VehiclePlanInput => ({
 		make: "", models: "", yearFrom: new Date().getFullYear(), yearTo: new Date().getFullYear(), trims: "",
-		bodyStyle: "sedan", status: "published", tags: [], popular: false,
+		status: "published", tags: [], popular: false,
 	});
 	let bulkDlg = $state(false);
 	let bulk = $state<VehiclePlanInput>(blankBulk());
@@ -268,7 +330,42 @@
 			{:else if rows.length === 0}
 				<li class="empty">No subjects match.</li>
 			{/if}
-			{#each rows as { v, total, live, soon, want } (v.id)}
+			{#each grouped.makes as mk (mk.key)}
+				<li class="grp">
+					<button class="row row--make" aria-expanded={isOpen(mk.key)} onclick={() => toggle(mk.key)}>
+						<svg class="caret" class:caret--open={isOpen(mk.key)} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+						<span class="row__name">{mk.name}</span>
+						<span class="row__sub">{mk.models.length} {mk.models.length === 1 ? "model" : "models"}</span>
+						{#if mk.soon}<span class="subj__soon" title="{mk.soon} without a live pattern yet">{mk.soon} need</span>{/if}
+						<span class="subj__count" title="{mk.live} live of {mk.total} patterns">{mk.live}/{mk.total}</span>
+					</button>
+					{#if isOpen(mk.key)}
+						<ul class="sub">
+							{#each mk.models as md (md.key)}
+								<li>
+									<button class="row row--model" aria-expanded={isOpen(md.key)} onclick={() => toggle(md.key)}>
+										<svg class="caret" class:caret--open={isOpen(md.key)} width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+										<span class="row__name">{md.name}</span>
+										<span class="row__sub mono">{md.range}</span>
+										{#if md.soon}<span class="subj__soon" title="{md.soon} without a live pattern yet — up to {md.want} want it">{md.soon} need</span>{/if}
+										<span class="subj__count" title="{md.live} live of {md.total} patterns">{md.live}/{md.total}</span>
+									</button>
+									{#if isOpen(md.key)}
+										<div class="years">
+											{#each md.rows as { v, total, live, soon, want } (v.id)}
+												<button class="yr" class:yr--on={selectedId === v.id} onclick={() => (selectedId = v.id)} title="{subjectName(v)} · {v.status} · {soon ? `${want} want it, no live pattern` : `${live} live of ${total}`}">
+													<span class="dot dot--{v.status}"></span>{yearLabel(v)}{#if soon}<span class="yr__soon">•</span>{/if}
+												</button>
+											{/each}
+										</div>
+									{/if}
+								</li>
+							{/each}
+						</ul>
+					{/if}
+				</li>
+			{/each}
+			{#each grouped.other as { v, total, live, soon, want } (v.id)}
 				<li>
 					<button class="subj" class:subj--on={selectedId === v.id} onclick={() => (selectedId = v.id)}>
 						<span class="subj__icon" aria-hidden="true">
@@ -404,14 +501,9 @@
 					<label class="fld"><span>Last year</span><input class="in" type="number" bind:value={bulk.yearTo} /></label>
 				</div>
 				<label class="fld"><span>Trims <em>optional — blank adds the base subject only</em></span><input class="in" bind:value={bulk.trims} placeholder="SR5, TRD Pro" /></label>
-				<div class="grid2">
-					<label class="fld"><span>Body style</span>
-						<select class="in" bind:value={bulk.bodyStyle}>{#each ["sedan", "coupe", "suv", "truck", "convertible", "wagon", "hatchback"] as b}<option value={b}>{b}</option>{/each}</select>
-					</label>
-					<label class="fld"><span>Status</span>
-						<select class="in" bind:value={bulk.status}><option value="published">Published — Coming soon</option><option value="draft">Draft — hidden</option></select>
-					</label>
-				</div>
+				<label class="fld"><span>Status</span>
+					<select class="in" bind:value={bulk.status}><option value="published">Published — Coming soon</option><option value="draft">Draft — hidden</option></select>
+				</label>
 				<label class="fld"><span>Tags <em>comma-separated</em></span><input class="in" bind:value={bulkTags} /></label>
 				<label class="check"><input type="checkbox" bind:checked={bulk.popular} /> <span>Mark as popular</span></label>
 				<p class="bulk__sum" class:warn={!!bulkPlan?.error}>
@@ -427,7 +519,7 @@
 			</div>
 			<div class="dlg__foot">
 				<button class="btn" onclick={() => (bulkDlg = false)}>Cancel</button>
-				<button class="btn btn--primary" disabled={busy || !bulkPlan || !!bulkPlan.error || !bulkPlan.create.length} onclick={submitBulk}>{bulkPlan?.create.length ? `Add ${bulkPlan.create.length} ${bulkPlan.create.length === 1 ? "vehicle" : "vehicles"}` : "Add vehicles"}</button>
+				<button class="btn btn--primary" disabled={busy || !bulkPlan || !!bulkPlan.error || !bulkPlan.create.length} onclick={submitBulk}>{#if busy}<Spinner />{/if}{bulkPlan?.create.length ? `Add ${bulkPlan.create.length} ${bulkPlan.create.length === 1 ? "vehicle" : "vehicles"}` : "Add vehicles"}</button>
 			</div>
 		</div>
 	</div>
@@ -472,7 +564,7 @@
 			</div>
 			<div class="dlg__foot">
 				<button class="btn" onclick={() => (subjectDlg = null)}>Cancel</button>
-				<button class="btn btn--primary" disabled={busy} onclick={submitSubject}>{subjectDlg.target ? "Save changes" : "Add subject"}</button>
+				<button class="btn btn--primary" disabled={busy} onclick={submitSubject}>{#if busy}<Spinner />{/if}{subjectDlg.target ? "Save changes" : "Add subject"}</button>
 			</div>
 		</div>
 	</div>
@@ -525,7 +617,7 @@
 			</div>
 			<div class="dlg__foot">
 				<button class="btn" onclick={() => (patternDlg = null)}>Cancel</button>
-				<button class="btn btn--primary" disabled={busy} onclick={submitPattern}>{patternDlg.target ? "Save changes" : "Add pattern"}</button>
+				<button class="btn btn--primary" disabled={busy} onclick={submitPattern}>{#if busy}<Spinner />{/if}{patternDlg.target ? "Save changes" : "Add pattern"}</button>
 			</div>
 		</div>
 	</div>
@@ -565,6 +657,21 @@
 	.bulk__preview .more { color: var(--text-tertiary); border-style: dashed; }
 	.bulk__sum { margin: 0; font-size: 0.8125rem; color: var(--text-secondary); min-height: 1.2em; }
 	.callout--info { color: var(--text-secondary); background: var(--bg-surface-2); border-color: var(--border-default); }
+	.grp { display: flex; flex-direction: column; }
+	.row { width: 100%; display: flex; align-items: center; gap: 7px; padding: 6px 8px; text-align: left; font: inherit; color: inherit; background: none; border: 1px solid transparent; border-radius: var(--radius-md); cursor: pointer; }
+	.row:hover { background: var(--bg-surface-2); }
+	.row--make .row__name { font-weight: 600; }
+	.row__name { flex: 1; min-width: 0; font-size: 0.8125rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.row__sub { font-size: 0.6875rem; color: var(--text-tertiary); white-space: nowrap; }
+	.caret { color: var(--text-tertiary); flex-shrink: 0; transition: transform 0.12s; }
+	.caret--open { transform: rotate(90deg); }
+	.sub { list-style: none; margin: 0 0 4px 10px; padding: 0 0 0 6px; border-left: 1px solid var(--border-subtle); }
+	.years { display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 6px 8px 24px; }
+	.yr { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; font-family: var(--font-mono); font-size: 0.6875rem; color: var(--text-secondary); background: var(--bg-base); border: 1px solid var(--border-default); border-radius: 99px; cursor: pointer; }
+	.yr:hover { color: var(--text-primary); }
+	.yr--on { color: var(--text-primary); border-color: var(--color-brand-dim); background: color-mix(in srgb, var(--color-brand) 12%, transparent); }
+	.yr .dot { width: 6px; height: 6px; }
+	.yr__soon { color: var(--color-warning); }
 	.subj__count { font-family: var(--font-mono); font-size: 0.6875rem; color: var(--text-tertiary); }
 	.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-tertiary); flex-shrink: 0; }
 	.dot--published { background: var(--color-success); }

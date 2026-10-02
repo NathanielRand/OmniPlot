@@ -1,6 +1,11 @@
 <script lang="ts">
+	import Spinner from "$lib/components/ui/Spinner.svelte";
 	// "No patterns yet" for a make/model an admin has listed ahead of its patterns,
 	// with a vote that feeds the same demand record the request form does.
+	// Voting is one step: pick, the check lands, the count ticks up, and the options
+	// fold away into an "already voted" summary (with a way to change it).
+	import { fly } from "svelte/transition";
+	import VoteSummary from "./VoteSummary.svelte";
 	import { patternStore } from "$lib/stores/patternStore.svelte";
 	import { userStore } from "$lib/stores";
 	import { demandId, hasVoted, votesForYear } from "$lib/utils/demand";
@@ -21,36 +26,86 @@
 	const signedIn = $derived(!!userStore.user);
 	const sortedYears = $derived([...years].sort((a, b) => b - a));
 	let busy = $state(false);
+	let editing = $state(false);
+	/** Vote accepted, but my own-votes snapshot hasn't caught up yet. */
+	let confirmed = $state(false);
+	/** Play the check burst (only right after voting, not when arriving already voted). */
+	let burst = $state(false);
+	let burstTimer: ReturnType<typeof setTimeout> | undefined;
+
+	// A different make/model starts fresh.
+	let lastId: string | undefined;
+	$effect(() => { if (id !== lastId) { const first = lastId === undefined; lastId = id; if (first) return; editing = false; confirmed = false; burst = false; } });
+
+	const voted = $derived(hasVoted(mine) || confirmed);
+	const folded = $derived(voted && !editing);
+	const wanted = $derived(record?.votes ?? 0);
+	// Flair only when the number goes UP while you watch (not on first paint or a drop).
+	let seen: { id: string; n: number } | undefined;
+	let bumped = $state(false);
+	let bumpTimer: ReturnType<typeof setTimeout> | undefined;
+	$effect(() => {
+		const n = wanted, key = id;
+		if (seen && seen.id === key && n > seen.n) {
+			bumped = true;
+			clearTimeout(bumpTimer);
+			bumpTimer = setTimeout(() => (bumped = false), 1400);
+		}
+		seen = { id: key, n };
+	});
 
 	async function toggle(year?: number) {
 		if (busy) return;
 		busy = true;
 		// The any-year button is only "on" for an any-year vote; specific years only count their own.
 		const on = year ? !hasVoted(mine, year) : !mine?.any;
-		await patternStore.vote({ projectType: "vehicle", make, model, year }, on);
+		const ok = await patternStore.vote({ projectType: "vehicle", make, model, year }, on);
 		busy = false;
+		if (!ok) return;
+		if (on) {
+			confirmed = true; editing = false; burst = true;
+			clearTimeout(burstTimer);
+			burstTimer = setTimeout(() => (burst = false), 1600);
+		} else if (!hasVoted(mine) || !year) { confirmed = false; }
 	}
 
-	const wanted = $derived(record?.votes ?? 0);
+	async function withdraw() {
+		if (busy) return;
+		busy = true;
+		const ok = await patternStore.vote({ projectType: "vehicle", make, model }, false);
+		busy = false;
+		if (ok) { confirmed = false; editing = false; burst = false; }
+	}
 </script>
 
-<div class="cs" class:cs--slim={!allSoon}>
+<div class="cs" class:cs--slim={!allSoon} class:cs--done={folded}>
 	<div class="cs__text">
 		<h3 class="cs__title">{allSoon ? "No patterns available yet" : `Not available yet for ${sortedYears.length === 1 ? sortedYears[0] : "some years"}`}</h3>
 		<p class="cs__sub">
-			{#if allSoon}
+			{#if folded}
+				We're adding new patterns every day. We'll move this one up the list.
+			{:else if allSoon}
 				{make} {model} is coming soon. We're adding new patterns every day — vote and we'll move it up the list.
 			{:else}
 				We're adding new patterns every day. Vote for the years you need and we'll move them up the list.
 			{/if}
 		</p>
-		{#if wanted > 0}<p class="cs__count"><b>{wanted}</b> {wanted === 1 ? "person wants" : "people want"} the {model}</p>{/if}
+		{#if wanted > 0}
+			<p class="cs__count" aria-live="polite">
+				<span class="cs__num" class:cs__num--bump={bumped}>{#key wanted}<b in:fly={{ y: 12, duration: 340 }}>{wanted}</b>{/key}</span>
+				<span>{wanted === 1 ? "person wants" : "people want"} the {model}</span>
+			</p>
+		{/if}
 	</div>
 
-	{#if signedIn}
+	{#if !signedIn}
+		<a class="cs__vote" href="/login">Sign in to vote</a>
+	{:else if folded}
+		<VoteSummary {mine} {burst} {busy} onChange={() => (editing = true)} onRemove={withdraw} />
+	{:else}
 		<div class="cs__actions">
 			<button class="cs__vote" class:cs__vote--on={mine?.any} disabled={busy} aria-pressed={!!mine?.any} onclick={() => toggle()}>
-				{mine?.any ? "✓ You voted — any year" : mine ? "I want any year" : "I want this — any year"}
+				{#if busy}<Spinner />{/if}{busy ? "Saving…" : mine?.any ? "✓ You voted — any year" : mine ? "I want any year" : "I want this — any year"}
 			</button>
 			{#if sortedYears.length > 1 || (sortedYears.length === 1 && !allSoon)}
 				<div class="cs__years" role="group" aria-label="Vote for specific years">
@@ -61,9 +116,8 @@
 					{/each}
 				</div>
 			{/if}
+			{#if editing}<button class="cs__link" onclick={() => (editing = false)}>Done</button>{/if}
 		</div>
-	{:else}
-		<a class="cs__vote" href="/login">Sign in to vote</a>
 	{/if}
 </div>
 
@@ -85,4 +139,16 @@
 	.cs__year { padding: 3px 10px; font: inherit; font-size: 0.75rem; color: var(--text-secondary); background: var(--bg-base); border: 1px solid var(--border-default); border-radius: 99px; cursor: pointer; }
 	.cs__year span { font-family: var(--font-mono); font-size: 0.6875rem; color: var(--text-tertiary); }
 	.cs__year--on { color: var(--text-primary); border-color: var(--color-success); background: color-mix(in srgb, var(--color-success) 12%, transparent); }
+	.cs--done { padding-block: 12px; }
+	.cs__count { display: flex; align-items: center; gap: 10px; }
+	.cs__num { position: relative; display: inline-flex; align-items: center; justify-content: center; min-width: 2.1em; height: 1.9em; padding: 0 0.6em; overflow: hidden; font-family: var(--font-mono); font-size: 0.875rem; color: var(--text-primary); background: var(--bg-surface-2); border: 1px solid var(--border-default); border-radius: 99px; transition: color .3s, background .3s, border-color .3s; }
+	.cs__num b { line-height: 1; font-variant-numeric: tabular-nums; }
+	.cs__num--bump { color: var(--color-success); background: color-mix(in srgb, var(--color-success) 14%, transparent); border-color: color-mix(in srgb, var(--color-success) 55%, transparent); animation: cs-num-pop 620ms cubic-bezier(.2,1.5,.4,1), cs-ring 900ms ease-out; }
+	@keyframes cs-num-pop { 0% { transform: scale(0.85); } 45% { transform: scale(1.22); } 100% { transform: scale(1); } }
+	@keyframes cs-ring { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-success) 55%, transparent); } 100% { box-shadow: 0 0 0 10px transparent; } }
+	.cs__link { padding: 0; font: inherit; font-size: 0.75rem; color: var(--text-brand); background: none; border: none; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+	.cs__link:disabled { opacity: 0.6; cursor: wait; }
+	@media (prefers-reduced-motion: reduce) {
+		.cs__num--bump { animation: none; }
+	}
 </style>

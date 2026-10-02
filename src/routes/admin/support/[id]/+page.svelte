@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Spinner from "$lib/components/ui/Spinner.svelte";
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import Badge from '$lib/components/ui/Badge.svelte';
@@ -583,7 +584,7 @@
 							<span class="trigger__hint">Not sent to the customer.</span>
 						{/if}
 						<button type="submit" class="btn btn--primary" disabled={busy || !body.trim()}>
-							{busy ? 'Saving…' : mode === 'note' ? 'Add note' : SEND_LABEL[sendStatus]}
+							{#if busy}<Spinner />{/if}{busy ? 'Saving…' : mode === 'note' ? 'Add note' : SEND_LABEL[sendStatus]}
 						</button>
 					</div>
 				</form>

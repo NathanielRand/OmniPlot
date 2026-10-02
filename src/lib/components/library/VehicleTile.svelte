@@ -111,7 +111,7 @@
 			radial-gradient(120% 100% at 50% 0%, color-mix(in srgb, var(--color-brand) 10%, transparent), transparent 70%),
 			var(--bg-surface-2);
 	}
-	.tile--make .tile__media { aspect-ratio: 16 / 11; }
+	.tile--make .tile__media { aspect-ratio: 16 / 9; }
 	.tile--model .tile__media { aspect-ratio: 16 / 10; }
 	.tile--trim .tile__media { aspect-ratio: 16 / 9; }
 
@@ -150,6 +150,9 @@
 		width: clamp(64px, 44%, 112px);
 		aspect-ratio: 1;
 	}
+	/* Makes: the logo is the card, so let it fill the media area. */
+	.tile--make .tile__logo { width: 72%; height: 84%; aspect-ratio: auto; }
+	.tile--make .tile__mono { width: auto; height: 100%; aspect-ratio: 1; }
 	.tile__logo img {
 		max-width: 100%;
 		max-height: 100%;
@@ -213,6 +216,7 @@
 		overflow-wrap: anywhere;
 	}
 	.tile--make .tile__title { font-size: 1.0625rem; }
+	.tile--make .tile__body { padding-top: 8px; padding-bottom: 11px; }
 	.tile__meta {
 		display: flex;
 		flex-wrap: wrap;

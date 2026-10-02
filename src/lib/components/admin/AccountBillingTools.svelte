@@ -1,4 +1,5 @@
 <script lang="ts" module>
+	import Spinner from "$lib/components/ui/Spinner.svelte";
 	export interface CreditSummary {
 		subscription: { id: string; planLabel: string; monthValueCents: number; currency: string; monthly: boolean; cancelAtPeriodEnd: boolean } | null;
 		pending: { id: string; label: string }[];
@@ -238,7 +239,7 @@
 				<div class="abt__actions">
 					<button type="button" class="abt__btn" onclick={() => (formOpen = false)}>Cancel</button>
 					<button type="submit" class="abt__btn abt__btn--primary" disabled={!creditPreview || busy !== null}>
-						{busy === "grant" ? "Applying…" : `Apply ${creditPreview ?? ""}`}
+						{#if busy === "grant"}<Spinner />{/if}{busy === "grant" ? "Applying…" : `Apply ${creditPreview ?? ""}`}
 					</button>
 				</div>
 			</form>

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Spinner from "$lib/components/ui/Spinner.svelte";
 	import { toastStore, canvasStore, userStore, confirmStore } from "$lib/stores";
 	import {
 		patternStore, TINT_ZONE_GROUP, PPF_ZONE_GROUP, MIRROR_PAIRS, PATTERN_CATEGORIES,
@@ -20,11 +21,13 @@
 	import VehicleTile from "$lib/components/library/VehicleTile.svelte";
 	import VehicleHero from "$lib/components/library/VehicleHero.svelte";
 	import ComingSoon from "$lib/components/library/ComingSoon.svelte";
+	import VoteSummary from "$lib/components/library/VoteSummary.svelte";
 	import VehicleTreeFilter, { type TreePath } from "$lib/components/library/VehicleTreeFilter.svelte";
 	import {
 		buildTree, entriesUnder, mediaFor, yearSpan, trimFilter, matchesQuery,
 		BASE_TRIM_LABEL, TRIM_BASE, TRIM_ALL, makeKey, modelKey,
 	} from "$lib/utils/vehicleCatalog";
+	import { demandId, hasVoted } from "$lib/utils/demand";
 	import {
 		communityRows, comingSoonRows, privateRows, rowsForSource, uniquePatterns, distinctCount, patternKey, shareStatusOf, userPatternToPattern,
 		type LibPattern, type LibRow, type LibrarySource, type ShareStatus,
@@ -672,6 +675,23 @@
 	const vehicleSubjects = $derived(patternStore.vehicles.filter((v) => (v.projectType ?? "vehicle") === "vehicle" && v.make && v.model));
 	const reqMakes = $derived([...new Map(vehicleSubjects.map((v) => [makeKey(v.make), v.make!])).values()].sort());
 	const reqModels = $derived([...new Map(vehicleSubjects.filter((v) => makeKey(v.make) === makeKey(requestForm.make)).map((v) => [modelKey(v.model), v.model!])).values()].sort());
+	// Already voted for what's typed? Show that instead of submitting again.
+	const reqId = $derived(
+		requestType === "vehicle"
+			? (requestForm.make.trim() && requestForm.model.trim() ? demandId({ projectType: "vehicle", make: requestForm.make, model: requestForm.model }) : "")
+			: (requestForm.title.trim() ? demandId({ projectType: requestType, model: requestForm.title }) : ""),
+	);
+	const reqMine = $derived(reqId ? patternStore.myVotes[reqId] : undefined);
+	const reqVoted = $derived(!!reqMine && hasVoted(reqMine, requestType === "vehicle" ? requestForm.year || undefined : undefined));
+	let reqBusy = $state(false);
+	async function removeReqVote() {
+		if (reqBusy || !reqId) return;
+		reqBusy = true;
+		await patternStore.vote(requestType === "vehicle"
+			? { projectType: "vehicle", make: requestForm.make.trim(), model: requestForm.model.trim() }
+			: { projectType: requestType, model: requestForm.title.trim() }, false);
+		reqBusy = false;
+	}
 	function openRequest(t: ProjectType = projectType) {
 		requestType = t;
 		showRequestModal = true;
@@ -762,8 +782,12 @@
 			? { projectType: "vehicle", make: make.trim(), model: model.trim(), year: year || 0, notes: notes.trim() }
 			: { projectType: requestType, model: title.trim(), notes: notes.trim() };
 		if (!t.model || (requestType === "vehicle" && !t.make)) return;
+		if (reqVoted || reqBusy) return;
 		// Already requested? The server adds this to the same record — one vote each.
-		if (!(await patternStore.vote(t))) return;
+		reqBusy = true;
+		const ok = await patternStore.vote(t);
+		reqBusy = false;
+		if (!ok) return;
 		const what = requestType === "vehicle" ? [year || "", make.trim(), model.trim()].filter(Boolean).join(" ") : `"${t.model}"`;
 		toastStore.success("Thanks — you're on the list", `${what}: requests are counted once, so this added your vote.`);
 		showRequestModal = false;
@@ -819,41 +843,52 @@
 
 {#snippet filterGroups()}
 		{#if isVeh && YEARS.length > 1}
-			<div class="lib-section-label">Year</div>
-			<div class="lib-filter-pills lib-filter-pills--years">
-				{#each YEARS as year}
-					<button class="lib-pill" class:active={activeYear === year} onclick={() => (activeYear = year)} aria-pressed={activeYear === year}>{year}</button>
-				{/each}
-			</div>
+			<section class="lib-fgroup">
+				<div class="lib-fgroup__head">
+					<span class="lib-section-label">Year</span>
+					{#if activeYear !== "All"}<button class="lib-fgroup__clear" onclick={() => (activeYear = "All")}>Clear</button>{/if}
+				</div>
+				<div class="lib-years" use:revealActive={activeYear}>
+					{#each YEARS as year}
+						<button class="lib-year" class:active={activeYear === year} class:lib-year--all={year === "All"} onclick={() => (activeYear = year)} aria-pressed={activeYear === year}>{year === "All" ? "All years" : year}</button>
+					{/each}
+				</div>
+			</section>
 		{/if}
 
 		{#if isVeh && soonAll.length}
-			<div class="lib-section-label">Availability</div>
-			<div class="lib-filter-pills">
-				<button class="lib-pill" class:active={!hideSoon} aria-pressed={!hideSoon} onclick={() => (hideSoon = false)}>All</button>
-				<button class="lib-pill" class:active={hideSoon} aria-pressed={hideSoon} onclick={() => (hideSoon = true)}>Available only</button>
-			</div>
+			<section class="lib-fgroup">
+				<div class="lib-fgroup__head"><span class="lib-section-label">Availability</span></div>
+				<div class="lib-seg" role="group" aria-label="Availability">
+					<button class="lib-seg__btn" class:active={!hideSoon} aria-pressed={!hideSoon} onclick={() => (hideSoon = false)}>All</button>
+					<button class="lib-seg__btn" class:active={hideSoon} aria-pressed={hideSoon} onclick={() => (hideSoon = true)}>Available only</button>
+				</div>
+			</section>
 		{/if}
 
 		{#if ZONES.length > 2}
-			<div class="lib-section-label">Zone</div>
-			<div class="lib-filter-pills">
-				{#each ZONES as zone}
-					<button class="lib-pill" class:active={activeZone === zone} onclick={() => (activeZone = zone)} aria-pressed={activeZone === zone}>
-						{zone} <span class="lib-pill__count">{zone === "All zones" ? zoneSource.length : zoneCounts[zone] ?? 0}</span>
-					</button>
-				{/each}
-			</div>
+			<section class="lib-fgroup">
+				<div class="lib-fgroup__head"><span class="lib-section-label">Zone</span></div>
+				<div class="lib-filter-pills">
+					{#each ZONES as zone}
+						<button class="lib-pill" class:active={activeZone === zone} onclick={() => (activeZone = zone)} aria-pressed={activeZone === zone}>
+							{zone} <span class="lib-pill__count">{zone === "All zones" ? zoneSource.length : zoneCounts[zone] ?? 0}</span>
+						</button>
+					{/each}
+				</div>
+			</section>
 		{/if}
 
 		{#if showStatus}
-			<div class="lib-section-label">Your patterns</div>
-			<div class="lib-filter-pills">
-				<button class="lib-pill" class:active={shareFilter === "all"} aria-pressed={shareFilter === "all"} onclick={() => (shareFilter = "all")}>Any <span class="lib-pill__count">{myPatterns.length}</span></button>
-				{#each statusKinds as s (s)}
-					<button class="lib-pill" class:active={shareFilter === s} aria-pressed={shareFilter === s} onclick={() => (shareFilter = s)}>{STATUS_LABEL[s]} <span class="lib-pill__count">{statusCounts[s]}</span></button>
-				{/each}
-			</div>
+			<section class="lib-fgroup">
+				<div class="lib-fgroup__head"><span class="lib-section-label">Your patterns</span></div>
+				<div class="lib-opts" role="group" aria-label="Your patterns">
+					<button class="lib-opt" class:active={shareFilter === "all"} aria-pressed={shareFilter === "all"} onclick={() => (shareFilter = "all")}><span>Any</span><span class="lib-pill__count">{myPatterns.length}</span></button>
+					{#each statusKinds as s (s)}
+						<button class="lib-opt" class:active={shareFilter === s} aria-pressed={shareFilter === s} onclick={() => (shareFilter = s)}><span>{STATUS_LABEL[s]}</span><span class="lib-pill__count">{statusCounts[s]}</span></button>
+					{/each}
+				</div>
+			</section>
 		{/if}
 
 {/snippet}
@@ -1619,9 +1654,11 @@
 					<input id="req-notes" type="text" class="form-input" bind:value={requestForm.notes} placeholder={requestType === "vehicle" ? "Any specific zones — PPF, tint, both?" : "Sizes, brand, film type — anything that helps"} />
 				</div>
 
+				{#if reqVoted}<div class="req-voted"><VoteSummary mine={reqMine} busy={reqBusy} onRemove={removeReqVote} /></div>{/if}
+
 				<div class="modal__actions">
-					<button type="button" class="btn-ghost" onclick={() => (showRequestModal = false)}>Cancel</button>
-					<button type="submit" class="btn-primary">Submit request</button>
+					<button type="button" class="btn-ghost" onclick={() => (showRequestModal = false)}>{reqVoted ? "Close" : "Cancel"}</button>
+					<button type="submit" class="btn-primary" disabled={reqVoted || reqBusy}>{#if reqBusy}<Spinner />Sending…{:else}{reqVoted ? "Already voted" : "Submit request"}{/if}</button>
 				</div>
 			</form>
 		</div>
@@ -2546,6 +2583,7 @@
 	.lib-pill.active .lib-pill__count { color: inherit; opacity: 0.75; }
 	.lib-request-btn { text-decoration: none; }
 	.zone-grid[hidden] { display: none; }
+	.req-voted { padding: 10px 12px; background: var(--bg-surface-2); border: 1px solid var(--border-default); border-radius: var(--radius-md); }
 	.muted { color: var(--text-tertiary); font-weight: 400; }
 	.mode-btn--empty:not(.active) { opacity: 0.55; }
 	button.zone-empty__cta { background: transparent; color: var(--text-brand); cursor: pointer; font-family: var(--font-body); }
@@ -2672,7 +2710,47 @@
 		padding: 8px 0 0; background: var(--bg-surface);
 	}
 	.lib-stats { min-height: 52px; }
-	.lib-filter-pills--years { max-height: 112px; overflow-y: auto; }
+	/* ─── Filter groups v2: one rhythm, controls sized to their content ─── */
+	.lib-fgroup { display: flex; flex-direction: column; gap: 6px; padding: 12px 4px 14px; border-bottom: 1px solid var(--border-subtle); }
+	.lib-fgroup__head { display: flex; align-items: center; justify-content: space-between; min-height: 18px; }
+	.lib-fgroup .lib-section-label { padding: 0; margin: 0; }
+	.lib-fgroup__clear { background: none; border: none; padding: 0; font: inherit; font-size: 0.6875rem; color: var(--text-brand); cursor: pointer; }
+	.lib-fgroup__clear:hover { text-decoration: underline; }
+
+	/* Years: a 4-up grid, three rows tall, scrolling inside with a fade hint. */
+	.lib-years {
+		display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px;
+		max-height: 118px; overflow-y: auto; overscroll-behavior: contain;
+		padding: 1px 4px 1px 1px; margin-right: -4px;
+		scrollbar-width: thin; scrollbar-color: var(--border-default) transparent;
+		scroll-padding-block: 28px;
+		-webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 6px, #000 calc(100% - 14px), transparent 100%);
+		mask-image: linear-gradient(to bottom, transparent 0, #000 6px, #000 calc(100% - 14px), transparent 100%);
+	}
+	.lib-years::-webkit-scrollbar { width: 6px; }
+	.lib-years::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 99px; }
+	.lib-year {
+		height: 28px; padding: 0; font: inherit; font-size: 0.75rem; font-weight: 500; font-variant-numeric: tabular-nums;
+		color: var(--text-secondary); background: var(--bg-surface-2); border: 1px solid var(--border-subtle);
+		border-radius: var(--radius-md); cursor: pointer; transition: background 0.12s, color 0.12s, border-color 0.12s;
+	}
+	.lib-year--all { grid-column: 1 / -1; }
+	.lib-year:hover { border-color: var(--border-default); color: var(--text-primary); }
+	.lib-year.active { background: var(--color-brand-dim); border-color: var(--color-brand-dim); color: #fff; }
+
+	/* Segmented control (two-way choices) */
+	.lib-seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 2px; padding: 2px; background: var(--bg-surface-2); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); }
+	.lib-seg__btn { height: 28px; padding: 0 6px; font: inherit; font-size: 0.75rem; font-weight: 500; color: var(--text-secondary); background: none; border: none; border-radius: calc(var(--radius-md) - 2px); cursor: pointer; white-space: nowrap; transition: background 0.12s, color 0.12s; }
+	.lib-seg__btn:hover { color: var(--text-primary); }
+	.lib-seg__btn.active { background: var(--color-brand-dim); color: #fff; }
+
+	/* Option rows: label left, count right */
+	.lib-opts { display: flex; flex-direction: column; gap: 2px; }
+	.lib-opt { display: flex; align-items: center; justify-content: space-between; gap: 8px; height: 30px; padding: 0 10px; font: inherit; font-size: 0.8125rem; font-weight: 500; color: var(--text-secondary); background: none; border: 1px solid transparent; border-radius: var(--radius-md); cursor: pointer; text-align: left; transition: background 0.12s, color 0.12s; }
+	.lib-opt:hover { background: var(--bg-surface-2); color: var(--text-primary); }
+	.lib-opt.active { background: color-mix(in srgb, var(--color-brand-dim) 14%, transparent); border-color: color-mix(in srgb, var(--color-brand-dim) 40%, transparent); color: var(--text-primary); }
+	.lib-opt .lib-pill__count { margin: 0; }
+	.lib-year:focus-visible, .lib-seg__btn:focus-visible, .lib-opt:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 1px; }
 	.lib-tree { margin-top: 4px; }
 	@media (max-width: 1100px) {
 		.library__header-actions { flex-wrap: wrap; }
@@ -2698,7 +2776,10 @@
 		font: inherit; font-weight: 600; cursor: pointer;
 	}
 	.sheet__body .lib-pill { padding: 8px 14px; min-height: 38px; font-size: 0.875rem; }
-	.sheet__body .lib-filter-pills--years { max-height: none; overflow: visible; }
+	.sheet__body .lib-years { max-height: none; overflow: visible; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; -webkit-mask-image: none; mask-image: none; margin-right: 0; }
+	.sheet__body .lib-year, .sheet__body .lib-seg__btn { height: 40px; font-size: 0.875rem; }
+	.sheet__body .lib-opt { height: 40px; font-size: 0.9375rem; }
+	.sheet__body .lib-fgroup .lib-section-label { padding-top: 0; }
 	.sheet__body .lib-section-label { padding-top: 14px; }
 	.sheet__body .lib-request-btn { margin-top: 18px; padding: 11px 12px; }
 
