@@ -54,9 +54,11 @@ Why I didn't do the last two steps:
 - Rules: the live app still records usage from the browser, and the new rules block that. Deploying them now would silently stop counting every cut until the app deploys.
 - Backfill: the live app would show the reconstructed rows on customers' Jobs pages.
 - tooltips need responsive aligning.
+- preparing account, dashboard, etc.. loading screen in between signin and routing to user dashboard instead of showing a loading spinner.
 - save draft btn on each step of the pattern importer
 - pattern uplaoder: ui message and/or reposition to missing or incorrect values on the form instead ofg silently failing the submit.
 - upload pattern btn dyancmially changes to incorrect values for the pattern library category filter views such as still showing vehicle veribage when they are clciked into a different category
+- localization for spanish and chinese/asian markets.
 - audit all advertised features, services, pages (marketing & user dashboard) to make sure we support, enforce, and have the right systems in place for the whole process. update any marketing pages with features we've added since updating those last or process changes. find where we have inaccurate or mock data to prevent misadvertising. build a list of whats incomplete and also what is missing entirely or something we should have considering our reexpanded product line. we need proper disclousure and badges next to everything we dont support or is in dev and disable to prevent misuse or abuse.
 - BG remove option (on by default) on pattern uploader input images to help clean up the input image before before for a cleaner vectorization.
 - Fixing OmniPlot's autonesting so it uses all patterns without stranding pieces outside the cut zone, even partially so all bounds need to be checked.
