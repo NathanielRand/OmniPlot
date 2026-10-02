@@ -98,6 +98,23 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
+    // ─── Demand (requests + votes, one record per make/model) ─────────────
+    // Written only by /api/demand and /api/admin/demand so counts stay in step
+    // with each person's one vote. userVotes/{uid} is that person's own stakes.
+    match /demand/{id} {
+      allow read:  if true;
+      allow write: if false;
+    }
+    // Who asked and what they typed — admin-only, so the public record carries neither.
+    match /demandPrivate/{id} {
+      allow read:  if isAdmin();
+      allow write: if false;
+    }
+    match /userVotes/{userId} {
+      allow read:  if authed() && uid() == userId;
+      allow write: if false;
+    }
+
     // ─── User patterns ────────────────────────────────────────────────────
     // Each user can create and read their own patterns immediately.
     // isPublished is set only by admins — owners cannot self-approve.

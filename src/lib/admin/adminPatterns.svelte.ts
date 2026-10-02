@@ -13,12 +13,13 @@
 import { patternStore, MIRROR_PAIRS, zoneLabel as storeZoneLabel } from "$lib/stores/patternStore.svelte";
 import {
 	getReviewQueue, getAdjustmentRequests, resolveAdjustmentRequest, adminUpdateUserPattern, deleteUserPattern,
-	commitCatalogChange, setVehicleDoc, updateVehicleDoc, setPatternDoc, updatePatternDoc, updateRequestDoc,
+	commitCatalogChange, setVehicleDoc, updateVehicleDoc, setPatternDoc, updatePatternDoc, setDemandStatus,
 } from "$lib/firebase/firestore";
 import { toastStore, confirmStore } from "$lib/stores";
 import { auth } from "$lib/firebase/client";
 import { formatMeasure, uid } from "$lib/utils";
 import { sizeError } from "$lib/utils/patternSize";
+import { planVehicles, type VehiclePlanInput } from "./vehiclePlan";
 import { planPublish, planRevoke, linkedPatterns, ownersToReset, RESET_TO_PRIVATE } from "$lib/utils/publishPlan";
 import {
 	diff, subjectName, subjectFromForm, subjectFormError, subjectRow, SUBJECT_LABELS,
@@ -450,6 +451,42 @@ function createAdminPatterns() {
 		return saved;
 	}
 
+	/** What bulk-adding would do — recomputed live while the admin types. */
+	const planBulk = (input: VehiclePlanInput) => planVehicles(input, patternStore.vehicles, uid, today());
+
+	/**
+	 * Add many vehicles at once (a make's models × a span of years × trims), as
+	 * one all-or-nothing write. Published ones show to customers as "coming soon"
+	 * until their first pattern goes live.
+	 */
+	async function addVehicles(input: VehiclePlanInput): Promise<VehicleEntry[] | null> {
+		const plan = planBulk(input);
+		if (plan.error) { toastStore.error("Can't add vehicles", plan.error); return null; }
+		if (!plan.create.length) { toastStore.info("Nothing new", "Every one of those is already in the catalog."); return null; }
+		const models = new Set(plan.create.map((v) => v.model)).size;
+		const ok = await confirmStore.ask({
+			title: `Add ${plan.create.length} vehicle${plan.create.length === 1 ? "" : "s"} to the catalog?`,
+			message: input.status === "published"
+				? "They're published, so customers see them as \"Coming soon\" until you add a pattern — and can vote for them."
+				: "They're saved as " + input.status + " — customers won't see them until they're published.",
+			details: [
+				{ label: "Make", value: plan.create[0].make ?? input.make },
+				{ label: "Models", value: String(models) },
+				{ label: "Subjects created", value: String(plan.create.length) },
+				...(plan.skipped ? [{ label: "Already in the catalog", value: String(plan.skipped) }] : []),
+			],
+			confirmLabel: "Add vehicles",
+		});
+		if (!ok || !(await ensureCatalog())) return null;
+		let created: VehicleEntry[] | null = null;
+		await run("add-vehicles", "Couldn't add vehicles", async () => {
+			await commitCatalogChange({ subjects: plan.create });
+			created = plan.create;
+			toastStore.success("Vehicles added", `${plan.create.length} subject${plan.create.length === 1 ? "" : "s"} created.`);
+		});
+		return created;
+	}
+
 	async function deleteSubject(v: VehicleEntry): Promise<boolean> {
 		const pats = patternStore.getPatterns(v.id);
 		const resets = ownersToReset(pats, allCatalogPatterns().filter((p) => p.vehicleId !== v.id), submissions);
@@ -596,7 +633,7 @@ function createAdminPatterns() {
 	// ─── Pattern requests ───────────────────────
 	async function setRequestStatus(id: string, status: RequestStatus): Promise<boolean> {
 		return run("request-status", "Couldn't update request", async () => {
-			await updateRequestDoc(id, { status });
+			await setDemandStatus(id, status);
 		});
 	}
 
@@ -616,7 +653,7 @@ function createAdminPatterns() {
 		allCatalogPatterns, zoneLabel, ensureCatalog,
 		planFor, approve, repairCount, repairAll, reject, reopen, revoke, saveSubmissionEdit, deleteSubmission,
 		resolveChange,
-		saveSubject, deleteSubject, savePattern, togglePublished, deletePattern,
+		saveSubject, planBulk, addVehicles, deleteSubject, savePattern, togglePublished, deletePattern,
 		setRequestStatus,
 	};
 }

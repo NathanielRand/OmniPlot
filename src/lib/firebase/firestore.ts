@@ -36,6 +36,9 @@ import type {
 	VehicleEntry,
 	VehicleMedia,
 	PatternRequest,
+	DemandRecord,
+	ProjectType,
+	RequestStatus,
 	Shop,
 	ShopMember,
 	ShopInvite,
@@ -57,6 +60,9 @@ export const Collections = {
 	VEHICLES: "vehicles",
 	PATTERNS: "patterns",
 	REQUESTS: "requests",
+	DEMAND: "demand",
+	USER_VOTES: "userVotes",
+	DEMAND_PRIVATE: "demandPrivate",
 	JOBS: "jobs",
 	STATS: "stats",
 	PLOTTERS: "plotters",
@@ -444,16 +450,68 @@ export function subscribePatterns(
 	);
 }
 
+export function toDemandRecord(id: string, data: DocumentData): DemandRecord {
+	const legacyVotes = data.legacyVotes ?? 0;
+	const voters = data.voters ?? 0;
+	return {
+		...toPatternRequest(id, data),
+		year: 0,
+		votes: data.votes ?? voters + legacyVotes,
+		voters,
+		legacyVotes,
+		anyVotes: data.anyVotes ?? 0,
+		yearVotes: data.yearVotes ?? {},
+	};
+}
+
+/** Requests and votes, one record per make/model. Replaces the old free-text list. */
 export function subscribeRequests(
-	onNext: (requests: PatternRequest[]) => void,
+	onNext: (requests: DemandRecord[]) => void,
 	onError?: (err: Error) => void,
 ): Unsubscribe {
 	return onSnapshot(
-		collection(db, Collections.REQUESTS),
-		(snap) => onNext(snap.docs.map((d) => toPatternRequest(d.id, d.data()))),
+		collection(db, Collections.DEMAND),
+		(snap) => onNext(snap.docs.map((d) => toDemandRecord(d.id, d.data()))),
 		onError,
 	);
 }
+
+/** Admin only: who asked and what they wrote, per demand record (kept off the public record). */
+export function subscribeDemandPrivate(
+	onNext: (meta: Record<string, { notes: string; requestedBy?: string }>) => void,
+	onError?: (err: Error) => void,
+): Unsubscribe {
+	return onSnapshot(
+		collection(db, Collections.DEMAND_PRIVATE),
+		(snap) => onNext(Object.fromEntries(snap.docs.map((d) => [d.id, { notes: d.data().notes ?? "", requestedBy: d.data().requestedBy ?? undefined }]))),
+		onError,
+	);
+}
+
+/** The signed-in user's own votes: { [demandId]: { any, years } }. */
+export function subscribeMyVotes(
+	uid: string,
+	onNext: (votes: Record<string, { any: boolean; years: number[] }>) => void,
+	onError?: (err: Error) => void,
+): Unsubscribe {
+	return onSnapshot(doc(db, Collections.USER_VOTES, uid), (snap) => onNext(snap.data()?.votes ?? {}), onError);
+}
+
+export interface VoteTarget { projectType: ProjectType; make?: string; model: string; year?: number; notes?: string }
+
+/** Add (or with on=false, withdraw) my vote. Server-side: one vote per person, one record per make/model. */
+export async function sendVote(t: VoteTarget, on = true): Promise<void> {
+	await authedFetch("/api/demand", { method: on ? "POST" : "DELETE", body: JSON.stringify(t) });
+}
+
+/** Admin: move a demand record along. */
+export async function setDemandStatus(id: string, status: RequestStatus): Promise<void> {
+	await authedFetch("/api/admin/demand", { method: "PATCH", body: JSON.stringify({ id, status }) });
+}
+
+export interface DemandMergePreview { groups: { id: string; title: string; requests: number; votes: number; years: number[] }[]; unmergeable: number }
+export const previewDemandMerge = async (): Promise<DemandMergePreview> => (await authedFetch("/api/admin/demand")).json();
+export const runDemandMerge = async (): Promise<{ merged: number; groups: number }> => (await authedFetch("/api/admin/demand", { method: "POST" })).json();
 
 // ─── Vehicle media (logos + imagery for the vehicle browser) ──
 export function subscribeVehicleMedia(

@@ -1,27 +1,37 @@
 <script lang="ts">
-	// Requests: what customers asked to have added, most-voted first, with the
-	// catalog subjects that may already cover each one and a one-click way to
-	// create the missing subject.
+	// Requests: one row per make/model (or project) customers asked for or voted
+	// on, most-wanted first — requests and votes are the same thing and are counted
+	// once per person. Shows whether the catalog has it yet (a Coming soon
+	// placeholder, or live patterns) and a one-click way to create the placeholders.
 	import Badge from "$lib/components/ui/Badge.svelte";
 	import { adminPatterns as ap } from "$lib/admin/adminPatterns.svelte";
 	import { patternStore } from "$lib/stores/patternStore.svelte";
-	import { makeKey, modelKey } from "$lib/utils/vehicleCatalog";
+	import { makeKey } from "$lib/utils/vehicleCatalog";
+	import { demandModelKey } from "$lib/utils/demand";
+	import { previewDemandMerge, runDemandMerge, subscribeDemandPrivate, type DemandMergePreview } from "$lib/firebase/firestore";
+	import { confirmStore, toastStore } from "$lib/stores";
+	import type { VehiclePlanInput } from "$lib/admin/vehiclePlan";
 	import { PROJECT_TYPES, projectTypeMeta, subjectName, type SubjectForm } from "$lib/admin/patternForms";
-	import type { PatternRequest, ProjectType, RequestStatus } from "$lib/types";
+	import type { DemandRecord, ProjectType, RequestStatus } from "$lib/types";
 
 	interface Props {
 		onOpenSubject: (subjectId: string) => void;
 		onCreateSubject: (prefill: Partial<SubjectForm>) => void;
+		/** Vehicles: open the bulk "add vehicles" dialog for this make/model/years. */
+		onCreateVehicles: (prefill: Partial<VehiclePlanInput>) => void;
 	}
-	let { onOpenSubject, onCreateSubject }: Props = $props();
+	let { onOpenSubject, onCreateSubject, onCreateVehicles }: Props = $props();
 
 	let view = $state<"open" | "done" | "all">("open");
 	let typeFilter = $state<"all" | ProjectType>("all");
 
 	// The store holds placeholder requests until the catalog has loaded — never show those.
 	const loading = $derived(patternStore.loading);
-	const all = $derived(loading ? [] : patternStore.requests.filter((r) => ap.matchesUser(r.requestedBy)));
-	const typeOf = (r: PatternRequest): ProjectType => r.projectType ?? "vehicle";
+	// Who asked and what they wrote is admin-only (demandPrivate), not on the public record.
+	let meta = $state<Record<string, { notes: string; requestedBy?: string }>>({});
+	$effect(() => subscribeDemandPrivate((m) => { meta = m; }, () => {}));
+	const all = $derived(loading ? [] : patternStore.requests.filter((r) => ap.matchesUser(meta[r.id]?.requestedBy)));
+	const typeOf = (r: DemandRecord): ProjectType => r.projectType ?? "vehicle";
 
 	const shown = $derived(
 		all
@@ -33,24 +43,58 @@
 		done: all.filter((r) => r.status === "done").length,
 	});
 
-	/** Catalog subjects that may already cover a request. */
-	function matches(r: PatternRequest) {
+	/** Catalog subjects under a request (every year/trim of that model). */
+	function matches(r: DemandRecord) {
 		if (typeOf(r) !== "vehicle") {
 			const label = r.model.trim().toLowerCase();
 			return patternStore.vehicles.filter((v) => (v.projectType ?? "vehicle") === typeOf(r) && (v.propertyLabel ?? "").trim().toLowerCase() === label);
 		}
 		return patternStore.vehicles.filter(
-			(v) => (v.projectType ?? "vehicle") === "vehicle" && makeKey(v.make) === makeKey(r.make) &&
-				modelKey(v.model) === modelKey(r.model) && (!r.year || v.year === r.year),
+			(v) => (v.projectType ?? "vehicle") === "vehicle" && makeKey(v.make) === makeKey(r.make) && demandModelKey(v.make, v.model) === demandModelKey(r.make, r.model),
 		);
 	}
+	/** Where a request stands in the catalog. */
+	function coverage(found: ReturnType<typeof matches>) {
+		const live = found.filter((v) => patternStore.getPatterns(v.id, undefined, true).length > 0).length;
+		const soon = found.filter((v) => v.status === "published").length - live;
+		return { live, soon, total: found.length };
+	}
+	const years = (r: DemandRecord) => Object.keys(r.yearVotes).map(Number).filter(Boolean).sort((a, b) => a - b);
 
-	function create(r: PatternRequest) {
-		onCreateSubject(
-			typeOf(r) === "vehicle"
-				? { projectType: "vehicle", make: r.make, model: r.model, year: r.year || new Date().getFullYear() }
-				: { projectType: typeOf(r), propertyLabel: r.model },
-		);
+	function create(r: DemandRecord) {
+		if (typeOf(r) === "vehicle") {
+			const ys = years(r), now = new Date().getFullYear();
+			onCreateVehicles({ make: r.make, models: r.model, yearFrom: ys[0] ?? now, yearTo: ys.at(-1) ?? now });
+		} else onCreateSubject({ projectType: typeOf(r), propertyLabel: r.model });
+	}
+
+	// ─── Old requests → one record per make/model ───
+	let legacy = $state<DemandMergePreview | null>(null);
+	let merging = $state(false);
+	$effect(() => {
+		previewDemandMerge().then((p) => { legacy = p; }).catch(() => { legacy = null; });
+	});
+	async function mergeLegacy() {
+		if (!legacy) return;
+		const requests = legacy.groups.reduce((n, g) => n + g.requests, 0);
+		const ok = await confirmStore.ask({
+			title: "Merge duplicate requests?",
+			message: "Older requests were free text, so the same car appears several times. They're folded into one record per make/model with the votes added up. Nothing is deleted — the old requests are kept and marked as merged.",
+			details: [
+				{ label: "Old requests", value: String(requests) },
+				{ label: "Become", value: `${legacy.groups.length} record${legacy.groups.length === 1 ? "" : "s"}` },
+				...(legacy.unmergeable ? [{ label: "Left as they are (no make/model)", value: String(legacy.unmergeable) }] : []),
+			],
+			confirmLabel: "Merge",
+		});
+		if (!ok) return;
+		merging = true;
+		try {
+			const r = await runDemandMerge();
+			toastStore.success("Requests merged", `${r.merged} old request${r.merged === 1 ? "" : "s"} folded into ${r.groups} record${r.groups === 1 ? "" : "s"}.`);
+			legacy = await previewDemandMerge();
+		} catch (e) { toastStore.error("Merge failed", e instanceof Error ? e.message : "Please try again."); }
+		finally { merging = false; }
 	}
 
 	const NEXT: Record<RequestStatus, { to: RequestStatus; label: string }> = {
@@ -62,6 +106,12 @@
 </script>
 
 <div class="rb">
+	{#if legacy && legacy.groups.length}
+		<div class="merge">
+			<span><b>{legacy.groups.reduce((n, g) => n + g.requests, 0)}</b> older requests aren't merged yet — they'd become <b>{legacy.groups.length}</b> {legacy.groups.length === 1 ? "record" : "records"}, so votes for the same car add up.</span>
+			<button class="btn btn--sm btn--primary" disabled={merging} onclick={mergeLegacy}>{merging ? "Merging…" : "Merge duplicates"}</button>
+		</div>
+	{/if}
 	<div class="rb__bar">
 		<div class="tabs" role="tablist" aria-label="Request status">
 			<button class="tab" class:tab--on={view === "open"} role="tab" aria-selected={view === "open"} onclick={() => (view = "open")}>Open <span class="n">{counts.open}</span></button>
@@ -85,7 +135,7 @@
 			{#each shown as r (r.id)}
 				{@const found = matches(r)}
 				<li class="req" class:req--done={r.status === "done"}>
-					<div class="req__votes" title="{r.votes} votes"><b>{r.votes}</b><span>vote{r.votes === 1 ? "" : "s"}</span></div>
+					<div class="req__votes" title="{r.votes} {r.votes === 1 ? "person" : "people"}{r.legacyVotes ? ` (${r.legacyVotes} from before votes were tracked per person)` : ""}"><b>{r.votes}</b><span>want{r.votes === 1 ? "s" : ""}</span></div>
 					<div class="req__main">
 						<div class="req__title">
 							<span class="req__icon" title={projectTypeMeta(r.projectType).label} aria-hidden="true">
@@ -94,14 +144,16 @@
 							{r.vehicle}
 							<Badge variant={statusVariant(r.status)} size="sm" dot={r.status === "in-progress"}>{r.status}</Badge>
 						</div>
-						{#if r.notes}<p class="req__notes">{r.notes}</p>{/if}
+						{#if years(r).length}<div class="req__years">{#each years(r) as y (y)}<span class="yr">{y} <b>{r.yearVotes[String(y)] + r.anyVotes}</b></span>{/each}{#if r.anyVotes}<span class="yr yr--any">any year <b>{r.anyVotes}</b></span>{/if}</div>{/if}
+						{#if meta[r.id]?.notes}<p class="req__notes">{meta[r.id].notes}</p>{/if}
 						<div class="req__meta">
-							{#if r.requestedBy}<button class="link" onclick={() => (ap.filterUser = r.requestedBy!)}>{ap.userLabel(r.requestedBy)}</button>{:else}<span>Unknown requester</span>{/if}
+							{#if meta[r.id]?.requestedBy}<button class="link" onclick={() => (ap.filterUser = meta[r.id].requestedBy!)}>{ap.userLabel(meta[r.id].requestedBy!)}</button>{:else}<span>Unknown requester</span>{/if}
 							· {r.requestedAt || "—"}
 						</div>
 						<div class="req__cover">
 							{#if found.length}
-								<span class="cover__k">Already in the catalog</span>
+								{@const c = coverage(found)}
+								<span class="cover__k">{c.live ? `${c.live} with patterns` : "Coming soon placeholder"}{#if c.live && c.soon} · {c.soon} coming soon{/if}</span>
 								{#each found.slice(0, 4) as v (v.id)}
 									<button class="pill" onclick={() => onOpenSubject(v.id)}>
 										{subjectName(v)}
@@ -116,7 +168,7 @@
 					<div class="req__actions">
 						<button class="btn btn--sm" disabled={!!ap.busy} onclick={() => ap.setRequestStatus(r.id, NEXT[r.status].to)}>{NEXT[r.status].label}</button>
 						{#if r.status !== "done" && !found.length}
-							<button class="btn btn--sm btn--primary" onclick={() => create(r)}>Create subject</button>
+								<button class="btn btn--sm btn--primary" onclick={() => create(r)}>{typeOf(r) === "vehicle" ? "Add placeholders" : "Create subject"}</button>
 						{/if}
 					</div>
 				</li>
@@ -147,6 +199,10 @@
 	.req__icon { color: var(--text-tertiary); display: grid; place-items: center; }
 	.req__notes { margin: 0; font-size: 0.8125rem; color: var(--text-secondary); white-space: pre-wrap; overflow-wrap: anywhere; }
 	.req__meta { font-size: 0.75rem; color: var(--text-tertiary); }
+	.merge { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px; font-size: 0.8125rem; color: var(--text-secondary); background: color-mix(in srgb, var(--color-warning) 9%, transparent); border: 1px solid color-mix(in srgb, var(--color-warning) 30%, transparent); border-radius: var(--radius-md); }
+	.req__years { display: flex; flex-wrap: wrap; gap: 4px; }
+	.yr { padding: 1px 8px; font-size: 0.6875rem; color: var(--text-secondary); background: var(--bg-base); border: 1px solid var(--border-default); border-radius: 99px; }
+	.yr b { font-family: var(--font-mono); color: var(--text-primary); }
 	.req__cover { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 2px; }
 	.cover__k { font-size: 0.6875rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-tertiary); }
 	.cover__k--warn { color: var(--color-warning); }

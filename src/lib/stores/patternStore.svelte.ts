@@ -4,6 +4,8 @@
 // ─────────────────────────────────────────────
 
 import { uid } from "$lib/utils";
+import type { MyVote } from "$lib/utils/demand";
+import type { VoteTarget } from "$lib/firebase/firestore";
 import { rectSegs, serializePath } from "$lib/utils/pathGeometry";
 import type {
 	Pattern,
@@ -14,6 +16,7 @@ import type {
 	VehicleEntry,
 	VehicleMedia,
 	PatternRequest,
+	DemandRecord,
 	PatternStatus,
 	RequestStatus,
 } from "$lib/types";
@@ -21,6 +24,9 @@ import {
 	subscribeVehicles,
 	subscribePatterns,
 	subscribeRequests,
+	subscribeMyVotes,
+	sendVote,
+	setDemandStatus,
 	subscribeVehicleMedia,
 	setVehicleDoc,
 	updateVehicleDoc,
@@ -28,8 +34,6 @@ import {
 	setPatternDoc,
 	updatePatternDoc,
 	deletePatternDoc,
-	setRequestDoc,
-	updateRequestDoc,
 	batchSeedData,
 } from "$lib/firebase/firestore";
 import { toastStore, userStore } from "./stores.svelte";
@@ -296,7 +300,9 @@ function createPatternStore() {
 	// loads the UI shows a loading state, and a load failure shows an error.
 	let vehicles  = $state<VehicleEntry[]>([]);
 	let patterns  = $state<Record<string, Pattern[]>>({});
-	let requests  = $state<PatternRequest[]>(INITIAL_REQUESTS);
+	let requests  = $state<DemandRecord[]>([]);
+	let myVotes   = $state<Record<string, MyVote>>({});
+	let unsubVotes: (() => void) | null = null;
 	let loading   = $state(true);
 	let media     = $state<Record<string, VehicleMedia>>({});
 	let firestoreReady = false;
@@ -339,14 +345,6 @@ function createPatternStore() {
 	function syncPatternDelete(id: string) {
 		if (!firestoreReady) return;
 		deletePatternDoc(id).catch(() => toastStore.error("Sync error", "Could not delete pattern"));
-	}
-	function syncRequest(r: PatternRequest) {
-		if (!firestoreReady) return;
-		setRequestDoc(r).catch(() => toastStore.error("Sync error", "Could not save request"));
-	}
-	function syncRequestUpdate(id: string, patch: Partial<PatternRequest>) {
-		if (!firestoreReady) return;
-		updateRequestDoc(id, patch).catch(() => toastStore.error("Sync error", "Could not update request"));
 	}
 
 	// ─ Lifecycle ───────────────────────────────────────────────
@@ -398,7 +396,7 @@ function createPatternStore() {
 			() => {},
 		);
 
-		return () => { unsubV(); unsubP(); unsubR(); unsubM(); firestoreReady = false; };
+		return () => { unsubV(); unsubP(); unsubR(); unsubM(); unsubVotes?.(); firestoreReady = false; };
 	}
 
 	// Create-only: writes seed docs that don't exist yet and leaves existing
@@ -479,48 +477,35 @@ function createPatternStore() {
 		syncPatternDelete(id);
 	}
 
-	/** Vehicle requests carry make/model/year; property and custom requests
-	 *  carry a title (in `model`) and no year. */
-	function addRequest(r: { projectType?: ProjectType; make: string; model: string; year: number; notes: string }): PatternRequest {
-		const projectType = r.projectType ?? "vehicle";
-		const req: PatternRequest = {
-			id: uid("req_"),
-			vehicle: projectType === "vehicle" ? `${r.year} ${r.make} ${r.model}` : r.model,
-			projectType,
-			make: r.make,
-			model: r.model,
-			year: projectType === "vehicle" ? r.year : 0,
-			notes: r.notes,
-			votes: 1,
-			status: "queued",
-			requestedAt: new Date().toISOString().split("T")[0],
-			requestedBy: userStore.user?.uid,
-		};
-		requests = [...requests, req];
-		syncRequest(req);
-		return req;
+	/**
+	 * Ask for a pattern, or vote on a coming-soon one — the same thing. The server
+	 * folds it into the one record for that make/model and keeps it to one vote
+	 * per person, so this is safe to call for something already requested.
+	 */
+	async function vote(t: VoteTarget, on = true): Promise<boolean> {
+		try { await sendVote(t, on); return true; }
+		catch (e) { toastStore.error(on ? "Couldn't save your vote" : "Couldn't remove your vote", e instanceof Error ? e.message : "Please try again."); return false; }
 	}
 
-	function advanceRequest(id: string) {
-		requests = requests.map((r) => {
-			if (r.id !== id) return r;
-			if (r.status === "queued") return { ...r, status: "in-progress" as RequestStatus };
-			if (r.status === "in-progress") return { ...r, status: "done" as RequestStatus };
-			return r;
-		});
-		const updated = requests.find((r) => r.id === id);
-		if (updated) syncRequestUpdate(id, { status: updated.status });
+	/** Follow the signed-in user's own votes (null on sign-out). */
+	function watchVotes(uid: string | null) {
+		unsubVotes?.(); unsubVotes = null; myVotes = {};
+		if (uid) unsubVotes = subscribeMyVotes(uid, (v) => { myVotes = v; }, () => {});
 	}
 
-	function voteRequest(id: string) {
-		requests = requests.map((r) => (r.id === id ? { ...r, votes: r.votes + 1 } : r));
-		const updated = requests.find((r) => r.id === id);
-		if (updated) syncRequestUpdate(id, { votes: updated.votes });
+	async function advanceRequest(id: string) {
+		const r = requests.find((x) => x.id === id);
+		if (!r) return;
+		const to: RequestStatus = r.status === "queued" ? "in-progress" : r.status === "in-progress" ? "done" : r.status;
+		if (to === r.status) return;
+		try { await setDemandStatus(id, to); }
+		catch { toastStore.error("Sync error", "Could not update request"); }
 	}
 
 	return {
 		get vehicles() { return vehicles; },
 		get requests() { return requests; },
+		get myVotes() { return myVotes; },
 		get media() { return media; },
 		get loading() { return loading; },
 		get usingSeed() { return usingSeed; },
@@ -535,9 +520,9 @@ function createPatternStore() {
 		addPattern,
 		updatePattern,
 		deletePattern,
-		addRequest,
+		vote,
+		watchVotes,
 		advanceRequest,
-		voteRequest,
 	};
 }
 

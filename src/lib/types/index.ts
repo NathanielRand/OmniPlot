@@ -591,6 +591,22 @@ export interface PatternRequest {
 	requestedBy?: string; // uid; absent on requests made before this was tracked
 }
 
+/**
+ * One record per make/model (or property/project) in `demand/{id}` — requests and
+ * votes both land here. `votes` is distinct people plus `legacyVotes` (anonymous
+ * votes from before votes were tracked per person). `year` is always 0: years
+ * live in `yearVotes`, so a model's total is never the sum of its years.
+ */
+export interface DemandRecord extends PatternRequest {
+	/** Distinct people who voted, tracked per person. */
+	voters: number;
+	legacyVotes: number;
+	/** People happy with any year. */
+	anyVotes: number;
+	/** People who named this year (not counting `anyVotes`). */
+	yearVotes: Record<string, number>;
+}
+
 // ─── Insights / Blog ─────────────────────────
 export type InsightCategory = 'ppf' | 'window-tint' | 'guides' | 'vehicles';
 export type InsightStatus   = 'draft' | 'published';

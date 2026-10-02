@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { UserPattern, VehicleEntry } from "$lib/types";
 import { buildTree, entriesUnder, makeKey } from "./vehicleCatalog";
 import {
-	communityRows, distinctCount, expandYears, privateRows, rowsForSource, shareStatusOf, uniquePatterns,
+	comingSoonRows, communityRows, distinctCount, expandYears, privateRows, rowsForSource, shareStatusOf, uniquePatterns,
 	MAX_YEARS_PER_PATTERN,
 } from "./libraryRows";
 
@@ -145,5 +145,18 @@ describe("shareStatusOf", () => {
 	});
 	it("makeKey still groups the aliased make", () => {
 		expect(makeKey("Chevy")).toBe("chevrolet");
+	});
+});
+
+describe("coming soon", () => {
+	const veh = (id: string, status: "published" | "draft" = "published"): VehicleEntry => ({
+		id, projectType: "vehicle", make: "Toyota", model: "GR86", year: 2024, tags: [], status, updatedAt: "2026-01-01",
+	});
+	const live = { v1: [{ id: "c1" }] } as unknown as Record<string, never[]>;
+	const rows = comingSoonRows([veh("v1"), veh("v2"), veh("v3", "draft")], (id) => (live[id] ?? []) as never);
+
+	it("is published subjects with no live pattern, and counts no patterns", () => {
+		expect(rows.map((r) => r.v.id)).toEqual(["v2"]);
+		expect(distinctCount(rows)).toBe(0);
 	});
 });

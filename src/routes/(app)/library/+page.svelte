@@ -9,7 +9,7 @@
 	import Button from "$lib/components/ui/Button.svelte";
 	import { uid, getItemColor, formatMeasure } from "$lib/utils";
 	import { bestNest } from "$lib/utils/nesting";
-	import { getUserPatterns, updateUserPattern, deleteUserPattern, addPatternAdjustmentRequest } from "$lib/firebase/firestore";
+	import { getUserPatterns, updateUserPattern, deleteUserPattern, addPatternAdjustmentRequest, type VoteTarget } from "$lib/firebase/firestore";
 	import { tooltip } from "$lib/actions/tooltip";
 	import type { CanvasItem, Pattern, PatternCategory, PatternZone, ProjectType, UserPattern } from "$lib/types";
 	import { fitPattern } from "$lib/actions/fitPattern";
@@ -19,13 +19,14 @@
 	import type { VehicleEntry } from "$lib/stores/patternStore.svelte";
 	import VehicleTile from "$lib/components/library/VehicleTile.svelte";
 	import VehicleHero from "$lib/components/library/VehicleHero.svelte";
+	import ComingSoon from "$lib/components/library/ComingSoon.svelte";
 	import VehicleTreeFilter, { type TreePath } from "$lib/components/library/VehicleTreeFilter.svelte";
 	import {
 		buildTree, entriesUnder, mediaFor, yearSpan, trimFilter, matchesQuery,
-		BASE_TRIM_LABEL, TRIM_BASE, TRIM_ALL,
+		BASE_TRIM_LABEL, TRIM_BASE, TRIM_ALL, makeKey, modelKey,
 	} from "$lib/utils/vehicleCatalog";
 	import {
-		communityRows, privateRows, rowsForSource, uniquePatterns, distinctCount, patternKey, shareStatusOf, userPatternToPattern,
+		communityRows, comingSoonRows, privateRows, rowsForSource, uniquePatterns, distinctCount, patternKey, shareStatusOf, userPatternToPattern,
 		type LibPattern, type LibRow, type LibrarySource, type ShareStatus,
 	} from "$lib/utils/libraryRows";
 
@@ -122,6 +123,7 @@
 			.catch(() => { myPatternsError = "Could not load your private patterns."; })
 			.finally(() => { myPatternsLoading = false; });
 	}
+	$effect(() => { patternStore.watchVotes(userStore.user?.uid ?? null); });
 	$effect(() => {
 		const id = userStore.user?.uid;
 		if (!id || id === loadedForUid) return;
@@ -143,6 +145,10 @@
 	const communityAll = $derived(
 		communityRows(patternStore.vehicles, (id) => patternStore.getPatterns(id, undefined, true)),
 	);
+	// Subjects an admin has listed ahead of their patterns. They show as "coming soon"
+	// (vehicles only) until the first pattern is published; no pattern count includes them.
+	let hideSoon = $state(false);
+	const soonAll = $derived(source === "private" ? [] : comingSoonRows(patternStore.vehicles, (id) => patternStore.getPatterns(id, undefined, true)));
 	const privateAll = $derived(privateRows(myPatterns));
 	const sourceRows = $derived(rowsForSource(source, communityAll, privateAll));
 	const sourceCounts = $derived({
@@ -190,7 +196,8 @@
 		visible
 			.filter((x) => typeOf(x.v) === projectType)
 			.map((x) => ({ v: x.v, pats: x.pats.filter((p) => p.category === category) }))
-			.filter((x) => x.pats.length > 0),
+			.filter((x) => x.pats.length > 0)
+			.concat(projectType === "vehicle" && !hideSoon ? soonAll : []),
 	);
 
 	// ─── Zone groups ──────────────────────────────
@@ -255,7 +262,12 @@
 	// Tree the tiles and sidebar render: search + year applied, zone not (zone
 	// is a pattern-level filter, offered once a trim's patterns are showing).
 	const vehBase = $derived(baseFiltered.filter((x) => typeOf(x.v) === "vehicle" && x.v.make && x.v.model));
-	const tree = $derived(buildTree(vehBase.map(toRow)));
+	// Makes and models with patterns first; coming-soon ones after, each group A–Z.
+	const tree = $derived(
+		buildTree(vehBase.map(toRow))
+			.map((m) => ({ ...m, models: [...m.models].sort((a, b) => Number(a.count === 0) - Number(b.count === 0)) }))
+			.sort((a, b) => Number(a.count === 0) - Number(b.count === 0)),
+	);
 	const treeTotal = $derived(tree.reduce((n, m) => n + m.count, 0));
 
 	const makeNode = $derived(path.make ? tree.find((m) => m.key === path.make) : undefined);
@@ -368,6 +380,9 @@
 				: [],
 	);
 	const visibleStorePatterns = $derived(vehiclePatterns.filter(inZone));
+	// Model years in this branch that have no patterns yet (vehicles).
+	const soonYears = $derived(isVeh && leafActive ? leafEntries.filter((x) => x.pats.length === 0 && x.v.year).map((x) => x.v.year as number) : []);
+	const allSoonLeaf = $derived(soonYears.length > 0 && vehiclePatterns.length === 0);
 	const useStorePatterns = $derived(vehiclePatterns.length > 0);
 
 	// Zone pills + counts: the patterns on screen, else every subject the
@@ -461,6 +476,7 @@
 	});
 
 	const pieceWord = $derived(category === "window-tint" ? "windows" : "patterns");
+	const pieces = (n: number) => (n === 0 ? "Coming soon" : `${n} ${n === 1 ? pieceWord.replace(/s$/, "") : pieceWord}`);
 
 	// ─── Pattern detail dialog ────────────────────
 	let detailPattern = $state<LibPattern | null>(null);
@@ -651,7 +667,11 @@
 	// Request modal — for whichever subject type is active
 	let showRequestModal = $state(false);
 	let requestType = $state<ProjectType>("vehicle");
-	let requestForm = $state({ year: new Date().getFullYear(), make: "", model: "", title: "", notes: "" });
+	let requestForm = $state<{ year: number | null; make: string; model: string; title: string; notes: string }>({ year: null, make: "", model: "", title: "", notes: "" });
+	// Suggestions come from the catalog so the same car isn't requested five different ways.
+	const vehicleSubjects = $derived(patternStore.vehicles.filter((v) => (v.projectType ?? "vehicle") === "vehicle" && v.make && v.model));
+	const reqMakes = $derived([...new Map(vehicleSubjects.map((v) => [makeKey(v.make), v.make!])).values()].sort());
+	const reqModels = $derived([...new Map(vehicleSubjects.filter((v) => makeKey(v.make) === makeKey(requestForm.make)).map((v) => [modelKey(v.model), v.model!])).values()].sort());
 	function openRequest(t: ProjectType = projectType) {
 		requestType = t;
 		showRequestModal = true;
@@ -735,19 +755,19 @@
 	const selectedCount = $derived(selectedPatternIds.size);
 
 	// ─── Request vehicle ──────────────────────────
-	function submitRequest() {
+	async function submitRequest() {
 		const { year, make, model, title, notes } = requestForm;
-		if (requestType === "vehicle") {
-			if (!make.trim() || !model.trim()) return;
-			patternStore.addRequest({ projectType: "vehicle", year, make: make.trim(), model: model.trim(), notes: notes.trim() });
-			toastStore.success("Request submitted!", `${year} ${make.trim()} ${model.trim()} has been added to the queue.`);
-		} else {
-			if (!title.trim()) return;
-			patternStore.addRequest({ projectType: requestType, year: 0, make: typeMeta(requestType).label, model: title.trim(), notes: notes.trim() });
-			toastStore.success("Request submitted!", `"${title.trim()}" has been added to the queue.`);
-		}
+		if (!userStore.user) { toastStore.error("Sign in to request a pattern", "Requests and votes are tied to your account."); return; }
+		const t: VoteTarget = requestType === "vehicle"
+			? { projectType: "vehicle", make: make.trim(), model: model.trim(), year: year || 0, notes: notes.trim() }
+			: { projectType: requestType, model: title.trim(), notes: notes.trim() };
+		if (!t.model || (requestType === "vehicle" && !t.make)) return;
+		// Already requested? The server adds this to the same record — one vote each.
+		if (!(await patternStore.vote(t))) return;
+		const what = requestType === "vehicle" ? [year || "", make.trim(), model.trim()].filter(Boolean).join(" ") : `"${t.model}"`;
+		toastStore.success("Thanks — you're on the list", `${what}: requests are counted once, so this added your vote.`);
 		showRequestModal = false;
-		requestForm = { year: new Date().getFullYear(), make: "", model: "", title: "", notes: "" };
+		requestForm = { year: null, make: "", model: "", title: "", notes: "" };
 	}
 
 	// ─── Header copy ──────────────────────────────
@@ -760,9 +780,9 @@
 			? "loading"
 			: patternStore.catalogError && source !== "private" && !communityAll.length
 				? "error"
-				: sourceCounts[source] === 0
+				: sourceCounts[source] === 0 && !soonAll.length
 					? "none-source"
-					: !typeCounts[projectType]
+					: !typeCounts[projectType] && !(isVeh && soonAll.length)
 						? "none-type"
 						: "filters",
 	);
@@ -771,14 +791,16 @@
 	// ─── Mobile filter sheet ──────────────────────
 	const filterCount = $derived(
 		(isVeh && activeYear !== "All" ? 1 : 0) +
+		(hideSoon ? 1 : 0) +
 		(activeZone !== "All zones" ? 1 : 0) +
 		(showStatus && shareFilter !== "all" ? 1 : 0),
 	);
-	const hasFilterGroups = $derived((isVeh && YEARS.length > 1) || ZONES.length > 2 || showStatus);
+	const hasFilterGroups = $derived((isVeh && YEARS.length > 1) || (isVeh && soonAll.length > 0) || ZONES.length > 2 || showStatus);
 	function resetFilters() {
 		activeYear = "All";
 		activeZone = "All zones";
 		shareFilter = "all";
+		hideSoon = false;
 	}
 
 	// Keep the active tab of a horizontally scrolling switcher in view.
@@ -802,6 +824,14 @@
 				{#each YEARS as year}
 					<button class="lib-pill" class:active={activeYear === year} onclick={() => (activeYear = year)} aria-pressed={activeYear === year}>{year}</button>
 				{/each}
+			</div>
+		{/if}
+
+		{#if isVeh && soonAll.length}
+			<div class="lib-section-label">Availability</div>
+			<div class="lib-filter-pills">
+				<button class="lib-pill" class:active={!hideSoon} aria-pressed={!hideSoon} onclick={() => (hideSoon = false)}>All</button>
+				<button class="lib-pill" class:active={hideSoon} aria-pressed={hideSoon} onclick={() => (hideSoon = true)}>Available only</button>
 			</div>
 		{/if}
 
@@ -1075,7 +1105,7 @@
 									years={yearSpan(o.years)}
 									bodyStyle={o.bodyStyle}
 									imageUrl={mediaOf(m.label, o.label)?.imageUrl}
-									meta={[...(o.trims.length > 1 ? [`${o.trims.length} trims`] : o.trims.length === 1 && o.trims[0].key !== "" ? [o.trims[0].label] : []), `${o.count} ${o.count === 1 ? pieceWord.replace(/s$/, "") : pieceWord}`]}
+									meta={[...(o.trims.length > 1 ? [`${o.trims.length} trims`] : o.trims.length === 1 && o.trims[0].key !== "" ? [o.trims[0].label] : []), pieces(o.count)]}
 									onclick={() => go(o.trims.length === 1 && o.trims[0].key !== "" ? { make: m.key, model: o.key, trim: o.trims[0].key } : { make: m.key, model: o.key })}
 								/>
 							{/each}
@@ -1094,7 +1124,7 @@
 									title={m.label}
 									logoUrl={md?.logoUrl}
 									imageUrl={md?.imageUrl}
-									meta={[`${m.models.length} ${m.models.length === 1 ? "model" : "models"}`, `${m.count} ${m.count === 1 ? pieceWord.replace(/s$/, "") : pieceWord}`]}
+									meta={[`${m.models.length} ${m.models.length === 1 ? "model" : "models"}`, pieces(m.count)]}
 									onclick={() => go({ make: m.key })}
 								/>
 							{/each}
@@ -1111,7 +1141,7 @@
 							eyebrow="Make"
 							logoUrl={md?.logoUrl}
 							imageUrl={md?.imageUrl}
-							stats={[`${makeNode.models.length} ${makeNode.models.length === 1 ? "model" : "models"}`, `${makeNode.count} ${makeNode.count === 1 ? pieceWord.replace(/s$/, "") : pieceWord}`]}
+							stats={[`${makeNode.models.length} ${makeNode.models.length === 1 ? "model" : "models"}`, pieces(makeNode.count)]}
 						/>
 						<div class="vb-grid vb-grid--model">
 							{#each makeNode.models as o (o.key)}
@@ -1121,7 +1151,7 @@
 									years={yearSpan(o.years)}
 									bodyStyle={o.bodyStyle}
 									imageUrl={mediaOf(makeNode.label, o.label)?.imageUrl}
-									meta={[...(o.trims.length > 1 ? [`${o.trims.length} trims`] : o.trims.length === 1 && o.trims[0].key !== "" ? [o.trims[0].label] : []), `${o.count} ${o.count === 1 ? pieceWord.replace(/s$/, "") : pieceWord}`]}
+									meta={[...(o.trims.length > 1 ? [`${o.trims.length} trims`] : o.trims.length === 1 && o.trims[0].key !== "" ? [o.trims[0].label] : []), pieces(o.count)]}
 									onclick={() => go({ make: makeNode.key, model: o.key })}
 								/>
 							{/each}
@@ -1138,13 +1168,13 @@
 							eyebrow={makeNode.label}
 							logoUrl={mediaOf(makeNode.label)?.logoUrl}
 							imageUrl={md?.imageUrl}
-							stats={[`${modelNode.trims.length} trims & variants`, `${modelNode.count} ${modelNode.count === 1 ? pieceWord.replace(/s$/, "") : pieceWord}`, yearSpan(modelNode.years)].filter(Boolean)}
+							stats={[`${modelNode.trims.length} trims & variants`, pieces(modelNode.count), yearSpan(modelNode.years)].filter(Boolean)}
 						/>
 						<div class="vb-grid vb-grid--trim">
 							<VehicleTile
 								variant="trim"
 								title="All {modelNode.label} patterns"
-								meta={[`${modelNode.count} ${modelNode.count === 1 ? pieceWord.replace(/s$/, "") : pieceWord}`]}
+								meta={[pieces(modelNode.count)]}
 								years={yearSpan(modelNode.years)}
 								onclick={() => go({ make: makeNode.key, model: modelNode.key, trim: TRIM_ALL })}
 							/>
@@ -1154,7 +1184,7 @@
 									title={t.label}
 									years={yearSpan(t.years)}
 									imageUrl={mediaOf(makeNode.label, modelNode.label, t.key ? t.label : undefined)?.imageUrl}
-									meta={[`${t.count} ${t.count === 1 ? pieceWord.replace(/s$/, "") : pieceWord}`]}
+									meta={[pieces(t.count)]}
 									onclick={() => go({ make: makeNode.key, model: modelNode.key, trim: t.key === "" ? TRIM_BASE : t.key })}
 								/>
 							{/each}
@@ -1233,7 +1263,11 @@
 					</div>
 				</div>
 
-				<div class="zone-grid">
+				{#if soonYears.length}
+					<ComingSoon make={makeLabel} model={modelLabel} years={soonYears} allSoon={allSoonLeaf} />
+				{/if}
+
+				<div class="zone-grid" hidden={allSoonLeaf}>
 					{#if visibleStorePatterns.length}
 						{#each visibleStorePatterns as pattern (pattern.id)}
 							{@const selected = selectedPatternIds.has(pattern.id)}
@@ -1550,17 +1584,19 @@
 				{#if requestType === "vehicle"}
 					<div class="form-row">
 						<div class="form-group">
-							<label class="form-label" for="req-year">Year</label>
-							<input id="req-year" type="number" class="form-input" bind:value={requestForm.year} min="1990" max={new Date().getFullYear() + 2} required />
+							<label class="form-label" for="req-year">Year <span class="muted">optional</span></label>
+							<input id="req-year" type="number" class="form-input" bind:value={requestForm.year} min="1990" max={new Date().getFullYear() + 2} placeholder="Any" />
 						</div>
 						<div class="form-group" style="flex:2">
 							<label class="form-label" for="req-make">Make</label>
-							<input id="req-make" type="text" class="form-input" bind:value={requestForm.make} placeholder="e.g. Toyota" required />
+							<input id="req-make" type="text" class="form-input" bind:value={requestForm.make} placeholder="e.g. Toyota" list="req-makes" autocomplete="off" required />
+							<datalist id="req-makes">{#each reqMakes as m}<option value={m}></option>{/each}</datalist>
 						</div>
 					</div>
 					<div class="form-group">
 						<label class="form-label" for="req-model">Model</label>
-						<input id="req-model" type="text" class="form-input" bind:value={requestForm.model} placeholder="e.g. GR86" required />
+						<input id="req-model" type="text" class="form-input" bind:value={requestForm.model} placeholder="e.g. GR86" list="req-models" autocomplete="off" required />
+						<datalist id="req-models">{#each reqModels as m}<option value={m}></option>{/each}</datalist>
 					</div>
 				{:else}
 					<div class="form-group">
@@ -2509,6 +2545,8 @@
 	.lib-pill__count { font-family: var(--font-mono); font-size: 0.6875rem; color: var(--text-tertiary); margin-left: 2px; }
 	.lib-pill.active .lib-pill__count { color: inherit; opacity: 0.75; }
 	.lib-request-btn { text-decoration: none; }
+	.zone-grid[hidden] { display: none; }
+	.muted { color: var(--text-tertiary); font-weight: 400; }
 	.mode-btn--empty:not(.active) { opacity: 0.55; }
 	button.zone-empty__cta { background: transparent; color: var(--text-brand); cursor: pointer; font-family: var(--font-body); }
 	button.zone-card__add { border: none; font: inherit; }

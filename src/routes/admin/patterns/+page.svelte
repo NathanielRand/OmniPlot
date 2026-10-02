@@ -8,6 +8,7 @@
 	import CatalogManager from "$lib/components/admin/patterns/CatalogManager.svelte";
 	import MediaCoverage from "$lib/components/admin/patterns/MediaCoverage.svelte";
 	import RequestsBoard from "$lib/components/admin/patterns/RequestsBoard.svelte";
+	import type { VehiclePlanInput } from "$lib/admin/vehiclePlan";
 	import { adminPatterns as ap } from "$lib/admin/adminPatterns.svelte";
 	import { patternStore } from "$lib/stores/patternStore.svelte";
 	import type { SubjectForm } from "$lib/admin/patternForms";
@@ -25,8 +26,13 @@
 	// Cross-tab jumps: Review/Requests → a subject in the Catalog.
 	let focus = $state<{ subjectId: string; patternId?: string } | null>(null);
 	let prefill = $state<Partial<SubjectForm> | null>(null);
+	let bulkPrefill = $state<Partial<VehiclePlanInput> | null>(null);
 	function openCatalog(subjectId: string, patternId?: string) {
 		focus = { subjectId, patternId };
+		setTab("catalog");
+	}
+	function createVehicles(pre: Partial<VehiclePlanInput>) {
+		bulkPrefill = pre;
 		setTab("catalog");
 	}
 	function createSubject(pre: Partial<SubjectForm>) {
@@ -140,11 +146,11 @@
 		{#if tab === "review"}
 			<ReviewQueue onOpenCatalog={openCatalog} />
 		{:else if tab === "catalog"}
-			<CatalogManager {focus} onFocusUsed={() => (focus = null)} {prefill} onPrefillUsed={() => (prefill = null)} />
+			<CatalogManager {focus} onFocusUsed={() => (focus = null)} {prefill} onPrefillUsed={() => (prefill = null)} {bulkPrefill} onBulkPrefillUsed={() => (bulkPrefill = null)} />
 		{:else if tab === "media"}
 			<MediaCoverage onOpen={(id) => openCatalog(id)} />
 		{:else}
-			<RequestsBoard onOpenSubject={(id) => openCatalog(id)} onCreateSubject={createSubject} />
+			<RequestsBoard onOpenSubject={(id) => openCatalog(id)} onCreateSubject={createSubject} onCreateVehicles={createVehicles} />
 		{/if}
 	</div>
 </div>

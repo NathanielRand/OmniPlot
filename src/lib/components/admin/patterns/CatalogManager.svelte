@@ -15,6 +15,8 @@
 	} from "$lib/admin/patternForms";
 	import type { Pattern, PatternCategory, ProjectType, VehicleEntry } from "$lib/types";
 	import type { PatternStatus } from "$lib/stores/patternStore.svelte";
+	import { demandId, votesForYear } from "$lib/utils/demand";
+	import { splitList, type VehiclePlanInput } from "$lib/admin/vehiclePlan";
 
 	interface Props {
 		/** Select this subject (and flash one of its patterns) — set when jumping in from Review. */
@@ -23,13 +25,17 @@
 		/** Open the "add subject" dialog pre-filled — set when creating from a request. */
 		prefill?: Partial<SubjectForm> | null;
 		onPrefillUsed?: () => void;
+		/** Open the "add vehicles" dialog pre-filled — set when creating placeholders from a request. */
+		bulkPrefill?: Partial<VehiclePlanInput> | null;
+		onBulkPrefillUsed?: () => void;
 	}
-	let { focus = null, onFocusUsed, prefill = null, onPrefillUsed }: Props = $props();
+	let { focus = null, onFocusUsed, prefill = null, onPrefillUsed, bulkPrefill = null, onBulkPrefillUsed }: Props = $props();
 
 	// ─── List ────────────────────────────────────
 	let search = $state("");
 	let typeFilter = $state<"all" | ProjectType>("all");
-	let statusFilter = $state<"all" | PatternStatus>("all");
+	// "soon" = published but no live pattern yet — what customers see as "Coming soon".
+	let statusFilter = $state<"all" | PatternStatus | "soon">("all");
 	let selectedId = $state<string | null>(null);
 	let category = $state<"all" | PatternCategory>("all");
 
@@ -49,21 +55,28 @@
 		return [...ids];
 	}
 
+	// People who want this subject's make/model (and year), from the one demand record.
+	const demandIndex = $derived(new Map(patternStore.requests.map((r) => [r.id, r])));
+	const wantOf = (v: VehicleEntry) =>
+		typeOf(v) === "vehicle" && v.make && v.model ? votesForYear(demandIndex.get(demandId({ projectType: "vehicle", make: v.make, model: v.model })), v.year) : 0;
+	const isSoon = (v: VehicleEntry, live: number) => v.status === "published" && live === 0;
+
 	const rows = $derived(
 		patternStore.vehicles
 			.map((v) => {
 				const pats = patternStore.getPatterns(v.id);
-				return { v, total: pats.length, live: pats.filter((p) => p.isPublished).length };
+				const live = pats.filter((p) => p.isPublished).length;
+				return { v, total: pats.length, live, soon: isSoon(v, live), want: wantOf(v) };
 			})
-			.filter(({ v }) => {
+			.filter(({ v, soon }) => {
 				const q = search.trim().toLowerCase();
 				const text = `${v.make ?? ""} ${v.model ?? ""} ${v.trim ?? ""} ${v.year ?? ""} ${v.propertyLabel ?? ""} ${v.address ?? ""} ${(v.tags ?? []).join(" ")}`.toLowerCase();
 				return (!q || text.includes(q))
 					&& (typeFilter === "all" || typeOf(v) === typeFilter)
-					&& (statusFilter === "all" || v.status === statusFilter)
+					&& (statusFilter === "all" || (statusFilter === "soon" ? soon : v.status === statusFilter))
 					&& (!ap.filterUser || contributors(v).includes(ap.filterUser));
 			})
-			.sort((a, b) => subjectName(a.v).localeCompare(subjectName(b.v), undefined, { numeric: true, sensitivity: "base" })),
+			.sort((a, b) => (statusFilter === "soon" ? b.want - a.want : 0) || subjectName(a.v).localeCompare(subjectName(b.v), undefined, { numeric: true, sensitivity: "base" })),
 	);
 
 	const typeCounts = $derived(
@@ -73,6 +86,9 @@
 		patternStore.vehicles
 			.filter((v) => typeFilter === "all" || typeOf(v) === typeFilter)
 			.reduce((acc, v) => { acc[v.status] = (acc[v.status] ?? 0) + 1; return acc; }, {} as Record<string, number>),
+	);
+	const soonCount = $derived(
+		patternStore.vehicles.filter((v) => (typeFilter === "all" || typeOf(v) === typeFilter) && isSoon(v, patternStore.getPatterns(v.id).filter((p) => p.isPublished).length)).length,
 	);
 	const totals = $derived({
 		subjects: patternStore.vehicles.length,
@@ -102,6 +118,7 @@
 	);
 	const liveCount = $derived(subjectPatterns.filter((p) => p.isPublished).length);
 	const invisible = $derived(!!subject && subject.status === "published" && liveCount === 0);
+	const subjectWant = $derived(subject ? wantOf(subject) : 0);
 
 	// Jumping in from Review / Requests.
 	let flash = $state<string | null>(null);
@@ -132,6 +149,12 @@
 		onPrefillUsed?.();
 	});
 
+	$effect(() => {
+		if (!bulkPrefill) return;
+		openBulk(bulkPrefill);
+		onBulkPrefillUsed?.();
+	});
+
 	async function submitSubject() {
 		if (!subjectDlg) return;
 		const saved = await ap.saveSubject(subjectForm, subjectDlg.target);
@@ -143,6 +166,33 @@
 	}
 	async function removeSubject(v: VehicleEntry) {
 		if (await ap.deleteSubject(v)) selectedId = null;
+	}
+
+	const focusOnMount = (n: HTMLElement) => { n.focus(); };
+
+	// ─── Bulk add vehicles ───────────────────────
+	const blankBulk = (): VehiclePlanInput => ({
+		make: "", models: "", yearFrom: new Date().getFullYear(), yearTo: new Date().getFullYear(), trims: "",
+		bodyStyle: "sedan", status: "published", tags: [], popular: false,
+	});
+	let bulkDlg = $state(false);
+	let bulk = $state<VehiclePlanInput>(blankBulk());
+	let bulkTags = $state("advertised");
+	const bulkInput = $derived<VehiclePlanInput>({ ...bulk, tags: splitList(bulkTags).map((t) => t.toLowerCase()) });
+	const bulkPlan = $derived(bulkDlg ? ap.planBulk(bulkInput) : null);
+	const bulkMakes = $derived([...new Set(patternStore.vehicles.map((v) => v.make).filter(Boolean) as string[])].sort());
+	function openBulk(pre?: Partial<VehiclePlanInput>) {
+		bulk = { ...blankBulk(), ...pre };
+		bulkTags = "advertised";
+		bulkDlg = true;
+	}
+	async function submitBulk() {
+		const created = await ap.addVehicles(bulkInput);
+		if (!created) return;
+		bulkDlg = false;
+		typeFilter = "all"; search = ""; statusFilter = created[0].status === "published" ? "soon" : "all";
+		wantId = created[0].id;
+		setTimeout(() => (wantId = null), 4000);
 	}
 
 	// ─── Pattern dialog ──────────────────────────
@@ -194,7 +244,8 @@
 				<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
 				<input type="search" placeholder="Search subjects, tags…" bind:value={search} aria-label="Search subjects" />
 			</div>
-			<button class="btn btn--primary btn--sm" disabled={busy} onclick={() => openAddSubject()}>+ Add subject</button>
+			<button class="btn btn--primary btn--sm" disabled={busy} onclick={() => openBulk()}>+ Add vehicles</button>
+			<button class="btn btn--sm" disabled={busy} onclick={() => openAddSubject()} title="One subject — a residential, commercial or custom project, or a single vehicle">+ Subject</button>
 		</div>
 
 		<div class="cm__types" role="tablist" aria-label="Subject type">
@@ -204,9 +255,9 @@
 			{/each}
 		</div>
 		<div class="cm__status" role="group" aria-label="Status">
-			{#each (["all", "published", "review", "draft"] as const) as s}
-				<button class="chip" class:chip--on={statusFilter === s} aria-pressed={statusFilter === s} onclick={() => (statusFilter = s)}>
-					{s === "all" ? "Any status" : s[0].toUpperCase() + s.slice(1)}{#if s !== "all"} <span class="n">{statusCounts[s] ?? 0}</span>{/if}
+			{#each (["all", "published", "review", "draft", "soon"] as const) as s}
+				<button class="chip" class:chip--on={statusFilter === s} aria-pressed={statusFilter === s} onclick={() => (statusFilter = s)} title={s === "soon" ? "Published, no live pattern yet — shown to customers as Coming soon. Most wanted first." : undefined}>
+					{s === "all" ? "Any status" : s === "soon" ? "Needs patterns" : s[0].toUpperCase() + s.slice(1)}{#if s !== "all"} <span class="n">{s === "soon" ? soonCount : statusCounts[s] ?? 0}</span>{/if}
 				</button>
 			{/each}
 		</div>
@@ -217,14 +268,14 @@
 			{:else if rows.length === 0}
 				<li class="empty">No subjects match.</li>
 			{/if}
-			{#each rows as { v, total, live } (v.id)}
+			{#each rows as { v, total, live, soon, want } (v.id)}
 				<li>
 					<button class="subj" class:subj--on={selectedId === v.id} onclick={() => (selectedId = v.id)}>
 						<span class="subj__icon" aria-hidden="true">
 							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d={projectTypeMeta(v.projectType).icon}/></svg>
 						</span>
 						<span class="subj__name">{subjectName(v)}</span>
-						<span class="subj__count" title="{live} live of {total}">{live}/{total}</span>
+						{#if soon}<span class="subj__soon" title="{want} {want === 1 ? "person wants" : "people want"} this — no live pattern yet">{want} want</span>{:else}<span class="subj__count" title="{live} live of {total}">{live}/{total}</span>{/if}
 						<span class="dot dot--{v.status}" title={v.status}></span>
 					</button>
 				</li>
@@ -259,7 +310,7 @@
 			</header>
 
 			{#if invisible}
-				<p class="callout">This subject is published but has no live patterns, so customers don't see it in the library yet.</p>
+				<p class="callout callout--info">No live patterns yet, so customers see this as <b>Coming soon</b>{subjectWant ? ` — ${subjectWant} ${subjectWant === 1 ? "person wants" : "people want"} it` : ""}. It goes live by itself when its first pattern is published.</p>
 			{:else if subject.status !== "published" && liveCount > 0}
 				<p class="callout">{liveCount} pattern{liveCount === 1 ? " is" : "s are"} live but the subject is “{subject.status}”, so customers can't see {liveCount === 1 ? "it" : "them"}. Publish the subject from Edit details.</p>
 			{/if}
@@ -334,6 +385,53 @@
 		{/if}
 	</section>
 </div>
+
+<svelte:window onkeydown={(e) => { if (e.key === "Escape" && bulkDlg) bulkDlg = false; }} />
+<!-- ─── Add vehicles (bulk) ─── -->
+{#if bulkDlg}
+	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+	<div class="overlay" onclick={() => (bulkDlg = false)}>
+		<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+		<div class="dlg" role="dialog" aria-modal="true" aria-label="Add vehicles" tabindex="-1" onclick={(e) => e.stopPropagation()}>
+			<h2 class="dlg__title">Add vehicles</h2>
+			<div class="dlg__body">
+				<p class="muted bulk__intro">List a make and its models ahead of the patterns. Published vehicles show to customers as <b>Coming soon</b> and collect votes, then go live by themselves when you add a pattern.</p>
+				<label class="fld"><span>Make</span><input class="in" bind:value={bulk.make} list="bulk-makes" autocomplete="off" use:focusOnMount placeholder="e.g. Toyota" /></label>
+				<datalist id="bulk-makes">{#each bulkMakes as m}<option value={m}></option>{/each}</datalist>
+				<label class="fld"><span>Models <em>comma or one per line</em></span><textarea class="in" rows="3" bind:value={bulk.models} placeholder="GR86, GR Supra, Tacoma"></textarea></label>
+				<div class="grid2">
+					<label class="fld"><span>First year</span><input class="in" type="number" bind:value={bulk.yearFrom} /></label>
+					<label class="fld"><span>Last year</span><input class="in" type="number" bind:value={bulk.yearTo} /></label>
+				</div>
+				<label class="fld"><span>Trims <em>optional — blank adds the base subject only</em></span><input class="in" bind:value={bulk.trims} placeholder="SR5, TRD Pro" /></label>
+				<div class="grid2">
+					<label class="fld"><span>Body style</span>
+						<select class="in" bind:value={bulk.bodyStyle}>{#each ["sedan", "coupe", "suv", "truck", "convertible", "wagon", "hatchback"] as b}<option value={b}>{b}</option>{/each}</select>
+					</label>
+					<label class="fld"><span>Status</span>
+						<select class="in" bind:value={bulk.status}><option value="published">Published — Coming soon</option><option value="draft">Draft — hidden</option></select>
+					</label>
+				</div>
+				<label class="fld"><span>Tags <em>comma-separated</em></span><input class="in" bind:value={bulkTags} /></label>
+				<label class="check"><input type="checkbox" bind:checked={bulk.popular} /> <span>Mark as popular</span></label>
+				<p class="bulk__sum" class:warn={!!bulkPlan?.error}>
+					{#if bulkPlan?.error}{bulk.make.trim() || bulk.models.trim() ? bulkPlan.error : ""}
+					{:else if bulkPlan}Creates <b>{bulkPlan.create.length}</b> subject{bulkPlan.create.length === 1 ? "" : "s"}{#if bulkPlan.skipped} · skips {bulkPlan.skipped} already in the catalog{/if}.{/if}
+				</p>
+				{#if bulkPlan && !bulkPlan.error && bulkPlan.create.length}
+					<ul class="bulk__preview" aria-label="Preview">
+						{#each bulkPlan.create.slice(0, 6) as v (v.id)}<li>{subjectName(v)}</li>{/each}
+						{#if bulkPlan.create.length > 6}<li class="more">+ {bulkPlan.create.length - 6} more</li>{/if}
+					</ul>
+				{/if}
+			</div>
+			<div class="dlg__foot">
+				<button class="btn" onclick={() => (bulkDlg = false)}>Cancel</button>
+				<button class="btn btn--primary" disabled={busy || !bulkPlan || !!bulkPlan.error || !bulkPlan.create.length} onclick={submitBulk}>{bulkPlan?.create.length ? `Add ${bulkPlan.create.length} ${bulkPlan.create.length === 1 ? "vehicle" : "vehicles"}` : "Add vehicles"}</button>
+			</div>
+		</div>
+	</div>
+{/if}
 
 <!-- ─── Subject dialog ─── -->
 {#if subjectDlg}
@@ -460,6 +558,13 @@
 	.subj--on { background: var(--bg-surface-2); border-color: var(--color-brand-dim); }
 	.subj__icon { color: var(--text-tertiary); display: grid; place-items: center; }
 	.subj__name { flex: 1; min-width: 0; font-size: 0.8125rem; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.subj__soon { font-size: 0.6875rem; font-weight: 600; color: var(--color-warning); white-space: nowrap; }
+	.bulk__intro { margin: 0; font-size: 0.8125rem; }
+	.bulk__preview { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+	.bulk__preview li { padding: 2px 9px; font-size: 0.75rem; color: var(--text-secondary); background: var(--bg-surface-2); border: 1px solid var(--border-default); border-radius: 99px; }
+	.bulk__preview .more { color: var(--text-tertiary); border-style: dashed; }
+	.bulk__sum { margin: 0; font-size: 0.8125rem; color: var(--text-secondary); min-height: 1.2em; }
+	.callout--info { color: var(--text-secondary); background: var(--bg-surface-2); border-color: var(--border-default); }
 	.subj__count { font-family: var(--font-mono); font-size: 0.6875rem; color: var(--text-tertiary); }
 	.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-tertiary); flex-shrink: 0; }
 	.dot--published { background: var(--color-success); }

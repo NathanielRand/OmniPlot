@@ -188,6 +188,21 @@ export function communityRows(
 }
 
 /**
+ * Coming soon: published vehicle subjects with no published pattern yet. An admin
+ * adds these ahead of the patterns (to advertise a make or model); they flip to
+ * live by themselves the moment the first pattern is published. Rows carry no
+ * patterns, so nothing that counts patterns counts them.
+ */
+export function comingSoonRows(
+	vehicles: VehicleEntry[],
+	getPatterns: (vehicleId: string) => Pattern[],
+): LibRow[] {
+	return vehicles
+		.filter((v) => v.status === "published" && (v.projectType ?? "vehicle") === "vehicle" && v.make && v.model && getPatterns(v.id).length === 0)
+		.map((v) => ({ v, pats: [] }));
+}
+
+/**
  * Rows for a source filter. Approving a submission COPIES it into the public
  * catalog and keeps the owner's record (no link between the two), so "All"
  * leaves the owner's already-published uploads out — the community copy is
