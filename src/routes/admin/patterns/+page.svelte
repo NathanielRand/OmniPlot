@@ -4,17 +4,16 @@
 	import { onMount } from "svelte";
 	import { page } from "$app/state";
 	import { goto } from "$app/navigation";
-	import Button from "$lib/components/ui/Button.svelte";
-	import VehicleMediaManager from "$lib/components/admin/VehicleMediaManager.svelte";
 	import ReviewQueue from "$lib/components/admin/patterns/ReviewQueue.svelte";
 	import CatalogManager from "$lib/components/admin/patterns/CatalogManager.svelte";
+	import MediaCoverage from "$lib/components/admin/patterns/MediaCoverage.svelte";
 	import RequestsBoard from "$lib/components/admin/patterns/RequestsBoard.svelte";
 	import { adminPatterns as ap } from "$lib/admin/adminPatterns.svelte";
 	import { patternStore } from "$lib/stores/patternStore.svelte";
 	import type { SubjectForm } from "$lib/admin/patternForms";
 
-	type Tab = "review" | "catalog" | "requests";
-	const TABS: Tab[] = ["review", "catalog", "requests"];
+	type Tab = "review" | "catalog" | "media" | "requests";
+	const TABS: Tab[] = ["review", "catalog", "media", "requests"];
 	const tab = $derived<Tab>(TABS.find((t) => t === page.url.searchParams.get("tab")) ?? "review");
 
 	function setTab(t: Tab) {
@@ -35,7 +34,6 @@
 		setTab("catalog");
 	}
 
-	let showMedia = $state(false);
 	onMount(() => { ap.loadAll(); });
 
 	// ─── Numbers up top ──────────────────────────
@@ -62,16 +60,11 @@
 
 <svelte:head><title>Patterns — Admin — OmniPlot</title></svelte:head>
 
-{#if showMedia}<VehicleMediaManager onclose={() => (showMedia = false)} />{/if}
-
 <div class="ap">
 	<div class="head">
 		<div>
 			<h1 class="title">Patterns</h1>
-			<p class="sub">Review what the community submits, manage the public catalog, and answer pattern requests.</p>
-		</div>
-		<div class="head__actions">
-			<Button variant="secondary" size="sm" onclick={() => (showMedia = true)}>Vehicle images</Button>
+			<p class="sub">Review what the community submits, manage the public catalog and its images, and answer pattern requests.</p>
 		</div>
 	</div>
 
@@ -120,6 +113,9 @@
 			<button class="tab" class:tab--on={tab === "catalog"} role="tab" aria-selected={tab === "catalog"} onclick={() => setTab("catalog")}>
 				Catalog <span class="badge">{totals.subjects}</span>
 			</button>
+			<button class="tab" class:tab--on={tab === "media"} role="tab" aria-selected={tab === "media"} onclick={() => setTab("media")}>
+				Images
+			</button>
 			<button class="tab" class:tab--on={tab === "requests"} role="tab" aria-selected={tab === "requests"} onclick={() => setTab("requests")}>
 				Requests {#if openRequests}<span class="badge">{openRequests}</span>{/if}
 			</button>
@@ -145,6 +141,8 @@
 			<ReviewQueue onOpenCatalog={openCatalog} />
 		{:else if tab === "catalog"}
 			<CatalogManager {focus} onFocusUsed={() => (focus = null)} {prefill} onPrefillUsed={() => (prefill = null)} />
+		{:else if tab === "media"}
+			<MediaCoverage onOpen={(id) => openCatalog(id)} />
 		{:else}
 			<RequestsBoard onOpenSubject={(id) => openCatalog(id)} onCreateSubject={createSubject} />
 		{/if}
@@ -156,7 +154,6 @@
 	.head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 	.title { font-size: 1.375rem; margin: 0 0 3px; }
 	.sub { margin: 0; font-size: 0.875rem; color: var(--text-secondary); }
-	.head__actions { display: flex; gap: 8px; }
 
 	.banner { padding: 12px 16px; font-size: 0.8125rem; line-height: 1.5; color: var(--text-secondary); background: color-mix(in srgb, var(--color-warning) 9%, transparent); border: 1px solid color-mix(in srgb, var(--color-warning) 30%, transparent); border-radius: var(--radius-md); }
 	.banner strong { color: var(--text-primary); }

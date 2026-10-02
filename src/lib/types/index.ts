@@ -559,12 +559,21 @@ export interface VehicleEntry {
  */
 export interface VehicleMedia {
 	id: string;
-	kind: "make" | "model" | "trim";
+	/** "subject" = a residential / commercial / custom project (one image, keyed by type + label). */
+	kind: "make" | "model" | "trim" | "subject";
 	make: string;
 	model?: string;
 	trim?: string;
+	projectType?: ProjectType;
+	/** Display name for "subject" records. */
+	label?: string;
 	logoUrl?: string;
 	imageUrl?: string;
+	/** Storage object path + content hash per slot — used to clean up on replace and to spot duplicate uploads. */
+	logoPath?: string;
+	imagePath?: string;
+	logoHash?: string;
+	imageHash?: string;
 }
 
 export interface PatternRequest {

@@ -68,6 +68,28 @@ export function mediaId(make: string, model?: string, trim?: string): string {
 		.join("__");
 }
 
+/** Media doc id for a residential / commercial / custom subject. */
+export function subjectMediaId(projectType: string, label: string): string {
+	return `${projectType}__${slug(label)}`;
+}
+
+/** What a media slot belongs to — the single description both client and server derive the doc id from. */
+export interface MediaTarget {
+	kind: "make" | "model" | "trim" | "subject";
+	make?: string;
+	model?: string;
+	trim?: string;
+	projectType?: string;
+	label?: string;
+}
+
+export function targetId(t: MediaTarget): string {
+	if (t.kind === "subject") return subjectMediaId(t.projectType ?? "custom", t.label ?? "");
+	if (t.kind === "make") return mediaId(t.make ?? "");
+	if (t.kind === "model") return mediaId(t.make ?? "", t.model);
+	return mediaId(t.make ?? "", t.model, t.trim);
+}
+
 export function mediaFor(
 	media: Record<string, VehicleMedia>,
 	make: string,

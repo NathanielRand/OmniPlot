@@ -1,6 +1,7 @@
 import { cert, getApp, getApps, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
+import { getStorage } from 'firebase-admin/storage';
 import { FIREBASE_SERVICE_ACCOUNT_JSON } from '$env/static/private';
 
 // Lazily initialize on first access so the module doesn't crash during SSR
@@ -13,6 +14,10 @@ function getAdminApp() {
 
 export function getAdminDb() {
 	return getFirestore(getAdminApp());
+}
+
+export function getAdminBucket() {
+	return getStorage(getAdminApp()).bucket(import.meta.env.VITE_FIREBASE_STORAGE_BUCKET);
 }
 
 export function getAdminAuth() {

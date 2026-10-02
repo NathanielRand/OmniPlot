@@ -474,27 +474,17 @@ export function subscribeVehicleMedia(
 						trim: x.trim || undefined,
 						logoUrl: x.logoUrl || undefined,
 						imageUrl: x.imageUrl || undefined,
+						projectType: x.projectType || undefined,
+						label: x.label || undefined,
+						logoPath: x.logoPath || undefined,
+						imagePath: x.imagePath || undefined,
+						logoHash: x.logoHash || undefined,
+						imageHash: x.imageHash || undefined,
 					} satisfies VehicleMedia;
 				}),
 			),
 		onError,
 	);
-}
-
-export async function setVehicleMediaDoc(m: VehicleMedia): Promise<void> {
-	await setDoc(doc(db, Collections.VEHICLE_MEDIA, m.id), {
-		kind: m.kind,
-		make: m.make,
-		model: m.model ?? null,
-		trim: m.trim ?? null,
-		logoUrl: m.logoUrl ?? null,
-		imageUrl: m.imageUrl ?? null,
-		updatedAt: serverTimestamp(),
-	});
-}
-
-export async function deleteVehicleMediaDoc(id: string): Promise<void> {
-	await deleteDoc(doc(db, Collections.VEHICLE_MEDIA, id));
 }
 
 // ─── VehicleEntry CRUD ────────────────────────

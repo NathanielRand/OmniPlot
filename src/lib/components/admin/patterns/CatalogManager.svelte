@@ -3,6 +3,7 @@
 	// left; its patterns (grouped by category, with publish toggles and the
 	// community submission each came from) are on the right.
 	import Badge from "$lib/components/ui/Badge.svelte";
+	import SubjectMedia from "./SubjectMedia.svelte";
 	import PatternPreview from "$lib/components/ui/PatternPreview.svelte";
 	import { adminPatterns as ap } from "$lib/admin/adminPatterns.svelte";
 	import { patternStore, PATTERN_CATEGORIES, zonesFor, categoryShortLabel } from "$lib/stores/patternStore.svelte";
@@ -276,6 +277,8 @@
 					<div><span class="meta__k">Tags</span> {#each subject.tags as t (t)}<span class="tag">{t}</span>{/each}</div>
 				{/if}
 			</div>
+
+			<SubjectMedia {subject} />
 
 			<div class="pbar">
 				<div class="tabs" role="tablist" aria-label="Category">
