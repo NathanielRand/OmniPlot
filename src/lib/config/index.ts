@@ -982,9 +982,24 @@ export const FAQ_ITEMS = [
 // ─── Changelog ────────────────────────────────
 // Newest first. `LATEST_VERSION` drives the sidebar "what's new" badge —
 // bump it whenever a release entry is added below.
-export const LATEST_VERSION = "1.16.0";
+export const LATEST_VERSION = "1.17.0";
 
 export const CHANGELOG = [
+	{
+		version: "1.17.0",
+		date: "2026-10-02",
+		label: "Bigger make logos & a cleaner library filter sidebar",
+		changes: [
+			{
+				type: "improvement",
+				text: "Make cards in the library now give the logo more room, so brands are easier to spot at a glance.",
+			},
+			{
+				type: "improvement",
+				text: "The library filters are tidier: years sit in a compact scrolling grid, Available only is a simple toggle, and your pattern statuses are a clear list with counts.",
+			},
+		],
+	},
 	{
 		version: "1.16.0",
 		date: "2026-10-02",
