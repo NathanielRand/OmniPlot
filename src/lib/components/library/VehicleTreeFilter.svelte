@@ -64,7 +64,7 @@
 									<span class="vt__count">{o.count}</span>
 								</button>
 
-								{#if openModel && gens.length}
+								{#if openModel && gens.length && o.trims.length <= 1}
 										<ul class="vt__list vt__list--nested" aria-label="Generations">
 											{#each gens as g (g.key)}
 												<li>
@@ -95,6 +95,18 @@
 													<span class="vt__label">{t.label}</span>
 													<span class="vt__count">{t.count}</span>
 												</button>
+												{#if isTrim(t.key) && gens.length}
+													<ul class="vt__list vt__list--nested" aria-label="Generations">
+														{#each gens as g (g.key)}
+															<li>
+																<button class="vt__row vt__row--sm vt__row--gen" class:vt__row--on={activeYear === g.key} aria-pressed={activeYear === g.key} onclick={() => onyear?.(g.key)}>
+																	<span class="vt__label">{g.label}</span>
+																	<span class="vt__span">{g.from === g.to ? g.from : `${g.from}–${g.to}`}</span>
+																</button>
+															</li>
+														{/each}
+													</ul>
+												{/if}
 											</li>
 										{/each}
 									</ul>

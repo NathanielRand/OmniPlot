@@ -590,15 +590,16 @@ export async function updateVehicleDoc(
 }
 
 /**
- * Admin: how a model's years are grouped. Lives on the model's media doc (one doc
- * per make/model, already read by the library and admin). Merged, so it never
- * touches the model's image; an empty list clears the grouping.
+ * Admin: how one trim's years are grouped (the base, no-trim entries use the model's
+ * own record). Lives on that trim's media doc, which the library and admin already
+ * read. Merged, so it never touches the image; an empty list clears the grouping.
  */
-export async function setModelGenerations(make: string, model: string, generations: Generation[]): Promise<void> {
-	const id = targetId({ kind: "model", make, model });
+export async function setGenerations(make: string, model: string, trim: string | undefined, generations: Generation[]): Promise<void> {
+	const t = trim?.trim() || undefined;
+	const id = targetId({ kind: t ? "trim" : "model", make, model, trim: t });
 	await setDoc(
 		doc(db, Collections.VEHICLE_MEDIA, id),
-		{ kind: "model", make, model, generations: cleanGenerations(generations), updatedAt: serverTimestamp() },
+		{ kind: t ? "trim" : "model", make, model, trim: t ?? null, generations: cleanGenerations(generations), updatedAt: serverTimestamp() },
 		{ merge: true },
 	);
 }

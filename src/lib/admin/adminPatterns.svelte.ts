@@ -13,7 +13,7 @@
 import { patternStore, MIRROR_PAIRS, zoneLabel as storeZoneLabel } from "$lib/stores/patternStore.svelte";
 import {
 	getReviewQueue, getAdjustmentRequests, resolveAdjustmentRequest, adminUpdateUserPattern, deleteUserPattern,
-	commitCatalogChange, setVehicleDoc, updateVehicleDoc, setPatternDoc, updatePatternDoc, setDemandStatus, setModelGenerations,
+	commitCatalogChange, setVehicleDoc, updateVehicleDoc, setPatternDoc, updatePatternDoc, setDemandStatus, setGenerations,
 } from "$lib/firebase/firestore";
 import { toastStore, confirmStore } from "$lib/stores";
 import { auth } from "$lib/firebase/client";
@@ -488,14 +488,14 @@ function createAdminPatterns() {
 		return created;
 	}
 
-	/** Group a model's years into named generations (an empty list ungroups them). */
-	async function saveGenerations(make: string, model: string, list: Generation[]): Promise<boolean> {
+	/** Group one trim's years into named generations (an empty list ungroups them). */
+	async function saveGenerations(make: string, model: string, trim: string | undefined, list: Generation[]): Promise<boolean> {
 		const err = generationError(list);
 		if (err) { toastStore.error("Can't save generations", err); return false; }
 		const gens = cleanGenerations(list);
 		return run("save-generations", "Couldn't save generations", async () => {
-			await setModelGenerations(make, model, gens);
-			toastStore.success(gens.length ? "Generations saved" : "Generations cleared", `${make} ${model}`);
+			await setGenerations(make, model, trim, gens);
+			toastStore.success(gens.length ? "Generations saved" : "Generations cleared", [make, model, trim].filter(Boolean).join(" "));
 		});
 	}
 

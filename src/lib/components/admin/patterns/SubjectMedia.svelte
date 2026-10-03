@@ -4,7 +4,7 @@
 	// project, its one image). Sits beside the subject's patterns so a subject,
 	// its patterns and its pictures are managed as one unit.
 	import { patternStore } from "$lib/stores/patternStore.svelte";
-	import { makeKey, modelKey, trimKey, targetId, generationOf, genSpan, type MediaTarget } from "$lib/utils/vehicleCatalog";
+	import { makeKey, modelKey, trimKey, targetId, generationOf, generationsFor, genSpan, type MediaTarget } from "$lib/utils/vehicleCatalog";
 	import { subjectName } from "$lib/admin/patternForms";
 	import type { VehicleEntry } from "$lib/types";
 	import MediaSlot from "./MediaSlot.svelte";
@@ -23,9 +23,10 @@
 	const modelTarget = $derived<MediaTarget>({ kind: "model", make, model });
 	const trimTarget = $derived<MediaTarget>({ kind: "trim", make, model, trim });
 	// A year inside an admin-set generation can also carry that generation's image.
-	const gen = $derived(isVehicle && make && model ? generationOf(subject.year, patternStore.media[targetId(modelTarget)]?.generations ?? []) : undefined);
-	const genTarget = $derived<MediaTarget>({ kind: "generation", make, model, generation: gen?.label ?? "" });
-	const yearTarget = $derived<MediaTarget>({ kind: "year", make, model, year: subject.year });
+	// Generations are per trim: this entry's trim (or the base entries') decides which.
+	const gen = $derived(isVehicle && make && model ? generationOf(subject.year, generationsFor(patternStore.media, make, model, trim)) : undefined);
+	const genTarget = $derived<MediaTarget>({ kind: "generation", make, model, trim: trim || undefined, generation: gen?.label ?? "" });
+	const yearTarget = $derived<MediaTarget>({ kind: "year", make, model, trim: trim || undefined, year: subject.year });
 
 	// How many catalog entries (years / trims) share each image.
 	const sameMake = $derived(patternStore.vehicles.filter((v) => makeKey(v.make) === makeKey(make)).length);
@@ -39,8 +40,8 @@
 				...(make ? [{ t: makeTarget, f: "imageUrl" as const, label: `${make} cover`, hint: "Banner / fallback behind the make's models" }] : []),
 				...(make && model ? [{ t: modelTarget, f: "imageUrl" as const, label: `${model} image`, hint: `Shown on the ${model} tile · shared by ${sameModel} entries` }] : []),
 				...(make && model && trim ? [{ t: trimTarget, f: "imageUrl" as const, label: `${trim} image`, hint: `Only the ${trim} trim · shared by ${sameTrim} entries` }] : []),
-				...(gen ? [{ t: genTarget, f: "imageUrl" as const, label: `${gen.label} image`, hint: `Every ${model} ${genSpan(gen)} — used instead of the ${model} image`, optional: true }] : []),
-				...(make && model && subject.year ? [{ t: yearTarget, f: "imageUrl" as const, label: `${subject.year} image`, hint: `Optional · just the ${subject.year} ${model}. Without one it uses ${gen ? `the ${gen.label} image` : `the ${model} image`}`, optional: true }] : []),
+				...(gen ? [{ t: genTarget, f: "imageUrl" as const, label: `${gen.label} image`, hint: `Every ${[model, trim].filter(Boolean).join(" ")} ${genSpan(gen)} — used instead of the ${trim ? "trim" : model} image`, optional: true }] : []),
+				...(make && model && subject.year ? [{ t: yearTarget, f: "imageUrl" as const, label: `${subject.year} image`, hint: `Optional · just the ${subject.year} ${[model, trim].filter(Boolean).join(" ")}. Without one it uses ${gen ? `the ${gen.label} image` : `the ${trim ? "trim" : model} image`}`, optional: true }] : []),
 			] : [])
 			: projectLabel
 				? [{ t: projectTarget, f: "imageUrl" as const, label: `${projectLabel} image`, hint: "Shown on this project's card in the library" }]

@@ -18,7 +18,7 @@
 	import type { Generation, Pattern, PatternCategory, ProjectType, VehicleEntry } from "$lib/types";
 	import type { PatternStatus } from "$lib/stores/patternStore.svelte";
 	import { demandId, demandModelKey, votesForYear } from "$lib/utils/demand";
-	import { makeKey, mediaFor, groupByGeneration, generationOf, generationKey, genSpan, generationError } from "$lib/utils/vehicleCatalog";
+	import { makeKey, trimKey, generationsFor, groupByGeneration, generationOf, generationKey, genSpan, generationError } from "$lib/utils/vehicleCatalog";
 	import { splitList, type VehiclePlanInput } from "$lib/admin/vehiclePlan";
 
 	interface Props {
@@ -82,9 +82,10 @@
 			.sort((a, b) => (statusFilter === "soon" ? b.want - a.want : 0) || subjectName(a.v).localeCompare(subjectName(b.v), undefined, { numeric: true, sensitivity: "base" })),
 	);
 
-	// Vehicles fold into make → model → generation → years so the list stays short
-	// (years in no generation stay directly under the model); every other subject
-	// type stays a flat row beneath them.
+	// Vehicles fold into make → model → trim → generation → years so the list stays
+	// short. Each trim has its own generations; a model with only the base (no trim)
+	// entries skips the trim level. Years in no generation stay directly under their
+	// trim. Every other subject type stays a flat row beneath them.
 	type Row = (typeof rows)[number];
 	const grouped = $derived.by(() => {
 		const makes = new Map<string, { key: string; name: string; models: Map<string, { key: string; name: string; rows: Row[] }> }>();
@@ -113,18 +114,30 @@
 				const yrs = rs.map((r) => r.v.year).filter((y): y is number => !!y);
 				const lo = Math.min(...yrs), hi = Math.max(...yrs);
 				const range = yrs.length ? (lo === hi ? `${lo}` : `${lo}–${hi}`) : "";
-				// Generations hang off the model's media doc, found by the model's name.
 				const make = rs[0].v.make ?? m.name, model = rs[0].v.model ?? md.name;
-				const { groups, loose } = groupByGeneration(rs, mediaFor(patternStore.media, make, model)?.generations ?? []);
-				return {
-					...md, rows: rs, range, make, model, loose, ...sum(rs),
-					groups: groups.map((g) => ({ key: `${md.key}|g:${generationKey(g.gen)}`, gen: g.gen, rows: g.rows, ...sum(g.rows) })),
-				};
+				const byTrim = new Map<string, { tk: string; trim?: string; rows: Row[] }>();
+				for (const r of rs) {
+					const tk = trimKey(r.v.trim);
+					(byTrim.get(tk) ?? byTrim.set(tk, { tk, trim: r.v.trim?.trim() || undefined, rows: [] }).get(tk)!).rows.push(r);
+				}
+				const trims = [...byTrim.values()]
+					.sort((x, y) => (x.tk === "" ? -1 : y.tk === "" ? 1 : (x.trim ?? "").localeCompare(y.trim ?? "", undefined, { numeric: true, sensitivity: "base" })))
+					.map((t) => {
+						const key = `${md.key}|t:${t.tk}`;
+						const { groups, loose } = groupByGeneration(t.rows, generationsFor(patternStore.media, make, model, t.trim));
+						return {
+							key, name: t.trim ?? "No trim", trim: t.trim, rows: t.rows, loose, ...sum(t.rows),
+							groups: groups.map((g) => ({ key: `${key}|g:${generationKey(g.gen)}`, gen: g.gen, rows: g.rows, ...sum(g.rows) })),
+						};
+					});
+				return { ...md, rows: rs, range, make, model, trims, multi: trims.length > 1, ...sum(rs) };
 			}).sort(byName);
 			return { ...m, models, ...sum(models.flatMap((md) => md.rows)) };
 		}).sort(byName);
 		return { makes: list, other };
 	});
+
+	type TrimGroup = (typeof grouped)["makes"][number]["models"][number]["trims"][number];
 
 	// Open/closed state for the tree. A search forces every branch open so
 	// nothing hides behind a collapsed row.
@@ -135,8 +148,9 @@
 		if (!v || typeOf(v) !== "vehicle" || !v.make || !v.model) return [] as string[];
 		const mk = makeKey(v.make);
 		const dk = `${mk}|${demandModelKey(v.make, v.model)}`;
-		const g = generationOf(v.year, mediaFor(patternStore.media, v.make, v.model)?.generations ?? []);
-		return g ? [mk, dk, `${dk}|g:${generationKey(g)}`] : [mk, dk];
+		const tk = `${dk}|t:${trimKey(v.trim)}`;
+		const g = generationOf(v.year, generationsFor(patternStore.media, v.make, v.model, v.trim));
+		return g ? [mk, dk, tk, `${tk}|g:${generationKey(g)}`] : [mk, dk, tk];
 	});
 	const isOpen = (k: string) => searching || openKeys.has(k);
 	function toggle(k: string) {
@@ -200,7 +214,7 @@
 	// The admin-set generation this model year falls in, if any.
 	const subjectGen = $derived(
 		subject && typeOf(subject) === "vehicle" && subject.make && subject.model
-			? generationOf(subject.year, mediaFor(patternStore.media, subject.make, subject.model)?.generations ?? [])
+			? generationOf(subject.year, generationsFor(patternStore.media, subject.make, subject.model, subject.trim))
 			: undefined,
 	);
 
@@ -276,19 +290,19 @@
 	}
 
 	// ─── Generations (a model's years, grouped) ──
-	let genDlg = $state<{ make: string; model: string; list: Generation[] } | null>(null);
+	let genDlg = $state<{ make: string; model: string; trim?: string; list: Generation[] } | null>(null);
 	const genProblem = $derived(genDlg ? generationError(genDlg.list.filter((g) => g.label.trim() || g.from || g.to)) : null);
-	function openGenerations(make: string, model: string) {
-		const have = mediaFor(patternStore.media, make, model)?.generations ?? [];
+	function openGenerations(make: string, model: string, trim?: string) {
+		const have = generationsFor(patternStore.media, make, model, trim);
 		// Oldest first reads like a model's history; a fresh model starts with one blank row.
 		const list = have.map((g) => ({ ...g })).sort((a, b) => a.from - b.from);
-		genDlg = { make, model, list: list.length ? list : [{ label: "", from: 0, to: 0 }] };
+		genDlg = { make, model, trim: trim || undefined, list: list.length ? list : [{ label: "", from: 0, to: 0 }] };
 	}
 	async function submitGenerations() {
 		if (!genDlg || genProblem) return;
 		// Untouched blank rows aren't generations.
 		const list = genDlg.list.filter((g) => g.label.trim() || g.from || g.to);
-		if (await ap.saveGenerations(genDlg.make, genDlg.model, list)) genDlg = null;
+		if (await ap.saveGenerations(genDlg.make, genDlg.model, genDlg.trim, list)) genDlg = null;
 	}
 
 	// ─── Bulk add vehicles ───────────────────────
@@ -410,24 +424,25 @@
 											{#if md.soon}<span class="subj__soon" title="{md.soon} without a live pattern yet — up to {md.want} want it">{md.soon} need</span>{/if}
 											<span class="subj__count" title="{md.live} live of {md.total} patterns">{md.live}/{md.total}</span>
 										</button>
-										<button class="icon icon--sm" disabled={busy} onclick={() => openGenerations(md.make, md.model)} aria-label="Group {md.name} years into generations" title="Group years into generations">
-											<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M3 12h12M3 18h7"/></svg>
-										</button>
+										{#if !md.multi}{@render genButton(md.make, md.model, md.trims[0]?.trim, md.name)}{/if}
 									</div>
 									{#if isOpen(md.key)}
-										{#each md.groups as g (g.key)}
-											<button class="row row--gen" aria-expanded={isOpen(g.key)} onclick={() => toggle(g.key)}>
-												<svg class="caret" class:caret--open={isOpen(g.key)} width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
-												<span class="row__name">{g.gen.label}</span>
-												<span class="row__sub mono">{genSpan(g.gen)}</span>
-												{#if g.soon}<span class="subj__soon" title="{g.soon} without a live pattern yet">{g.soon} need</span>{/if}
-												<span class="subj__count" title="{g.live} live of {g.total} patterns">{g.live}/{g.total}</span>
-											</button>
-											{#if isOpen(g.key)}
-												{@render yearPills(g.rows, 36)}
-											{/if}
-										{/each}
-										{#if md.loose.length}{@render yearPills(md.loose, 24)}{/if}
+										{#if md.multi}
+											{#each md.trims as t (t.key)}
+												<div class="mrow mrow--trim">
+													<button class="row row--trim" aria-expanded={isOpen(t.key)} onclick={() => toggle(t.key)}>
+														<svg class="caret" class:caret--open={isOpen(t.key)} width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+														<span class="row__name">{t.name}</span>
+														{#if t.soon}<span class="subj__soon" title="{t.soon} without a live pattern yet">{t.soon} need</span>{/if}
+														<span class="subj__count" title="{t.live} live of {t.total} patterns">{t.live}/{t.total}</span>
+													</button>
+													{@render genButton(md.make, md.model, t.trim, t.name)}
+												</div>
+												{#if isOpen(t.key)}{@render trimBody(t, 14)}{/if}
+											{/each}
+										{:else if md.trims[0]}
+											{@render trimBody(md.trims[0], 0)}
+										{/if}
 									{/if}
 								</li>
 							{/each}
@@ -487,7 +502,7 @@
 					<div>
 						<span class="meta__k">Generation</span>
 						<span class="tag tag--gen">{subjectGen.label} <span class="mono">{genSpan(subjectGen)}</span></span>
-						<button class="link" disabled={busy} onclick={() => openGenerations(subject.make ?? "", subject.model ?? "")}>Edit</button>
+						<button class="link" disabled={busy} onclick={() => openGenerations(subject.make ?? "", subject.model ?? "", subject.trim)}>Edit</button>
 					</div>
 				{/if}
 				<div>
@@ -570,6 +585,29 @@
 	</div>
 {/snippet}
 
+{#snippet genButton(make: string, model: string, trim: string | undefined, name: string)}
+	<button class="icon icon--sm" disabled={busy} onclick={() => openGenerations(make, model, trim)} aria-label="Group {name} years into generations" title="Group years into generations">
+		<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M3 12h12M3 18h7"/></svg>
+	</button>
+{/snippet}
+
+<!-- One trim's generations (each opens to its years), then the years in none. -->
+{#snippet trimBody(t: TrimGroup, indent: number)}
+	{#each t.groups as g (g.key)}
+		<button class="row row--gen" style="margin-left: {indent}px" aria-expanded={isOpen(g.key)} onclick={() => toggle(g.key)}>
+			<svg class="caret" class:caret--open={isOpen(g.key)} width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+			<span class="row__name">{g.gen.label}</span>
+			<span class="row__sub mono">{genSpan(g.gen)}</span>
+			{#if g.soon}<span class="subj__soon" title="{g.soon} without a live pattern yet">{g.soon} need</span>{/if}
+			<span class="subj__count" title="{g.live} live of {g.total} patterns">{g.live}/{g.total}</span>
+		</button>
+		{#if isOpen(g.key)}
+			{@render yearPills(g.rows, 36 + indent)}
+		{/if}
+	{/each}
+	{#if t.loose.length}{@render yearPills(t.loose, 24 + indent)}{/if}
+{/snippet}
+
 <svelte:window onkeydown={(e) => { if (e.key === "Escape") { if (genDlg) genDlg = null; else if (bulkDlg) bulkDlg = false; } }} />
 <!-- ─── Add vehicles (bulk) ─── -->
 {#if bulkDlg}
@@ -618,9 +656,9 @@
 	<div class="overlay" onclick={() => (genDlg = null)}>
 		<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 		<div class="dlg" role="dialog" aria-modal="true" aria-label="Generations" tabindex="-1" onclick={(e) => e.stopPropagation()}>
-			<h2 class="dlg__title">Generations <span class="muted">· {genDlg.make} {genDlg.model}</span></h2>
+			<h2 class="dlg__title">Generations <span class="muted">· {[genDlg.make, genDlg.model, genDlg.trim].filter(Boolean).join(" ")}</span></h2>
 			<div class="dlg__body">
-				<p class="muted bulk__intro">Group this model's years by generation. The catalog and the customer library show each generation instead of its individual years, including years added later. A year in no generation stays on its own.</p>
+				<p class="muted bulk__intro">Group {genDlg.trim ? `the ${genDlg.trim} trim's` : "this model's base (no trim)"} years by generation. Each trim has its own set. The catalog and the customer library show each generation instead of its individual years, including years added later. A year in no generation stays on its own.</p>
 				<div class="gens">
 					{#each genDlg.list as g, i (i)}
 						<div class="gen">
@@ -789,6 +827,8 @@
 	.mrow { display: flex; align-items: center; gap: 4px; }
 	.mrow .row { flex: 1; min-width: 0; width: auto; }
 	.row--gen { padding-left: 22px; }
+	.mrow--trim { margin-left: 10px; }
+	.row--trim .row__name { font-weight: 500; }
 	.row--gen .row__name { font-size: 0.9375rem; font-weight: 600; }
 	.row--gen .row__sub { margin-right: 6px; font-size: 0.8125rem; }
 	.icon--sm { width: 22px; height: 22px; flex-shrink: 0; }

@@ -90,8 +90,9 @@ export interface MediaTarget {
 export function targetId(t: MediaTarget): string {
 	if (t.kind === "subject") return subjectMediaId(t.projectType ?? "custom", t.label ?? "");
 	// "~" never appears in a slug, so these can't collide with a trim's id.
-	if (t.kind === "generation") return `${mediaId(t.make ?? "", t.model)}__~g-${slug(t.generation)}`;
-	if (t.kind === "year") return `${mediaId(t.make ?? "", t.model)}__~y-${Math.floor(Number(t.year))}`;
+	// Generations belong to a trim (or to the base, no-trim, entries), so their images do too.
+	if (t.kind === "generation") return `${mediaId(t.make ?? "", t.model, t.trim)}__~g-${slug(t.generation)}`;
+	if (t.kind === "year") return `${mediaId(t.make ?? "", t.model, t.trim)}__~y-${Math.floor(Number(t.year))}`;
 	if (t.kind === "make") return mediaId(t.make ?? "");
 	if (t.kind === "model") return mediaId(t.make ?? "", t.model);
 	return mediaId(t.make ?? "", t.model, t.trim);
@@ -120,14 +121,15 @@ export function vehicleImage(
 	ctx: { trim?: string; year?: number; generation?: string } = {},
 ): string | undefined {
 	const img = (t: MediaTarget) => media[targetId(t)]?.imageUrl || undefined;
-	const gens = media[mediaId(make, model)]?.generations ?? [];
+	const trim = ctx.trim || undefined;
+	const gens = generationsFor(media, make, model, trim);
 	const genName = ctx.generation ?? generationOf(ctx.year, gens)?.label;
 	return (
-		(ctx.year ? img({ kind: "year", make, model, year: ctx.year }) : undefined) ??
-		(genName ? img({ kind: "generation", make, model, generation: genName }) : undefined) ??
-		(ctx.trim ? img({ kind: "trim", make, model, trim: ctx.trim }) : undefined) ??
+		(ctx.year ? img({ kind: "year", make, model, trim, year: ctx.year }) : undefined) ??
+		(genName ? img({ kind: "generation", make, model, trim, generation: genName }) : undefined) ??
+		(trim ? img({ kind: "trim", make, model, trim }) : undefined) ??
 		img({ kind: "model", make, model }) ??
-		(ctx.year || genName ? undefined : [...gens].sort((a, b) => b.to - a.to).map((g) => img({ kind: "generation", make, model, generation: g.label })).find(Boolean))
+		(ctx.year || genName ? undefined : [...gens].sort((a, b) => b.to - a.to).map((g) => img({ kind: "generation", make, model, trim, generation: g.label })).find(Boolean))
 	);
 }
 
@@ -272,6 +274,14 @@ export function yearSpan(years: number[]): string {
 // ranges on the model, not labels on each year entry, so a year added later
 // (bulk add, an approved submission, a private upload) lands in its generation
 // by itself. Years in no range simply stay as individual years.
+
+/**
+ * A trim's generations. They live on the trim's own record; the base entries (no
+ * trim) use the model's. A trim never borrows another's.
+ */
+export function generationsFor(media: Record<string, VehicleMedia>, make: string, model: string, trim?: string): Generation[] {
+	return media[mediaId(make, model, trim)]?.generations ?? [];
+}
 
 export const genSpan = (g: Pick<Generation, "from" | "to">) => (g.from === g.to ? String(g.from) : `${g.from}–${g.to}`);
 export const generationKey = (g: Pick<Generation, "label">) => slug(g.label);

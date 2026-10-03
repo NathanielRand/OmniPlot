@@ -25,7 +25,7 @@
 	import VehicleTreeFilter, { type TreePath } from "$lib/components/library/VehicleTreeFilter.svelte";
 	import {
 		buildTree, entriesUnder, mediaFor, yearSpan, trimFilter, matchesQuery,
-		yearOptions, generationOf, groupByGeneration, vehicleImage,
+		yearOptions, generationOf, groupByGeneration, vehicleImage, generationsFor, trimKey,
 		BASE_TRIM_LABEL, TRIM_BASE, TRIM_ALL, makeKey, modelKey,
 	} from "$lib/utils/vehicleCatalog";
 	import { demandId, hasVoted } from "$lib/utils/demand";
@@ -241,9 +241,13 @@
 	// Year filter. Once a model is chosen its years fold into the generations an
 	// admin set for it (a generation is one button; years in none stay single).
 	// activeYear is an option key: "All", a year, or "g:<generation>".
+	// Generations belong to a trim, so they only apply once exactly one trim is in
+	// view (a model with several trims shows plain years until one is picked).
+	const oneTrim = $derived(!!path.model && new Set(pathEntries.map((x) => trimKey(x.v.trim))).size === 1);
+	const focusTrim = $derived(oneTrim ? pathEntries[0]?.v.trim : undefined);
 	const modelGens = $derived.by(() => {
-		const e = path.model ? pathEntries[0]?.v : undefined;
-		return e?.make && e.model ? mediaFor(patternStore.media, e.make, e.model)?.generations ?? [] : [];
+		const e = oneTrim ? pathEntries[0]?.v : undefined;
+		return e?.make && e.model ? generationsFor(patternStore.media, e.make, e.model, e.trim) : [];
 	});
 	const yearOpts = $derived(yearOptions(pathEntries, modelGens));
 	const YEARS = $derived(["All", ...yearOpts.map((o) => o.key)]);
@@ -273,11 +277,13 @@
 	// Tree the tiles and sidebar render: search + year applied, zone not (zone
 	// is a pattern-level filter, offered once a trim's patterns are showing).
 	const vehBase = $derived(baseFiltered.filter((x) => typeOf(x.v) === "vehicle" && x.v.make && x.v.model));
-	// Makes and models with patterns first; coming-soon ones after, each group A–Z.
+	// Makes are alphabetical (A–Z, or Z–A with the toggle) — coming-soon ones sit in
+	// that order too. Within a make, models with patterns come first, each group A–Z.
+	let makesDesc = $state(false);
 	const tree = $derived(
 		buildTree(vehBase.map(toRow))
 			.map((m) => ({ ...m, models: [...m.models].sort((a, b) => Number(a.count === 0) - Number(b.count === 0)) }))
-			.sort((a, b) => Number(a.count === 0) - Number(b.count === 0)),
+			.sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: "base" }) * (makesDesc ? -1 : 1)),
 	);
 	const treeTotal = $derived(tree.reduce((n, m) => n + m.count, 0));
 
@@ -311,7 +317,7 @@
 	const imageOf = (make: string, model: string, trim?: string, scoped = false) => {
 		const sel = scoped ? yearSel : undefined;
 		return vehicleImage(patternStore.media, make, model, {
-			trim,
+			trim: trim ?? (scoped ? focusTrim : undefined),
 			...(sel ? (sel.isGen ? { generation: sel.label } : { year: sel.from }) : {}),
 		});
 	};
@@ -992,6 +998,10 @@
 						Select patterns below
 					{:else if isVeh}
 						{#if level === "makes"}{tree.length} {tree.length === 1 ? "make" : "makes"} · choose one to see its models
+							<button class="lib-sort" onclick={() => (makesDesc = !makesDesc)} aria-label="Sort makes {makesDesc ? 'A to Z' : 'Z to A'}" title="Switch to {makesDesc ? 'A–Z' : 'Z–A'}">
+								{makesDesc ? "Z–A" : "A–Z"}
+								<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style:transform={makesDesc ? "rotate(180deg)" : undefined}><path d="M12 5v14M5 12l7 7 7-7"/></svg>
+							</button>
 						{:else if level === "models"}Choose a model
 						{:else}Choose a trim or variant{/if}
 					{:else}
@@ -1687,7 +1697,7 @@
 					<input id="req-notes" type="text" class="form-input" bind:value={requestForm.notes} placeholder={requestType === "vehicle" ? "Any specific zones — PPF, tint, both?" : "Sizes, brand, film type — anything that helps"} />
 				</div>
 
-				{#if reqVoted}<div class="req-voted"><VoteSummary mine={reqMine} busy={reqBusy} onRemove={removeReqVote} gens={requestType === "vehicle" ? mediaFor(patternStore.media, requestForm.make, requestForm.model)?.generations ?? [] : []} /></div>{/if}
+				{#if reqVoted}<div class="req-voted"><VoteSummary mine={reqMine} busy={reqBusy} onRemove={removeReqVote} gens={requestType === "vehicle" ? generationsFor(patternStore.media, requestForm.make, requestForm.model) : []} /></div>{/if}
 
 				<div class="modal__actions">
 					<button type="button" class="btn-ghost" onclick={() => (showRequestModal = false)}>{reqVoted ? "Close" : "Cancel"}</button>
@@ -2744,6 +2754,8 @@
 	}
 	.lib-stats { min-height: 52px; }
 	/* ─── Filter groups v2: one rhythm, controls sized to their content ─── */
+	.lib-sort { display: inline-flex; align-items: center; gap: 5px; margin-left: 10px; padding: 2px 10px; font: inherit; font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); background: var(--bg-surface-2); border: 1px solid var(--border-default); border-radius: 99px; cursor: pointer; }
+	.lib-sort:hover { color: var(--text-primary); border-color: var(--color-brand-dim); }
 	.lib-fgroup { display: flex; flex-direction: column; gap: 6px; padding: 12px 4px 14px; border-bottom: 1px solid var(--border-subtle); }
 	.lib-fgroup__head { display: flex; align-items: center; justify-content: space-between; min-height: 18px; }
 	.lib-fgroup .lib-section-label { padding: 0; margin: 0; }

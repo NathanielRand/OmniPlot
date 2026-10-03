@@ -7,7 +7,7 @@
 	import Badge from "$lib/components/ui/Badge.svelte";
 	import { adminPatterns as ap } from "$lib/admin/adminPatterns.svelte";
 	import { patternStore } from "$lib/stores/patternStore.svelte";
-	import { makeKey, mediaFor, groupYearLabels, generationOf } from "$lib/utils/vehicleCatalog";
+	import { makeKey, generationsFor, groupYearLabels, generationOf } from "$lib/utils/vehicleCatalog";
 	import { demandModelKey } from "$lib/utils/demand";
 	import { previewDemandMerge, runDemandMerge, subscribeDemandPrivate, type DemandMergePreview } from "$lib/firebase/firestore";
 	import { confirmStore, toastStore } from "$lib/stores";
@@ -65,7 +65,7 @@
 	/** Year chips, with a model's generations folded into one chip (its most-wanted year's count). */
 	function yearChips(r: DemandRecord) {
 		const ys = years(r);
-		const gens = typeOf(r) === "vehicle" ? mediaFor(patternStore.media, r.make, r.model)?.generations ?? [] : [];
+		const gens = typeOf(r) === "vehicle" ? generationsFor(patternStore.media, r.make, r.model) : [];
 		const count = (y: number) => r.yearVotes[String(y)] + r.anyVotes;
 		return groupYearLabels(ys, gens).map((g) => {
 			const inGroup = g.isGen ? ys.filter((y) => generationOf(y, gens)?.label === g.label) : [Number(g.label)];

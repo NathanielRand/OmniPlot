@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { VehicleEntry } from "$lib/types";
 import {
 	buildTree, entriesUnder, makeKey, matchesQuery, mediaId, monogram, yearSpan, BASE_TRIM_LABEL,
-	cleanGenerations, generationError, generationOf, groupByGeneration, yearOptions, genSpan, groupYearLabels, vehicleImage, targetId,
+	cleanGenerations, generationError, generationOf, groupByGeneration, yearOptions, genSpan, groupYearLabels, vehicleImage, targetId, generationsFor,
 } from "./vehicleCatalog";
 
 const v = (id: string, make: string, model: string, year: number, trim?: string): VehicleEntry => ({
@@ -141,7 +141,9 @@ describe("vehicleImage", () => {
 	]) as Record<string, any>;
 	it("prefers year, then generation, then trim, then model", () => {
 		expect(vehicleImage(media, "Toyota", "Camry", { year: 2005 })).toBe("y2005.jpg");
-		expect(vehicleImage(media, "Toyota", "Camry", { year: 2006, trim: "LE" })).toBe("gen1.jpg");
+		expect(vehicleImage(media, "Toyota", "Camry", { year: 2006 })).toBe("gen1.jpg");
+		// A trim never borrows the base entries' generations.
+		expect(vehicleImage(media, "Toyota", "Camry", { year: 2006, trim: "LE" })).toBe("le.jpg");
 		expect(vehicleImage(media, "Toyota", "Camry", { generation: "Gen 1" })).toBe("gen1.jpg");
 		expect(vehicleImage(media, "Toyota", "Camry", { year: 2015, trim: "LE" })).toBe("le.jpg");
 		expect(vehicleImage(media, "Toyota", "Camry", { year: 2015 })).toBe("model.jpg");
@@ -151,6 +153,20 @@ describe("vehicleImage", () => {
 		const noModel = { ...media, toyota__camry: { ...media.toyota__camry, imageUrl: undefined } };
 		expect(vehicleImage(noModel, "Toyota", "Camry")).toBe("gen1.jpg");
 		expect(vehicleImage(noModel, "Toyota", "Camry", { year: 2015 })).toBeUndefined();
+	});
+	it("keeps each trim's generations and images apart", () => {
+		const m2: Record<string, any> = {
+			toyota__camry: { id: "toyota__camry", kind: "model", make: "Toyota", model: "Camry", generations: [{ label: "Gen 1", from: 1997, to: 2010 }] },
+			toyota__camry__se: { id: "toyota__camry__se", kind: "trim", make: "Toyota", model: "Camry", trim: "SE", generations: [{ label: "SE Mk1", from: 2000, to: 2005 }] },
+			"toyota__camry__se__~g-se-mk1": { imageUrl: "semk1.jpg" },
+			"toyota__camry__~g-gen-1": { imageUrl: "base-gen1.jpg" },
+		};
+		expect(generationsFor(m2, "Toyota", "Camry", "SE").map((g) => g.label)).toEqual(["SE Mk1"]);
+		expect(generationsFor(m2, "Toyota", "Camry").map((g) => g.label)).toEqual(["Gen 1"]);
+		expect(generationsFor(m2, "Toyota", "Camry", "LE")).toEqual([]);
+		expect(vehicleImage(m2, "Toyota", "Camry", { trim: "SE", year: 2003 })).toBe("semk1.jpg");
+		expect(vehicleImage(m2, "Toyota", "Camry", { year: 2003 })).toBe("base-gen1.jpg");
+		expect(targetId({ kind: "generation", make: "Toyota", model: "Camry", trim: "SE", generation: "SE Mk1" })).toBe("toyota__camry__se__~g-se-mk1");
 	});
 	it("builds distinct ids", () => {
 		expect(targetId({ kind: "generation", make: "Toyota", model: "Camry", generation: "Gen 1" })).toBe("toyota__camry__~g-gen-1");
