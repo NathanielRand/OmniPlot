@@ -7,7 +7,7 @@
 	import Badge from "$lib/components/ui/Badge.svelte";
 	import { adminPatterns as ap } from "$lib/admin/adminPatterns.svelte";
 	import { patternStore } from "$lib/stores/patternStore.svelte";
-	import { makeKey } from "$lib/utils/vehicleCatalog";
+	import { makeKey, mediaFor, groupYearLabels, generationOf } from "$lib/utils/vehicleCatalog";
 	import { demandModelKey } from "$lib/utils/demand";
 	import { previewDemandMerge, runDemandMerge, subscribeDemandPrivate, type DemandMergePreview } from "$lib/firebase/firestore";
 	import { confirmStore, toastStore } from "$lib/stores";
@@ -61,6 +61,17 @@
 		return { live, soon, total: found.length };
 	}
 	const years = (r: DemandRecord) => Object.keys(r.yearVotes).map(Number).filter(Boolean).sort((a, b) => a - b);
+
+	/** Year chips, with a model's generations folded into one chip (its most-wanted year's count). */
+	function yearChips(r: DemandRecord) {
+		const ys = years(r);
+		const gens = typeOf(r) === "vehicle" ? mediaFor(patternStore.media, r.make, r.model)?.generations ?? [] : [];
+		const count = (y: number) => r.yearVotes[String(y)] + r.anyVotes;
+		return groupYearLabels(ys, gens).map((g) => {
+			const inGroup = g.isGen ? ys.filter((y) => generationOf(y, gens)?.label === g.label) : [Number(g.label)];
+			return { label: g.label, n: Math.max(...inGroup.map(count)) };
+		});
+	}
 
 	function create(r: DemandRecord) {
 		if (typeOf(r) === "vehicle") {
@@ -145,7 +156,7 @@
 							{r.vehicle}
 							<Badge variant={statusVariant(r.status)} size="sm" dot={r.status === "in-progress"}>{r.status}</Badge>
 						</div>
-						{#if years(r).length}<div class="req__years">{#each years(r) as y (y)}<span class="yr">{y} <b>{r.yearVotes[String(y)] + r.anyVotes}</b></span>{/each}{#if r.anyVotes}<span class="yr yr--any">any year <b>{r.anyVotes}</b></span>{/if}</div>{/if}
+						{#if years(r).length}<div class="req__years">{#each yearChips(r) as c (c.label)}<span class="yr">{c.label} <b>{c.n}</b></span>{/each}{#if r.anyVotes}<span class="yr yr--any">any year <b>{r.anyVotes}</b></span>{/if}</div>{/if}
 						{#if meta[r.id]?.notes}<p class="req__notes">{meta[r.id].notes}</p>{/if}
 						<div class="req__meta">
 							{#if meta[r.id]?.requestedBy}<button class="link" onclick={() => (ap.filterUser = meta[r.id].requestedBy!)}>{ap.userLabel(meta[r.id].requestedBy!)}</button>{:else}<span>Unknown requester</span>{/if}

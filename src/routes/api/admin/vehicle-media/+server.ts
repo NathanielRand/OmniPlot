@@ -38,15 +38,17 @@ async function assertAdmin(request: Request): Promise<string | Response> {
 function parseTarget(raw: unknown): MediaTarget | null {
 	if (!raw || typeof raw !== 'object') return null;
 	const t = raw as MediaTarget;
-	if (!['make', 'model', 'trim', 'subject'].includes(t.kind)) return null;
+	if (!['make', 'model', 'trim', 'subject', 'generation', 'year'].includes(t.kind)) return null;
 	if (t.kind === 'subject' ? !t.label?.trim() : !t.make?.trim()) return null;
-	if ((t.kind === 'model' || t.kind === 'trim') && !t.model?.trim()) return null;
+	if ((t.kind === 'model' || t.kind === 'trim' || t.kind === 'generation' || t.kind === 'year') && !t.model?.trim()) return null;
+	if (t.kind === 'generation' && !t.generation?.trim()) return null;
+	if (t.kind === 'year' && !(Math.floor(Number(t.year)) >= 1900)) return null;
 	if (t.kind === 'trim' && !t.trim?.trim()) return null;
 	return t;
 }
 
 const labelOf = (d: FirebaseFirestore.DocumentData | undefined, id: string) =>
-	d?.label || [d?.make, d?.model, d?.trim].filter(Boolean).join(' ') || id;
+	d?.label || [d?.make, d?.model, d?.trim, d?.generation, d?.year].filter(Boolean).join(' ') || id;
 
 /** Best-effort removal of a replaced / cleared file. Never blocks the response. */
 async function dropFile(path: string | null | undefined) {
@@ -83,6 +85,8 @@ export const POST: RequestHandler = async ({ request }) => {
 			make: target.make ?? null,
 			model: target.model ?? null,
 			trim: target.trim ?? null,
+			generation: target.generation ?? null,
+			year: target.year ? Math.floor(Number(target.year)) : null,
 			projectType: target.projectType ?? null,
 			label: target.label ?? null,
 			updatedAt: FieldValue.serverTimestamp(),
@@ -160,7 +164,8 @@ export const DELETE: RequestHandler = async ({ request }) => {
 		stage = 'clear';
 		const d = snap.data()!;
 		const otherUrl = d[field === 'logoUrl' ? 'imageUrl' : 'logoUrl'];
-		if (otherUrl) {
+		// A model doc may also hold its generations — only a doc with nothing left goes.
+		if (otherUrl || d.generations?.length) {
 			await ref.update({ [field]: FieldValue.delete(), [`${slot}Path`]: FieldValue.delete(), [`${slot}Hash`]: FieldValue.delete(), updatedAt: FieldValue.serverTimestamp(), updatedBy: who });
 		} else {
 			await ref.delete(); // nothing left on it

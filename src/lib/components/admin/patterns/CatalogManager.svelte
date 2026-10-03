@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from "svelte";
 	import Spinner from "$lib/components/ui/Spinner.svelte";
 	// Catalog: the public library as admins manage it. Pick a subject on the
 	// left; its patterns (grouped by category, with publish toggles and the
@@ -14,10 +15,10 @@
 		PROJECT_TYPES, projectTypeMeta, subjectName, blankSubject, formFromSubject, blankPattern, formFromPattern,
 		type SubjectForm, type PatternForm,
 	} from "$lib/admin/patternForms";
-	import type { Pattern, PatternCategory, ProjectType, VehicleEntry } from "$lib/types";
+	import type { Generation, Pattern, PatternCategory, ProjectType, VehicleEntry } from "$lib/types";
 	import type { PatternStatus } from "$lib/stores/patternStore.svelte";
 	import { demandId, demandModelKey, votesForYear } from "$lib/utils/demand";
-	import { makeKey } from "$lib/utils/vehicleCatalog";
+	import { makeKey, mediaFor, groupByGeneration, generationOf, generationKey, genSpan, generationError } from "$lib/utils/vehicleCatalog";
 	import { splitList, type VehiclePlanInput } from "$lib/admin/vehiclePlan";
 
 	interface Props {
@@ -81,8 +82,9 @@
 			.sort((a, b) => (statusFilter === "soon" ? b.want - a.want : 0) || subjectName(a.v).localeCompare(subjectName(b.v), undefined, { numeric: true, sensitivity: "base" })),
 	);
 
-	// Vehicles fold into make → model → years so the list stays short; every
-	// other subject type stays a flat row beneath them.
+	// Vehicles fold into make → model → generation → years so the list stays short
+	// (years in no generation stay directly under the model); every other subject
+	// type stays a flat row beneath them.
 	type Row = (typeof rows)[number];
 	const grouped = $derived.by(() => {
 		const makes = new Map<string, { key: string; name: string; models: Map<string, { key: string; name: string; rows: Row[] }> }>();
@@ -111,7 +113,13 @@
 				const yrs = rs.map((r) => r.v.year).filter((y): y is number => !!y);
 				const lo = Math.min(...yrs), hi = Math.max(...yrs);
 				const range = yrs.length ? (lo === hi ? `${lo}` : `${lo}–${hi}`) : "";
-				return { ...md, rows: rs, range, ...sum(rs) };
+				// Generations hang off the model's media doc, found by the model's name.
+				const make = rs[0].v.make ?? m.name, model = rs[0].v.model ?? md.name;
+				const { groups, loose } = groupByGeneration(rs, mediaFor(patternStore.media, make, model)?.generations ?? []);
+				return {
+					...md, rows: rs, range, make, model, loose, ...sum(rs),
+					groups: groups.map((g) => ({ key: `${md.key}|g:${generationKey(g.gen)}`, gen: g.gen, rows: g.rows, ...sum(g.rows) })),
+				};
 			}).sort(byName);
 			return { ...m, models, ...sum(models.flatMap((md) => md.rows)) };
 		}).sort(byName);
@@ -126,7 +134,9 @@
 		const v = patternStore.vehicles.find((x) => x.id === selectedId);
 		if (!v || typeOf(v) !== "vehicle" || !v.make || !v.model) return [] as string[];
 		const mk = makeKey(v.make);
-		return [mk, `${mk}|${demandModelKey(v.make, v.model)}`];
+		const dk = `${mk}|${demandModelKey(v.make, v.model)}`;
+		const g = generationOf(v.year, mediaFor(patternStore.media, v.make, v.model)?.generations ?? []);
+		return g ? [mk, dk, `${dk}|g:${generationKey(g)}`] : [mk, dk];
 	});
 	const isOpen = (k: string) => searching || openKeys.has(k);
 	function toggle(k: string) {
@@ -135,9 +145,15 @@
 		openKeys = next;
 	}
 	// Reveal the branch of whatever just became selected (jump-ins, new subjects).
+	// Only when the selection moves: the branch holding it can then be collapsed
+	// again by hand without this reopening it.
+	let revealed = "";
 	$effect(() => {
-		const need = selectedKeys.filter((k) => !openKeys.has(k));
-		if (need.length) openKeys = new Set([...openKeys, ...need]);
+		const sig = `${selectedId}|${selectedKeys.join(",")}`;
+		if (sig === revealed) return;
+		revealed = sig;
+		const need = selectedKeys.filter((k) => !untrack(() => openKeys).has(k));
+		if (need.length) openKeys = new Set([...untrack(() => openKeys), ...need]);
 	});
 	const yearLabel = (v: VehicleEntry) => `${v.year ?? "—"}${v.trim ? ` ${v.trim}` : ""}`;
 
@@ -181,6 +197,12 @@
 	const liveCount = $derived(subjectPatterns.filter((p) => p.isPublished).length);
 	const invisible = $derived(!!subject && subject.status === "published" && liveCount === 0);
 	const subjectWant = $derived(subject ? wantOf(subject) : 0);
+	// The admin-set generation this model year falls in, if any.
+	const subjectGen = $derived(
+		subject && typeOf(subject) === "vehicle" && subject.make && subject.model
+			? generationOf(subject.year, mediaFor(patternStore.media, subject.make, subject.model)?.generations ?? [])
+			: undefined,
+	);
 
 	// Jumping in from Review / Requests.
 	let flash = $state<string | null>(null);
@@ -231,6 +253,43 @@
 	}
 
 	const focusOnMount = (n: HTMLElement) => { n.focus(); };
+
+	// The two cards run from where they start to the bottom of the admin pane, so
+	// there is no dead space under them and the lists get all the room there is.
+	function fillPane(node: HTMLElement) {
+		const scroller = (() => {
+			for (let e = node.parentElement; e; e = e.parentElement) if (/(auto|scroll)/.test(getComputedStyle(e).overflowY) && e.scrollHeight > 0) return e;
+			return null;
+		})();
+		const fit = () => {
+			if (window.matchMedia("(max-width: 960px)").matches) { node.style.height = ""; return; }
+			const top = node.getBoundingClientRect().top;
+			const bottom = scroller ? scroller.getBoundingClientRect().bottom : window.innerHeight;
+			node.style.height = `${Math.max(480, Math.floor(bottom - top - 24))}px`;
+		};
+		fit();
+		const ro = new ResizeObserver(fit);
+		for (const el of [scroller, document.body, node.closest(".ap")]) if (el) ro.observe(el);
+		window.addEventListener("resize", fit);
+		const t = setTimeout(fit, 300); // after the header above settles
+		return { destroy() { ro.disconnect(); window.removeEventListener("resize", fit); clearTimeout(t); } };
+	}
+
+	// ─── Generations (a model's years, grouped) ──
+	let genDlg = $state<{ make: string; model: string; list: Generation[] } | null>(null);
+	const genProblem = $derived(genDlg ? generationError(genDlg.list.filter((g) => g.label.trim() || g.from || g.to)) : null);
+	function openGenerations(make: string, model: string) {
+		const have = mediaFor(patternStore.media, make, model)?.generations ?? [];
+		// Oldest first reads like a model's history; a fresh model starts with one blank row.
+		const list = have.map((g) => ({ ...g })).sort((a, b) => a.from - b.from);
+		genDlg = { make, model, list: list.length ? list : [{ label: "", from: 0, to: 0 }] };
+	}
+	async function submitGenerations() {
+		if (!genDlg || genProblem) return;
+		// Untouched blank rows aren't generations.
+		const list = genDlg.list.filter((g) => g.label.trim() || g.from || g.to);
+		if (await ap.saveGenerations(genDlg.make, genDlg.model, list)) genDlg = null;
+	}
 
 	// ─── Bulk add vehicles ───────────────────────
 	const blankBulk = (): VehiclePlanInput => ({
@@ -298,7 +357,7 @@
 	const fmtDate = (s: string) => s || "—";
 </script>
 
-<div class="cm">
+<div class="cm" use:fillPane>
 	<!-- ─── Subjects ─── -->
 	<aside class="cm__list" aria-label="Subjects">
 		<div class="cm__tools">
@@ -343,21 +402,32 @@
 						<ul class="sub">
 							{#each mk.models as md (md.key)}
 								<li>
-									<button class="row row--model" aria-expanded={isOpen(md.key)} onclick={() => toggle(md.key)}>
-										<svg class="caret" class:caret--open={isOpen(md.key)} width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
-										<span class="row__name">{md.name}</span>
-										<span class="row__sub mono">{md.range}</span>
-										{#if md.soon}<span class="subj__soon" title="{md.soon} without a live pattern yet — up to {md.want} want it">{md.soon} need</span>{/if}
-										<span class="subj__count" title="{md.live} live of {md.total} patterns">{md.live}/{md.total}</span>
-									</button>
+									<div class="mrow">
+										<button class="row row--model" aria-expanded={isOpen(md.key)} onclick={() => toggle(md.key)}>
+											<svg class="caret" class:caret--open={isOpen(md.key)} width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+											<span class="row__name">{md.name}</span>
+											<span class="row__sub mono">{md.range}</span>
+											{#if md.soon}<span class="subj__soon" title="{md.soon} without a live pattern yet — up to {md.want} want it">{md.soon} need</span>{/if}
+											<span class="subj__count" title="{md.live} live of {md.total} patterns">{md.live}/{md.total}</span>
+										</button>
+										<button class="icon icon--sm" disabled={busy} onclick={() => openGenerations(md.make, md.model)} aria-label="Group {md.name} years into generations" title="Group years into generations">
+											<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M3 12h12M3 18h7"/></svg>
+										</button>
+									</div>
 									{#if isOpen(md.key)}
-										<div class="years">
-											{#each md.rows as { v, total, live, soon, want } (v.id)}
-												<button class="yr" class:yr--on={selectedId === v.id} onclick={() => (selectedId = v.id)} title="{subjectName(v)} · {v.status} · {soon ? `${want} want it, no live pattern` : `${live} live of ${total}`}">
-													<span class="dot dot--{v.status}"></span>{yearLabel(v)}{#if soon}<span class="yr__soon">•</span>{/if}
-												</button>
-											{/each}
-										</div>
+										{#each md.groups as g (g.key)}
+											<button class="row row--gen" aria-expanded={isOpen(g.key)} onclick={() => toggle(g.key)}>
+												<svg class="caret" class:caret--open={isOpen(g.key)} width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+												<span class="row__name">{g.gen.label}</span>
+												<span class="row__sub mono">{genSpan(g.gen)}</span>
+												{#if g.soon}<span class="subj__soon" title="{g.soon} without a live pattern yet">{g.soon} need</span>{/if}
+												<span class="subj__count" title="{g.live} live of {g.total} patterns">{g.live}/{g.total}</span>
+											</button>
+											{#if isOpen(g.key)}
+												{@render yearPills(g.rows, 36)}
+											{/if}
+										{/each}
+										{#if md.loose.length}{@render yearPills(md.loose, 24)}{/if}
 									{/if}
 								</li>
 							{/each}
@@ -394,7 +464,7 @@
 					<div>
 						<h2 class="sh__title">{subjectName(subject)}</h2>
 						<p class="sh__sub">
-							{projectTypeMeta(subject.projectType).label}{#if subject.address} · {subject.address}{/if} · updated {fmtDate(subject.updatedAt)}
+							{projectTypeMeta(subject.projectType).label}{#if subjectGen} · {subjectGen.label} ({genSpan(subjectGen)}){/if}{#if subject.address} · {subject.address}{/if} · updated {fmtDate(subject.updatedAt)}
 						</p>
 					</div>
 				</div>
@@ -413,6 +483,13 @@
 			{/if}
 
 			<div class="meta">
+				{#if subjectGen}
+					<div>
+						<span class="meta__k">Generation</span>
+						<span class="tag tag--gen">{subjectGen.label} <span class="mono">{genSpan(subjectGen)}</span></span>
+						<button class="link" disabled={busy} onclick={() => openGenerations(subject.make ?? "", subject.model ?? "")}>Edit</button>
+					</div>
+				{/if}
 				<div>
 					<span class="meta__k">Contributors</span>
 					{#each contributors(subject) as u (u)}
@@ -483,7 +560,17 @@
 	</section>
 </div>
 
-<svelte:window onkeydown={(e) => { if (e.key === "Escape" && bulkDlg) bulkDlg = false; }} />
+{#snippet yearPills(list: Row[], indent: number)}
+	<div class="years" style="padding-left: {indent}px">
+		{#each list as { v, total, live, soon, want } (v.id)}
+			<button class="yr" class:yr--on={selectedId === v.id} onclick={() => (selectedId = v.id)} title="{subjectName(v)} · {v.status} · {soon ? `${want} want it, no live pattern` : `${live} live of ${total}`}">
+				<span class="dot dot--{v.status}"></span>{yearLabel(v)}{#if soon}<span class="yr__soon">•</span>{/if}
+			</button>
+		{/each}
+	</div>
+{/snippet}
+
+<svelte:window onkeydown={(e) => { if (e.key === "Escape") { if (genDlg) genDlg = null; else if (bulkDlg) bulkDlg = false; } }} />
 <!-- ─── Add vehicles (bulk) ─── -->
 {#if bulkDlg}
 	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
@@ -520,6 +607,38 @@
 			<div class="dlg__foot">
 				<button class="btn" onclick={() => (bulkDlg = false)}>Cancel</button>
 				<button class="btn btn--primary" disabled={busy || !bulkPlan || !!bulkPlan.error || !bulkPlan.create.length} onclick={submitBulk}>{#if busy}<Spinner />{/if}{bulkPlan?.create.length ? `Add ${bulkPlan.create.length} ${bulkPlan.create.length === 1 ? "vehicle" : "vehicles"}` : "Add vehicles"}</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
+<!-- ─── Generations dialog ─── -->
+{#if genDlg}
+	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+	<div class="overlay" onclick={() => (genDlg = null)}>
+		<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+		<div class="dlg" role="dialog" aria-modal="true" aria-label="Generations" tabindex="-1" onclick={(e) => e.stopPropagation()}>
+			<h2 class="dlg__title">Generations <span class="muted">· {genDlg.make} {genDlg.model}</span></h2>
+			<div class="dlg__body">
+				<p class="muted bulk__intro">Group this model's years by generation. The catalog and the customer library show each generation instead of its individual years, including years added later. A year in no generation stays on its own.</p>
+				<div class="gens">
+					{#each genDlg.list as g, i (i)}
+						<div class="gen">
+							<input class="in" bind:value={g.label} placeholder="e.g. Gen 3" aria-label="Generation name" />
+							<input class="in" type="number" bind:value={g.from} placeholder="From" aria-label="First year" />
+							<input class="in" type="number" bind:value={g.to} placeholder="To" aria-label="Last year" />
+							<button class="icon" onclick={() => genDlg && (genDlg.list = genDlg.list.filter((_, j) => j !== i))} aria-label="Remove generation" title="Remove">
+								<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>
+							</button>
+						</div>
+					{/each}
+				</div>
+				<div><button class="btn btn--sm" onclick={() => genDlg && (genDlg.list = [...genDlg.list, { label: "", from: 0, to: 0 }])}>+ Add generation</button></div>
+				<p class="warn gen__err">{genProblem ?? ""}</p>
+			</div>
+			<div class="dlg__foot">
+				<button class="btn" onclick={() => (genDlg = null)}>Cancel</button>
+				<button class="btn btn--primary" disabled={busy || !!genProblem} onclick={submitGenerations}>{#if busy}<Spinner />{/if}Save generations</button>
 			</div>
 		</div>
 	</div>
@@ -624,7 +743,7 @@
 {/if}
 
 <style>
-	.cm { display: grid; grid-template-columns: minmax(280px, 340px) minmax(0, 1fr); gap: 16px; align-items: start; }
+	.cm { display: grid; grid-template-columns: minmax(300px, 400px) minmax(0, 1fr); gap: 16px; align-items: stretch; }
 	.muted { color: var(--text-tertiary); }
 	.mono { font-family: var(--font-mono); }
 	.n { font-family: var(--font-mono); font-size: 0.6875rem; color: var(--text-tertiary); }
@@ -632,7 +751,7 @@
 	.link:hover { text-decoration: underline; }
 
 	/* ── list ── */
-	.cm__list { background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); display: flex; flex-direction: column; min-width: 0; position: sticky; top: 0; max-height: calc(100dvh - 190px); }
+	.cm__list { background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
 	.cm__tools { display: flex; gap: 8px; padding: 10px; }
 	.search { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; padding: 0 10px; background: var(--bg-base); border: 1px solid var(--border-default); border-radius: var(--radius-md); color: var(--text-tertiary); }
 	.search input { flex: 1; min-width: 0; padding: 7px 0; background: none; border: none; outline: none; font: inherit; font-size: 0.8125rem; color: var(--text-primary); }
@@ -643,7 +762,7 @@
 	.cm__status { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px 10px; border-bottom: 1px solid var(--border-subtle); }
 	.chip { padding: 2px 9px; font: inherit; font-size: 0.6875rem; color: var(--text-secondary); background: var(--bg-base); border: 1px solid var(--border-default); border-radius: 99px; cursor: pointer; display: inline-flex; gap: 5px; align-items: center; }
 	.chip--on { color: var(--text-primary); border-color: var(--color-brand-dim); background: color-mix(in srgb, var(--color-brand) 10%, transparent); }
-	.subjects { list-style: none; margin: 0; padding: 6px; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
+	.subjects { list-style: none; margin: 0; padding: 6px; overflow-y: auto; flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 1px; }
 	.empty { padding: 28px 14px; text-align: center; font-size: 0.8125rem; color: var(--text-tertiary); }
 	.subj { width: 100%; display: flex; align-items: center; gap: 8px; padding: 7px 8px; text-align: left; font: inherit; color: inherit; background: none; border: 1px solid transparent; border-radius: var(--radius-md); cursor: pointer; }
 	.subj:hover { background: var(--bg-surface-2); }
@@ -667,10 +786,19 @@
 	.caret--open { transform: rotate(90deg); }
 	.sub { list-style: none; margin: 0 0 4px 10px; padding: 0 0 0 6px; border-left: 1px solid var(--border-subtle); }
 	.years { display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 6px 8px 24px; }
-	.yr { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; font-family: var(--font-mono); font-size: 0.6875rem; color: var(--text-secondary); background: var(--bg-base); border: 1px solid var(--border-default); border-radius: 99px; cursor: pointer; }
+	.mrow { display: flex; align-items: center; gap: 4px; }
+	.mrow .row { flex: 1; min-width: 0; width: auto; }
+	.row--gen { padding-left: 22px; }
+	.row--gen .row__name { font-size: 0.9375rem; font-weight: 600; }
+	.row--gen .row__sub { margin-right: 6px; font-size: 0.8125rem; }
+	.icon--sm { width: 22px; height: 22px; flex-shrink: 0; }
+	.gens { display: flex; flex-direction: column; gap: 8px; }
+	.gen { display: grid; grid-template-columns: minmax(0, 1fr) 84px 84px 26px; gap: 6px; align-items: center; }
+	.gen__err { min-height: 1.2em; }
+	.yr { display: inline-flex; align-items: center; gap: 7px; padding: 5px 13px; font-family: var(--font-mono); font-size: 0.9375rem; font-weight: 500; color: var(--text-secondary); background: var(--bg-base); border: 1px solid var(--border-default); border-radius: 99px; cursor: pointer; }
 	.yr:hover { color: var(--text-primary); }
 	.yr--on { color: var(--text-primary); border-color: var(--color-brand-dim); background: color-mix(in srgb, var(--color-brand) 12%, transparent); }
-	.yr .dot { width: 6px; height: 6px; }
+	.yr .dot { width: 8px; height: 8px; }
 	.yr__soon { color: var(--color-warning); }
 	.subj__count { font-family: var(--font-mono); font-size: 0.6875rem; color: var(--text-tertiary); }
 	.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-tertiary); flex-shrink: 0; }
@@ -679,7 +807,7 @@
 	.cm__foot { padding: 8px 12px; border-top: 1px solid var(--border-subtle); font-size: 0.6875rem; color: var(--text-tertiary); }
 
 	/* ── subject ── */
-	.cm__main { min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+	.cm__main { min-width: 0; min-height: 0; overflow-y: auto; padding-right: 4px; display: flex; flex-direction: column; gap: 12px; }
 	.blank { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 60px 20px; color: var(--text-tertiary); background: var(--bg-surface); border: 1px dashed var(--border-default); border-radius: var(--radius-lg); }
 	.blank p { margin: 0; }
 	.sh { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
@@ -692,6 +820,8 @@
 	.meta { display: flex; flex-wrap: wrap; gap: 6px 24px; font-size: 0.8125rem; }
 	.meta > div { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 	.meta__k { color: var(--text-tertiary); font-size: 0.6875rem; text-transform: uppercase; letter-spacing: 0.05em; }
+	.tag--gen { font-size: 0.8125rem; font-weight: 600; color: var(--text-primary); }
+	.tag--gen .mono { margin-left: 6px; font-weight: 500; color: var(--text-tertiary); }
 	.tag { padding: 1px 8px; font-size: 0.6875rem; border-radius: 99px; background: var(--bg-surface-3); color: var(--text-secondary); }
 	.pbar { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; border-bottom: 1px solid var(--border-subtle); padding-bottom: 8px; }
 	.pbar .tabs { padding: 0; }
@@ -753,7 +883,9 @@
 
 	@media (max-width: 960px) {
 		.cm { grid-template-columns: minmax(0, 1fr); }
-		.cm__list { position: static; max-height: 380px; }
+		.cm { height: auto !important; }
+		.cm__list { max-height: 380px; }
+		.cm__main { overflow: visible; padding-right: 0; }
 		.dlg__body--split { grid-template-columns: minmax(0, 1fr); }
 		.dlg__prev { position: static; }
 	}

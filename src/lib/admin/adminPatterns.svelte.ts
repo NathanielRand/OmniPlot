@@ -13,12 +13,13 @@
 import { patternStore, MIRROR_PAIRS, zoneLabel as storeZoneLabel } from "$lib/stores/patternStore.svelte";
 import {
 	getReviewQueue, getAdjustmentRequests, resolveAdjustmentRequest, adminUpdateUserPattern, deleteUserPattern,
-	commitCatalogChange, setVehicleDoc, updateVehicleDoc, setPatternDoc, updatePatternDoc, setDemandStatus,
+	commitCatalogChange, setVehicleDoc, updateVehicleDoc, setPatternDoc, updatePatternDoc, setDemandStatus, setModelGenerations,
 } from "$lib/firebase/firestore";
 import { toastStore, confirmStore } from "$lib/stores";
 import { auth } from "$lib/firebase/client";
 import { formatMeasure, uid } from "$lib/utils";
 import { sizeError } from "$lib/utils/patternSize";
+import { cleanGenerations, generationError } from "$lib/utils/vehicleCatalog";
 import { planVehicles, type VehiclePlanInput } from "./vehiclePlan";
 import { planPublish, planRevoke, linkedPatterns, ownersToReset, RESET_TO_PRIVATE } from "$lib/utils/publishPlan";
 import {
@@ -27,7 +28,7 @@ import {
 } from "./patternForms";
 import type {
 	Pattern, PatternAdjustmentRequest, PatternCategory, PatternCoverage, PatternZone,
-	RequestStatus, UserPattern, VehicleEntry,
+	Generation, RequestStatus, UserPattern, VehicleEntry,
 } from "$lib/types";
 
 export type AdminUserLite = { uid: string; displayName: string; email: string; tier: string };
@@ -487,6 +488,17 @@ function createAdminPatterns() {
 		return created;
 	}
 
+	/** Group a model's years into named generations (an empty list ungroups them). */
+	async function saveGenerations(make: string, model: string, list: Generation[]): Promise<boolean> {
+		const err = generationError(list);
+		if (err) { toastStore.error("Can't save generations", err); return false; }
+		const gens = cleanGenerations(list);
+		return run("save-generations", "Couldn't save generations", async () => {
+			await setModelGenerations(make, model, gens);
+			toastStore.success(gens.length ? "Generations saved" : "Generations cleared", `${make} ${model}`);
+		});
+	}
+
 	async function deleteSubject(v: VehicleEntry): Promise<boolean> {
 		const pats = patternStore.getPatterns(v.id);
 		const resets = ownersToReset(pats, allCatalogPatterns().filter((p) => p.vehicleId !== v.id), submissions);
@@ -653,7 +665,7 @@ function createAdminPatterns() {
 		allCatalogPatterns, zoneLabel, ensureCatalog,
 		planFor, approve, repairCount, repairAll, reject, reopen, revoke, saveSubmissionEdit, deleteSubmission,
 		resolveChange,
-		saveSubject, planBulk, addVehicles, deleteSubject, savePattern, togglePublished, deletePattern,
+		saveSubject, planBulk, addVehicles, saveGenerations, deleteSubject, savePattern, togglePublished, deletePattern,
 		setRequestStatus,
 	};
 }

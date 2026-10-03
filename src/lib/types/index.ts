@@ -552,6 +552,13 @@ export interface VehicleEntry {
 	contributedBy?: string;
 }
 
+/** A run of model years an admin groups under one name ("Gen 3", "NA Miata"), inclusive. */
+export interface Generation {
+	label: string;
+	from: number;
+	to: number;
+}
+
 /**
  * Imagery for the vehicle browser, keyed by `vehicleMediaId`. One doc per make
  * (logo + cover image), per model (image) and — later — per trim (image).
@@ -560,10 +567,13 @@ export interface VehicleEntry {
 export interface VehicleMedia {
 	id: string;
 	/** "subject" = a residential / commercial / custom project (one image, keyed by type + label). */
-	kind: "make" | "model" | "trim" | "subject";
+	kind: "make" | "model" | "trim" | "subject" | "generation" | "year";
 	make: string;
 	model?: string;
 	trim?: string;
+	/** "generation" docs: the generation's name. "year" docs: one model year. */
+	generation?: string;
+	year?: number;
 	projectType?: ProjectType;
 	/** Display name for "subject" records. */
 	label?: string;
@@ -574,6 +584,8 @@ export interface VehicleMedia {
 	imagePath?: string;
 	logoHash?: string;
 	imageHash?: string;
+	/** "model" docs only: how the admin groups this model's years. A year in no range stays on its own. */
+	generations?: Generation[];
 }
 
 export interface PatternRequest {

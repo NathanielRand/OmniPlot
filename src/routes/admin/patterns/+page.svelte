@@ -1,6 +1,6 @@
 <script lang="ts">
-	// Admin → Patterns. Three jobs, three tabs (kept in the URL so links and
-	// Back work): Review decisions, manage the Catalog, and answer Requests.
+	// Admin → Patterns. Manage the Catalog (the default tab), make Review
+	// decisions, and answer Requests — kept in the URL so links and Back work.
 	import { onMount } from "svelte";
 	import { page } from "$app/state";
 	import { goto } from "$app/navigation";
@@ -14,12 +14,12 @@
 	import type { SubjectForm } from "$lib/admin/patternForms";
 
 	type Tab = "review" | "catalog" | "media" | "requests";
-	const TABS: Tab[] = ["review", "catalog", "media", "requests"];
-	const tab = $derived<Tab>(TABS.find((t) => t === page.url.searchParams.get("tab")) ?? "review");
+	const TABS: Tab[] = ["catalog", "review", "media", "requests"];
+	const tab = $derived<Tab>(TABS.find((t) => t === page.url.searchParams.get("tab")) ?? "catalog");
 
 	function setTab(t: Tab) {
 		const url = new URL(page.url);
-		if (t === "review") url.searchParams.delete("tab"); else url.searchParams.set("tab", t);
+		if (t === "catalog") url.searchParams.delete("tab"); else url.searchParams.set("tab", t);
 		goto(url, { replaceState: true, noScroll: true, keepFocus: true });
 	}
 
@@ -113,11 +113,11 @@
 
 	<div class="nav">
 		<div class="tabs" role="tablist" aria-label="Sections">
-			<button class="tab" class:tab--on={tab === "review"} role="tab" aria-selected={tab === "review"} onclick={() => setTab("review")}>
-				Review {#if toReview}<span class="badge badge--hot">{toReview}</span>{/if}
-			</button>
 			<button class="tab" class:tab--on={tab === "catalog"} role="tab" aria-selected={tab === "catalog"} onclick={() => setTab("catalog")}>
 				Catalog <span class="badge">{totals.subjects}</span>
+			</button>
+			<button class="tab" class:tab--on={tab === "review"} role="tab" aria-selected={tab === "review"} onclick={() => setTab("review")}>
+				Review <span class="badge" class:badge--hot={toReview > 0} title="{pendingNew} new · {pendingChange} change request{pendingChange === 1 ? '' : 's'} waiting">{toReview}</span>
 			</button>
 			<button class="tab" class:tab--on={tab === "media"} role="tab" aria-selected={tab === "media"} onclick={() => setTab("media")}>
 				Images

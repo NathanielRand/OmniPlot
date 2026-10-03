@@ -4,7 +4,7 @@
 	// project, its one image). Sits beside the subject's patterns so a subject,
 	// its patterns and its pictures are managed as one unit.
 	import { patternStore } from "$lib/stores/patternStore.svelte";
-	import { makeKey, modelKey, trimKey, targetId, type MediaTarget } from "$lib/utils/vehicleCatalog";
+	import { makeKey, modelKey, trimKey, targetId, generationOf, genSpan, type MediaTarget } from "$lib/utils/vehicleCatalog";
 	import { subjectName } from "$lib/admin/patternForms";
 	import type { VehicleEntry } from "$lib/types";
 	import MediaSlot from "./MediaSlot.svelte";
@@ -22,6 +22,10 @@
 	const makeTarget = $derived<MediaTarget>({ kind: "make", make });
 	const modelTarget = $derived<MediaTarget>({ kind: "model", make, model });
 	const trimTarget = $derived<MediaTarget>({ kind: "trim", make, model, trim });
+	// A year inside an admin-set generation can also carry that generation's image.
+	const gen = $derived(isVehicle && make && model ? generationOf(subject.year, patternStore.media[targetId(modelTarget)]?.generations ?? []) : undefined);
+	const genTarget = $derived<MediaTarget>({ kind: "generation", make, model, generation: gen?.label ?? "" });
+	const yearTarget = $derived<MediaTarget>({ kind: "year", make, model, year: subject.year });
 
 	// How many catalog entries (years / trims) share each image.
 	const sameMake = $derived(patternStore.vehicles.filter((v) => makeKey(v.make) === makeKey(make)).length);
@@ -35,19 +39,23 @@
 				...(make ? [{ t: makeTarget, f: "imageUrl" as const, label: `${make} cover`, hint: "Banner / fallback behind the make's models" }] : []),
 				...(make && model ? [{ t: modelTarget, f: "imageUrl" as const, label: `${model} image`, hint: `Shown on the ${model} tile · shared by ${sameModel} entries` }] : []),
 				...(make && model && trim ? [{ t: trimTarget, f: "imageUrl" as const, label: `${trim} image`, hint: `Only the ${trim} trim · shared by ${sameTrim} entries` }] : []),
+				...(gen ? [{ t: genTarget, f: "imageUrl" as const, label: `${gen.label} image`, hint: `Every ${model} ${genSpan(gen)} — used instead of the ${model} image`, optional: true }] : []),
+				...(make && model && subject.year ? [{ t: yearTarget, f: "imageUrl" as const, label: `${subject.year} image`, hint: `Optional · just the ${subject.year} ${model}. Without one it uses ${gen ? `the ${gen.label} image` : `the ${model} image`}`, optional: true }] : []),
 			] : [])
 			: projectLabel
 				? [{ t: projectTarget, f: "imageUrl" as const, label: `${projectLabel} image`, hint: "Shown on this project's card in the library" }]
 				: [],
 	);
-	const filled = $derived(slots.filter((s) => patternStore.media[targetId(s.t)]?.[s.f]).length);
+	// Generation and year images are optional extras — they never make the count look unfinished.
+	const required = $derived(slots.filter((s) => !("optional" in s && s.optional)));
+	const filled = $derived(required.filter((s) => patternStore.media[targetId(s.t)]?.[s.f]).length);
 	let open = $state(true);
 </script>
 
 <section class="sm" aria-label="Images for {subjectName(subject)}">
 	<button class="sm__head" aria-expanded={open} onclick={() => (open = !open)}>
 		<span class="sm__title">Images &amp; logos</span>
-		<span class="sm__count" class:sm__count--done={filled === slots.length && slots.length > 0}>{filled}/{slots.length} set</span>
+		<span class="sm__count" class:sm__count--done={filled === required.length && required.length > 0}>{filled}/{required.length} set</span>
 		<svg class="sm__chev" class:sm__chev--open={open} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
 	</button>
 	{#if open}

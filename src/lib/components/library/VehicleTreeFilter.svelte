@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { monogram, type MakeNode } from "$lib/utils/vehicleCatalog";
+	import { monogram, type MakeNode, type YearOption } from "$lib/utils/vehicleCatalog";
 
 	// Sidebar make → model → trim tree. The active branch expands in place, so
 	// it always mirrors the page's breadcrumb and one click jumps anywhere.
@@ -12,8 +12,12 @@
 		logoFor: (makeLabel: string) => string | undefined;
 		onselect: (p: TreePath) => void;
 		trimBase: string;
+		/** The open model's generations (admin-set year groups) and the one filtering the page, if any. */
+		gens?: YearOption[];
+		activeYear?: string;
+		onyear?: (key: string) => void;
 	}
-	let { tree, path, total, logoFor, onselect, trimBase }: Props = $props();
+	let { tree, path, total, logoFor, onselect, trimBase, gens = [], activeYear = "All", onyear }: Props = $props();
 
 	const isTrim = (k: string) => path.trim === (k === "" ? trimBase : k);
 </script>
@@ -59,6 +63,24 @@
 									<span class="vt__label">{o.label}</span>
 									<span class="vt__count">{o.count}</span>
 								</button>
+
+								{#if openModel && gens.length}
+										<ul class="vt__list vt__list--nested" aria-label="Generations">
+											{#each gens as g (g.key)}
+												<li>
+													<button
+														class="vt__row vt__row--sm vt__row--gen"
+														class:vt__row--on={activeYear === g.key}
+														aria-pressed={activeYear === g.key}
+														onclick={() => onyear?.(g.key)}
+													>
+														<span class="vt__label">{g.label}</span>
+														<span class="vt__span">{g.from === g.to ? g.from : `${g.from}–${g.to}`}</span>
+													</button>
+												</li>
+											{/each}
+										</ul>
+								{/if}
 
 								{#if openModel && o.trims.length > 1}
 									<ul class="vt__list vt__list--nested">
@@ -130,7 +152,9 @@
 		font-size: 0.6875rem;
 		color: var(--text-tertiary);
 	}
-	.vt__row--on .vt__count { color: var(--color-brand-dim); }
+	.vt__row--on .vt__count, .vt__row--on .vt__span { color: var(--color-brand-dim); }
+	.vt__span { flex: none; margin-left: 12px; font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-tertiary); }
+	.vt__row--gen .vt__label { font-weight: 600; }
 
 	.vt__logo {
 		flex: none;

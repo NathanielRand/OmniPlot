@@ -2,6 +2,8 @@
 	// "Already voted" — the locked-in state of a vote, shared by the coming-soon panel
 	// and the request modal so a vote reads the same wherever it was cast.
 	import type { MyVote } from "$lib/utils/demand";
+	import { groupYearLabels } from "$lib/utils/vehicleCatalog";
+	import type { Generation } from "$lib/types";
 
 	interface Props {
 		mine: MyVote | undefined;
@@ -10,11 +12,14 @@
 		busy?: boolean;
 		onChange?: () => void;
 		onRemove?: () => void;
+		/** The model's generations, and the years a vote could name — a fully voted generation reads as its name. */
+		gens?: Generation[];
+		available?: number[];
 	}
-	let { mine, burst = false, busy = false, onChange, onRemove }: Props = $props();
+	let { mine, burst = false, busy = false, onChange, onRemove, gens = [], available }: Props = $props();
 
 	const label = $derived(
-		mine?.any ? "any year" : mine?.years.length ? [...mine.years].sort((a, b) => b - a).join(", ") : "",
+		mine?.any ? "any year" : mine?.years.length ? groupYearLabels(mine.years, gens, available).map((g) => g.label).join(", ") : "",
 	);
 </script>
 

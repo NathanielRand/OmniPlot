@@ -27,6 +27,7 @@ import {
 import { db, auth } from "./client";
 import { sizeError } from "$lib/utils/patternSize";
 import { pathStats } from "$lib/utils/pathStats";
+import { cleanGenerations, targetId } from "$lib/utils/vehicleCatalog";
 import type {
 	UserProfile,
 	Vehicle,
@@ -35,6 +36,7 @@ import type {
 	AdminStats,
 	VehicleEntry,
 	VehicleMedia,
+	Generation,
 	PatternRequest,
 	DemandRecord,
 	ProjectType,
@@ -530,6 +532,8 @@ export function subscribeVehicleMedia(
 						make: x.make ?? "",
 						model: x.model || undefined,
 						trim: x.trim || undefined,
+						generation: x.generation || undefined,
+						year: x.year || undefined,
 						logoUrl: x.logoUrl || undefined,
 						imageUrl: x.imageUrl || undefined,
 						projectType: x.projectType || undefined,
@@ -538,6 +542,7 @@ export function subscribeVehicleMedia(
 						imagePath: x.imagePath || undefined,
 						logoHash: x.logoHash || undefined,
 						imageHash: x.imageHash || undefined,
+						generations: cleanGenerations(x.generations),
 					} satisfies VehicleMedia;
 				}),
 			),
@@ -582,6 +587,20 @@ export async function updateVehicleDoc(
 	patch: Partial<VehicleEntry>,
 ): Promise<void> {
 	await updateDoc(doc(db, Collections.VEHICLES, id), withDeletes(patch));
+}
+
+/**
+ * Admin: how a model's years are grouped. Lives on the model's media doc (one doc
+ * per make/model, already read by the library and admin). Merged, so it never
+ * touches the model's image; an empty list clears the grouping.
+ */
+export async function setModelGenerations(make: string, model: string, generations: Generation[]): Promise<void> {
+	const id = targetId({ kind: "model", make, model });
+	await setDoc(
+		doc(db, Collections.VEHICLE_MEDIA, id),
+		{ kind: "model", make, model, generations: cleanGenerations(generations), updatedAt: serverTimestamp() },
+		{ merge: true },
+	);
 }
 
 export async function deleteVehicleDoc(id: string): Promise<void> {

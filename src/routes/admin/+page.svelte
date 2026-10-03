@@ -161,7 +161,7 @@
 		{
 			key: "patterns", label: "Pattern reviews",
 			count: attention ? attention.patterns : null,
-			sub: "submissions & changes pending", href: "/admin/patterns", tone: "info",
+			sub: "submissions & changes pending", href: "/admin/patterns?tab=review", tone: "info",
 		},
 	]);
 	const attnLoading = $derived(!attention && !attnError);

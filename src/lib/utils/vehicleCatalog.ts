@@ -7,7 +7,7 @@
 // no Firestore, no DOM — everything the UI counts comes from here.
 // ─────────────────────────────────────────────
 
-import type { VehicleEntry, VehicleMedia } from "$lib/types";
+import type { Generation, VehicleEntry, VehicleMedia } from "$lib/types";
 
 /** Label for entries that have no trim recorded. */
 export const BASE_TRIM_LABEL = "Base / all trims";
@@ -75,16 +75,23 @@ export function subjectMediaId(projectType: string, label: string): string {
 
 /** What a media slot belongs to — the single description both client and server derive the doc id from. */
 export interface MediaTarget {
-	kind: "make" | "model" | "trim" | "subject";
+	kind: "make" | "model" | "trim" | "subject" | "generation" | "year";
 	make?: string;
 	model?: string;
 	trim?: string;
 	projectType?: string;
 	label?: string;
+	/** kind "generation": the generation's name. */
+	generation?: string;
+	/** kind "year": the model year. */
+	year?: number;
 }
 
 export function targetId(t: MediaTarget): string {
 	if (t.kind === "subject") return subjectMediaId(t.projectType ?? "custom", t.label ?? "");
+	// "~" never appears in a slug, so these can't collide with a trim's id.
+	if (t.kind === "generation") return `${mediaId(t.make ?? "", t.model)}__~g-${slug(t.generation)}`;
+	if (t.kind === "year") return `${mediaId(t.make ?? "", t.model)}__~y-${Math.floor(Number(t.year))}`;
 	if (t.kind === "make") return mediaId(t.make ?? "");
 	if (t.kind === "model") return mediaId(t.make ?? "", t.model);
 	return mediaId(t.make ?? "", t.model, t.trim);
@@ -97,6 +104,31 @@ export function mediaFor(
 	trim?: string,
 ): VehicleMedia | undefined {
 	return media[mediaId(make, model, trim)];
+}
+
+/**
+ * The picture for a vehicle at whatever depth is being shown. The most specific
+ * image an admin set wins, so a view shows its year's photo, else its generation's,
+ * else the trim's, else the model's. With no year or generation in play (a model
+ * tile) it is the model's image, else the newest generation's that has one.
+ * Generations come from the model's own record.
+ */
+export function vehicleImage(
+	media: Record<string, VehicleMedia>,
+	make: string,
+	model: string,
+	ctx: { trim?: string; year?: number; generation?: string } = {},
+): string | undefined {
+	const img = (t: MediaTarget) => media[targetId(t)]?.imageUrl || undefined;
+	const gens = media[mediaId(make, model)]?.generations ?? [];
+	const genName = ctx.generation ?? generationOf(ctx.year, gens)?.label;
+	return (
+		(ctx.year ? img({ kind: "year", make, model, year: ctx.year }) : undefined) ??
+		(genName ? img({ kind: "generation", make, model, generation: genName }) : undefined) ??
+		(ctx.trim ? img({ kind: "trim", make, model, trim: ctx.trim }) : undefined) ??
+		img({ kind: "model", make, model }) ??
+		(ctx.year || genName ? undefined : [...gens].sort((a, b) => b.to - a.to).map((g) => img({ kind: "generation", make, model, generation: g.label })).find(Boolean))
+	);
 }
 
 /** "GM" / "BM" / "Toyota" → two-letter monogram for a make with no logo yet. */
@@ -233,6 +265,102 @@ export function yearSpan(years: number[]): string {
 	if (!years.length) return "";
 	const hi = Math.max(...years), lo = Math.min(...years);
 	return hi === lo ? String(hi) : `${lo}–${hi}`;
+}
+
+// ─── Generations ──────────────────────────────
+// An admin groups a model's years into named runs ("Gen 3: 2015–2020"). They're
+// ranges on the model, not labels on each year entry, so a year added later
+// (bulk add, an approved submission, a private upload) lands in its generation
+// by itself. Years in no range simply stay as individual years.
+
+export const genSpan = (g: Pick<Generation, "from" | "to">) => (g.from === g.to ? String(g.from) : `${g.from}–${g.to}`);
+export const generationKey = (g: Pick<Generation, "label">) => slug(g.label);
+
+/** Stored/typed generations → valid ones, newest first. Bad rows are dropped, bounds swapped if reversed. */
+export function cleanGenerations(raw: unknown): Generation[] {
+	if (!Array.isArray(raw)) return [];
+	const out: Generation[] = [];
+	for (const g of raw) {
+		const label = typeof g?.label === "string" ? g.label.trim() : "";
+		const a = Math.floor(Number(g?.from)), b = Math.floor(Number(g?.to));
+		if (!label || !a || !b) continue;
+		out.push({ label, from: Math.min(a, b), to: Math.max(a, b) });
+	}
+	return out.sort((x, y) => y.to - x.to || y.from - x.from);
+}
+
+/** Why a list can't be saved, or null. Checked as typed, before cleaning. */
+export function generationError(list: Generation[]): string | null {
+	const gens = list.map((g) => ({ label: String(g.label ?? "").trim(), from: Math.floor(Number(g.from)), to: Math.floor(Number(g.to)) }));
+	for (const g of gens) {
+		if (!g.label) return "Name every generation.";
+		if (!g.from || !g.to || g.from < 1900 || g.to > 2100) return `“${g.label}” needs a first and last year.`;
+		if (g.to < g.from) return `“${g.label}” ends before it starts.`;
+	}
+	const keys = new Set<string>();
+	for (const g of gens) {
+		const k = slug(g.label);
+		if (keys.has(k)) return `Two generations are called “${g.label}”.`;
+		keys.add(k);
+	}
+	const sorted = [...gens].sort((a, b) => a.from - b.from);
+	for (let i = 1; i < sorted.length; i++) {
+		if (sorted[i].from <= sorted[i - 1].to) return `“${sorted[i - 1].label}” and “${sorted[i].label}” share a year.`;
+	}
+	return null;
+}
+
+export function generationOf(year: number | undefined, gens: Generation[]): Generation | undefined {
+	return year ? gens.find((g) => year >= g.from && year <= g.to) : undefined;
+}
+
+/** Rows split into their generations (only ones with a row) and the years that sit in none. */
+export function groupByGeneration<T extends { v: Pick<VehicleEntry, "year"> }>(
+	rows: T[],
+	gens: Generation[],
+): { groups: { gen: Generation; rows: T[] }[]; loose: T[] } {
+	const byKey = new Map<string, { gen: Generation; rows: T[] }>();
+	const loose: T[] = [];
+	for (const r of rows) {
+		const gen = generationOf(r.v.year, gens);
+		if (!gen) { loose.push(r); continue; }
+		const k = generationKey(gen);
+		(byKey.get(k) ?? byKey.set(k, { gen, rows: [] }).get(k)!).rows.push(r);
+	}
+	return { groups: [...byKey.values()].sort((a, b) => b.gen.to - a.gen.to), loose };
+}
+
+/** Years as short labels: a generation whose years are all there collapses to its name; the rest stay single. Newest first. */
+export function groupYearLabels(years: number[], gens: Generation[], available?: number[]): { label: string; to: number; isGen: boolean }[] {
+	const set = new Set(years);
+	const used = new Set<number>();
+	const out: { label: string; to: number; isGen: boolean }[] = [];
+	for (const g of gens) {
+		const have = [...set].filter((y) => y >= g.from && y <= g.to);
+		if (!have.length) continue;
+		// "All of it" = every year that could have been picked (the available ones, else the whole range).
+		const need = available ? available.filter((y) => y >= g.from && y <= g.to) : null;
+		const full = need ? need.length > 0 && need.every((y) => set.has(y)) : have.length === g.to - g.from + 1;
+		if (!full) continue;
+		out.push({ label: g.label, to: g.to, isGen: true });
+		have.forEach((y) => used.add(y));
+	}
+	for (const y of set) if (!used.has(y)) out.push({ label: String(y), to: y, isGen: false });
+	return out.sort((a, b) => b.to - a.to);
+}
+
+export interface YearOption { key: string; label: string; from: number; to: number; isGen: boolean }
+
+/**
+ * The year filter: each generation that has entries (full-width, with its span),
+ * then any year in no generation on its own. Newest first.
+ */
+export function yearOptions(entries: { v: Pick<VehicleEntry, "year"> }[], gens: Generation[]): YearOption[] {
+	const years = [...new Set(entries.map((x) => x.v.year).filter((y): y is number => !!y))].sort((a, b) => b - a);
+	const { groups } = groupByGeneration(years.map((year) => ({ v: { year } })), gens);
+	const opts: YearOption[] = groups.map(({ gen }) => ({ key: `g:${generationKey(gen)}`, label: gen.label, from: gen.from, to: gen.to, isGen: true }));
+	for (const y of years) if (!generationOf(y, gens)) opts.push({ key: String(y), label: String(y), from: y, to: y, isGen: false });
+	return opts.sort((a, b) => b.to - a.to);
 }
 
 /** Entries under a make / model / trim path. Any level left undefined matches all. */

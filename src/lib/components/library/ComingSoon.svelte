@@ -9,6 +9,8 @@
 	import { patternStore } from "$lib/stores/patternStore.svelte";
 	import { userStore } from "$lib/stores";
 	import { demandId, hasVoted, votesForYear } from "$lib/utils/demand";
+	import { yearOptions, genSpan } from "$lib/utils/vehicleCatalog";
+	import type { Generation } from "$lib/types";
 
 	interface Props {
 		make: string;
@@ -17,14 +19,22 @@
 		years: number[];
 		/** Nothing at all is available for what's on screen — otherwise this is a slim notice. */
 		allSoon: boolean;
+		/** How the admin grouped this model's years — a generation votes as one button. */
+		gens?: Generation[];
 	}
-	let { make, model, years, allSoon }: Props = $props();
+	let { make, model, years, allSoon, gens = [] }: Props = $props();
 
 	const id = $derived(demandId({ projectType: "vehicle", make, model }));
 	const record = $derived(patternStore.requests.find((r) => r.id === id));
 	const mine = $derived(patternStore.myVotes[id]);
 	const signedIn = $derived(!!userStore.user);
 	const sortedYears = $derived([...years].sort((a, b) => b - a));
+	// Year buttons: one per generation (all its open years), then single years.
+	const options = $derived(
+		yearOptions(sortedYears.map((year) => ({ v: { year } })), gens).map((o) => ({ ...o, ys: sortedYears.filter((y) => y >= o.from && y <= o.to) })),
+	);
+	const optOn = (ys: number[]) => ys.length > 0 && ys.every((y) => hasVoted(mine, y));
+	const optVotes = (ys: number[]) => Math.max(0, ...ys.map((y) => votesForYear(record, y)));
 	let busy = $state(false);
 	let editing = $state(false);
 	/** Vote accepted, but my own-votes snapshot hasn't caught up yet. */
@@ -69,6 +79,25 @@
 		} else if (!hasVoted(mine) || !year) { confirmed = false; }
 	}
 
+	/** A generation: vote (or withdraw) every year it still lacks, one request each. */
+	async function toggleMany(ys: number[]) {
+		if (busy) return;
+		busy = true;
+		const on = !optOn(ys);
+		let ok = true;
+		for (const y of ys) {
+			if (hasVoted(mine, y) === on) continue;
+			ok = (await patternStore.vote({ projectType: "vehicle", make, model, year: y }, on)) && ok;
+		}
+		busy = false;
+		if (!ok) return;
+		if (on) {
+			confirmed = true; editing = false; burst = true;
+			clearTimeout(burstTimer);
+			burstTimer = setTimeout(() => (burst = false), 1600);
+		} else if (!hasVoted(mine)) { confirmed = false; }
+	}
+
 	async function withdraw() {
 		if (busy) return;
 		busy = true;
@@ -101,17 +130,17 @@
 	{#if !signedIn}
 		<a class="cs__vote" href="/login">Sign in to vote</a>
 	{:else if folded}
-		<VoteSummary {mine} {burst} {busy} onChange={() => (editing = true)} onRemove={withdraw} />
+		<VoteSummary {mine} {burst} {busy} {gens} available={sortedYears} onChange={() => (editing = true)} onRemove={withdraw} />
 	{:else}
 		<div class="cs__actions">
 			<button class="cs__vote" class:cs__vote--on={mine?.any} disabled={busy} aria-pressed={!!mine?.any} onclick={() => toggle()}>
 				{#if busy}<Spinner />{/if}{busy ? "Saving…" : mine?.any ? "✓ You voted — any year" : mine ? "I want any year" : "I want this — any year"}
 			</button>
-			{#if sortedYears.length > 1 || (sortedYears.length === 1 && !allSoon)}
+			{#if options.length > 1 || (options.length === 1 && !allSoon)}
 				<div class="cs__years" role="group" aria-label="Vote for specific years">
-					{#each sortedYears as y (y)}
-						<button class="cs__year" class:cs__year--on={hasVoted(mine, y)} disabled={busy} aria-pressed={hasVoted(mine, y)} onclick={() => toggle(y)}>
-							{y}{#if votesForYear(record, y) > 0} <span>{votesForYear(record, y)}</span>{/if}
+					{#each options as o (o.key)}
+						<button class="cs__year" class:cs__year--on={optOn(o.ys)} disabled={busy} aria-pressed={optOn(o.ys)} title={o.isGen ? `${genSpan(o)}` : undefined} onclick={() => (o.isGen ? toggleMany(o.ys) : toggle(o.from))}>
+							<span class="cs__yname">{o.label}</span>{#if o.isGen}<span class="cs__yspan">{genSpan(o)}</span>{/if}{#if optVotes(o.ys) > 0}<span class="cs__yvotes">{optVotes(o.ys)}</span>{/if}
 						</button>
 					{/each}
 				</div>
@@ -135,9 +164,11 @@
 	.cs__vote:hover:not(:disabled) { background: var(--color-brand); }
 	.cs__vote--on { color: var(--text-primary); background: color-mix(in srgb, var(--color-success) 14%, transparent); border-color: color-mix(in srgb, var(--color-success) 40%, transparent); }
 	.cs__vote:disabled, .cs__year:disabled { opacity: 0.6; cursor: wait; }
-	.cs__years { display: flex; flex-wrap: wrap; gap: 6px; }
-	.cs__year { padding: 3px 10px; font: inherit; font-size: 0.75rem; color: var(--text-secondary); background: var(--bg-base); border: 1px solid var(--border-default); border-radius: 99px; cursor: pointer; }
-	.cs__year span { font-family: var(--font-mono); font-size: 0.6875rem; color: var(--text-tertiary); }
+	.cs__years { display: flex; flex-wrap: wrap; gap: 10px; }
+	.cs__year { display: inline-flex; align-items: center; gap: 14px; padding: 9px 20px; font: inherit; font-size: 1.125rem; font-weight: 600; color: var(--text-secondary); background: var(--bg-base); border: 1px solid var(--border-default); border-radius: 99px; cursor: pointer; }
+	.cs__yname { margin-right: 4px; }
+	.cs__yspan, .cs__yvotes { font-family: var(--font-mono); font-size: 1rem; font-weight: 500; color: var(--text-tertiary); }
+	.cs__yvotes { padding-left: 12px; border-left: 1px solid var(--border-default); }
 	.cs__year--on { color: var(--text-primary); border-color: var(--color-success); background: color-mix(in srgb, var(--color-success) 12%, transparent); }
 	.cs--done { padding-block: 12px; }
 	.cs__count { display: flex; align-items: center; gap: 10px; }

@@ -25,6 +25,7 @@
 	import VehicleTreeFilter, { type TreePath } from "$lib/components/library/VehicleTreeFilter.svelte";
 	import {
 		buildTree, entriesUnder, mediaFor, yearSpan, trimFilter, matchesQuery,
+		yearOptions, generationOf, groupByGeneration, vehicleImage,
 		BASE_TRIM_LABEL, TRIM_BASE, TRIM_ALL, makeKey, modelKey,
 	} from "$lib/utils/vehicleCatalog";
 	import { demandId, hasVoted } from "$lib/utils/demand";
@@ -237,9 +238,16 @@
 	const trimArg = $derived(trimFilter(path.trim));
 	const pathEntries = $derived(entriesUnder(vehScope, { make: path.make, model: path.model, trim: trimArg }));
 
-	const YEARS = $derived(
-		["All", ...new Set(pathEntries.filter((x) => x.v.year).map((x) => String(x.v.year)).sort((a, b) => Number(b) - Number(a)))],
-	);
+	// Year filter. Once a model is chosen its years fold into the generations an
+	// admin set for it (a generation is one button; years in none stay single).
+	// activeYear is an option key: "All", a year, or "g:<generation>".
+	const modelGens = $derived.by(() => {
+		const e = path.model ? pathEntries[0]?.v : undefined;
+		return e?.make && e.model ? mediaFor(patternStore.media, e.make, e.model)?.generations ?? [] : [];
+	});
+	const yearOpts = $derived(yearOptions(pathEntries, modelGens));
+	const YEARS = $derived(["All", ...yearOpts.map((o) => o.key)]);
+	const yearSel = $derived(yearOpts.find((o) => o.key === activeYear));
 	// A year that isn't in the current branch resets it.
 	$effect(() => {
 		if (!YEARS.includes(activeYear)) activeYear = "All";
@@ -257,7 +265,7 @@
 			const v = x.v;
 			const q = search.trim().toLowerCase();
 			const matchSearch = !q || matchesQuery(`${v.year ?? ""} ${v.make ?? ""} ${v.model ?? ""} ${v.trim ?? ""} ${v.bodyStyle ?? ""} ${v.propertyLabel ?? ""} ${v.address ?? ""} ${x.pats.map((p) => `${p.name} ${zoneGroups(p).join(" ")}`).join(" ")}`, q);
-			const matchYear = typeOf(v) !== "vehicle" || activeYear === "All" || String(v.year) === activeYear;
+			const matchYear = typeOf(v) !== "vehicle" || activeYear === "All" || (!!yearSel && !!v.year && v.year >= yearSel.from && v.year <= yearSel.to);
 			return matchSearch && matchYear;
 		}),
 	);
@@ -298,6 +306,15 @@
 
 	const mediaOf = (make: string, model?: string, trim?: string) => mediaFor(patternStore.media, make, model, trim);
 	const logoFor = (makeLabel: string) => mediaOf(makeLabel)?.logoUrl;
+	// A model's picture: the year's, else its generation's (when the Year filter or a
+	// generation is chosen), else the trim's, else the model's.
+	const imageOf = (make: string, model: string, trim?: string, scoped = false) => {
+		const sel = scoped ? yearSel : undefined;
+		return vehicleImage(patternStore.media, make, model, {
+			trim,
+			...(sel ? (sel.isGen ? { generation: sel.label } : { year: sel.from }) : {}),
+		});
+	};
 
 	// Flat matches while searching from the top: every model across makes.
 	const searching = $derived(isVeh && search.trim() !== "" && !path.make);
@@ -363,8 +380,21 @@
 		const e = patMeta.get(patternKey(p));
 		if (!e) return "";
 		const trims = e.trims.length === 1 ? e.trims[0] : e.trims.length > 1 ? `${e.trims.length} trims` : "";
-		return [yearSpan(e.years), trims].filter(Boolean).join(" ");
+		// Name the generation when every year the pattern fits sits in the same one.
+		const gens = new Set(e.years.map((y) => generationOf(y, modelGens)?.label ?? ""));
+		const gen = gens.size === 1 ? [...gens][0] : "";
+		return [gen, yearSpan(e.years), trims].filter(Boolean).join(" ");
 	}
+	// "2 generations · 3 model years" instead of one long run of years.
+	const leafYearsLabel = $derived.by(() => {
+		const { groups, loose } = groupByGeneration(leafEntries, modelGens);
+		const gens = groups.length ? `${groups.length} ${groups.length === 1 ? "generation" : "generations"}` : "";
+		const yrs = new Set(loose.map((x) => x.v.year)).size;
+		const years = gens
+			? (yrs ? `${yrs} other ${yrs === 1 ? "year" : "years"}` : "")
+			: `${leafEntries.length} model ${leafEntries.length === 1 ? "year" : "years"}`;
+		return [gens, years].filter(Boolean).join(" · ");
+	});
 
 	const leafActive = $derived(isVeh ? level === "patterns" : !!selectedVehicle);
 
@@ -849,8 +879,11 @@
 					{#if activeYear !== "All"}<button class="lib-fgroup__clear" onclick={() => (activeYear = "All")}>Clear</button>{/if}
 				</div>
 				<div class="lib-years" use:revealActive={activeYear}>
-					{#each YEARS as year}
-						<button class="lib-year" class:active={activeYear === year} class:lib-year--all={year === "All"} onclick={() => (activeYear = year)} aria-pressed={activeYear === year}>{year === "All" ? "All years" : year}</button>
+					<button class="lib-year lib-year--all" class:active={activeYear === "All"} onclick={() => (activeYear = "All")} aria-pressed={activeYear === "All"}>All years</button>
+					{#each yearOpts as o (o.key)}
+						<button class="lib-year" class:active={activeYear === o.key} class:lib-year--gen={o.isGen} onclick={() => (activeYear = o.key)} aria-pressed={activeYear === o.key}>
+							{#if o.isGen}<span class="lib-year__name">{o.label}</span><span class="lib-year__span">{o.from === o.to ? o.from : `${o.from}–${o.to}`}</span>{:else}{o.label}{/if}
+						</button>
 					{/each}
 				</div>
 			</section>
@@ -922,7 +955,7 @@
 			<!-- Desktop: the tree lives here. ≤768px it moves into a sheet. -->
 			<div class="lib-tree">
 				<div class="lib-section-label">Browse</div>
-				<VehicleTreeFilter {tree} {path} total={treeTotal} {logoFor} onselect={go} trimBase={TRIM_BASE} />
+				<VehicleTreeFilter {tree} {path} total={treeTotal} {logoFor} onselect={go} trimBase={TRIM_BASE} gens={yearOpts.filter((o) => o.isGen)} {activeYear} onyear={(k) => (activeYear = activeYear === k ? "All" : k)} />
 			</div>
 			<button class="lib-pill lib-browse-btn" onclick={() => (browseOpen = true)}>
 				<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
@@ -1139,7 +1172,7 @@
 									eyebrow={m.label}
 									years={yearSpan(o.years)}
 									bodyStyle={o.bodyStyle}
-									imageUrl={mediaOf(m.label, o.label)?.imageUrl}
+									imageUrl={imageOf(m.label, o.label)}
 									meta={[...(o.trims.length > 1 ? [`${o.trims.length} trims`] : o.trims.length === 1 && o.trims[0].key !== "" ? [o.trims[0].label] : []), pieces(o.count)]}
 									onclick={() => go(o.trims.length === 1 && o.trims[0].key !== "" ? { make: m.key, model: o.key, trim: o.trims[0].key } : { make: m.key, model: o.key })}
 								/>
@@ -1185,7 +1218,7 @@
 									title={o.label}
 									years={yearSpan(o.years)}
 									bodyStyle={o.bodyStyle}
-									imageUrl={mediaOf(makeNode.label, o.label)?.imageUrl}
+									imageUrl={imageOf(makeNode.label, o.label)}
 									meta={[...(o.trims.length > 1 ? [`${o.trims.length} trims`] : o.trims.length === 1 && o.trims[0].key !== "" ? [o.trims[0].label] : []), pieces(o.count)]}
 									onclick={() => go({ make: makeNode.key, model: o.key })}
 								/>
@@ -1197,12 +1230,12 @@
 
 				{:else}
 					{#if modelNode && makeNode}
-						{@const md = mediaOf(makeNode.label, modelNode.label)}
+						{@const mdImg = imageOf(makeNode.label, modelNode.label, undefined, true)}
 						<VehicleHero
 							title={modelNode.label}
 							eyebrow={makeNode.label}
 							logoUrl={mediaOf(makeNode.label)?.logoUrl}
-							imageUrl={md?.imageUrl}
+							imageUrl={mdImg}
 							stats={[`${modelNode.trims.length} trims & variants`, pieces(modelNode.count), yearSpan(modelNode.years)].filter(Boolean)}
 						/>
 						<div class="vb-grid vb-grid--trim">
@@ -1218,7 +1251,7 @@
 									variant="trim"
 									title={t.label}
 									years={yearSpan(t.years)}
-									imageUrl={mediaOf(makeNode.label, modelNode.label, t.key ? t.label : undefined)?.imageUrl}
+									imageUrl={imageOf(makeNode.label, modelNode.label, t.key ? t.label : undefined, true)}
 									meta={[pieces(t.count)]}
 									onclick={() => go({ make: makeNode.key, model: modelNode.key, trim: t.key === "" ? TRIM_BASE : t.key })}
 								/>
@@ -1271,8 +1304,8 @@
 						title={[modelLabel, trimLabel && trimLabel !== BASE_TRIM_LABEL ? trimLabel : ""].filter(Boolean).join(" ")}
 						eyebrow={makeLabel}
 						logoUrl={mediaOf(makeLabel)?.logoUrl}
-						imageUrl={mediaOf(makeLabel, modelLabel)?.imageUrl}
-						stats={[yearSpan(leafEntries.map((x) => x.v.year ?? 0).filter(Boolean)), `${leafEntries.length} model ${leafEntries.length === 1 ? "year" : "years"}`].filter(Boolean)}
+						imageUrl={imageOf(makeLabel, modelLabel, trimLabel && trimLabel !== BASE_TRIM_LABEL ? trimLabel : undefined, true)}
+						stats={[yearSpan(leafEntries.map((x) => x.v.year ?? 0).filter(Boolean)), leafYearsLabel].filter(Boolean)}
 					/>
 				{/if}
 				<div class="zone-browser__header">
@@ -1299,7 +1332,7 @@
 				</div>
 
 				{#if soonYears.length}
-					<ComingSoon make={makeLabel} model={modelLabel} years={soonYears} allSoon={allSoonLeaf} />
+					<ComingSoon make={makeLabel} model={modelLabel} years={soonYears} allSoon={allSoonLeaf} gens={modelGens} />
 				{/if}
 
 				<div class="zone-grid" hidden={allSoonLeaf}>
@@ -1437,7 +1470,7 @@
 				</button>
 			</div>
 			<div class="sheet__body">
-				<VehicleTreeFilter {tree} {path} total={treeTotal} {logoFor} onselect={go} trimBase={TRIM_BASE} />
+				<VehicleTreeFilter {tree} {path} total={treeTotal} {logoFor} onselect={go} trimBase={TRIM_BASE} gens={yearOpts.filter((o) => o.isGen)} {activeYear} onyear={(k) => (activeYear = activeYear === k ? "All" : k)} />
 			</div>
 		</div>
 	</div>
@@ -1654,7 +1687,7 @@
 					<input id="req-notes" type="text" class="form-input" bind:value={requestForm.notes} placeholder={requestType === "vehicle" ? "Any specific zones — PPF, tint, both?" : "Sizes, brand, film type — anything that helps"} />
 				</div>
 
-				{#if reqVoted}<div class="req-voted"><VoteSummary mine={reqMine} busy={reqBusy} onRemove={removeReqVote} /></div>{/if}
+				{#if reqVoted}<div class="req-voted"><VoteSummary mine={reqMine} busy={reqBusy} onRemove={removeReqVote} gens={requestType === "vehicle" ? mediaFor(patternStore.media, requestForm.make, requestForm.model)?.generations ?? [] : []} /></div>{/if}
 
 				<div class="modal__actions">
 					<button type="button" class="btn-ghost" onclick={() => (showRequestModal = false)}>{reqVoted ? "Close" : "Cancel"}</button>
@@ -2719,22 +2752,20 @@
 
 	/* Years: a 4-up grid, three rows tall, scrolling inside with a fade hint. */
 	.lib-years {
-		display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px;
-		max-height: 118px; overflow-y: auto; overscroll-behavior: contain;
-		padding: 1px 4px 1px 1px; margin-right: -4px;
-		scrollbar-width: thin; scrollbar-color: var(--border-default) transparent;
-		scroll-padding-block: 28px;
-		-webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 6px, #000 calc(100% - 14px), transparent 100%);
-		mask-image: linear-gradient(to bottom, transparent 0, #000 6px, #000 calc(100% - 14px), transparent 100%);
+		display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px;
+		padding: 1px;
 	}
 	.lib-years::-webkit-scrollbar { width: 6px; }
 	.lib-years::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 99px; }
 	.lib-year {
-		height: 28px; padding: 0; font: inherit; font-size: 0.75rem; font-weight: 500; font-variant-numeric: tabular-nums;
+		height: 40px; padding: 0; font: inherit; font-size: 0.9375rem; font-weight: 500; font-variant-numeric: tabular-nums;
 		color: var(--text-secondary); background: var(--bg-surface-2); border: 1px solid var(--border-subtle);
 		border-radius: var(--radius-md); cursor: pointer; transition: background 0.12s, color 0.12s, border-color 0.12s;
 	}
 	.lib-year--all { grid-column: 1 / -1; }
+	.lib-year--gen { grid-column: 1 / -1; height: 46px; padding: 0 14px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+	.lib-year__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 1.0625rem; font-weight: 600; }
+	.lib-year__span { font-family: var(--font-mono); font-size: 0.9375rem; opacity: 0.85; white-space: nowrap; }
 	.lib-year:hover { border-color: var(--border-default); color: var(--text-primary); }
 	.lib-year.active { background: var(--color-brand-dim); border-color: var(--color-brand-dim); color: #fff; }
 
