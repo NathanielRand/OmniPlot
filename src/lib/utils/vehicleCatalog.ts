@@ -359,6 +359,24 @@ export function groupYearLabels(years: number[], gens: Generation[], available?:
 	return out.sort((a, b) => b.to - a.to);
 }
 
+/**
+ * The range to offer when grouping a trim's uncategorized years into a new generation:
+ * the biggest run of them that no existing generation sits in the middle of (newest wins a tie),
+ * so the suggestion never overlaps a generation that is already there.
+ */
+export function uncategorizedSpan(years: number[], gens: Generation[]): { from: number; to: number } | null {
+	const ys = [...new Set(years)].sort((a, b) => a - b);
+	if (!ys.length) return null;
+	const runs: number[][] = [[ys[0]]];
+	for (let k = 1; k < ys.length; k++) {
+		const prev = ys[k - 1], cur = ys[k];
+		const split = gens.some((g) => g.to > prev && g.from < cur);
+		if (split) runs.push([cur]); else runs[runs.length - 1].push(cur);
+	}
+	const best = runs.reduce((a, b) => (b.length > a.length || (b.length === a.length && b[b.length - 1] > a[a.length - 1]) ? b : a));
+	return { from: best[0], to: best[best.length - 1] };
+}
+
 export interface YearOption { key: string; label: string; from: number; to: number; isGen: boolean }
 
 /**

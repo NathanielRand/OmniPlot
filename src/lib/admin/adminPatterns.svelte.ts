@@ -13,13 +13,15 @@
 import { patternStore, MIRROR_PAIRS, zoneLabel as storeZoneLabel } from "$lib/stores/patternStore.svelte";
 import {
 	getReviewQueue, getAdjustmentRequests, resolveAdjustmentRequest, adminUpdateUserPattern, deleteUserPattern,
-	commitCatalogChange, setVehicleDoc, updateVehicleDoc, setPatternDoc, updatePatternDoc, setDemandStatus, setGenerations,
+	commitCatalogChange, commitLayerChange, setVehicleDoc, updateVehicleDoc, setPatternDoc, updatePatternDoc, setDemandStatus, setGenerations,
 } from "$lib/firebase/firestore";
 import { toastStore, confirmStore } from "$lib/stores";
 import { auth } from "$lib/firebase/client";
 import { formatMeasure, uid } from "$lib/utils";
 import { sizeError } from "$lib/utils/patternSize";
-import { cleanGenerations, generationError } from "$lib/utils/vehicleCatalog";
+import { cleanGenerations, generationError, generationsFor, makeKey } from "$lib/utils/vehicleCatalog";
+import { demandModelKey } from "$lib/utils/demand";
+import { planLayerEdit, planLayerDelete, planEntriesDelete, planGenerationChange, planSubmissionRename, planEntryMove, scopeOf, entryMediaIds, type LayerRef, type GenerationRow } from "./layerPlan";
 import { planVehicles, type VehiclePlanInput } from "./vehiclePlan";
 import { planPublish, planRevoke, linkedPatterns, ownersToReset, RESET_TO_PRIVATE } from "$lib/utils/publishPlan";
 import {
@@ -397,6 +399,16 @@ function createAdminPatterns() {
 
 	// ─── Change requests ────────────────────────
 	async function resolveChange(adj: PatternAdjustmentRequest, status: "approved" | "rejected", reply: string): Promise<boolean> {
+		if (status === "rejected") {
+			const ok = await confirmStore.ask({
+				title: "Decline this change request?",
+				message: "The customer sees it as declined" + (reply.trim() ? ", with your reply." : " — with no reply, since the box is empty."),
+				details: reply.trim() ? [{ label: "Reply", value: reply.trim() }] : undefined,
+				variant: "danger",
+				confirmLabel: "Decline",
+			});
+			if (!ok) return false;
+		}
 		return run("resolve", "Couldn't resolve", async () => {
 			await resolveAdjustmentRequest(adj.id, status, reply.trim() || undefined);
 			adjustments = adjustments.map((a) => (a.id === adj.id ? { ...a, status, adminResponse: reply.trim() || undefined } : a));
@@ -445,7 +457,11 @@ function createAdminPatterns() {
 		if (!ok || !(await ensureCatalog())) return null;
 		let saved: VehicleEntry | null = null;
 		await run("save-subject", "Couldn't save subject", async () => {
+			// Its own year image follows a change of make / model / trim / year.
+			const mv = planEntryMove(target, { ...target, ...patch }, patternStore.media);
+			if (mv.moves.length) await commitLayerChange({ mediaSets: mv.moves.map((m) => m.doc) });
 			await updateVehicleDoc(target.id, { ...patch, updatedAt: today() });
+			if (mv.removeMedia.length) await commitLayerChange({ mediaDeletes: mv.removeMedia });
 			saved = { ...target, ...patch };
 			toastStore.success("Subject saved", subjectName(saved));
 		});
@@ -489,13 +505,197 @@ function createAdminPatterns() {
 	}
 
 	/** Group one trim's years into named generations (an empty list ungroups them). */
-	async function saveGenerations(make: string, model: string, trim: string | undefined, list: Generation[]): Promise<boolean> {
-		const err = generationError(list);
+	async function saveGenerations(make: string, model: string, trim: string | undefined, rows: GenerationRow[]): Promise<boolean> {
+		const err = generationError(rows);
 		if (err) { toastStore.error("Can't save generations", err); return false; }
-		const gens = cleanGenerations(list);
+		const gens = cleanGenerations(rows);
+		const previous = generationsFor(patternStore.media, make, model, trim);
+		const change = planGenerationChange({ make, model, trim, previous, next: rows, media: patternStore.media });
+		if (change.error) { toastStore.error("Can't save generations", change.error); return false; }
+		const where = [make, model, trim].filter(Boolean).join(" ");
+		// Adding or re-ranging is harmless. Dropping or renaming one touches its image and where its years sit.
+		if (change.removed.length || change.renamed.length) {
+			const ok = await confirmStore.ask({
+				title: `Save generations for ${where}?`,
+				message: change.removed.length
+					? "Years in a removed generation go back to Uncategorized. Its image is deleted."
+					: "Renamed generations keep their image.",
+				details: [
+					...(change.removed.length ? [{ label: "Removed", value: change.removed.join(", ") }] : []),
+					...(change.removeMedia.length > change.moves.length ? [{ label: "Images deleted", value: String(change.removeMedia.length - change.moves.length) }] : []),
+					...change.renamed.map(([a, b]) => ({ label: "Renamed", value: `${a} → ${b}` })),
+				],
+				variant: change.removed.length ? "danger" : "primary",
+				confirmLabel: "Save generations",
+			});
+			if (!ok) return false;
+		}
 		return run("save-generations", "Couldn't save generations", async () => {
+			// New image docs first, then the list, then the old docs and files.
+			await commitLayerChange({ mediaSets: change.moves.map((m) => m.doc) });
 			await setGenerations(make, model, trim, gens);
-			toastStore.success(gens.length ? "Generations saved" : "Generations cleared", [make, model, trim].filter(Boolean).join(" "));
+			await commitLayerChange({ mediaDeletes: change.removeMedia, storagePaths: change.storagePaths });
+			toastStore.success(gens.length ? "Generations saved" : "Generations cleared", where);
+		});
+	}
+
+	// ─── Whole layers: make / model / trim ───────
+	const layerName = (ref: LayerRef) =>
+		ref.level === "make" ? ref.make : ref.level === "model" ? `${ref.make} ${ref.model}` : `${ref.make} ${ref.model} ${ref.trim || "(base, no trim)"}`;
+
+	/** Requests and votes are kept by make/model name and don't follow a rename. */
+	function demandUnder(ref: LayerRef) {
+		const hits = patternStore.requests.filter(
+			(r) => (r.projectType ?? "vehicle") === "vehicle" && makeKey(r.make) === makeKey(ref.make)
+				&& (ref.level === "make" || demandModelKey(r.make, r.model) === demandModelKey(ref.make, ref.model)),
+		);
+		return { requests: hits.length, votes: hits.reduce((n, r) => n + r.votes, 0) };
+	}
+
+	/** Rename a make / model / trim across every year under it, and/or set body style or visibility on all of them. */
+	async function editLayer(
+		ref: LayerRef,
+		edit: { name?: string; bodyStyle?: VehicleEntry["bodyStyle"]; status?: VehicleEntry["status"] },
+	): Promise<boolean> {
+		const plan = planLayerEdit({ ref, ...edit, vehicles: patternStore.vehicles, media: patternStore.media });
+		if (plan.error) { toastStore.error("Can't save", plan.error); return false; }
+		if (!plan.patches.length && !plan.moves.length) { toastStore.info("No changes", "Nothing to save."); return false; }
+		const renaming = !!edit.name?.trim() && plan.patches.some((p) => "make" in p.patch || "model" in p.patch || "trim" in p.patch);
+		const hiding = !!edit.status && edit.status !== "published"
+			&& plan.patches.some((p) => patternStore.vehicles.find((v) => v.id === p.id)?.status === "published");
+		const old = ref.level === "make" ? ref.make : ref.level === "model" ? ref.model : ref.trim;
+		const d = demandUnder(ref);
+		// Published copies keep their own make / models / trims; keep them in step (see planSubmissionRename).
+		const subPatches = renaming
+			? planSubmissionRename({
+				ref, name: edit.name!,
+				scopePatterns: scopeOf(ref, patternStore.vehicles).flatMap((v) => patternStore.getPatterns(v.id)),
+				submissions,
+			})
+			: [];
+		const notes = [
+			renaming && d.requests ? `${d.requests} request${d.requests === 1 ? "" : "s"} (${d.votes} vote${d.votes === 1 ? "" : "s"}) stay under the old name.` : "",
+			renaming ? "A submission still awaiting review under the old name would recreate it when approved." : "",
+			hiding ? "This takes published subjects out of the public library." : "",
+		].filter(Boolean).join(" ");
+		const ok = await confirmStore.ask({
+			title: renaming ? `Rename ${old} to ${edit.name!.trim()}?` : `Update every ${ref.level} entry under ${layerName(ref)}?`,
+			message: notes || undefined,
+			details: [
+				{ label: "Subjects updated", value: String(plan.patches.length) },
+				...(renaming ? [{ label: "Images & generations moved", value: String(plan.moves.filter((m) => m.from !== m.to).length) }] : []),
+				...(subPatches.length ? [{ label: "Published submissions renamed too", value: String(subPatches.length) }] : []),
+				...(edit.status ? [{ label: "Status", value: edit.status }] : []),
+				...(edit.bodyStyle ? [{ label: "Body style", value: edit.bodyStyle }] : []),
+			],
+			variant: hiding ? "danger" : "primary",
+			confirmLabel: renaming ? "Rename" : "Update subjects",
+		});
+		if (!ok || !(await ensureCatalog())) return false;
+		return run("edit-layer", "Couldn't save changes", async () => {
+			const batches = await commitLayerChange({
+				mediaSets: plan.moves.map((m) => m.doc),
+				vehicleUpdates: plan.patches,
+				userPatterns: subPatches,
+				mediaDeletes: plan.removeMedia,
+			});
+			for (const x of subPatches) patchLocal(x.id, x.patch);
+			console.info("[admin/patterns] edit-layer", layerName(ref), `${plan.patches.length} subjects, ${batches} batches`);
+			toastStore.success(renaming ? "Renamed" : "Updated", `${plan.patches.length} subject${plan.patches.length === 1 ? "" : "s"} · ${layerName(ref)}`);
+		});
+	}
+
+	/** Set visibility on a hand-picked set of entries (e.g. a trim's uncategorized years). */
+	async function setStatusFor(entries: VehicleEntry[], status: VehicleEntry["status"], label: string): Promise<boolean> {
+		const todo = entries.filter((v) => v.status !== status);
+		if (!todo.length) { toastStore.info("No changes", `They're all ${status} already.`); return false; }
+		const hiding = status !== "published" && todo.some((v) => v.status === "published");
+		const ok = await confirmStore.ask({
+			title: `Set ${todo.length} ${todo.length === 1 ? "subject" : "subjects"} to ${status}?`,
+			message: hiding ? "This takes published subjects out of the public library." : status === "published" ? "Published subjects with no live pattern show to customers as Coming soon." : undefined,
+			details: [{ label: "Where", value: label }, { label: "Subjects", value: String(todo.length) }, { label: "New status", value: status }],
+			variant: hiding ? "danger" : "primary",
+			confirmLabel: "Update subjects",
+		});
+		if (!ok || !(await ensureCatalog())) return false;
+		return run("set-status", "Couldn't update subjects", async () => {
+			await commitLayerChange({ vehicleUpdates: todo.map((v) => ({ id: v.id, patch: { status } })) });
+			toastStore.success("Updated", `${todo.length} ${todo.length === 1 ? "subject" : "subjects"} · ${label}`);
+		});
+	}
+
+	/** Delete a hand-picked set of entries with their patterns and year images. */
+	async function deleteEntries(entries: VehicleEntry[], label: string): Promise<boolean> {
+		const plan = planEntriesDelete({
+			subjects: entries, vehicles: patternStore.vehicles, media: patternStore.media,
+			patternsOf: (id) => patternStore.getPatterns(id), allPatterns: allCatalogPatterns(), submissions,
+		});
+		if (!plan.subjects.length) return false;
+		const live = plan.patterns.filter((p) => p.isPublished).length;
+		const ok = await confirmStore.ask({
+			title: `Delete ${plan.subjects.length} ${plan.subjects.length === 1 ? "year" : "years"}?`,
+			message: `This can't be undone. They're removed from the catalog and the customer library with their patterns${plan.images ? " and images" : ""}.`,
+			details: [
+				{ label: "Where", value: label },
+				{ label: "Years", value: plan.subjects.map((v) => v.year).filter(Boolean).sort((a, b) => (b as number) - (a as number)).join(", ") },
+				{ label: "Patterns deleted", value: String(plan.patterns.length) },
+				{ label: "Published patterns", value: String(live) },
+				...(plan.images ? [{ label: "Images deleted", value: String(plan.images) }] : []),
+				...(plan.resets.length ? [{ label: "Submitters' copies returned to private", value: String(plan.resets.length) }] : []),
+			],
+			variant: "danger",
+			confirmLabel: `Delete ${plan.subjects.length} ${plan.subjects.length === 1 ? "year" : "years"}`,
+			typeToConfirm: plan.subjects.length > 1 || plan.patterns.length ? "delete" : undefined,
+		});
+		if (!ok || !(await ensureCatalog())) return false;
+		return run("delete-entries", "Couldn't delete", async () => {
+			await commitLayerChange({
+				deleteGroups: plan.groups,
+				userPatterns: plan.resets.map((x) => ({ id: x.id, patch: { ...RESET_TO_PRIVATE } })),
+				mediaDeletes: plan.removeMedia,
+				storagePaths: plan.storagePaths,
+			});
+			for (const x of plan.resets) patchLocal(x.id, { ...RESET_TO_PRIVATE });
+			toastStore.success("Deleted", `${plan.subjects.length} ${plan.subjects.length === 1 ? "year" : "years"} · ${label}`);
+		});
+	}
+
+	/** Delete a make / model / trim and everything under it: subjects, patterns, generations and images. */
+	async function deleteLayer(ref: LayerRef): Promise<boolean> {
+		const plan = planLayerDelete({
+			ref, vehicles: patternStore.vehicles, media: patternStore.media,
+			patternsOf: (id) => patternStore.getPatterns(id), allPatterns: allCatalogPatterns(), submissions,
+		});
+		if (!plan.subjects.length) { toastStore.info("Nothing to delete", "Nothing in the catalog is under this."); return false; }
+		const d = demandUnder(ref);
+		const live = plan.patterns.filter((p) => p.isPublished).length;
+		const ok = await confirmStore.ask({
+			title: `Delete ${layerName(ref)}?`,
+			message: `This can't be undone. Every year under this ${ref.level === "trim" && !ref.trim ? "base (no-trim) group" : ref.level} is removed from the catalog and the customer library, with its patterns${plan.images || plan.generations ? ", generations and images" : ""}.`
+				+ (d.requests ? ` ${d.requests} request${d.requests === 1 ? "" : "s"} for it stay on the Requests board.` : ""),
+			details: [
+				{ label: "Subjects deleted", value: String(plan.subjects.length) },
+				{ label: "Patterns deleted", value: String(plan.patterns.length) },
+				{ label: "Published patterns", value: String(live) },
+				...(plan.generations ? [{ label: "Generations removed", value: String(plan.generations) }] : []),
+				...(plan.images ? [{ label: "Images deleted", value: String(plan.images) }] : []),
+				...(plan.resets.length ? [{ label: "Submitters' copies returned to private", value: String(plan.resets.length) }] : []),
+			],
+			variant: "danger",
+			confirmLabel: `Delete ${plan.subjects.length} subject${plan.subjects.length === 1 ? "" : "s"}`,
+			typeToConfirm: plan.subjects.length > 1 || plan.patterns.length ? (ref.level === "make" ? ref.make : ref.level === "model" ? ref.model : ref.trim || "base") : undefined,
+		});
+		if (!ok || !(await ensureCatalog())) return false;
+		return run("delete-layer", "Couldn't delete", async () => {
+			await commitLayerChange({
+				deleteGroups: plan.groups,
+				userPatterns: plan.resets.map((x) => ({ id: x.id, patch: { ...RESET_TO_PRIVATE } })),
+				mediaClearGenerations: plan.clearGenerations,
+				mediaDeletes: plan.removeMedia,
+				storagePaths: plan.storagePaths,
+			});
+			for (const x of plan.resets) patchLocal(x.id, { ...RESET_TO_PRIVATE });
+			toastStore.success("Deleted", `${layerName(ref)} · ${plan.subjects.length} subject${plan.subjects.length === 1 ? "" : "s"}`);
 		});
 	}
 
@@ -521,6 +721,11 @@ function createAdminPatterns() {
 				userPatterns: resets.map((s) => ({ id: s.id, patch: { ...RESET_TO_PRIVATE } })),
 			});
 			for (const s of resets) patchLocal(s.id, { ...RESET_TO_PRIVATE });
+			const yearDocs = entryMediaIds(v, patternStore.media);
+			if (yearDocs.length) {
+				const paths = yearDocs.flatMap((id) => [patternStore.media[id]?.imagePath]).filter((p): p is string => !!p && p.startsWith("vehicle-media/"));
+				await commitLayerChange({ mediaDeletes: yearDocs, storagePaths: paths });
+			}
 			toastStore.success("Subject deleted", subjectName(v));
 		});
 	}
@@ -665,7 +870,7 @@ function createAdminPatterns() {
 		allCatalogPatterns, zoneLabel, ensureCatalog,
 		planFor, approve, repairCount, repairAll, reject, reopen, revoke, saveSubmissionEdit, deleteSubmission,
 		resolveChange,
-		saveSubject, planBulk, addVehicles, saveGenerations, deleteSubject, savePattern, togglePublished, deletePattern,
+		saveSubject, planBulk, addVehicles, saveGenerations, editLayer, deleteLayer, setStatusFor, deleteEntries, deleteSubject, savePattern, togglePublished, deletePattern,
 		setRequestStatus,
 	};
 }

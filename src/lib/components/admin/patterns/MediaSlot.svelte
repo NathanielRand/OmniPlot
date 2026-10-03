@@ -3,7 +3,7 @@
 	// Shows what's assigned right now, so Replace is always a deliberate act, and
 	// warns before the same file is reused somewhere else.
 	import { patternStore } from "$lib/stores/patternStore.svelte";
-	import { toastStore } from "$lib/stores";
+	import { toastStore, confirmStore } from "$lib/stores";
 	import { uploadMedia, removeMedia, MEDIA_TYPES, type MediaField } from "$lib/admin/vehicleMedia";
 	import { targetId, type MediaTarget } from "$lib/utils/vehicleCatalog";
 
@@ -27,7 +27,18 @@
 	let linking = $state(false);
 	let link = $state("");
 
+	/** Putting a new image over a live one deletes the old file, so say so first. */
+	async function okToReplace(what: string): Promise<boolean> {
+		if (!url) return true;
+		return confirmStore.ask({
+			title: `Replace the ${label}?`,
+			message: `${what} replaces the image customers see now.${stored ? " The old file is deleted." : ""}`,
+			confirmLabel: "Replace image",
+		});
+	}
+
 	async function send(file: File, force = false) {
+		if (!force && !(await okToReplace(file.name))) return;
 		busy = true;
 		dup = null;
 		const r = await uploadMedia(target, field, { file, force });
@@ -42,6 +53,7 @@
 	}
 
 	async function sendLink() {
+		if (!(await okToReplace("This link"))) return;
 		busy = true;
 		const r = await uploadMedia(target, field, { url: link });
 		busy = false;
@@ -50,6 +62,13 @@
 	}
 
 	async function clear() {
+		const ok = await confirmStore.ask({
+			title: `Remove the ${label}?`,
+			message: `Customers go back to the fallback image.${stored ? " The uploaded file is deleted." : ""}`,
+			variant: "danger",
+			confirmLabel: "Remove image",
+		});
+		if (!ok) return;
 		busy = true;
 		const r = await removeMedia(target, field);
 		busy = false;

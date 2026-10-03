@@ -5,6 +5,8 @@
 import type { Pattern, PatternCategory, PatternCoverage, PatternZone, ProjectType, VehicleEntry } from "$lib/types";
 import type { PatternStatus } from "$lib/stores/patternStore.svelte";
 import { sizeError } from "$lib/utils/patternSize";
+import { makeKey, trimKey } from "$lib/utils/vehicleCatalog";
+import { demandModelKey } from "$lib/utils/demand";
 
 export const PROJECT_TYPES: { value: ProjectType; label: string; icon: string }[] = [
 	{ value: "vehicle",     label: "Vehicle",     icon: "M5 17H3a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v5M14 17a3 3 0 100 6 3 3 0 000-6zM8 17a3 3 0 100 6 3 3 0 000-6z" },
@@ -79,6 +81,27 @@ export function subjectFormError(f: SubjectForm): string | null {
 		return f.projectType === "custom" ? "Enter a project name." : "Enter a property label.";
 	}
 	return null;
+}
+
+/**
+ * The catalog entry this form would duplicate, if any. Matched by the keys the
+ * library groups by, so "GR-86" and "gr86", or "Chevy" and "Chevrolet", are the same.
+ */
+export function subjectDuplicate(f: SubjectForm, existing: VehicleEntry[], selfId?: string): VehicleEntry | null {
+	if (f.projectType === "vehicle") {
+		const mk = makeKey(f.make), dk = demandModelKey(f.make, f.model), tk = trimKey(f.trim), year = Number(f.year);
+		if (!mk || !dk || !year) return null;
+		return existing.find((v) =>
+			v.id !== selfId && (v.projectType ?? "vehicle") === "vehicle" && v.year === year
+			&& makeKey(v.make) === mk && demandModelKey(v.make, v.model) === dk && trimKey(v.trim) === tk,
+		) ?? null;
+	}
+	const label = (f.propertyLabel || f.model).trim().toLowerCase();
+	if (!label) return null;
+	return existing.find((v) =>
+		v.id !== selfId && (v.projectType ?? "vehicle") === f.projectType
+		&& (v.propertyLabel ?? v.model ?? "").trim().toLowerCase() === label,
+	) ?? null;
 }
 
 export const SUBJECT_LABELS: Record<string, string> = {

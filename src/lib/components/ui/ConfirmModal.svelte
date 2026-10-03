@@ -5,6 +5,10 @@
 	import { confirmStore } from "$lib/stores";
 	import Button from "$lib/components/ui/Button.svelte";
 
+	let typed = $state("");
+	// A new request starts with an empty box.
+	$effect(() => { confirmStore.pending; typed = ""; });
+
 	function handleBackdrop(e: MouseEvent) {
 		if (e.target === e.currentTarget) confirmStore.resolve(false);
 	}
@@ -62,6 +66,13 @@
 				</div>
 			{/if}
 
+			{#if opt.typeToConfirm}
+				<label class="confirm-type">
+					<span>Type <b>{opt.typeToConfirm}</b> to confirm</span>
+					<input bind:value={typed} autocomplete="off" spellcheck="false" onkeydown={(e) => { if (e.key === "Enter" && typed.trim() === opt.typeToConfirm) confirmStore.resolve(true); }} />
+				</label>
+			{/if}
+
 			<div class="modal__actions">
 				<Button variant="ghost" size="sm" onclick={() => confirmStore.resolve(false)}>
 					{opt.cancelLabel ?? "Cancel"}
@@ -69,7 +80,8 @@
 				<Button
 					variant={opt.variant === "danger" ? "danger" : "primary"}
 					size="sm"
-					autofocus
+					autofocus={!opt.typeToConfirm}
+					disabled={!!opt.typeToConfirm && typed.trim() !== opt.typeToConfirm}
 					onclick={() => confirmStore.resolve(true)}
 				>
 					{opt.confirmLabel ?? "Confirm"}
@@ -80,6 +92,11 @@
 {/if}
 
 <style>
+	.confirm-type { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; font-size: 0.8125rem; color: var(--text-secondary); }
+	.confirm-type b { color: var(--text-primary); }
+	.confirm-type input { padding: 8px 10px; font: inherit; font-size: 0.875rem; color: var(--text-primary); background: var(--bg-base); border: 1px solid var(--border-default); border-radius: var(--radius-md); outline: none; }
+	.confirm-type input:focus { border-color: var(--color-danger); }
+
 	.backdrop {
 		position: fixed;
 		inset: 0;

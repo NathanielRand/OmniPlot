@@ -3,7 +3,7 @@
 	import Button from '$lib/components/ui/Button.svelte';
 	import { auth } from '$lib/firebase/client';
 	import { onMount } from 'svelte';
-	import { toastStore } from '$lib/stores';
+	import { toastStore, confirmStore } from '$lib/stores';
 	import { tooltip } from '$lib/actions/tooltip';
 
 	// Stripe dashboard link — comes from the authed products API.
@@ -149,6 +149,11 @@
 
 	// ─── Sync from config ──────────────────────────
 	async function syncConfig() {
+		if (!(await confirmStore.ask({
+			title: 'Sync prices to Stripe?',
+			message: 'Creates any missing products and prices in Stripe from the saved allowances. Prices can be archived later but never deleted.',
+			confirmLabel: 'Sync to Stripe',
+		}))) return;
 		syncing = true; syncResult = null;
 		try {
 			const res = await fetch('/api/admin/products', {
@@ -204,6 +209,16 @@
 	// ─── Create price ──────────────────────────────
 	async function createPrice(productId: string) {
 		if (!newPrice.amount) return;
+		if (!(await confirmStore.ask({
+			title: 'Create this price in Stripe?',
+			message: "A price can be archived afterwards but can't be edited or deleted.",
+			details: [
+				{ label: 'Amount', value: String(newPrice.amount) },
+				{ label: 'Billing', value: newPrice.interval },
+				...(newPrice.nickname ? [{ label: 'Nickname', value: newPrice.nickname }] : []),
+			],
+			confirmLabel: 'Create price',
+		}))) return;
 		savingPrice = true;
 		try {
 			const res = await fetch('/api/admin/products', {
@@ -229,6 +244,13 @@
 
 	// ─── Archive product ───────────────────────────
 	async function archiveProduct(productId: string) {
+		const name = products.find(p => p.id === productId)?.name ?? 'this product';
+		if (!(await confirmStore.ask({
+			title: `Archive ${name}?`,
+			message: 'It is archived in Stripe, so new customers can no longer buy it. Existing subscriptions are not cancelled.',
+			variant: 'danger',
+			confirmLabel: 'Archive product',
+		}))) return;
 		archivingProduct = productId;
 		try {
 			const res = await fetch('/api/admin/products', {
@@ -250,6 +272,12 @@
 
 	// ─── Archive price ─────────────────────────────
 	async function archivePrice(priceId: string, productId: string) {
+		if (!(await confirmStore.ask({
+			title: 'Archive this price?',
+			message: 'New customers can no longer subscribe at this price. Existing subscriptions on it keep billing.',
+			variant: 'danger',
+			confirmLabel: 'Archive price',
+		}))) return;
 		archivingPrice = priceId;
 		try {
 			const res = await fetch('/api/admin/products', {

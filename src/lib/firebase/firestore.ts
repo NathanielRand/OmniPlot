@@ -24,7 +24,8 @@ import {
 	type QueryConstraint,
 	type Unsubscribe,
 } from "firebase/firestore";
-import { db, auth } from "./client";
+import { ref as storageRef, deleteObject } from "firebase/storage";
+import { db, auth, storage } from "./client";
 import { sizeError } from "$lib/utils/patternSize";
 import { pathStats } from "$lib/utils/pathStats";
 import { cleanGenerations, targetId } from "$lib/utils/vehicleCatalog";
@@ -587,6 +588,80 @@ export async function updateVehicleDoc(
 	patch: Partial<VehicleEntry>,
 ): Promise<void> {
 	await updateDoc(doc(db, Collections.VEHICLES, id), withDeletes(patch));
+}
+
+/** The Firestore fields of a media doc — one builder for every write, so nothing is dropped or left undefined. */
+function mediaDocData(d: VehicleMedia): Record<string, unknown> {
+	const out: Record<string, unknown> = { kind: d.kind, make: d.make };
+	for (const k of ["model", "trim", "generation", "year", "projectType", "label", "logoUrl", "imageUrl", "logoPath", "imagePath", "logoHash", "imageHash"] as const) {
+		if (d[k] !== undefined && d[k] !== "") out[k] = d[k];
+	}
+	if (d.generations?.length) out.generations = cleanGenerations(d.generations);
+	return out;
+}
+
+export interface LayerCommit {
+	/** Media docs to write (a rename's new ids, or in-place updates). Written first. */
+	mediaSets?: VehicleMedia[];
+	vehicleUpdates?: { id: string; patch: Partial<VehicleEntry> }[];
+	/** Subjects to delete, each with its patterns so a chunk never strands one without the other. */
+	deleteGroups?: { subjectId: string; patternIds: string[] }[];
+	userPatterns?: { id: string; patch: Partial<UserPattern> }[];
+	/** Media docs whose `generations` list to drop (doc stays). */
+	mediaClearGenerations?: string[];
+	mediaDeletes?: string[];
+	/** Uploaded files behind deleted media docs. Best effort — never fails the change. */
+	storagePaths?: string[];
+}
+
+const CHUNK = 400;
+const chunks = <T>(xs: T[], n = CHUNK): T[][] => Array.from({ length: Math.ceil(xs.length / n) }, (_, i) => xs.slice(i * n, i * n + n));
+
+/**
+ * Apply a layer change that can run past one batch (a whole make is hundreds of
+ * documents). Ordered so a failure part-way is safe to run again: new media docs
+ * first, then the entries, deletes next, the submitters' resets after every delete
+ * has succeeded, and old media docs and files last. Returns how many batches ran.
+ */
+export async function commitLayerChange(c: LayerCommit): Promise<number> {
+	const day = new Date().toISOString().split("T")[0];
+	let n = 0;
+	const run = async (fill: (b: ReturnType<typeof writeBatch>) => void) => { const b = writeBatch(db); fill(b); await b.commit(); n++; };
+
+	for (const part of chunks(c.mediaSets ?? [])) {
+		await run((b) => part.forEach((d) => b.set(doc(db, Collections.VEHICLE_MEDIA, d.id), { ...mediaDocData(d), updatedAt: serverTimestamp() })));
+	}
+	for (const part of chunks(c.vehicleUpdates ?? [])) {
+		await run((b) => part.forEach((u) => b.update(doc(db, Collections.VEHICLES, u.id), { ...withDeletes(u.patch), updatedAt: day })));
+	}
+	// Pack whole subjects (the subject + its patterns) into batches.
+	let pack: { subjectId: string; patternIds: string[] }[] = [], size = 0;
+	const flush = async () => {
+		if (!pack.length) return;
+		const batchGroups = pack;
+		pack = []; size = 0;
+		await run((b) => batchGroups.forEach((g) => { g.patternIds.forEach((id) => b.delete(doc(db, Collections.PATTERNS, id))); b.delete(doc(db, Collections.VEHICLES, g.subjectId)); }));
+	};
+	for (const g of c.deleteGroups ?? []) {
+		const ops = g.patternIds.length + 1;
+		if (ops > CHUNK) throw new Error(`One subject has ${g.patternIds.length} patterns — too many to delete in one step.`);
+		if (size + ops > CHUNK) await flush();
+		pack.push(g); size += ops;
+	}
+	await flush();
+	for (const part of chunks(c.userPatterns ?? [])) {
+		await run((b) => part.forEach((u) => b.update(doc(db, Collections.USER_PATTERNS, u.id), { ...withDeletes(u.patch), updatedAt: serverTimestamp() })));
+	}
+	for (const part of chunks(c.mediaClearGenerations ?? [])) {
+		await run((b) => part.forEach((id) => b.update(doc(db, Collections.VEHICLE_MEDIA, id), { generations: deleteField() })));
+	}
+	for (const part of chunks(c.mediaDeletes ?? [])) {
+		await run((b) => part.forEach((id) => b.delete(doc(db, Collections.VEHICLE_MEDIA, id))));
+	}
+	for (const path of c.storagePaths ?? []) {
+		try { await deleteObject(storageRef(storage, path)); } catch (e) { console.warn("[layer] could not delete file", path, e); }
+	}
+	return n;
 }
 
 /**

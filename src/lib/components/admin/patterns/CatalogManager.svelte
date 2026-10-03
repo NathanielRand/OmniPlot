@@ -15,11 +15,13 @@
 		PROJECT_TYPES, projectTypeMeta, subjectName, blankSubject, formFromSubject, blankPattern, formFromPattern,
 		type SubjectForm, type PatternForm,
 	} from "$lib/admin/patternForms";
-	import type { Generation, Pattern, PatternCategory, ProjectType, VehicleEntry } from "$lib/types";
+	import type { Pattern, PatternCategory, ProjectType, VehicleEntry } from "$lib/types";
 	import type { PatternStatus } from "$lib/stores/patternStore.svelte";
 	import { demandId, demandModelKey, votesForYear } from "$lib/utils/demand";
-	import { makeKey, trimKey, generationsFor, groupByGeneration, generationOf, generationKey, genSpan, generationError } from "$lib/utils/vehicleCatalog";
+	import { makeKey, trimKey, generationsFor, groupByGeneration, generationOf, generationKey, genSpan, generationError, uncategorizedSpan } from "$lib/utils/vehicleCatalog";
 	import { splitList, type VehiclePlanInput } from "$lib/admin/vehiclePlan";
+	import { subjectDuplicate, subjectFormError, parseTags } from "$lib/admin/patternForms";
+	import { planLayerEdit, scopeOf, type LayerRef, type GenerationRow } from "$lib/admin/layerPlan";
 
 	interface Props {
 		/** Select this subject (and flash one of its patterns) — set when jumping in from Review. */
@@ -126,11 +128,11 @@
 						const key = `${md.key}|t:${t.tk}`;
 						const { groups, loose } = groupByGeneration(t.rows, generationsFor(patternStore.media, make, model, t.trim));
 						return {
-							key, name: t.trim ?? "No trim", trim: t.trim, rows: t.rows, loose, ...sum(t.rows),
+							key, make, model, name: t.trim ?? "No trim", trim: t.trim, rows: t.rows, loose, uncat: sum(loose), ...sum(t.rows),
 							groups: groups.map((g) => ({ key: `${key}|g:${generationKey(g.gen)}`, gen: g.gen, rows: g.rows, ...sum(g.rows) })),
 						};
 					});
-				return { ...md, rows: rs, range, make, model, trims, multi: trims.length > 1, ...sum(rs) };
+				return { ...md, rows: rs, range, make, model, trims, multi: trims.length > 1 || trims[0]?.trim !== undefined, ...sum(rs) };
 			}).sort(byName);
 			return { ...m, models, ...sum(models.flatMap((md) => md.rows)) };
 		}).sort(byName);
@@ -150,7 +152,7 @@
 		const dk = `${mk}|${demandModelKey(v.make, v.model)}`;
 		const tk = `${dk}|t:${trimKey(v.trim)}`;
 		const g = generationOf(v.year, generationsFor(patternStore.media, v.make, v.model, v.trim));
-		return g ? [mk, dk, tk, `${tk}|g:${generationKey(g)}`] : [mk, dk, tk];
+		return g ? [mk, dk, tk, `${tk}|g:${generationKey(g)}`] : [mk, dk, tk, `${tk}|u`];
 	});
 	const isOpen = (k: string) => searching || openKeys.has(k);
 	function toggle(k: string) {
@@ -169,7 +171,8 @@
 		const need = selectedKeys.filter((k) => !untrack(() => openKeys).has(k));
 		if (need.length) openKeys = new Set([...untrack(() => openKeys), ...need]);
 	});
-	const yearLabel = (v: VehicleEntry) => `${v.year ?? "—"}${v.trim ? ` ${v.trim}` : ""}`;
+	// The trim is already a level in the tree above, so a year badge is just the year.
+	const yearLabel = (v: VehicleEntry) => `${v.year ?? "—"}`;
 
 	const typeCounts = $derived(
 		patternStore.vehicles.reduce((acc, v) => { acc[typeOf(v)] = (acc[typeOf(v)] ?? 0) + 1; return acc; }, {} as Record<string, number>),
@@ -234,10 +237,12 @@
 	let subjectForm = $state<SubjectForm>(blankSubject());
 
 	function openAddSubject(pre?: Partial<SubjectForm>) {
+		tagDraft = "";
 		subjectForm = { ...blankSubject(), ...pre };
 		subjectDlg = { target: null };
 	}
 	function openEditSubject(v: VehicleEntry) {
+		tagDraft = "";
 		subjectForm = formFromSubject(v);
 		subjectDlg = { target: v };
 	}
@@ -255,6 +260,7 @@
 
 	async function submitSubject() {
 		if (!subjectDlg) return;
+		if (tagDraft.trim()) addTags();
 		const saved = await ap.saveSubject(subjectForm, subjectDlg.target);
 		if (!saved) return;
 		subjectDlg = null;
@@ -267,6 +273,43 @@
 	}
 
 	const focusOnMount = (n: HTMLElement) => { n.focus(); };
+
+	// What the subject dialog knows about the catalog, so it can suggest, place and warn.
+	const uniq = (xs: (string | undefined)[]) => [...new Set(xs.map((x) => x?.trim()).filter(Boolean) as string[])].sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
+	const sameMake = $derived(patternStore.vehicles.filter((v) => typeOf(v) === "vehicle" && makeKey(v.make) === makeKey(subjectForm.make)));
+	const modelSuggest = $derived(uniq(sameMake.map((v) => v.model)));
+	const trimSuggest = $derived(uniq(sameMake.filter((v) => demandModelKey(v.make, v.model) === demandModelKey(subjectForm.make, subjectForm.model)).map((v) => v.trim)));
+	const formIsVehicle = $derived(subjectForm.projectType === "vehicle");
+	const formGens = $derived(
+		subjectDlg && formIsVehicle && subjectForm.make.trim() && subjectForm.model.trim()
+			? generationsFor(patternStore.media, subjectForm.make.trim(), subjectForm.model.trim(), subjectForm.trim.trim() || undefined)
+			: [],
+	);
+	const formGen = $derived(generationOf(Number(subjectForm.year), formGens));
+	const formDup = $derived(subjectDlg ? subjectDuplicate(subjectForm, patternStore.vehicles, subjectDlg.target?.id) : null);
+	const formProblem = $derived(subjectDlg ? subjectFormError(subjectForm) : null);
+	// Where this subject lands in the tree, as the library will show it.
+	const formPath = $derived(
+		formIsVehicle
+			? [subjectForm.make.trim() || "Make", subjectForm.model.trim() || "Model", subjectForm.trim.trim() || "No trim",
+				...(formGens.length ? [formGen?.label ?? "Uncategorized"] : []), String(subjectForm.year || "Year")]
+			: [projectTypeMeta(subjectForm.projectType).label, subjectForm.propertyLabel.trim() || "Untitled"],
+	);
+	const formTags = $derived(parseTags(subjectForm.tags));
+	let tagDraft = $state("");
+	function addTags() {
+		const next = parseTags([...formTags, ...tagDraft.split(",")].join(","));
+		subjectForm.tags = next.join(", ");
+		tagDraft = "";
+	}
+	function dropTag(t: string) { subjectForm.tags = formTags.filter((x) => x !== t).join(", "); }
+	const STATUSES = [
+		{ value: "draft", label: "Draft", note: "Hidden from customers" },
+		{ value: "review", label: "In review", note: "Hidden while you check it" },
+		{ value: "published", label: "Published", note: "Visible — “Coming soon” until it has a live pattern" },
+	] as const;
+	const BODY_STYLES = ["sedan", "coupe", "suv", "truck", "convertible", "wagon", "hatchback"] as const;
+	const targetPatterns = $derived(subjectDlg?.target ? patternStore.getPatterns(subjectDlg.target.id).length : 0);
 
 	// The two cards run from where they start to the bottom of the admin pane, so
 	// there is no dead space under them and the lists get all the room there is.
@@ -290,19 +333,76 @@
 	}
 
 	// ─── Generations (a model's years, grouped) ──
-	let genDlg = $state<{ make: string; model: string; trim?: string; list: Generation[] } | null>(null);
+	let genDlg = $state<{ make: string; model: string; trim?: string; list: GenerationRow[] } | null>(null);
 	const genProblem = $derived(genDlg ? generationError(genDlg.list.filter((g) => g.label.trim() || g.from || g.to)) : null);
-	function openGenerations(make: string, model: string, trim?: string) {
+	function openGenerations(make: string, model: string, trim?: string, suggest?: { from: number; to: number } | null) {
 		const have = generationsFor(patternStore.media, make, model, trim);
 		// Oldest first reads like a model's history; a fresh model starts with one blank row.
-		const list = have.map((g) => ({ ...g })).sort((a, b) => a.from - b.from);
-		genDlg = { make, model, trim: trim || undefined, list: list.length ? list : [{ label: "", from: 0, to: 0 }] };
+		const list: GenerationRow[] = have.map((g) => ({ ...g, orig: g.label })).sort((a, b) => a.from - b.from);
+		// "Group into a generation" arrives with the leftover years' range filled in; only a name is missing.
+		const fresh: GenerationRow = { label: "", from: suggest?.from ?? 0, to: suggest?.to ?? 0 };
+		genDlg = { make, model, trim: trim || undefined, list: suggest ? [...list, fresh] : list.length ? list : [fresh] };
+	}
+	/** Remove one generation from a trim (its years go back to Uncategorized). Confirms first. */
+	async function dropGeneration(make: string, model: string, trim: string | undefined, label: string) {
+		const rows: GenerationRow[] = generationsFor(patternStore.media, make, model, trim).filter((g) => g.label !== label).map((g) => ({ ...g, orig: g.label }));
+		await ap.saveGenerations(make, model, trim, rows);
 	}
 	async function submitGenerations() {
 		if (!genDlg || genProblem) return;
 		// Untouched blank rows aren't generations.
 		const list = genDlg.list.filter((g) => g.label.trim() || g.from || g.to);
 		if (await ap.saveGenerations(genDlg.make, genDlg.model, genDlg.trim, list)) genDlg = null;
+	}
+
+	// ─── A trim's uncategorized years ────────────
+	const uncatLabel = (t: TrimGroup) => [t.make, t.model, t.trim, "uncategorized"].filter(Boolean).join(" ");
+	function groupUncat(t: TrimGroup) {
+		const gens = generationsFor(patternStore.media, t.make, t.model, t.trim);
+		openGenerations(t.make, t.model, t.trim, uncategorizedSpan(t.loose.map((r) => r.v.year).filter((y): y is number => !!y), gens));
+	}
+	let statusDlg = $state<{ t: TrimGroup; status: VehicleEntry["status"] } | null>(null);
+	async function submitStatus() {
+		if (!statusDlg) return;
+		if (await ap.setStatusFor(statusDlg.t.loose.map((r) => r.v), statusDlg.status, uncatLabel(statusDlg.t))) statusDlg = null;
+	}
+
+	// ─── Whole layers: make / model / trim ───────
+	type StatusPick = "" | VehicleEntry["status"];
+	let layerDlg = $state<{ ref: LayerRef; name: string; bodyStyle: "" | NonNullable<VehicleEntry["bodyStyle"]>; status: StatusPick } | null>(null);
+	const layerOwn = (r: LayerRef) => (r.level === "make" ? r.make : r.level === "model" ? r.model : r.trim);
+	const layerIsBase = $derived(!!layerDlg && layerDlg.ref.level === "trim" && layerDlg.ref.trim === "");
+	const layerScope = $derived(layerDlg ? scopeOf(layerDlg.ref, patternStore.vehicles) : []);
+	const layerPatterns = $derived(layerScope.reduce((n, v) => n + patternStore.getPatterns(v.id).length, 0));
+	const layerPlanNow = $derived(
+		layerDlg
+			? planLayerEdit({
+				ref: layerDlg.ref,
+				name: !layerIsBase && layerDlg.name !== layerOwn(layerDlg.ref) ? layerDlg.name : undefined,
+				bodyStyle: layerDlg.bodyStyle || undefined,
+				status: layerDlg.status || undefined,
+				vehicles: patternStore.vehicles, media: patternStore.media,
+			})
+			: null,
+	);
+	const layerCanSave = $derived(!!layerPlanNow && !layerPlanNow.error && (layerPlanNow.patches.length > 0 || layerPlanNow.moves.some((m) => m.from !== m.to)));
+	const layerTitle = (r: LayerRef) => (r.level === "make" ? "make" : r.level === "model" ? "model" : r.trim ? "trim" : "base entries");
+	function openLayerEdit(ref: LayerRef) {
+		layerDlg = { ref, name: layerOwn(ref), bodyStyle: "", status: "" };
+	}
+	async function submitLayer() {
+		if (!layerDlg || !layerCanSave) return;
+		const { ref } = layerDlg;
+		const name = !layerIsBase && layerDlg.name !== layerOwn(ref) ? layerDlg.name : undefined;
+		if (await ap.editLayer(ref, { name, bodyStyle: layerDlg.bodyStyle || undefined, status: layerDlg.status || undefined })) layerDlg = null;
+	}
+	/** "+" on a layer: the bulk-add dialog, filled in down to that layer. */
+	function addUnder(ref: LayerRef) {
+		openBulk(
+			ref.level === "make" ? { make: ref.make }
+			: ref.level === "model" ? { make: ref.make, models: ref.model }
+			: { make: ref.make, models: ref.model, trims: ref.trim },
+		);
 	}
 
 	// ─── Bulk add vehicles ───────────────────────
@@ -405,13 +505,16 @@
 			{/if}
 			{#each grouped.makes as mk (mk.key)}
 				<li class="grp">
-					<button class="row row--make" aria-expanded={isOpen(mk.key)} onclick={() => toggle(mk.key)}>
-						<svg class="caret" class:caret--open={isOpen(mk.key)} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
-						<span class="row__name">{mk.name}</span>
-						<span class="row__sub">{mk.models.length} {mk.models.length === 1 ? "model" : "models"}</span>
-						{#if mk.soon}<span class="subj__soon" title="{mk.soon} without a live pattern yet">{mk.soon} need</span>{/if}
-						<span class="subj__count" title="{mk.live} live of {mk.total} patterns">{mk.live}/{mk.total}</span>
-					</button>
+					<div class="mrow">
+						<button class="row row--make" aria-expanded={isOpen(mk.key)} onclick={() => toggle(mk.key)}>
+							<svg class="caret" class:caret--open={isOpen(mk.key)} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+							<span class="row__name">{mk.name}</span>
+							<span class="row__sub">{mk.models.length} {mk.models.length === 1 ? "model" : "models"}</span>
+							{#if mk.soon}<span class="subj__soon" title="{mk.soon} without a live pattern yet">{mk.soon} need</span>{/if}
+							<span class="subj__count" title="{mk.live} live of {mk.total} patterns">{mk.live}/{mk.total}</span>
+						</button>
+						{@render layerBtns({ level: "make", make: mk.name }, mk.name)}
+					</div>
 					{#if isOpen(mk.key)}
 						<ul class="sub">
 							{#each mk.models as md (md.key)}
@@ -425,6 +528,7 @@
 											<span class="subj__count" title="{md.live} live of {md.total} patterns">{md.live}/{md.total}</span>
 										</button>
 										{#if !md.multi}{@render genButton(md.make, md.model, md.trims[0]?.trim, md.name)}{/if}
+										{@render layerBtns({ level: "model", make: md.make, model: md.model }, md.name)}
 									</div>
 									{#if isOpen(md.key)}
 										{#if md.multi}
@@ -437,6 +541,7 @@
 														<span class="subj__count" title="{t.live} live of {t.total} patterns">{t.live}/{t.total}</span>
 													</button>
 													{@render genButton(md.make, md.model, t.trim, t.name)}
+													{@render layerBtns({ level: "trim", make: md.make, model: md.model, trim: t.trim ?? "" }, t.name)}
 												</div>
 												{#if isOpen(t.key)}{@render trimBody(t, 14)}{/if}
 											{/each}
@@ -585,6 +690,20 @@
 	</div>
 {/snippet}
 
+{#snippet layerBtns(ref: LayerRef, label: string)}
+	<span class="lbtns">
+		<button class="icon icon--sm" disabled={busy} onclick={() => openLayerEdit(ref)} aria-label="Edit {label}" title="Edit {label}">
+			<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+		</button>
+		<button class="icon icon--sm" disabled={busy} onclick={() => addUnder(ref)} aria-label="Add under {label}" title="Add models, trims or years under {label}">
+			<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+		</button>
+		<button class="icon icon--sm icon--danger" disabled={busy} onclick={() => ap.deleteLayer(ref)} aria-label="Delete {label}" title="Delete {label} and everything under it">
+			<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+		</button>
+	</span>
+{/snippet}
+
 {#snippet genButton(make: string, model: string, trim: string | undefined, name: string)}
 	<button class="icon icon--sm" disabled={busy} onclick={() => openGenerations(make, model, trim)} aria-label="Group {name} years into generations" title="Group years into generations">
 		<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M3 12h12M3 18h7"/></svg>
@@ -594,21 +713,56 @@
 <!-- One trim's generations (each opens to its years), then the years in none. -->
 {#snippet trimBody(t: TrimGroup, indent: number)}
 	{#each t.groups as g (g.key)}
-		<button class="row row--gen" style="margin-left: {indent}px" aria-expanded={isOpen(g.key)} onclick={() => toggle(g.key)}>
-			<svg class="caret" class:caret--open={isOpen(g.key)} width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
-			<span class="row__name">{g.gen.label}</span>
-			<span class="row__sub mono">{genSpan(g.gen)}</span>
-			{#if g.soon}<span class="subj__soon" title="{g.soon} without a live pattern yet">{g.soon} need</span>{/if}
-			<span class="subj__count" title="{g.live} live of {g.total} patterns">{g.live}/{g.total}</span>
-		</button>
+		<div class="mrow" style="margin-left: {indent}px">
+			<button class="row row--gen" aria-expanded={isOpen(g.key)} onclick={() => toggle(g.key)}>
+				<svg class="caret" class:caret--open={isOpen(g.key)} width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+				<span class="row__name">{g.gen.label}</span>
+				<span class="row__sub mono">{genSpan(g.gen)}</span>
+				{#if g.soon}<span class="subj__soon" title="{g.soon} without a live pattern yet">{g.soon} need</span>{/if}
+				<span class="subj__count" title="{g.live} live of {g.total} patterns">{g.live}/{g.total}</span>
+			</button>
+			<span class="lbtns">
+				<button class="icon icon--sm" disabled={busy} onclick={() => openGenerations(t.make, t.model, t.trim)} aria-label="Edit generations" title="Edit generations">
+					<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+				</button>
+				<button class="icon icon--sm icon--danger" disabled={busy} onclick={() => dropGeneration(t.make, t.model, t.trim, g.gen.label)} aria-label="Remove {g.gen.label}" title="Remove this generation (its years become Uncategorized)">
+					<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>
+				</button>
+			</span>
+		</div>
 		{#if isOpen(g.key)}
 			{@render yearPills(g.rows, 36 + indent)}
 		{/if}
 	{/each}
-	{#if t.loose.length}{@render yearPills(t.loose, 24 + indent)}{/if}
+	{#if t.loose.length && t.groups.length}
+		{@const uk = `${t.key}|u`}
+		<div class="mrow" style="margin-left: {indent}px">
+			<button class="row row--gen row--uncat" aria-expanded={isOpen(uk)} onclick={() => toggle(uk)}>
+				<svg class="caret" class:caret--open={isOpen(uk)} width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+				<span class="row__name">Uncategorized</span>
+				<span class="row__sub mono">{t.loose.length} {t.loose.length === 1 ? "year" : "years"}</span>
+				{#if t.uncat.soon}<span class="subj__soon" title="{t.uncat.soon} without a live pattern yet">{t.uncat.soon} need</span>{/if}
+				<span class="subj__count" title="{t.uncat.live} live of {t.uncat.total} patterns">{t.uncat.live}/{t.uncat.total}</span>
+			</button>
+			<span class="lbtns">
+				<button class="icon icon--sm" disabled={busy} onclick={() => groupUncat(t)} aria-label="Group these years into a generation" title="Group these years into a generation">
+					<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 6h18M3 12h12M3 18h7"/></svg>
+				</button>
+				<button class="icon icon--sm" disabled={busy} onclick={() => (statusDlg = { t, status: "published" })} aria-label="Set visibility for these years" title="Set visibility for these years">
+					<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+				</button>
+				<button class="icon icon--sm icon--danger" disabled={busy} onclick={() => ap.deleteEntries(t.loose.map((r) => r.v), uncatLabel(t))} aria-label="Delete these {t.loose.length} years" title="Delete these {t.loose.length} years">
+					<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+				</button>
+			</span>
+		</div>
+		{#if isOpen(uk)}{@render yearPills(t.loose, 36 + indent)}{/if}
+	{:else if t.loose.length}
+		{@render yearPills(t.loose, 24 + indent)}
+	{/if}
 {/snippet}
 
-<svelte:window onkeydown={(e) => { if (e.key === "Escape") { if (genDlg) genDlg = null; else if (bulkDlg) bulkDlg = false; } }} />
+<svelte:window onkeydown={(e) => { if (e.key === "Escape") { if (genDlg) genDlg = null; else if (statusDlg) statusDlg = null; else if (layerDlg) layerDlg = null; else if (bulkDlg) bulkDlg = false; } }} />
 <!-- ─── Add vehicles (bulk) ─── -->
 {#if bulkDlg}
 	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
@@ -653,7 +807,7 @@
 <!-- ─── Generations dialog ─── -->
 {#if genDlg}
 	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-	<div class="overlay" onclick={() => (genDlg = null)}>
+	<div class="overlay overlay--top" onclick={() => (genDlg = null)}>
 		<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 		<div class="dlg" role="dialog" aria-modal="true" aria-label="Generations" tabindex="-1" onclick={(e) => e.stopPropagation()}>
 			<h2 class="dlg__title">Generations <span class="muted">· {[genDlg.make, genDlg.model, genDlg.trim].filter(Boolean).join(" ")}</span></h2>
@@ -682,46 +836,178 @@
 	</div>
 {/if}
 
+<!-- ─── Visibility for a trim's uncategorized years ─── -->
+{#if statusDlg}
+	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+	<div class="overlay" onclick={() => (statusDlg = null)}>
+		<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+		<div class="dlg" role="dialog" aria-modal="true" aria-label="Set visibility" tabindex="-1" onclick={(e) => e.stopPropagation()}>
+			<div class="sd__head">
+				<h2 class="dlg__title">Set visibility</h2>
+				<p class="sd__sub">{[statusDlg.t.make, statusDlg.t.model, statusDlg.t.trim].filter(Boolean).join(" ")} · {statusDlg.t.loose.length} uncategorized {statusDlg.t.loose.length === 1 ? "year" : "years"}</p>
+			</div>
+			<div class="dlg__body sd">
+				<div class="seg seg--stack" role="radiogroup" aria-label="Status">
+					{#each STATUSES as st (st.value)}
+						<button type="button" class="seg__btn seg__btn--col" class:seg__btn--on={statusDlg.status === st.value} role="radio" aria-checked={statusDlg.status === st.value} onclick={() => statusDlg && (statusDlg.status = st.value)}>
+							<span class="dot dot--{st.value}"></span>
+							<span><b>{st.label}</b><small>{st.note}</small></span>
+						</button>
+					{/each}
+				</div>
+			</div>
+			<div class="dlg__foot">
+				<button class="btn" onclick={() => (statusDlg = null)}>Cancel</button>
+				<button class="btn btn--primary" disabled={busy} onclick={submitStatus}>{#if busy}<Spinner />{/if}Review changes</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
+<!-- ─── Layer dialog (make / model / trim) ─── -->
+{#if layerDlg}
+	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+	<div class="overlay" onclick={() => (layerDlg = null)}>
+		<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+		<div class="dlg" role="dialog" aria-modal="true" aria-label="Edit {layerTitle(layerDlg.ref)}" tabindex="-1" onclick={(e) => e.stopPropagation()}>
+			<div class="sd__head">
+				<h2 class="dlg__title">Edit {layerTitle(layerDlg.ref)}</h2>
+				<p class="sd__sub">{[layerDlg.ref.make, layerDlg.ref.level !== "make" ? layerDlg.ref.model : "", layerDlg.ref.level === "trim" ? (layerDlg.ref.trim || "No trim") : ""].filter(Boolean).join(" › ")} · {layerScope.length} {layerScope.length === 1 ? "subject" : "subjects"} · {layerPatterns} {layerPatterns === 1 ? "pattern" : "patterns"}</p>
+			</div>
+			<div class="dlg__body sd">
+				{#if !layerIsBase}
+					<label class="fld"><span>Name <em>renames it on every year under it</em></span><input class="in" bind:value={layerDlg.name} use:focusOnMount /></label>
+				{:else}
+					<p class="muted bulk__intro">These are the entries with no trim, so there's no name to change. Use <b>+</b> to add a named trim, or set the options below.</p>
+				{/if}
+				{#if layerDlg.ref.level === "model"}
+					<label class="fld"><span>Body style <em>applies to every year</em></span>
+						<select class="in" bind:value={layerDlg.bodyStyle}>
+							<option value="">Keep each as it is</option>
+							{#each BODY_STYLES as b}<option value={b}>{b[0].toUpperCase() + b.slice(1)}</option>{/each}
+						</select>
+					</label>
+				{/if}
+				<div class="fld">
+					<span>Visibility <em>for all {layerScope.length} {layerScope.length === 1 ? "subject" : "subjects"}</em></span>
+					<div class="seg" role="radiogroup" aria-label="Visibility">
+						{#each [{ value: "", label: "Keep" }, ...STATUSES] as st (st.value)}
+							<button type="button" class="seg__btn" class:seg__btn--on={layerDlg.status === st.value} role="radio" aria-checked={layerDlg.status === st.value} onclick={() => layerDlg && (layerDlg.status = st.value as StatusPick)}>{st.label}</button>
+						{/each}
+					</div>
+				</div>
+				{#if layerPlanNow?.error}
+					<p class="warn">{layerPlanNow.error}</p>
+				{:else if layerCanSave && layerPlanNow}
+					<p class="muted bulk__intro">
+						Updates <b>{layerPlanNow.patches.length}</b> {layerPlanNow.patches.length === 1 ? "subject" : "subjects"}{#if layerPlanNow.moves.some((m) => m.from !== m.to)}, and moves <b>{layerPlanNow.moves.filter((m) => m.from !== m.to).length}</b> image / generation {layerPlanNow.moves.filter((m) => m.from !== m.to).length === 1 ? "record" : "records"} with it{/if}. You'll confirm before anything is saved.
+					</p>
+				{/if}
+			</div>
+			<div class="dlg__foot">
+				<button class="btn" onclick={() => (layerDlg = null)}>Cancel</button>
+				<button class="btn btn--primary" disabled={busy || !layerCanSave} onclick={submitLayer}>{#if busy}<Spinner />{/if}Review changes</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
 <!-- ─── Subject dialog ─── -->
 {#if subjectDlg}
+	{@const editing = !!subjectDlg.target}
 	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 	<div class="overlay" onclick={() => (subjectDlg = null)}>
 		<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-		<div class="dlg" role="dialog" aria-modal="true" aria-label={subjectDlg.target ? "Edit subject" : "Add subject"} tabindex="-1" onclick={(e) => e.stopPropagation()}>
-			<h2 class="dlg__title">{subjectDlg.target ? "Edit subject" : "Add subject"}</h2>
-			<div class="dlg__body">
-				<label class="fld"><span>Type</span>
-					<select class="in" bind:value={subjectForm.projectType} disabled={!!subjectDlg.target}>
-						{#each PROJECT_TYPES as t (t.value)}<option value={t.value}>{t.label}</option>{/each}
-					</select>
-				</label>
-				{#if subjectForm.projectType === "vehicle"}
-					<div class="grid2">
-						<label class="fld"><span>Year</span><input class="in" type="number" bind:value={subjectForm.year} /></label>
-						<label class="fld"><span>Make</span><input class="in" bind:value={subjectForm.make} /></label>
-						<label class="fld"><span>Model</span><input class="in" bind:value={subjectForm.model} /></label>
-						<label class="fld"><span>Trim <em>optional</em></span><input class="in" bind:value={subjectForm.trim} /></label>
-						<label class="fld"><span>Body style</span>
-							<select class="in" bind:value={subjectForm.bodyStyle}>
-								{#each ["sedan", "coupe", "suv", "truck", "convertible", "wagon", "hatchback"] as b}<option value={b}>{b}</option>{/each}
-							</select>
-						</label>
-					</div>
+		<div class="dlg dlg--subject" role="dialog" aria-modal="true" aria-label={editing ? "Edit subject" : "Add subject"} tabindex="-1" onclick={(e) => e.stopPropagation()}>
+			<div class="sd__head">
+				<h2 class="dlg__title">{editing ? "Edit subject" : "Add subject"}</h2>
+				{#if editing && subjectDlg.target}
+					<p class="sd__sub">{subjectName(subjectDlg.target)} · {targetPatterns} {targetPatterns === 1 ? "pattern" : "patterns"} attached</p>
 				{:else}
-					<label class="fld"><span>{subjectForm.projectType === "custom" ? "Project name" : "Property label"}</span><input class="in" bind:value={subjectForm.propertyLabel} /></label>
-					<label class="fld"><span>Address <em>optional</em></span><input class="in" bind:value={subjectForm.address} /></label>
+					<p class="sd__sub">One vehicle model year, or a residential, commercial or custom project. To add many years or models at once, use <b>Add vehicles</b>.</p>
 				{/if}
-				<div class="grid2">
-					<label class="fld"><span>Status</span>
-						<select class="in" bind:value={subjectForm.status}><option value="draft">Draft</option><option value="review">In review</option><option value="published">Published</option></select>
-					</label>
-					<label class="fld"><span>Tags <em>comma-separated</em></span><input class="in" bind:value={subjectForm.tags} /></label>
-				</div>
-				<label class="check"><input type="checkbox" bind:checked={subjectForm.popular} /> <span>Mark as popular</span></label>
 			</div>
+
+			<div class="dlg__body sd">
+				{#if !editing}
+					<div class="seg" role="radiogroup" aria-label="Type">
+						{#each PROJECT_TYPES as t (t.value)}
+							<button type="button" class="seg__btn" class:seg__btn--on={subjectForm.projectType === t.value} role="radio" aria-checked={subjectForm.projectType === t.value} onclick={() => (subjectForm.projectType = t.value)}>
+								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d={t.icon}/></svg>
+								{t.label}
+							</button>
+						{/each}
+					</div>
+				{/if}
+
+				{#if formIsVehicle}
+					<section class="sd__sec">
+						<h3 class="sd__h">Vehicle</h3>
+						<div class="grid2">
+							<label class="fld"><span>Make</span><input class="in" bind:value={subjectForm.make} list="sd-makes" autocomplete="off" use:focusOnMount placeholder="e.g. Toyota" /></label>
+							<label class="fld"><span>Model</span><input class="in" bind:value={subjectForm.model} list="sd-models" autocomplete="off" placeholder="e.g. Camry" /></label>
+							<label class="fld"><span>Trim <em>optional — blank is the base / all trims</em></span><input class="in" bind:value={subjectForm.trim} list="sd-trims" autocomplete="off" placeholder="e.g. SE" /></label>
+							<label class="fld"><span>Model year</span><input class="in" type="number" bind:value={subjectForm.year} min="1950" /></label>
+							<label class="fld fld--wide"><span>Body style</span>
+								<select class="in" bind:value={subjectForm.bodyStyle}>{#each BODY_STYLES as b}<option value={b}>{b[0].toUpperCase() + b.slice(1)}</option>{/each}</select>
+							</label>
+						</div>
+						<datalist id="sd-makes">{#each bulkMakes as m}<option value={m}></option>{/each}</datalist>
+						<datalist id="sd-models">{#each modelSuggest as m}<option value={m}></option>{/each}</datalist>
+						<datalist id="sd-trims">{#each trimSuggest as t}<option value={t}></option>{/each}</datalist>
+					</section>
+				{:else}
+					<section class="sd__sec">
+						<h3 class="sd__h">{subjectForm.projectType === "custom" ? "Project" : "Property"}</h3>
+						<label class="fld"><span>{subjectForm.projectType === "custom" ? "Project name" : "Property label"}</span><input class="in" bind:value={subjectForm.propertyLabel} use:focusOnMount placeholder={subjectForm.projectType === "custom" ? "e.g. Boat windows" : "e.g. Smith Residence"} /></label>
+						<label class="fld"><span>Address <em>optional</em></span><input class="in" bind:value={subjectForm.address} /></label>
+					</section>
+				{/if}
+
+				<div class="where" class:where--bad={!!formDup}>
+					<div class="where__k">Lands in the library at</div>
+					<div class="where__path">
+						{#each formPath as part, i}{#if i}<span class="where__sep" aria-hidden="true">›</span>{/if}<span class="where__part" class:where__part--dim={part === "No trim" || part === "Uncategorized"}>{part}</span>{/each}
+					</div>
+					{#if formDup}
+						<p class="where__note where__note--bad">Already in the catalog as {subjectName(formDup)} ({formDup.status}). Edit that one instead.</p>
+					{:else if formIsVehicle && subjectForm.make.trim() && subjectForm.model.trim()}
+						<p class="where__note">
+							{#if formGen}In <b>{formGen.label}</b> ({genSpan(formGen)}) for {subjectForm.trim.trim() || "the base"} entries.
+							{:else if formGens.length}Not in any generation of {subjectForm.trim.trim() || "the base"} entries, so it sits under <b>Uncategorized</b>.
+							{:else}No generations set for {subjectForm.trim.trim() || "the base"} entries yet — years show individually.{/if}
+							<button type="button" class="link" onclick={() => openGenerations(subjectForm.make.trim(), subjectForm.model.trim(), subjectForm.trim.trim() || undefined)}>{formGens.length ? "Edit generations" : "Set up generations"}</button>
+						</p>
+					{/if}
+				</div>
+
+				<section class="sd__sec">
+					<h3 class="sd__h">Visibility</h3>
+					<div class="seg seg--stack" role="radiogroup" aria-label="Status">
+						{#each STATUSES as st (st.value)}
+							<button type="button" class="seg__btn seg__btn--col" class:seg__btn--on={subjectForm.status === st.value} role="radio" aria-checked={subjectForm.status === st.value} onclick={() => (subjectForm.status = st.value)}>
+								<span class="dot dot--{st.value}"></span>
+								<span><b>{st.label}</b><small>{st.note}</small></span>
+							</button>
+						{/each}
+					</div>
+					<label class="check"><input type="checkbox" bind:checked={subjectForm.popular} /> <span>Mark as popular <em class="muted">— featured in the library</em></span></label>
+					<div class="fld">
+						<span>Tags <em>press Enter or comma to add</em></span>
+						<div class="chips">
+							{#each formTags as t (t)}
+								<span class="chip2">{t}<button type="button" onclick={() => dropTag(t)} aria-label="Remove tag {t}">×</button></span>
+							{/each}
+							<input class="chips__in" bind:value={tagDraft} placeholder={formTags.length ? "" : "e.g. advertised"} onkeydown={(e) => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addTags(); } else if (e.key === "Backspace" && !tagDraft && formTags.length) dropTag(formTags[formTags.length - 1]); }} onblur={() => tagDraft.trim() && addTags()} />
+						</div>
+					</div>
+				</section>
+			</div>
+
 			<div class="dlg__foot">
+				{#if formProblem && (subjectForm.make || subjectForm.propertyLabel || subjectForm.model)}<span class="sd__warn">{formProblem}</span>{/if}
 				<button class="btn" onclick={() => (subjectDlg = null)}>Cancel</button>
-				<button class="btn btn--primary" disabled={busy} onclick={submitSubject}>{#if busy}<Spinner />{/if}{subjectDlg.target ? "Save changes" : "Add subject"}</button>
+				<button class="btn btn--primary" disabled={busy || !!formProblem || !!formDup} onclick={submitSubject}>{#if busy}<Spinner />{/if}{editing ? "Save changes" : "Add subject"}</button>
 			</div>
 		</div>
 	</div>
@@ -827,7 +1113,11 @@
 	.mrow { display: flex; align-items: center; gap: 4px; }
 	.mrow .row { flex: 1; min-width: 0; width: auto; }
 	.row--gen { padding-left: 22px; }
+	.row--uncat .row__name { font-style: italic; font-weight: 500; color: var(--text-secondary); }
 	.mrow--trim { margin-left: 10px; }
+	.lbtns { display: inline-flex; gap: 2px; flex-shrink: 0; opacity: 0.35; transition: opacity 0.12s; }
+	.mrow:hover .lbtns, .mrow:focus-within .lbtns { opacity: 1; }
+	@media (hover: none) { .lbtns { opacity: 0.8; } }
 	.row--trim .row__name { font-weight: 500; }
 	.row--gen .row__name { font-size: 0.9375rem; font-weight: 600; }
 	.row--gen .row__sub { margin-right: 6px; font-size: 0.8125rem; }
@@ -911,9 +1201,40 @@
 	.warn { margin: 0; font-size: 0.8125rem; color: var(--color-danger); }
 
 	/* dialogs */
+	.overlay--top { z-index: 210; }
 	.overlay { position: fixed; inset: 0; z-index: 200; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(0, 0, 0, 0.55); }
 	.dlg { width: 480px; max-width: 100%; max-height: calc(100dvh - 40px); display: flex; flex-direction: column; background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-xl); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3); }
 	.dlg--wide { width: 860px; }
+	.dlg--subject { width: 620px; }
+	.sd__head { padding-bottom: 4px; }
+	.sd__head .dlg__title { padding-bottom: 2px; }
+	.sd__sub { margin: 0; padding: 0 20px; font-size: 0.8125rem; color: var(--text-tertiary); }
+	.sd { gap: 16px; padding-top: 12px; }
+	.sd__sec { display: flex; flex-direction: column; gap: 10px; }
+	.sd__h { margin: 0; font-size: 0.6875rem; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-tertiary); }
+	.seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 4px; padding: 3px; background: var(--bg-surface-2); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); }
+	.seg--stack { grid-auto-flow: row; padding: 0; gap: 6px; background: none; border: none; }
+	.seg__btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 8px 10px; font: inherit; font-size: 0.8125rem; font-weight: 600; color: var(--text-secondary); background: none; border: 1px solid transparent; border-radius: var(--radius-sm, 6px); cursor: pointer; }
+	.seg__btn:hover { color: var(--text-primary); }
+	.seg__btn--on { color: var(--text-primary); background: var(--bg-surface); border-color: var(--color-brand-dim); }
+	.seg__btn--col { justify-content: flex-start; text-align: left; padding: 9px 12px; background: var(--bg-base); border-color: var(--border-default); }
+	.seg__btn--col small { display: block; margin-top: 1px; font-size: 0.75rem; font-weight: 400; color: var(--text-tertiary); }
+	.seg__btn--col b { font-weight: 600; }
+	.where { padding: 12px 14px; background: var(--bg-surface-2); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); }
+	.where--bad { border-color: color-mix(in srgb, var(--color-danger) 50%, transparent); }
+	.where__k { font-size: 0.6875rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-tertiary); }
+	.where__path { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin-top: 4px; font-size: 0.9375rem; font-weight: 600; }
+	.where__sep { color: var(--text-tertiary); font-weight: 400; }
+	.where__part--dim { font-weight: 500; font-style: italic; color: var(--text-tertiary); }
+	.where__note { margin: 8px 0 0; font-size: 0.8125rem; color: var(--text-secondary); }
+	.where__note--bad { color: var(--color-danger); }
+	.chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 5px 8px; background: var(--bg-base); border: 1px solid var(--border-default); border-radius: var(--radius-md); }
+	.chips:focus-within { border-color: var(--color-brand-dim); }
+	.chips__in { flex: 1; min-width: 100px; padding: 3px 0; font: inherit; font-size: 0.8125rem; color: var(--text-primary); background: none; border: none; outline: none; }
+	.chip2 { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 10px; font-size: 0.75rem; color: var(--text-secondary); background: var(--bg-surface-3); border-radius: 99px; }
+	.chip2 button { width: 18px; height: 18px; padding: 0; font: inherit; line-height: 1; color: var(--text-tertiary); background: none; border: none; border-radius: 50%; cursor: pointer; }
+	.chip2 button:hover { color: var(--text-primary); background: var(--bg-surface-2); }
+	.sd__warn { margin-right: auto; align-self: center; font-size: 0.8125rem; color: var(--color-danger); }
 	.dlg__title { margin: 0; padding: 18px 20px 8px; font-size: 1.0625rem; }
 	.dlg__body { padding: 8px 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
 	.dlg__body--split { display: grid; grid-template-columns: minmax(0, 1fr) 240px; gap: 18px; }

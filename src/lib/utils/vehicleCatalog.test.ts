@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { VehicleEntry } from "$lib/types";
 import {
 	buildTree, entriesUnder, makeKey, matchesQuery, mediaId, monogram, yearSpan, BASE_TRIM_LABEL,
-	cleanGenerations, generationError, generationOf, groupByGeneration, yearOptions, genSpan, groupYearLabels, vehicleImage, targetId, generationsFor,
+	cleanGenerations, generationError, generationOf, groupByGeneration, yearOptions, genSpan, groupYearLabels, vehicleImage, targetId, generationsFor, uncategorizedSpan,
 } from "./vehicleCatalog";
 
 const v = (id: string, make: string, model: string, year: number, trim?: string): VehicleEntry => ({
@@ -171,5 +171,19 @@ describe("vehicleImage", () => {
 	it("builds distinct ids", () => {
 		expect(targetId({ kind: "generation", make: "Toyota", model: "Camry", generation: "Gen 1" })).toBe("toyota__camry__~g-gen-1");
 		expect(targetId({ kind: "year", make: "Toyota", model: "Camry", year: 2005 })).toBe("toyota__camry__~y-2005");
+	});
+});
+
+describe("uncategorizedSpan", () => {
+	const gens = [{ label: "A", from: 2010, to: 2012 }, { label: "B", from: 2018, to: 2020 }];
+	it("suggests the biggest run no generation sits inside", () => {
+		expect(uncategorizedSpan([2013, 2014, 2015, 2016, 2017], gens)).toEqual({ from: 2013, to: 2017 });
+		// 2008 | A | 2013-2016 | B | 2022
+		expect(uncategorizedSpan([2008, 2013, 2014, 2015, 2016, 2022], gens)).toEqual({ from: 2013, to: 2016 });
+	});
+	it("prefers the newest run on a tie, and handles none", () => {
+		expect(uncategorizedSpan([2008, 2022], gens)).toEqual({ from: 2022, to: 2022 });
+		expect(uncategorizedSpan([], gens)).toBeNull();
+		expect(uncategorizedSpan([2005, 2006], [])).toEqual({ from: 2005, to: 2006 });
 	});
 });

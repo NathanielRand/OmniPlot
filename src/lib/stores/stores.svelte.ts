@@ -206,6 +206,8 @@ export interface ConfirmOptions {
 	variant?: "danger" | "primary";
 	/** Optional key/value rows (e.g. counters) shown under the message. */
 	details?: ConfirmDetail[];
+	/** For big, permanent deletes: the confirm button stays off until this exact text is typed. */
+	typeToConfirm?: string;
 }
 interface PendingConfirm {
 	options: ConfirmOptions;
