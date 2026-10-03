@@ -55,6 +55,7 @@ Why I didn't do the last two steps:
 - Backfill: the live app would show the reconstructed rows on customers' Jobs pages.
 - tooltips need responsive aligning.
 - preparing account, dashboard, etc.. loading screen in between signin and routing to user dashboard instead of showing a loading spinner.
+- select all or more than one private patterns for community review.
 - save draft btn on each step of the pattern importer
 - pattern uplaoder: ui message and/or reposition to missing or incorrect values on the form instead ofg silently failing the submit.
 - upload pattern btn dyancmially changes to incorrect values for the pattern library category filter views such as still showing vehicle veribage when they are clciked into a different category

@@ -9,7 +9,8 @@
 	import { patternStore } from "$lib/stores/patternStore.svelte";
 	import { userStore } from "$lib/stores";
 	import { demandId, hasVoted, votesForYear } from "$lib/utils/demand";
-	import { yearOptions, genSpan } from "$lib/utils/vehicleCatalog";
+	import { groupYearLabels } from "$lib/utils/vehicleCatalog";
+	import YearRange from "./YearRange.svelte";
 	import type { Generation } from "$lib/types";
 
 	interface Props {
@@ -29,12 +30,31 @@
 	const mine = $derived(patternStore.myVotes[id]);
 	const signedIn = $derived(!!userStore.user);
 	const sortedYears = $derived([...years].sort((a, b) => b - a));
-	// Year buttons: one per generation (all its open years), then single years.
-	const options = $derived(
-		yearOptions(sortedYears.map((year) => ({ v: { year } })), gens).map((o) => ({ ...o, ys: sortedYears.filter((y) => y >= o.from && y <= o.to) })),
-	);
-	const optOn = (ys: number[]) => ys.length > 0 && ys.every((y) => hasVoted(mine, y));
-	const optVotes = (ys: number[]) => Math.max(0, ...ys.map((y) => votesForYear(record, y)));
+	// The years to vote for: a slider range over the open years (default: all of them).
+	let picked = $state<[number, number] | null>(null);
+	const lo = $derived(sortedYears[sortedYears.length - 1] ?? 0);
+	const hi = $derived(sortedYears[0] ?? 0);
+	const range = $derived<[number, number]>(picked ? [Math.max(picked[0], lo), Math.min(picked[1], hi)] : [lo, hi]);
+	const ys = $derived(sortedYears.filter((y) => y >= range[0] && y <= range[1]));
+	// The whole span selected is just "any year" — one vote, not a list of every year.
+	const full = $derived(sortedYears.length > 1 && ys.length === sortedYears.length);
+	const rangeOn = $derived(full ? !!mine?.any : ys.length > 0 && ys.every((y) => hasVoted(mine, y)));
+	const rangeVotes = $derived(Math.max(0, ...ys.map((y) => votesForYear(record, y))));
+	const votedYears = $derived(sortedYears.filter((y) => hasVoted(mine, y)));
+	const votedInRange = $derived(ys.filter((y) => votedYears.includes(y)).length);
+	// Quick picks: everything, or one generation (clipped to the years still open).
+	const presets = $derived([
+		{ key: "all", label: "All years", span: "", from: lo, to: hi },
+		...(sortedYears.length > 1
+			? gens.flatMap((g) => {
+					const inG = sortedYears.filter((y) => y >= g.from && y <= g.to);
+					return inG.length ? [{ key: g.label, label: g.label, span: inG.length === 1 ? String(inG[0]) : `${inG[inG.length - 1]}–${inG[0]}`, from: inG[inG.length - 1], to: inG[0] }] : [];
+				})
+			: []),
+	]);
+	// "2019–2022" reads as its generation name when the range is a whole one.
+	const rangeLabel = $derived(groupYearLabels(ys, gens, sortedYears).map((g) => g.label).join(", "));
+	const voteWhat = $derived(full ? "any year" : rangeLabel);
 	let busy = $state(false);
 	let editing = $state(false);
 	/** Vote accepted, but my own-votes snapshot hasn't caught up yet. */
@@ -45,7 +65,7 @@
 
 	// A different make/model starts fresh.
 	let lastId: string | undefined;
-	$effect(() => { if (id !== lastId) { const first = lastId === undefined; lastId = id; if (first) return; editing = false; confirmed = false; burst = false; } });
+	$effect(() => { if (id !== lastId) { const first = lastId === undefined; lastId = id; if (first) return; editing = false; confirmed = false; burst = false; picked = null; } });
 
 	const voted = $derived(hasVoted(mine) || confirmed);
 	const folded = $derived(voted && !editing);
@@ -80,12 +100,12 @@
 	}
 
 	/** A generation: vote (or withdraw) every year it still lacks, one request each. */
-	async function toggleMany(ys: number[]) {
+	async function toggleMany(years: number[]) {
 		if (busy) return;
 		busy = true;
-		const on = !optOn(ys);
+		const on = !years.every((y) => hasVoted(mine, y));
 		let ok = true;
-		for (const y of ys) {
+		for (const y of years) {
 			if (hasVoted(mine, y) === on) continue;
 			ok = (await patternStore.vote({ projectType: "vehicle", make, model, year: y }, on)) && ok;
 		}
@@ -132,20 +152,41 @@
 	{:else if folded}
 		<VoteSummary {mine} {burst} {busy} {gens} available={sortedYears} onChange={() => (editing = true)} onRemove={withdraw} />
 	{:else}
-		<div class="cs__actions">
-			<button class="cs__vote" class:cs__vote--on={mine?.any} disabled={busy} aria-pressed={!!mine?.any} onclick={() => toggle()}>
-				{#if busy}<Spinner />{/if}{busy ? "Saving…" : mine?.any ? "✓ You voted — any year" : mine ? "I want any year" : "I want this — any year"}
-			</button>
-			{#if options.length > 1 || (options.length === 1 && !allSoon)}
-				<div class="cs__years" role="group" aria-label="Vote for specific years">
-					{#each options as o (o.key)}
-						<button class="cs__year" class:cs__year--on={optOn(o.ys)} disabled={busy} aria-pressed={optOn(o.ys)} title={o.isGen ? `${genSpan(o)}` : undefined} onclick={() => (o.isGen ? toggleMany(o.ys) : toggle(o.from))}>
-							<span class="cs__yname">{o.label}</span>{#if o.isGen}<span class="cs__yspan">{genSpan(o)}</span>{/if}{#if optVotes(o.ys) > 0}<span class="cs__yvotes">{optVotes(o.ys)}</span>{/if}
-						</button>
-					{/each}
-				</div>
+		<div class="cs__panel">
+			{#if sortedYears.length > 1}
+				{#if presets.length > 1}
+					<div class="cs__presets" role="group" aria-label="Quick picks">
+						{#each presets as p (p.key)}
+							<button type="button" class="cs__chip" class:cs__chip--on={range[0] === p.from && range[1] === p.to} onclick={() => (picked = [p.from, p.to])}>
+								{p.label}{#if p.span}<span class="cs__chipspan">{p.span}</span>{/if}
+							</button>
+						{/each}
+					</div>
+				{/if}
+				<YearRange inline years={sortedYears} from={range[0]} to={range[1]} marked={votedYears} onchange={(a, b) => (picked = [a, b])} label="Years to vote for" />
 			{/if}
-			{#if editing}<button class="cs__link" onclick={() => (editing = false)}>Done</button>{/if}
+			<div class="cs__foot">
+				<p class="cs__sum" aria-live="polite">
+					{#if sortedYears.length > 1}
+						<b>{ys.length}</b> {ys.length === 1 ? "model year" : "model years"} selected{#if votedInRange > 0} · <span class="cs__ok">{votedInRange} voted</span>{/if}{#if rangeVotes > 0} · {rangeVotes} {rangeVotes === 1 ? "vote" : "votes"} so far{/if}
+					{:else}
+						Model year <b>{sortedYears[0]}</b>{#if rangeVotes > 0} · {rangeVotes} {rangeVotes === 1 ? "vote" : "votes"} so far{/if}
+					{/if}
+				</p>
+				<div class="cs__btns">
+					{#if editing}<button type="button" class="cs__link" onclick={() => (editing = false)}>Done</button>{/if}
+					{#if !full}
+						<button type="button" class="cs__ghost" class:cs__ghost--on={mine?.any} disabled={busy} aria-pressed={!!mine?.any} onclick={() => toggle()}>
+							{mine?.any ? "✓ Any year" : "Any year"}
+						</button>
+					{/if}
+					{#if ys.length}
+						<button type="button" class="cs__vote" class:cs__vote--on={rangeOn} disabled={busy} aria-pressed={rangeOn} onclick={() => (full ? toggle() : toggleMany(ys))}>
+							{#if busy}<Spinner />{/if}{busy ? "Saving…" : rangeOn ? `✓ Voted — ${voteWhat}` : `Vote for ${voteWhat}`}
+						</button>
+					{/if}
+				</div>
+			</div>
 		</div>
 	{/if}
 </div>
@@ -159,18 +200,25 @@
 	.cs__sub { margin: 0; font-size: 0.875rem; color: var(--text-secondary); }
 	.cs__count { margin: 8px 0 0; font-size: 0.8125rem; color: var(--text-tertiary); }
 	.cs__count b { color: var(--text-primary); }
-	.cs__actions { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
 	.cs__vote { display: inline-block; padding: 9px 16px; font: inherit; font-size: 0.8125rem; font-weight: 600; text-decoration: none; color: #fff; background: var(--color-brand-dim); border: 1px solid transparent; border-radius: var(--radius-md); cursor: pointer; }
 	.cs__vote:hover:not(:disabled) { background: var(--color-brand); }
 	.cs__vote--on { color: var(--text-primary); background: color-mix(in srgb, var(--color-success) 14%, transparent); border-color: color-mix(in srgb, var(--color-success) 40%, transparent); }
-	.cs__vote:disabled, .cs__year:disabled { opacity: 0.6; cursor: wait; }
-	.cs__years { display: flex; flex-wrap: wrap; gap: 10px; }
-	.cs__year { display: inline-flex; align-items: center; gap: 14px; padding: 9px 20px; font: inherit; font-size: 1.125rem; font-weight: 600; color: var(--text-secondary); background: var(--bg-base); border: 1px solid var(--border-default); border-radius: 99px; cursor: pointer; }
-	.cs__yname { margin-right: 4px; }
-	.cs__yspan, .cs__yvotes { font-family: var(--font-mono); font-size: 1rem; font-weight: 500; color: var(--text-tertiary); }
-	.cs__yvotes { padding-left: 12px; border-left: 1px solid var(--border-default); }
-	.cs__year--on { color: var(--text-primary); border-color: var(--color-success); background: color-mix(in srgb, var(--color-success) 12%, transparent); }
+	.cs__vote:disabled, .cs__ghost:disabled { opacity: 0.6; cursor: wait; }
 	.cs--done { padding-block: 12px; }
+	.cs__panel { flex: 1 1 100%; display: flex; flex-direction: column; gap: 16px; padding: 16px; background: var(--bg-base); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); }
+	.cs__presets { display: flex; flex-wrap: wrap; gap: 6px; }
+	.cs__chip { display: inline-flex; align-items: baseline; gap: 8px; padding: 5px 12px; font: inherit; font-size: 0.8125rem; font-weight: 600; color: var(--text-secondary); background: var(--bg-surface-2); border: 1px solid var(--border-subtle); border-radius: 99px; cursor: pointer; transition: background 0.12s, color 0.12s, border-color 0.12s; }
+	.cs__chip:hover { color: var(--text-primary); border-color: var(--border-default); }
+	.cs__chip--on { color: #fff; background: var(--color-brand-dim); border-color: var(--color-brand-dim); }
+	.cs__chipspan { font-family: var(--font-mono); font-size: 0.6875rem; font-weight: 500; opacity: 0.8; }
+	.cs__foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; }
+	.cs__sum { margin: 0; font-size: 0.8125rem; color: var(--text-tertiary); }
+	.cs__sum b { color: var(--text-primary); }
+	.cs__ok { color: var(--color-success); }
+	.cs__btns { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+	.cs__ghost { padding: 9px 14px; font: inherit; font-size: 0.8125rem; font-weight: 600; color: var(--text-secondary); background: none; border: 1px solid var(--border-default); border-radius: var(--radius-md); cursor: pointer; }
+	.cs__ghost:hover:not(:disabled) { color: var(--text-primary); border-color: var(--text-tertiary); }
+	.cs__ghost--on { color: var(--text-primary); border-color: var(--color-success); background: color-mix(in srgb, var(--color-success) 12%, transparent); }
 	.cs__count { display: flex; align-items: center; gap: 10px; }
 	.cs__num { position: relative; display: inline-flex; align-items: center; justify-content: center; min-width: 2.1em; height: 1.9em; padding: 0 0.6em; overflow: hidden; font-family: var(--font-mono); font-size: 0.875rem; color: var(--text-primary); background: var(--bg-surface-2); border: 1px solid var(--border-default); border-radius: 99px; transition: color .3s, background .3s, border-color .3s; }
 	.cs__num b { line-height: 1; font-variant-numeric: tabular-nums; }

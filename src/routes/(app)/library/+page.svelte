@@ -22,6 +22,7 @@
 	import VehicleHero from "$lib/components/library/VehicleHero.svelte";
 	import ComingSoon from "$lib/components/library/ComingSoon.svelte";
 	import VoteSummary from "$lib/components/library/VoteSummary.svelte";
+	import YearRange from "$lib/components/library/YearRange.svelte";
 	import VehicleTreeFilter, { type TreePath } from "$lib/components/library/VehicleTreeFilter.svelte";
 	import {
 		buildTree, entriesUnder, mediaFor, yearSpan, trimFilter, matchesQuery,
@@ -72,7 +73,7 @@
 	);
 	let category       = $state<PatternCategory>("ppf");
 	let search         = $state("");
-	let activeYear     = $state("All");
+	let yearRange      = $state<[number, number] | null>(null);
 	let activeZone     = $state("All zones");
 	// Where a private pattern stands (not shared / in review / in community / not approved).
 	let shareFilter    = $state<"all" | ShareStatus>("all");
@@ -250,12 +251,26 @@
 		return e?.make && e.model ? generationsFor(patternStore.media, e.make, e.model, e.trim) : [];
 	});
 	const yearOpts = $derived(yearOptions(pathEntries, modelGens));
-	const YEARS = $derived(["All", ...yearOpts.map((o) => o.key)]);
-	const yearSel = $derived(yearOpts.find((o) => o.key === activeYear));
-	// A year that isn't in the current branch resets it.
-	$effect(() => {
-		if (!YEARS.includes(activeYear)) activeYear = "All";
+	// The Year filter is a range slider over the years in view. A range that spans
+	// them all is no filter; one that matches a generation (or a single year) names it.
+	const yearList = $derived([...new Set(pathEntries.filter((x) => x.pats.length > 0).map((x) => x.v.year).filter((y): y is number => !!y))].sort((a, b) => a - b));
+	const YEARS = $derived(yearList.length > 1 ? ["All", ...yearList.map(String)] : ["All"]);
+	const yearBounds = $derived<[number, number]>([yearList[0] ?? 0, yearList[yearList.length - 1] ?? 0]);
+	// What the slider shows: the saved range clamped to the years in view.
+	const yearShown = $derived<[number, number]>(
+		yearRange ? [Math.max(yearRange[0], yearBounds[0]), Math.min(yearRange[1], yearBounds[1])] : yearBounds,
+	);
+	const yearActive = $derived(YEARS.length > 1 && !!yearRange && yearShown[0] <= yearShown[1] && (yearShown[0] > yearBounds[0] || yearShown[1] < yearBounds[1]));
+	const yearSel = $derived.by(() => {
+		if (!yearActive) return undefined;
+		const [from, to] = yearShown;
+		return yearOpts.find((o) => o.from === from && o.to === to) ?? { key: "range", label: from === to ? String(from) : `${from}–${to}`, from, to, isGen: false };
 	});
+	// The tree highlights the generation the range matches.
+	const activeYear = $derived(yearSel?.isGen ? yearSel.key : "All");
+	function setYearRange(from: number, to: number) {
+		yearRange = from <= yearBounds[0] && to >= yearBounds[1] ? null : [from, to];
+	}
 	$effect(() => {
 		if (!ZONES.includes(activeZone)) activeZone = "All zones";
 	});
@@ -269,7 +284,7 @@
 			const v = x.v;
 			const q = search.trim().toLowerCase();
 			const matchSearch = !q || matchesQuery(`${v.year ?? ""} ${v.make ?? ""} ${v.model ?? ""} ${v.trim ?? ""} ${v.bodyStyle ?? ""} ${v.propertyLabel ?? ""} ${v.address ?? ""} ${x.pats.map((p) => `${p.name} ${zoneGroups(p).join(" ")}`).join(" ")}`, q);
-			const matchYear = typeOf(v) !== "vehicle" || activeYear === "All" || (!!yearSel && !!v.year && v.year >= yearSel.from && v.year <= yearSel.to);
+			const matchYear = typeOf(v) !== "vehicle" || !yearSel || (!!v.year && v.year >= yearSel.from && v.year <= yearSel.to);
 			return matchSearch && matchYear;
 		}),
 	);
@@ -318,7 +333,7 @@
 		const sel = scoped ? yearSel : undefined;
 		return vehicleImage(patternStore.media, make, model, {
 			trim: trim ?? (scoped ? focusTrim : undefined),
-			...(sel ? (sel.isGen ? { generation: sel.label } : { year: sel.from }) : {}),
+			...(sel ? (sel.isGen ? { generation: sel.label } : sel.from === sel.to ? { year: sel.from } : {}) : {}),
 		});
 	};
 
@@ -460,7 +475,7 @@
 		projectType = p;
 		selectedVehicle = null;
 		if (path.make) go({});
-		activeYear = "All";
+		yearRange = null;
 		activeZone = "All zones";
 		search = "";
 		selectedPatternIds = new Set();
@@ -484,7 +499,7 @@
 		selectedVehicle = null;
 		selectedPatternIds = new Set();
 		activeZone = "All zones";
-		activeYear = "All";
+		yearRange = null;
 		search = "";
 		autoPick = !urlType;
 		const url = new URL(page.url);
@@ -850,14 +865,14 @@
 
 	// ─── Mobile filter sheet ──────────────────────
 	const filterCount = $derived(
-		(isVeh && activeYear !== "All" ? 1 : 0) +
+		(isVeh && yearActive ? 1 : 0) +
 		(hideSoon ? 1 : 0) +
 		(activeZone !== "All zones" ? 1 : 0) +
 		(showStatus && shareFilter !== "all" ? 1 : 0),
 	);
 	const hasFilterGroups = $derived((isVeh && YEARS.length > 1) || (isVeh && soonAll.length > 0) || ZONES.length > 2 || showStatus);
 	function resetFilters() {
-		activeYear = "All";
+		yearRange = null;
 		activeZone = "All zones";
 		shareFilter = "all";
 		hideSoon = false;
@@ -882,16 +897,9 @@
 			<section class="lib-fgroup">
 				<div class="lib-fgroup__head">
 					<span class="lib-section-label">Year</span>
-					{#if activeYear !== "All"}<button class="lib-fgroup__clear" onclick={() => (activeYear = "All")}>Clear</button>{/if}
+					{#if yearActive}<button class="lib-fgroup__clear" onclick={() => (yearRange = null)}>Clear</button>{/if}
 				</div>
-				<div class="lib-years" use:revealActive={activeYear}>
-					<button class="lib-year lib-year--all" class:active={activeYear === "All"} onclick={() => (activeYear = "All")} aria-pressed={activeYear === "All"}>All years</button>
-					{#each yearOpts as o (o.key)}
-						<button class="lib-year" class:active={activeYear === o.key} class:lib-year--gen={o.isGen} onclick={() => (activeYear = o.key)} aria-pressed={activeYear === o.key}>
-							{#if o.isGen}<span class="lib-year__name">{o.label}</span><span class="lib-year__span">{o.from === o.to ? o.from : `${o.from}–${o.to}`}</span>{:else}{o.label}{/if}
-						</button>
-					{/each}
-				</div>
+				<YearRange years={yearList} from={yearShown[0]} to={yearShown[1]} onchange={setYearRange} />
 			</section>
 		{/if}
 
@@ -961,7 +969,7 @@
 			<!-- Desktop: the tree lives here. ≤768px it moves into a sheet. -->
 			<div class="lib-tree">
 				<div class="lib-section-label">Browse</div>
-				<VehicleTreeFilter {tree} {path} total={treeTotal} {logoFor} onselect={go} trimBase={TRIM_BASE} gens={yearOpts.filter((o) => o.isGen)} {activeYear} onyear={(k) => (activeYear = activeYear === k ? "All" : k)} />
+				<VehicleTreeFilter {tree} {path} total={treeTotal} {logoFor} onselect={go} trimBase={TRIM_BASE} gens={yearOpts.filter((o) => o.isGen)} {activeYear} onyear={(k) => { const o = yearOpts.find((x) => x.key === k); yearRange = !o || activeYear === k ? null : [o.from, o.to]; }} />
 			</div>
 			<button class="lib-pill lib-browse-btn" onclick={() => (browseOpen = true)}>
 				<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
@@ -1155,7 +1163,7 @@
 				{:else}
 					<p class="lib-empty__title">Nothing matches these filters</p>
 					<p class="lib-empty__sub">
-						Try a different search or filter{#if isVeh && (path.make || activeYear !== "All")}, <button class="lib-empty__request" onclick={() => { activeYear = "All"; go({}); }}>start over</button>{/if}{#if source !== "private"}, or <button class="lib-empty__request" onclick={() => openRequest()}>request {projectType === "vehicle" ? "a vehicle" : "a pattern"}</button>{/if}.
+						Try a different search or filter{#if isVeh && (path.make || yearActive)}, <button class="lib-empty__request" onclick={() => { yearRange = null; go({}); }}>start over</button>{/if}{#if source !== "private"}, or <button class="lib-empty__request" onclick={() => openRequest()}>request {projectType === "vehicle" ? "a vehicle" : "a pattern"}</button>{/if}.
 					</p>
 				{/if}
 				{#if emptyKind !== "loading" && emptyKind !== "error"}
@@ -1341,10 +1349,6 @@
 					</div>
 				</div>
 
-				{#if soonYears.length}
-					<ComingSoon make={makeLabel} model={modelLabel} years={soonYears} allSoon={allSoonLeaf} gens={modelGens} />
-				{/if}
-
 				<div class="zone-grid" hidden={allSoonLeaf}>
 					{#if visibleStorePatterns.length}
 						{#each visibleStorePatterns as pattern (pattern.id)}
@@ -1459,6 +1463,10 @@
 						</div>
 					{/if}
 				</div>
+
+				{#if soonYears.length}
+					<ComingSoon make={makeLabel} model={modelLabel} years={soonYears} allSoon={allSoonLeaf} gens={modelGens} />
+				{/if}
 			</div>
 		{/if}
 
@@ -1480,7 +1488,7 @@
 				</button>
 			</div>
 			<div class="sheet__body">
-				<VehicleTreeFilter {tree} {path} total={treeTotal} {logoFor} onselect={go} trimBase={TRIM_BASE} gens={yearOpts.filter((o) => o.isGen)} {activeYear} onyear={(k) => (activeYear = activeYear === k ? "All" : k)} />
+				<VehicleTreeFilter {tree} {path} total={treeTotal} {logoFor} onselect={go} trimBase={TRIM_BASE} gens={yearOpts.filter((o) => o.isGen)} {activeYear} onyear={(k) => { const o = yearOpts.find((x) => x.key === k); yearRange = !o || activeYear === k ? null : [o.from, o.to]; }} />
 			</div>
 		</div>
 	</div>
@@ -2762,25 +2770,6 @@
 	.lib-fgroup__clear { background: none; border: none; padding: 0; font: inherit; font-size: 0.6875rem; color: var(--text-brand); cursor: pointer; }
 	.lib-fgroup__clear:hover { text-decoration: underline; }
 
-	/* Years: a 4-up grid, three rows tall, scrolling inside with a fade hint. */
-	.lib-years {
-		display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px;
-		padding: 1px;
-	}
-	.lib-years::-webkit-scrollbar { width: 6px; }
-	.lib-years::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 99px; }
-	.lib-year {
-		height: 40px; padding: 0; font: inherit; font-size: 0.9375rem; font-weight: 500; font-variant-numeric: tabular-nums;
-		color: var(--text-secondary); background: var(--bg-surface-2); border: 1px solid var(--border-subtle);
-		border-radius: var(--radius-md); cursor: pointer; transition: background 0.12s, color 0.12s, border-color 0.12s;
-	}
-	.lib-year--all { grid-column: 1 / -1; }
-	.lib-year--gen { grid-column: 1 / -1; height: 46px; padding: 0 14px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-	.lib-year__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 1.0625rem; font-weight: 600; }
-	.lib-year__span { font-family: var(--font-mono); font-size: 0.9375rem; opacity: 0.85; white-space: nowrap; }
-	.lib-year:hover { border-color: var(--border-default); color: var(--text-primary); }
-	.lib-year.active { background: var(--color-brand-dim); border-color: var(--color-brand-dim); color: #fff; }
-
 	/* Segmented control (two-way choices) */
 	.lib-seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 2px; padding: 2px; background: var(--bg-surface-2); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); }
 	.lib-seg__btn { height: 28px; padding: 0 6px; font: inherit; font-size: 0.75rem; font-weight: 500; color: var(--text-secondary); background: none; border: none; border-radius: calc(var(--radius-md) - 2px); cursor: pointer; white-space: nowrap; transition: background 0.12s, color 0.12s; }
@@ -2793,7 +2782,7 @@
 	.lib-opt:hover { background: var(--bg-surface-2); color: var(--text-primary); }
 	.lib-opt.active { background: color-mix(in srgb, var(--color-brand-dim) 14%, transparent); border-color: color-mix(in srgb, var(--color-brand-dim) 40%, transparent); color: var(--text-primary); }
 	.lib-opt .lib-pill__count { margin: 0; }
-	.lib-year:focus-visible, .lib-seg__btn:focus-visible, .lib-opt:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 1px; }
+	.lib-seg__btn:focus-visible, .lib-opt:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 1px; }
 	.lib-tree { margin-top: 4px; }
 	@media (max-width: 1100px) {
 		.library__header-actions { flex-wrap: wrap; }
@@ -2819,8 +2808,7 @@
 		font: inherit; font-weight: 600; cursor: pointer;
 	}
 	.sheet__body .lib-pill { padding: 8px 14px; min-height: 38px; font-size: 0.875rem; }
-	.sheet__body .lib-years { max-height: none; overflow: visible; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; -webkit-mask-image: none; mask-image: none; margin-right: 0; }
-	.sheet__body .lib-year, .sheet__body .lib-seg__btn { height: 40px; font-size: 0.875rem; }
+	.sheet__body .lib-seg__btn { height: 40px; font-size: 0.875rem; }
 	.sheet__body .lib-opt { height: 40px; font-size: 0.9375rem; }
 	.sheet__body .lib-fgroup .lib-section-label { padding-top: 0; }
 	.sheet__body .lib-section-label { padding-top: 14px; }
