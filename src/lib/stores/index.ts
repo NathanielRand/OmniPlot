@@ -6,3 +6,4 @@ export * from './plansStore.svelte';
 export * from './platformStore.svelte';
 export * from './plotterHistoryStore.svelte';
 export * from './plotterStatusStore.svelte';
+export * from './patternOptionsStore.svelte';

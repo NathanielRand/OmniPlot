@@ -10,7 +10,7 @@
 // were never published.
 // ─────────────────────────────────────────────
 
-import { patternStore, MIRROR_PAIRS, zoneLabel as storeZoneLabel } from "$lib/stores/patternStore.svelte";
+import { patternStore, mirrorOf as storeMirrorOf, zoneLabel as storeZoneLabel } from "$lib/stores/patternStore.svelte";
 import {
 	getReviewQueue, getAdjustmentRequests, resolveAdjustmentRequest, adminUpdateUserPattern, deleteUserPattern,
 	commitCatalogChange, commitLayerChange, setVehicleDoc, updateVehicleDoc, setPatternDoc, updatePatternDoc, setDemandStatus, setGenerations,
@@ -171,7 +171,7 @@ function createAdminPatterns() {
 			sub: { ...sub, ...edits, notes: edits.notes || undefined },
 			vehicles: patternStore.vehicles,
 			patterns: allCatalogPatterns(),
-			mirrorOf: (z) => MIRROR_PAIRS[z],
+			mirrorOf: (z) => storeMirrorOf(z),
 			newId: uid,
 		});
 	}
@@ -252,7 +252,7 @@ function createAdminPatterns() {
 			const e = editsOf(sub);
 			const plan = planPublish({
 				sub: { ...sub, ...e, notes: e.notes || undefined }, vehicles, patterns,
-				mirrorOf: (z) => MIRROR_PAIRS[z], newId: uid,
+				mirrorOf: (z) => storeMirrorOf(z), newId: uid,
 			});
 			if (plan.error || !plan.patterns.length) continue;
 			out.push({ sub, plan });

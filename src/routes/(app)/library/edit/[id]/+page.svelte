@@ -2,7 +2,8 @@
 	import { page } from "$app/state";
 	import { goto } from "$app/navigation";
 	import { userStore, toastStore } from "$lib/stores";
-	import { patternStore, MIRROR_PAIRS, PATTERN_CATEGORIES, zonesFor } from "$lib/stores/patternStore.svelte";
+	import { patternOptionsStore } from "$lib/stores/patternOptionsStore.svelte";
+	import { patternStore, mirrorOf as storeMirrorOf, allCategories, allBodyStyles, zonesFor } from "$lib/stores/patternStore.svelte";
 	import { getUserPatternById, updateUserPattern, deleteUserPattern } from "$lib/firebase/firestore";
 	import SvgPathInput from "$lib/components/ui/SvgPathInput.svelte";
 	import InfoTip from "$lib/components/ui/InfoTip.svelte";
@@ -91,8 +92,11 @@
 
 	// A vehicle's zone list depends on the category; drop zones the new list
 	// doesn't have (custom zones always stay).
+	// Waits for the admin-added zones and counts hidden ones as valid: a pattern
+	// saved with one must keep it, not lose it to a late load or a hide.
 	$effect(() => {
-		const valid = new Set(zoneList.map((z) => z.value));
+		if (!patternOptionsStore.loaded) return;
+		const valid = new Set(zonesFor(pattern.category, projectType, true).map((z) => z.value));
 		if (pattern.zones.some((z) => z !== "custom" && !valid.has(z))) {
 			const keep = pattern.zones
 				.map((z, i) => ({ z, l: pattern.customZoneLabels[i] ?? "" }))
@@ -112,14 +116,14 @@
 
 	const hasMirrorPair = $derived(
 		pattern.zones.some((z) => {
-			const m = MIRROR_PAIRS[z];
+			const m = storeMirrorOf(z);
 			return m !== undefined && pattern.zones.includes(m);
 		}),
 	);
 
 	const mirrorZoneLabels = $derived((() => {
 		for (const z of pattern.zones) {
-			const m = MIRROR_PAIRS[z];
+			const m = storeMirrorOf(z);
 			if (m && pattern.zones.includes(m)) {
 				return { orig: zoneLabel(z), flip: zoneLabel(m) };
 			}
@@ -157,7 +161,7 @@
 		return zoneList.find((zl) => zl.value === z)?.label ?? z;
 	}
 	function mirrorOf(z: PatternZone): PatternZone | undefined {
-		return MIRROR_PAIRS[z];
+		return storeMirrorOf(z);
 	}
 
 	// ─── Load once auth has resolved ──────────────
@@ -495,13 +499,7 @@
 							<div class="field">
 								<label class="field__label" for="bodyStyle">Body Style</label>
 								<select id="bodyStyle" class="field__select" bind:value={vehicle.bodyStyle}>
-									<option value="sedan">Sedan</option>
-									<option value="coupe">Coupe</option>
-									<option value="suv">SUV / Crossover</option>
-									<option value="truck">Truck</option>
-									<option value="convertible">Convertible</option>
-									<option value="wagon">Wagon</option>
-									<option value="hatchback">Hatchback</option>
+									{#each allBodyStyles() as b (b.value)}<option value={b.value}>{b.label}</option>{/each}
 								</select>
 							</div>
 						</div>
@@ -542,7 +540,7 @@
 					<div class="field">
 						<span class="field__label">Category</span>
 						<div class="category-cards" role="radiogroup" aria-label="Pattern category">
-							{#each PATTERN_CATEGORIES as c}
+							{#each allCategories() as c (c.value)}
 								<label
 									class="category-card"
 									class:category-card--active={pattern.category === c.value}

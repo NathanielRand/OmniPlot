@@ -7,14 +7,15 @@
 	import ReviewQueue from "$lib/components/admin/patterns/ReviewQueue.svelte";
 	import CatalogManager from "$lib/components/admin/patterns/CatalogManager.svelte";
 	import MediaCoverage from "$lib/components/admin/patterns/MediaCoverage.svelte";
+	import OptionsManager from "$lib/components/admin/patterns/OptionsManager.svelte";
 	import RequestsBoard from "$lib/components/admin/patterns/RequestsBoard.svelte";
 	import type { VehiclePlanInput } from "$lib/admin/vehiclePlan";
 	import { adminPatterns as ap } from "$lib/admin/adminPatterns.svelte";
 	import { patternStore } from "$lib/stores/patternStore.svelte";
 	import type { SubjectForm } from "$lib/admin/patternForms";
 
-	type Tab = "review" | "catalog" | "media" | "requests";
-	const TABS: Tab[] = ["catalog", "review", "media", "requests"];
+	type Tab = "review" | "catalog" | "media" | "requests" | "options";
+	const TABS: Tab[] = ["catalog", "review", "media", "requests", "options"];
 	const tab = $derived<Tab>(TABS.find((t) => t === page.url.searchParams.get("tab")) ?? "catalog");
 
 	function setTab(t: Tab) {
@@ -125,6 +126,9 @@
 			<button class="tab" class:tab--on={tab === "requests"} role="tab" aria-selected={tab === "requests"} onclick={() => setTab("requests")}>
 				Requests {#if openRequests}<span class="badge">{openRequests}</span>{/if}
 			</button>
+			<button class="tab" class:tab--on={tab === "options"} role="tab" aria-selected={tab === "options"} onclick={() => setTab("options")}>
+				Options
+			</button>
 		</div>
 
 		<div class="who">
@@ -149,6 +153,8 @@
 			<CatalogManager {focus} onFocusUsed={() => (focus = null)} {prefill} onPrefillUsed={() => (prefill = null)} {bulkPrefill} onBulkPrefillUsed={() => (bulkPrefill = null)} />
 		{:else if tab === "media"}
 			<MediaCoverage onOpen={(id) => openCatalog(id)} />
+		{:else if tab === "options"}
+			<OptionsManager />
 		{:else}
 			<RequestsBoard onOpenSubject={(id) => openCatalog(id)} onCreateSubject={createSubject} onCreateVehicles={createVehicles} />
 		{/if}

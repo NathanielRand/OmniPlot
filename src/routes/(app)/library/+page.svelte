@@ -2,7 +2,7 @@
 	import Spinner from "$lib/components/ui/Spinner.svelte";
 	import { toastStore, canvasStore, userStore, confirmStore } from "$lib/stores";
 	import {
-		patternStore, TINT_ZONE_GROUP, PPF_ZONE_GROUP, MIRROR_PAIRS, PATTERN_CATEGORIES,
+		patternStore, TINT_ZONE_GROUP, PPF_ZONE_GROUP, mirrorOf as storeMirrorOf, adminZoneGroup, knownCategories,
 		zoneLabel, categoryShortLabel, categoryLabel, categoryMeta,
 	} from "$lib/stores/patternStore.svelte";
 	import Badge from "$lib/components/ui/Badge.svelte";
@@ -184,7 +184,7 @@
 	// Categories that actually have patterns for the chosen subject type.
 	const categoriesForType = $derived.by(() => {
 		const inType = uniquePatterns(visible.filter((x) => typeOf(x.v) === projectType).flatMap((x) => x.pats));
-		return PATTERN_CATEGORIES
+		return knownCategories()
 			.map((c) => ({ ...c, count: inType.filter((p) => p.category === c.value).length }))
 			.filter((c) => c.count > 0);
 	});
@@ -216,7 +216,7 @@
 	function groupOfZone(zone: PatternZone, cat: PatternCategory, t: ProjectType, customLabel?: string): string {
 		if (t === "vehicle") {
 			const map: Partial<Record<PatternZone, string>> = cat === "ppf" ? PPF_ZONE_GROUP : cat === "window-tint" ? TINT_ZONE_GROUP : {};
-			const g = map[zone];
+			const g = map[zone] ?? adminZoneGroup(zone);
 			if (g) return g;
 		}
 		return zoneLabel(zone, cat, t, customLabel);
@@ -541,7 +541,7 @@
 	const detailMirror = $derived.by(() => {
 		const p = detailPattern;
 		if (!p || p.source !== "community") return null;
-		const m = MIRROR_PAIRS[p.zone];
+		const m = storeMirrorOf(p.zone);
 		if (!m) return null;
 		const t = p.projectType ?? (selectedVehicle ? typeOf(selectedVehicle) : projectType);
 		// Prefer the same model year's own pattern — a leaf spans several years.
@@ -634,7 +634,7 @@
 		const parts: string[] = [];
 		p.zones.forEach((z, i) => {
 			if (!remaining.has(z)) return;
-			const mirror = MIRROR_PAIRS[z];
+			const mirror = storeMirrorOf(z);
 			if (mirror && remaining.has(mirror)) {
 				parts.push(`${getLabel(z, i).replace(/ Left$| Right$/, "")} (L/R)`);
 				remaining.delete(z);
@@ -660,7 +660,7 @@
 		if (!mirrorTarget) return null;
 		const t = mirrorTarget;
 		for (const z of t.zones) {
-			const m = MIRROR_PAIRS[z];
+			const m = storeMirrorOf(z);
 			if (m && t.zones.includes(m)) {
 				return {
 					orig: { zone: z, label: zoneLabel(z, t.category, t.projectType) },
@@ -673,7 +673,7 @@
 
 	function hasMirrorZones(p: UserPattern): boolean {
 		return p.zones.some((z) => {
-			const m = MIRROR_PAIRS[z];
+			const m = storeMirrorOf(z);
 			return m !== undefined && p.zones.includes(m);
 		});
 	}

@@ -37,6 +37,20 @@ import {
 	batchSeedData,
 } from "$lib/firebase/firestore";
 import { toastStore, userStore } from "./stores.svelte";
+import { patternOptionsStore } from "./patternOptionsStore.svelte";
+import {
+	BODY_STYLES, CUSTOM_ZONES_LIST, PPF_ZONES_LIST, TINT_ZONES_LIST, RESIDENTIAL_ZONES_LIST, COMMERCIAL_ZONES_LIST,
+	PATTERN_CATEGORIES, TINT_ZONE_GROUP, PPF_ZONE_GROUP, MIRROR_PAIRS,
+	categoryMetaOf, mirrorPairs, withAdminZones, withCategoryOverride, type PatternCategoryMeta,
+} from "$lib/patternOptions";
+
+// Built-in option lists moved to $lib/patternOptions (shared with the server);
+// re-exported so existing imports keep working.
+export {
+	BODY_STYLES, CUSTOM_ZONES_LIST, PPF_ZONES_LIST, TINT_ZONES_LIST, RESIDENTIAL_ZONES_LIST, COMMERCIAL_ZONES_LIST,
+	PATTERN_CATEGORIES, TINT_ZONE_GROUP, PPF_ZONE_GROUP, MIRROR_PAIRS,
+};
+export type { PatternCategoryMeta };
 
 export type { PatternStatus, RequestStatus, VehicleEntry, PatternRequest };
 
@@ -56,39 +70,6 @@ const INITIAL_VEHICLES: VehicleEntry[] = [
 
 const INITIAL_REQUESTS: PatternRequest[] = [];
 
-// ─── Zone metadata ────────────────────────────
-
-// Maps PatternZone values to human-readable group names (used for zone filter).
-export const TINT_ZONE_GROUP: Partial<Record<PatternZone, string>> = {
-	windshield:           "Windshield",
-	"windshield-strip":   "Windshield",
-	"rear-windshield":    "Rear Window",
-	sunroof:              "Sunroof",
-	moonroof:             "Sunroof",
-	"window-front-left":  "Side Windows",
-	"window-front-right": "Side Windows",
-	"window-rear-left":   "Side Windows",
-	"window-rear-right":  "Side Windows",
-	"quarter-window-left":  "Quarter / Vent",
-	"quarter-window-right": "Quarter / Vent",
-	"vent-window-left":   "Quarter / Vent",
-	"vent-window-right":  "Quarter / Vent",
-};
-
-export const PPF_ZONE_GROUP: Partial<Record<PatternZone, string>> = {
-	hood: "Hood", "hood-edge-left": "Hood", "hood-edge-right": "Hood",
-	"bumper-front": "Bumpers", "bumper-rear": "Bumpers",
-	"fender-front-left": "Fenders", "fender-front-right": "Fenders",
-	"fender-rear-left": "Fenders", "fender-rear-right": "Fenders",
-	"door-front-left": "Doors", "door-front-right": "Doors",
-	"door-rear-left": "Doors", "door-rear-right": "Doors",
-	"rocker-left": "Rocker Panels", "rocker-right": "Rocker Panels",
-	"mirror-left": "Mirrors", "mirror-right": "Mirrors",
-	roof: "Roof", "a-pillar-left": "Roof", "a-pillar-right": "Roof",
-	trunk: "Trunk",
-	"headlight-left": "Lights", "headlight-right": "Lights",
-	"foglight-left": "Lights", "foglight-right": "Lights",
-};
 
 // ─── Seed: Community reference patterns (residential / commercial) ───────────
 // Admin-curated, non-vehicle-specific templates for the most common window,
@@ -538,181 +519,29 @@ export function getVehicleName(vehicleId: string): string {
 	return `${v.year} ${v.make} ${v.model}`;
 }
 
-// ─── Zone options (for admin add-pattern form) ─
 
-export const PPF_ZONES_LIST: Array<{ value: PatternZone; label: string }> = [
-	{ value: "hood",              label: "Hood" },
-	{ value: "hood-edge-left",    label: "Hood Edge Left" },
-	{ value: "hood-edge-right",   label: "Hood Edge Right" },
-	{ value: "bumper-front",      label: "Front Bumper" },
-	{ value: "bumper-rear",       label: "Rear Bumper" },
-	{ value: "fender-front-left", label: "Fender Front Left" },
-	{ value: "fender-front-right",label: "Fender Front Right" },
-	{ value: "fender-rear-left",  label: "Fender Rear Left" },
-	{ value: "fender-rear-right", label: "Fender Rear Right" },
-	{ value: "door-front-left",   label: "Door Front Left" },
-	{ value: "door-front-right",  label: "Door Front Right" },
-	{ value: "door-rear-left",    label: "Door Rear Left" },
-	{ value: "door-rear-right",   label: "Door Rear Right" },
-	{ value: "rocker-left",       label: "Rocker Left" },
-	{ value: "rocker-right",      label: "Rocker Right" },
-	{ value: "mirror-left",       label: "Mirror Left" },
-	{ value: "mirror-right",      label: "Mirror Right" },
-	{ value: "a-pillar-left",     label: "A-Pillar Left" },
-	{ value: "a-pillar-right",    label: "A-Pillar Right" },
-	{ value: "roof",              label: "Roof" },
-	{ value: "trunk",             label: "Trunk" },
-	{ value: "headlight-left",    label: "Headlight Left" },
-	{ value: "headlight-right",   label: "Headlight Right" },
-	{ value: "foglight-left",     label: "Foglight Left" },
-	{ value: "foglight-right",    label: "Foglight Right" },
-	{ value: "custom",            label: "Custom" },
-];
+const builtinCategories = () => PATTERN_CATEGORIES.map((c) => withCategoryOverride(c, patternOptionsStore.doc.overrides.categories[c.value]));
 
-// Mirror pairs — selecting one side suggests adding the other.
-// Only zones that have a geometric mirror are listed; symmetric zones (hood, roof, etc.) are absent.
-export const MIRROR_PAIRS: Partial<Record<PatternZone, PatternZone>> = {
-	"hood-edge-left":       "hood-edge-right",
-	"hood-edge-right":      "hood-edge-left",
-	"fender-front-left":    "fender-front-right",
-	"fender-front-right":   "fender-front-left",
-	"fender-rear-left":     "fender-rear-right",
-	"fender-rear-right":    "fender-rear-left",
-	"door-front-left":      "door-front-right",
-	"door-front-right":     "door-front-left",
-	"door-rear-left":       "door-rear-right",
-	"door-rear-right":      "door-rear-left",
-	"rocker-left":          "rocker-right",
-	"rocker-right":         "rocker-left",
-	"mirror-left":          "mirror-right",
-	"mirror-right":         "mirror-left",
-	"a-pillar-left":        "a-pillar-right",
-	"a-pillar-right":       "a-pillar-left",
-	"headlight-left":       "headlight-right",
-	"headlight-right":      "headlight-left",
-	"foglight-left":        "foglight-right",
-	"foglight-right":       "foglight-left",
-	"window-front-left":    "window-front-right",
-	"window-front-right":   "window-front-left",
-	"window-rear-left":     "window-rear-right",
-	"window-rear-right":    "window-rear-left",
-	"quarter-window-left":  "quarter-window-right",
-	"quarter-window-right": "quarter-window-left",
-	"vent-window-left":     "vent-window-right",
-	"vent-window-right":    "vent-window-left",
-};
-
-export const TINT_ZONES_LIST: Array<{ value: PatternZone; label: string }> = [
-	{ value: "windshield",          label: "Windshield (Full)" },
-	{ value: "windshield-strip",    label: "Windshield Strip" },
-	{ value: "window-front-left",   label: "Front Driver Window" },
-	{ value: "window-front-right",  label: "Front Passenger Window" },
-	{ value: "window-rear-left",    label: "Rear Driver Window" },
-	{ value: "window-rear-right",   label: "Rear Passenger Window" },
-	{ value: "rear-windshield",     label: "Rear Windshield" },
-	{ value: "sunroof",             label: "Sunroof / Panoramic Roof" },
-	{ value: "moonroof",            label: "Moonroof / Rear Panel" },
-	{ value: "quarter-window-left", label: "Quarter Window Left" },
-	{ value: "quarter-window-right",label: "Quarter Window Right" },
-	{ value: "vent-window-left",    label: "Vent Window Left" },
-	{ value: "vent-window-right",   label: "Vent Window Right" },
-	{ value: "custom",              label: "Custom" },
-];
-
-export const RESIDENTIAL_ZONES_LIST: Array<{ value: PatternZone; label: string }> = [
-	{ value: "res-picture-window",     label: "Picture Window" },
-	{ value: "res-living-room-window", label: "Living Room Window" },
-	{ value: "res-bedroom-window",     label: "Bedroom Window" },
-	{ value: "res-kitchen-window",     label: "Kitchen Window" },
-	{ value: "res-bathroom-window",    label: "Bathroom Window" },
-	{ value: "res-sunroom-window",     label: "Sunroom Window" },
-	{ value: "res-basement-window",    label: "Basement Window" },
-	{ value: "res-garage-window",      label: "Garage Window" },
-	{ value: "res-skylight",           label: "Skylight" },
-	{ value: "res-sliding-glass-door", label: "Sliding Glass Door" },
-	{ value: "res-front-door-glass",   label: "Front Door Glass" },
-	{ value: "res-front-door-sidelight", label: "Front Door Sidelight" },
-	{ value: "custom",                 label: "Custom" },
-];
-
-export const COMMERCIAL_ZONES_LIST: Array<{ value: PatternZone; label: string }> = [
-	{ value: "com-storefront-window",       label: "Storefront Window" },
-	{ value: "com-display-window",          label: "Display Window" },
-	{ value: "com-entry-door-glass",        label: "Entry Door Glass" },
-	{ value: "com-lobby-window",            label: "Lobby Window" },
-	{ value: "com-office-window",           label: "Office Window" },
-	{ value: "com-conference-room-window",  label: "Conference Room Window" },
-	{ value: "com-curtain-wall",            label: "Curtain Wall Panel" },
-	{ value: "com-transom-window",          label: "Transom Window" },
-	{ value: "com-skylight",                label: "Skylight" },
-	{ value: "custom",                      label: "Custom" },
-];
-
-// Categories with no dedicated zone taxonomy yet (vinyl, HTV, gasket, stencil,
-// signage) — every piece is "custom" until zone-specific values are added.
-export const CUSTOM_ZONES_LIST: Array<{ value: PatternZone; label: string }> = [
-	{ value: "custom", label: "Custom" },
-];
-
-// ─── Category metadata (labels + icon + zone list) for CRUD UI ───
-// Icons are single-path 0-24 viewBox glyphs, drawn with stroke=currentColor at
-// call sites so they inherit each card's accent color.
-export interface PatternCategoryMeta {
-	value: PatternCategory;
-	label: string;
-	shortLabel: string;
-	description: string;
-	icon: string; // svg path `d`
-	accent: string; // CSS color used for icon/active-state tint
+/** Categories offered in pickers: built-ins and additions, minus hidden ones. */
+export function allCategories(): PatternCategoryMeta[] {
+	const { doc } = patternOptionsStore;
+	return [
+		...builtinCategories().filter((c) => !doc.overrides.categories[c.value]?.hidden),
+		...doc.categories.filter((c) => !c.hidden).map(categoryMetaOf),
+	];
 }
 
-export const PATTERN_CATEGORIES: PatternCategoryMeta[] = [
-	{
-		value: "ppf", label: "Paint Protection Film", shortLabel: "PPF",
-		description: "Clear film panels for paint",
-		icon: "M12 2l8 4v6c0 5-3.5 9-8 10-4.5-1-8-5-8-10V6z",
-		accent: "#00e5ff",
-	},
-	{
-		value: "window-tint", label: "Window Tint", shortLabel: "Tint",
-		description: "Precut glass films",
-		icon: "M3 4h18v16H3z M3 12h18 M9 4v16 M15 4v16",
-		accent: "#0070ff",
-	},
-	{
-		value: "vinyl", label: "Vinyl Wrap", shortLabel: "Vinyl",
-		description: "Full/partial body wraps",
-		icon: "M12 2a10 10 0 100 20 10 10 0 000-20z M12 9a3 3 0 100 6 3 3 0 000-6z",
-		accent: "#a855f7",
-	},
-	{
-		value: "htv", label: "Heat Transfer Vinyl", shortLabel: "HTV",
-		description: "Apparel & garment cuts",
-		icon: "M12 2c-1.2 3.6-5 5-5 9a5 5 0 0010 0c0-1.8-.8-2.8-1.7-3.7.1 1.8-.8 2.7-1.8 1.9.9-1.8-.1-4.7-1.5-7.2z",
-		accent: "#f97316",
-	},
-	{
-		value: "gasket", label: "Gasket", shortLabel: "Gasket",
-		description: "Seals & rings",
-		icon: "M12 2a10 10 0 100 20 10 10 0 000-20z M12 8a4 4 0 100 8 4 4 0 000-8z",
-		accent: "#94a3b8",
-	},
-	{
-		value: "stencil", label: "Stencil", shortLabel: "Stencil",
-		description: "Paint & spray masks",
-		icon: "M9 3h6v4H9z M7 7h10l1 14H6z M9 12h6 M9 16h6",
-		accent: "#22c55e",
-	},
-	{
-		value: "signage", label: "Signage", shortLabel: "Signage",
-		description: "Storefront & display signs",
-		icon: "M4 4h16v12H4z M9 20h6 M12 16v4 M8 9h4 M8 12h8",
-		accent: "#eab308",
-	},
-];
+/** Every category that can appear on an existing pattern — hidden ones too,
+ *  so browsing and filtering never lose patterns saved under them. */
+export function knownCategories(): PatternCategoryMeta[] {
+	return [...builtinCategories(), ...patternOptionsStore.doc.categories.map(categoryMetaOf)];
+}
 
 export function categoryMeta(category: PatternCategory): PatternCategoryMeta {
-	return PATTERN_CATEGORIES.find((c) => c.value === category) ?? PATTERN_CATEGORIES[0];
+	const extra = patternOptionsStore.doc.categories.find((c) => c.id === category);
+	if (extra) return categoryMetaOf(extra);
+	const all = builtinCategories();
+	return all.find((c) => c.value === category) ?? all[0];
 }
 
 export function categoryLabel(category: PatternCategory): string {
@@ -723,33 +552,65 @@ export function categoryShortLabel(category: PatternCategory): string {
 	return categoryMeta(category).shortLabel;
 }
 
-export function zonesForCategory(category: PatternCategory): Array<{ value: PatternZone; label: string }> {
-	switch (category) {
-		case "ppf": return PPF_ZONES_LIST;
-		case "window-tint": return TINT_ZONES_LIST;
-		default: return CUSTOM_ZONES_LIST;
-	}
+/** Vehicle types offered in pickers: built-ins and additions, minus hidden ones. */
+export function allBodyStyles(includeHidden = false): Array<{ value: string; label: string }> {
+	const { doc } = patternOptionsStore;
+	return [
+		...BODY_STYLES
+			.filter((b) => includeHidden || !doc.overrides.bodyStyles[b.value]?.hidden)
+			.map((b) => ({ value: b.value, label: doc.overrides.bodyStyles[b.value]?.label ?? b.label })),
+		...doc.bodyStyles.filter((b) => includeHidden || !b.hidden).map((b) => ({ value: b.id, label: b.label })),
+	];
+}
+
+export function bodyStyleLabel(style: string): string {
+	return allBodyStyles(true).find((b) => b.value === style)?.label
+		?? style.replace(/-/g, " ").replace(/^./, (c) => c.toUpperCase());
+}
+
+export function zonesForCategory(category: PatternCategory, includeHidden = false): Array<{ value: PatternZone; label: string }> {
+	const { doc } = patternOptionsStore;
+	const builtin = category === "ppf" ? PPF_ZONES_LIST : category === "window-tint" ? TINT_ZONES_LIST : CUSTOM_ZONES_LIST;
+	return withAdminZones(builtin, doc.zones.filter((z) => z.category === category), includeHidden, doc.overrides.zones);
 }
 
 /** Zones valid for a subject: residential/commercial/custom subjects have
- *  their own lists regardless of category; vehicles go by category. */
-export function zonesFor(category: PatternCategory, projectType?: ProjectType): Array<{ value: PatternZone; label: string }> {
-	switch (projectType ?? "vehicle") {
-		case "residential": return RESIDENTIAL_ZONES_LIST;
-		case "commercial":  return COMMERCIAL_ZONES_LIST;
-		case "custom":      return CUSTOM_ZONES_LIST;
-		default:            return zonesForCategory(category);
-	}
+ *  their own lists regardless of category; vehicles go by category.
+ *  `includeHidden` adds zones hidden from the pickers — for checking that
+ *  a saved zone is still valid, never for offering a choice. */
+export function zonesFor(category: PatternCategory, projectType?: ProjectType, includeHidden = false): Array<{ value: PatternZone; label: string }> {
+	const t = projectType ?? "vehicle";
+	if (t === "vehicle") return zonesForCategory(category, includeHidden);
+	const { doc } = patternOptionsStore;
+	const builtin = t === "residential" ? RESIDENTIAL_ZONES_LIST : t === "commercial" ? COMMERCIAL_ZONES_LIST : CUSTOM_ZONES_LIST;
+	return withAdminZones(builtin, doc.zones.filter((z) => z.projectType === t), includeHidden, doc.overrides.zones);
+}
+
+/** The zone that mirrors this one (left ↔ right), built-in or admin-defined. */
+export function mirrorOf(zone: PatternZone): PatternZone | undefined {
+	return mirrorPairs(patternOptionsStore.doc)[zone];
+}
+
+/** Library zone-filter group for an admin-added zone, if it has one. */
+export function adminZoneGroup(zone: PatternZone): string | undefined {
+	const z = patternOptionsStore.doc.zones.find((x) => x.id === zone);
+	return z ? (z.group || z.label) : undefined;
 }
 
 /** Human label for any zone. Looks in the subject's own list first, then
- *  every list, so a residential zone never shows as its raw id. */
+ *  every list (hidden admin zones too), so a saved zone never shows as its raw id. */
 export function zoneLabel(zone: PatternZone, category: PatternCategory, projectType?: ProjectType, customLabel?: string): string {
 	if (zone === "custom") return customLabel?.trim() || "Custom";
-	const lists = [zonesFor(category, projectType), PPF_ZONES_LIST, TINT_ZONES_LIST, RESIDENTIAL_ZONES_LIST, COMMERCIAL_ZONES_LIST, CUSTOM_ZONES_LIST];
+	const ov = patternOptionsStore.doc.overrides.zones;
+	const lists = [
+		zonesFor(category, projectType, true),
+		...[PPF_ZONES_LIST, TINT_ZONES_LIST, RESIDENTIAL_ZONES_LIST, COMMERCIAL_ZONES_LIST, CUSTOM_ZONES_LIST].map((l) => withAdminZones(l, [], true, ov)),
+	];
 	for (const list of lists) {
 		const hit = list.find((z) => z.value === zone);
 		if (hit) return hit.label;
 	}
+	const added = patternOptionsStore.doc.zones.find((z) => z.id === zone);
+	if (added) return added.label;
 	return String(zone).replace(/^(res|com)-/, "").replace(/-/g, " ").replace(/^./, (c) => c.toUpperCase());
 }

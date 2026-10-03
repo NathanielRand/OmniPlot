@@ -8,7 +8,7 @@
 	import SubjectMedia from "./SubjectMedia.svelte";
 	import PatternPreview from "$lib/components/ui/PatternPreview.svelte";
 	import { adminPatterns as ap } from "$lib/admin/adminPatterns.svelte";
-	import { patternStore, PATTERN_CATEGORIES, zonesFor, categoryShortLabel } from "$lib/stores/patternStore.svelte";
+	import { patternStore, allCategories, knownCategories, allBodyStyles, zonesFor, categoryShortLabel } from "$lib/stores/patternStore.svelte";
 	import { deriveHeight, deriveWidth, relinkSize, sizeError } from "$lib/utils/patternSize";
 	import { formatMeasure } from "$lib/utils";
 	import {
@@ -203,11 +203,11 @@
 	// ─── The chosen subject ──────────────────────
 	const subject = $derived(patternStore.vehicles.find((v) => v.id === selectedId) ?? null);
 	const subjectPatterns = $derived(subject ? patternStore.getPatterns(subject.id) : []);
-	const catsPresent = $derived(PATTERN_CATEGORIES.filter((c) => subjectPatterns.some((p) => p.category === c.value)));
+	const catsPresent = $derived(knownCategories().filter((c) => subjectPatterns.some((p) => p.category === c.value)));
 	$effect(() => { subject?.id; category = "all"; });
 	const shownPatterns = $derived(subjectPatterns.filter((p) => category === "all" || p.category === category));
 	const groups = $derived(
-		PATTERN_CATEGORIES
+		knownCategories()
 			.map((c) => ({ c, pats: shownPatterns.filter((p) => p.category === c.value) }))
 			.filter((g) => g.pats.length > 0),
 	);
@@ -308,7 +308,6 @@
 		{ value: "review", label: "In review", note: "Hidden while you check it" },
 		{ value: "published", label: "Published", note: "Visible — “Coming soon” until it has a live pattern" },
 	] as const;
-	const BODY_STYLES = ["sedan", "coupe", "suv", "truck", "convertible", "wagon", "hatchback"] as const;
 	const targetPatterns = $derived(subjectDlg?.target ? patternStore.getPatterns(subjectDlg.target.id).length : 0);
 
 	// The two cards run from where they start to the bottom of the admin pane, so
@@ -884,7 +883,7 @@
 					<label class="fld"><span>Body style <em>applies to every year</em></span>
 						<select class="in" bind:value={layerDlg.bodyStyle}>
 							<option value="">Keep each as it is</option>
-							{#each BODY_STYLES as b}<option value={b}>{b[0].toUpperCase() + b.slice(1)}</option>{/each}
+							{#each allBodyStyles() as b (b.value)}<option value={b.value}>{b.label}</option>{/each}
 						</select>
 					</label>
 				{/if}
@@ -949,7 +948,7 @@
 							<label class="fld"><span>Trim <em>optional — blank is the base / all trims</em></span><input class="in" bind:value={subjectForm.trim} list="sd-trims" autocomplete="off" placeholder="e.g. SE" /></label>
 							<label class="fld"><span>Model year</span><input class="in" type="number" bind:value={subjectForm.year} min="1950" /></label>
 							<label class="fld fld--wide"><span>Body style</span>
-								<select class="in" bind:value={subjectForm.bodyStyle}>{#each BODY_STYLES as b}<option value={b}>{b[0].toUpperCase() + b.slice(1)}</option>{/each}</select>
+								<select class="in" bind:value={subjectForm.bodyStyle}>{#each allBodyStyles() as b (b.value)}<option value={b.value}>{b.label}</option>{/each}</select>
 							</label>
 						</div>
 						<datalist id="sd-makes">{#each bulkMakes as m}<option value={m}></option>{/each}</datalist>
@@ -1025,7 +1024,7 @@
 					<div class="grid2">
 						<label class="fld"><span>Category</span>
 							<select class="in" value={patternDlg.category} disabled={!!patternDlg.target} onchange={(e) => changeCategory((e.currentTarget as HTMLSelectElement).value as PatternCategory)}>
-								{#each PATTERN_CATEGORIES as c (c.value)}<option value={c.value}>{c.label}</option>{/each}
+								{#each allCategories() as c (c.value)}<option value={c.value}>{c.label}</option>{/each}
 							</select>
 						</label>
 						<label class="fld"><span>Zone</span>

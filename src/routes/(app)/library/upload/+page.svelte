@@ -2,7 +2,8 @@
 	import { onMount, tick, untrack } from "svelte";
 	import { goto } from "$app/navigation";
 	import { userStore, shopStore, toastStore, uiStore, plansStore } from "$lib/stores";
-	import { patternStore, RESIDENTIAL_ZONES_LIST, COMMERCIAL_ZONES_LIST, MIRROR_PAIRS, PATTERN_CATEGORIES, zonesForCategory } from "$lib/stores/patternStore.svelte";
+	import { patternOptionsStore } from "$lib/stores/patternOptionsStore.svelte";
+	import { patternStore, mirrorOf as storeMirrorOf, allCategories, allBodyStyles, zonesFor } from "$lib/stores/patternStore.svelte";
 	import { addUserPattern } from "$lib/firebase/firestore";
 	import SvgPathInput, { type SvgInputSource } from "$lib/components/ui/SvgPathInput.svelte";
 	import VehicleCombobox from "$lib/components/ui/VehicleCombobox.svelte";
@@ -155,15 +156,11 @@
 		)].sort(),
 	);
 
-	const zoneList = $derived(
-		projectType === "residential" ? RESIDENTIAL_ZONES_LIST :
-		projectType === "commercial"  ? COMMERCIAL_ZONES_LIST :
-		projectType === "custom"      ? [{ value: "custom" as PatternZone, label: "Custom" }] :
-		zonesForCategory(pattern.category),
-	);
+	const zoneList = $derived(zonesFor(pattern.category, projectType));
 
 	// Reset zones when category or pattern type changes (zone lists are disjoint)
-	$effect(() => { zoneList; pattern.zones = []; pattern.customZoneLabels = []; pendingCustomZone = false; pendingCustomLabel = ""; });
+	// Keyed on the category / type, not the list object — the admin additions land late and must not wipe picks.
+	$effect(() => { pattern.category; projectType; pattern.zones = []; pattern.customZoneLabels = []; pendingCustomZone = false; pendingCustomLabel = ""; });
 
 	$effect(() => {
 		if (pattern.category === "window-tint") pattern.coverage = "full";
@@ -172,6 +169,7 @@
 	// Per-zone slots keep a zone from the previous category/type otherwise, and
 	// would save a "hood" pattern into a window-tint upload.
 	$effect(() => {
+		if (!patternOptionsStore.loaded) return;
 		const valid = new Set<string>(zoneList.map((z) => z.value));
 		untrack(() => {
 			for (const s of [...individualSlots, ...multiSlots]) if (s.zone && !valid.has(s.zone)) s.zone = "";
@@ -186,7 +184,7 @@
 
 	const hasMirrorPair = $derived(
 		pattern.zones.some(z => {
-			const m = MIRROR_PAIRS[z];
+			const m = storeMirrorOf(z);
 			return m !== undefined && pattern.zones.includes(m);
 		}),
 	);
@@ -194,7 +192,7 @@
 	// Zone labels for the mirror preview panels in SvgPathInput
 	const mirrorZoneLabels = $derived((() => {
 		for (const z of pattern.zones) {
-			const m = MIRROR_PAIRS[z];
+			const m = storeMirrorOf(z);
 			if (m && pattern.zones.includes(m)) {
 				return { orig: zoneLabel(z), flip: zoneLabel(m) };
 			}
@@ -237,7 +235,7 @@
 		return zoneList.find(zl => zl.value === z)?.label ?? z;
 	}
 	function mirrorOf(z: PatternZone): PatternZone | undefined {
-		return MIRROR_PAIRS[z];
+		return storeMirrorOf(z);
 	}
 
 	// ─── Individual slot helpers ──────────────────
@@ -571,7 +569,7 @@
 			}]));
 		}
 		return pattern.zones.map((z, idx) => {
-			const partner = MIRROR_PAIRS[z];
+			const partner = storeMirrorOf(z);
 			const secondHand = partner !== undefined && pattern.zones.slice(0, idx).includes(partner);
 			return {
 				idx, zone: z, customLabel: z === "custom" ? (pattern.customZoneLabels[idx] ?? "").trim() : "",
@@ -883,13 +881,7 @@
 							<div class="field">
 								<label class="field__label" for="bodyStyle">Body Style</label>
 								<select id="bodyStyle" class="field__select" bind:value={vehicle.bodyStyle}>
-									<option value="sedan">Sedan</option>
-									<option value="coupe">Coupe</option>
-									<option value="suv">SUV / Crossover</option>
-									<option value="truck">Truck</option>
-									<option value="convertible">Convertible</option>
-									<option value="wagon">Wagon</option>
-									<option value="hatchback">Hatchback</option>
+									{#each allBodyStyles() as b (b.value)}<option value={b.value}>{b.label}</option>{/each}
 								</select>
 							</div>
 						</div>
@@ -930,7 +922,7 @@
 					<div class="field">
 						<span class="field__label">Category</span>
 						<div class="category-cards" role="radiogroup" aria-label="Pattern category">
-							{#each PATTERN_CATEGORIES as c}
+							{#each allCategories() as c (c.value)}
 								<label
 									class="category-card"
 									class:category-card--active={pattern.category === c.value}

@@ -171,6 +171,10 @@ export interface ShopInvite {
 export type ProjectType = "vehicle" | "residential" | "commercial" | "custom";
 
 // ─── Vehicle & Patterns ───────────────────────
+export type BuiltinBodyStyle = "sedan" | "coupe" | "suv" | "truck" | "convertible" | "wagon" | "hatchback";
+/** Built-in vehicle types plus any an admin added (Admin → Patterns → Options). */
+export type BodyStyle = BuiltinBodyStyle | (string & {});
+
 export interface Vehicle {
 	id: string;
 	// Defaults to "vehicle" when absent — preserves existing vehicle-only data.
@@ -180,14 +184,7 @@ export interface Vehicle {
 	model?: string;
 	year?: number;
 	variant?: string;
-	bodyStyle?:
-		| "sedan"
-		| "coupe"
-		| "suv"
-		| "truck"
-		| "convertible"
-		| "wagon"
-		| "hatchback";
+	bodyStyle?: BodyStyle;
 	// Residential/commercial/custom subjects use these instead of make/model/year.
 	address?: string;
 	propertyLabel?: string;
@@ -199,7 +196,7 @@ export interface Vehicle {
 	tags: string[];
 }
 
-export type PatternCategory =
+export type BuiltinPatternCategory =
 	| "ppf"
 	| "window-tint"
 	| "vinyl"
@@ -208,7 +205,10 @@ export type PatternCategory =
 	| "stencil"
 	| "signage";
 
-export type PatternZone =
+/** Built-in categories plus any an admin added (Admin → Patterns → Options). */
+export type PatternCategory = BuiltinPatternCategory | (string & {});
+
+export type BuiltinPatternZone =
 	// ── PPF zones ─────────────────────────────
 	| "hood"
 	| "hood-edge-left"
@@ -273,6 +273,9 @@ export type PatternZone =
 	| "com-transom-window"
 	| "com-skylight"
 	| "custom";
+
+/** Built-in zones plus any an admin added (Admin → Patterns → Options). */
+export type PatternZone = BuiltinPatternZone | (string & {});
 
 export type PatternCoverage = "full" | "partial" | "edge-only";
 
@@ -539,7 +542,7 @@ export interface VehicleEntry {
 	/** Trim / variant ("Sport", "Crew Cab"). Absent = the base / unspecified trim. */
 	trim?: string;
 	year?: number;
-	bodyStyle?: "sedan" | "coupe" | "suv" | "truck" | "convertible" | "wagon" | "hatchback";
+	bodyStyle?: BodyStyle;
 	// Residential/commercial/custom subjects use these instead of make/model/year.
 	address?: string;
 	propertyLabel?: string;
@@ -668,7 +671,7 @@ export interface UserPattern {
 	/** Trims / variants the pattern fits, e.g. ["Sport", "Crew Cab"]. Empty/absent = base. */
 	trims?: string[];
 	years: string[];   // e.g. ["2018", "2020-2024"]
-	bodyStyle: "sedan" | "coupe" | "suv" | "truck" | "convertible" | "wagon" | "hatchback";
+	bodyStyle: BodyStyle;
 	// Pattern geometry
 	category: PatternCategory;
 	zones: PatternZone[];
