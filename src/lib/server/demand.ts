@@ -1,6 +1,7 @@
 import { FieldValue } from 'firebase-admin/firestore';
 import { getAdminDb } from '$lib/server/firebase-admin';
-import { demandId, demandTitle, demandValid, nextVote, type MyVote } from '$lib/utils/demand';
+import { canonicalTarget, demandId, demandTitle, demandValid, nextVote, type KnownNames, type MyVote } from '$lib/utils/demand';
+import { makeKey } from '$lib/utils/vehicleCatalog';
 import type { ProjectType } from '$lib/types';
 
 // Demand writes (Admin SDK only — rules keep clients out):
@@ -37,6 +38,16 @@ export function parseVoteInput(body: any): VoteInput | string {
 	return { projectType, make, model, year: isVehicle ? year : 0, notes: clean(body?.notes, 300) };
 }
 
+/** The catalog's own spelling of this make and its models, so a new request reads like the library entry. */
+async function catalogNames(make: string): Promise<KnownNames> {
+	const col = getAdminDb().collection('vehicleMedia');
+	const makes = (await col.where('kind', '==', 'make').get()).docs.map((d) => String(d.data().make ?? '')).filter(Boolean);
+	const label = makes.find((m) => makeKey(m) === makeKey(make));
+	if (!label) return { makes };
+	const models = (await col.where('kind', '==', 'model').where('make', '==', label).get()).docs.map((d) => String(d.data().model ?? '')).filter(Boolean);
+	return { makes, models };
+}
+
 type Tally = { any: number; years: Record<string, number> };
 const tallyOf = (v: MyVote | undefined): Tally => ({
 	any: v?.any ? 1 : 0,
@@ -48,6 +59,13 @@ export async function setVote(uid: string, input: VoteInput, on: boolean, idOver
 	const db = getAdminDb();
 	const id = idOverride ?? demandId(input);
 	const dRef = db.doc(`demand/${id}`);
+	// Only the person who creates a record names it, so the catalog is read once per
+	// record, not once per vote. Naming never changes `id`, so a stale answer is harmless.
+	if (on && input.projectType === 'vehicle' && !(await dRef.get()).exists) {
+		input = canonicalTarget(input, await catalogNames(input.make).catch(() => ({})));
+	} else if (on && input.projectType !== 'vehicle') {
+		input = canonicalTarget(input);
+	}
 	const uRef = db.doc(`userVotes/${uid}`);
 	const pRef = db.doc(`demandPrivate/${id}`);
 

@@ -78,6 +78,73 @@ export function nextVote(mine: MyVote | undefined, year: number | undefined, on:
 	return cur.any || cur.years.length ? cur : null;
 }
 
+// ─── Naming ──────────────────────────────────
+// The first person to request a model names its record for everyone, so what they
+// type is tidied into one house style before it's stored: "toyota" / "TOYOTA" →
+// "Toyota", "gr86" → "GR86", "f-150 raptor" → "F-150 Raptor". Spelling that matches
+// a catalog name wins over any guess.
+
+const MAKE_DISPLAY: Record<string, string> = {
+	chevrolet: "Chevrolet",
+	volkswagen: "Volkswagen",
+	"mercedes-benz": "Mercedes-Benz",
+	"land-rover": "Land Rover",
+	"alfa-romeo": "Alfa Romeo",
+};
+/** Short names that are always capitalised. Tokens with a digit and 1–2 letter tokens are upper-cased anyway. */
+const ACRONYMS = new Set(["bmw", "gmc", "byd", "amc", "tvr", "wrx", "sti", "gti", "gtr", "srt", "trd", "suv", "awd", "ltz", "xlt", "slt", "xse"]);
+
+function tidyPart(p: string): string {
+	if (!p) return p;
+	// Someone who typed their own mixed case ("MacBook", "ProMaster") meant it.
+	if (p !== p.toLowerCase() && p !== p.toUpperCase()) return p;
+	const letters = p.replace(/[^a-z]/gi, "");
+	if (p === p.toUpperCase() && letters.length <= 3) return p; // "RAM", "KIA", "GT"
+	if (/\d/.test(p) || letters.length <= 2 || ACRONYMS.has(p.toLowerCase())) return p.toUpperCase();
+	return p[0].toUpperCase() + p.slice(1).toLowerCase();
+}
+
+/** Spaces collapsed, each word / hyphenated part cased: "  f-150   RAPTOR " → "F-150 Raptor". */
+export function tidyName(text: string | undefined | null): string {
+	return (text ?? "")
+		.replace(/\s+/g, " ")
+		.trim()
+		.split(" ")
+		.map((w) => w.split(/([-/])/).map(tidyPart).join(""))
+		.join(" ");
+}
+
+export interface KnownNames {
+	/** Make labels as the catalog spells them. */
+	makes?: string[];
+	/** Model labels (of the make being requested) as the catalog spells them. */
+	models?: string[];
+}
+
+/**
+ * The target with its names in house style, ready to store. `known` (catalog
+ * spellings) takes priority so a request reads exactly like the library entry it
+ * will become. Never changes which record it lands on — `demandId` is unaffected.
+ */
+export function canonicalTarget<T extends DemandTarget>(t: T, known: KnownNames = {}): T {
+	const isVehicle = (t.projectType ?? "vehicle") === "vehicle";
+	if (!isVehicle) {
+		const s = (t.model ?? "").replace(/\s+/g, " ").trim();
+		return { ...t, model: s ? s[0].toUpperCase() + s.slice(1) : s };
+	}
+	const mk = makeKey(t.make);
+	const make = known.makes?.find((m) => makeKey(m) === mk) ?? MAKE_DISPLAY[mk] ?? tidyName(t.make);
+	// "Toyota GR86" typed under make Toyota: drop the repeated make before casing.
+	const makeWords = slug(t.make).split("-").filter(Boolean);
+	let words = (t.model ?? "").replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+	const lead = words.slice(0, makeWords.length).map((w) => slug(w)).join("-");
+	if (makeWords.length && words.length > makeWords.length && lead === makeWords.join("-")) words = words.slice(makeWords.length);
+	const typed = words.join(" ");
+	const mdl = demandModelKey(t.make, typed);
+	const model = known.models?.find((m) => demandModelKey(t.make, m) === mdl) ?? tidyName(typed);
+	return { ...t, make, model };
+}
+
 /** Display title for a record. */
 export function demandTitle(t: DemandTarget): string {
 	return (t.projectType ?? "vehicle") === "vehicle" ? [t.make, t.model].filter(Boolean).join(" ") : (t.model ?? "");

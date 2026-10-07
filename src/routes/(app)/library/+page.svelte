@@ -29,7 +29,7 @@
 		yearOptions, generationOf, groupByGeneration, vehicleImage, generationsFor, trimKey,
 		BASE_TRIM_LABEL, TRIM_BASE, TRIM_ALL, makeKey, modelKey,
 	} from "$lib/utils/vehicleCatalog";
-	import { demandId, hasVoted } from "$lib/utils/demand";
+	import { canonicalTarget, demandId, hasVoted } from "$lib/utils/demand";
 	import {
 		communityRows, comingSoonRows, privateRows, rowsForSource, uniquePatterns, distinctCount, patternKey, shareStatusOf, userPatternToPattern,
 		type LibPattern, type LibRow, type LibrarySource, type ShareStatus,
@@ -733,6 +733,18 @@
 			: (requestForm.title.trim() ? demandId({ projectType: requestType, model: requestForm.title }) : ""),
 	);
 	const reqMine = $derived(reqId ? patternStore.myVotes[reqId] : undefined);
+	// Someone already asked for this exact make/model (same record however it's spelled)?
+	const reqExisting = $derived(reqId ? patternStore.requests.find((r) => r.id === reqId) : undefined);
+	/** Tidy the typed names into house style, using the catalog's spelling where there is one. */
+	function tidyRequestForm() {
+		if (requestType === "vehicle") {
+			const t = canonicalTarget({ projectType: "vehicle", make: requestForm.make, model: requestForm.model }, { makes: reqMakes, models: reqModels });
+			requestForm.make = t.make ?? "";
+			requestForm.model = t.model ?? "";
+		} else {
+			requestForm.title = canonicalTarget({ projectType: requestType, model: requestForm.title }).model ?? "";
+		}
+	}
 	const reqVoted = $derived(!!reqMine && hasVoted(reqMine, requestType === "vehicle" ? requestForm.year || undefined : undefined));
 	let reqBusy = $state(false);
 	async function removeReqVote() {
@@ -827,6 +839,7 @@
 
 	// ─── Request vehicle ──────────────────────────
 	async function submitRequest() {
+		tidyRequestForm();
 		const { year, make, model, title, notes } = requestForm;
 		if (!userStore.user) { toastStore.error("Sign in to request a pattern", "Requests and votes are tied to your account."); return; }
 		const t: VoteTarget = requestType === "vehicle"
@@ -1470,6 +1483,18 @@
 			</div>
 		{/if}
 
+		<hr class="lib-divider" />
+		<aside class="lib-cta" aria-label="Request a pattern">
+			<div class="lib-cta__text">
+				<p class="lib-cta__title">Can't find what you need?</p>
+				<p class="lib-cta__sub">New patterns are uploaded every week. Request yours and we'll add it. If someone's already asked, your request adds to their votes.</p>
+			</div>
+			<button class="lib-cta__btn" onclick={() => openRequest()}>
+				<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+				Request a pattern
+			</button>
+		</aside>
+
 	</div>
 </div>
 
@@ -1675,13 +1700,13 @@
 						</div>
 						<div class="form-group" style="flex:2">
 							<label class="form-label" for="req-make">Make</label>
-							<input id="req-make" type="text" class="form-input" bind:value={requestForm.make} placeholder="e.g. Toyota" list="req-makes" autocomplete="off" required />
+							<input id="req-make" type="text" class="form-input" bind:value={requestForm.make} onblur={tidyRequestForm} placeholder="e.g. Toyota" list="req-makes" autocomplete="off" required />
 							<datalist id="req-makes">{#each reqMakes as m}<option value={m}></option>{/each}</datalist>
 						</div>
 					</div>
 					<div class="form-group">
 						<label class="form-label" for="req-model">Model</label>
-						<input id="req-model" type="text" class="form-input" bind:value={requestForm.model} placeholder="e.g. GR86" list="req-models" autocomplete="off" required />
+						<input id="req-model" type="text" class="form-input" bind:value={requestForm.model} onblur={tidyRequestForm} placeholder="e.g. GR86" list="req-models" autocomplete="off" required />
 						<datalist id="req-models">{#each reqModels as m}<option value={m}></option>{/each}</datalist>
 					</div>
 				{:else}
@@ -1694,6 +1719,7 @@
 							type="text"
 							class="form-input"
 							bind:value={requestForm.title}
+							onblur={tidyRequestForm}
 							placeholder={requestType === "residential" ? "e.g. Andersen 400 double-hung, 3052" : requestType === "commercial" ? "e.g. Storefront transom, 96 × 24 in" : "e.g. Kitchen canister labels"}
 							required
 						/>
@@ -1705,11 +1731,17 @@
 					<input id="req-notes" type="text" class="form-input" bind:value={requestForm.notes} placeholder={requestType === "vehicle" ? "Any specific zones — PPF, tint, both?" : "Sizes, brand, film type — anything that helps"} />
 				</div>
 
+				{#if reqExisting && !reqVoted}
+					<p class="req-existing" role="status">
+						<strong>{reqExisting.votes} {reqExisting.votes === 1 ? "person has" : "people have"} already requested this.</strong>
+						Submitting adds your vote to it — no duplicate is created.
+					</p>
+				{/if}
 				{#if reqVoted}<div class="req-voted"><VoteSummary mine={reqMine} busy={reqBusy} onRemove={removeReqVote} gens={requestType === "vehicle" ? generationsFor(patternStore.media, requestForm.make, requestForm.model) : []} /></div>{/if}
 
 				<div class="modal__actions">
 					<button type="button" class="btn-ghost" onclick={() => (showRequestModal = false)}>{reqVoted ? "Close" : "Cancel"}</button>
-					<button type="submit" class="btn-primary" disabled={reqVoted || reqBusy}>{#if reqBusy}<Spinner />Sending…{:else}{reqVoted ? "Already voted" : "Submit request"}{/if}</button>
+					<button type="submit" class="btn-primary" disabled={reqVoted || reqBusy}>{#if reqBusy}<Spinner />Sending…{:else}{reqVoted ? "Already voted" : reqExisting ? "Add my vote" : "Submit request"}{/if}</button>
 				</div>
 			</form>
 		</div>
@@ -1979,6 +2011,25 @@
 		justify-content: center;
 	}
 
+	.lib-divider { border: none; border-top: 1px solid var(--border-default); margin: 8px 0 0; width: 100%; }
+	.lib-cta {
+		display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+		padding: 4px 2px 12px;
+	}
+	.lib-cta__title { margin: 0; font-size: 0.9375rem; font-weight: 600; color: var(--text-primary); }
+	.lib-cta__sub { margin: 2px 0 0; font-size: 0.8125rem; color: var(--text-secondary); max-width: 52ch; }
+	.lib-cta__btn {
+		display: inline-flex; align-items: center; gap: 6px; padding: 9px 16px;
+		font-size: 0.8125rem; font-weight: 500; font-family: var(--font-body);
+		background: var(--bg-surface-2); border: 1px solid var(--border-default); border-radius: var(--radius-md);
+		color: var(--text-primary); cursor: pointer; transition: all 0.12s;
+	}
+	.lib-cta__btn:hover { border-color: var(--color-brand-dim); color: var(--text-brand); }
+	.req-existing {
+		margin: 0; padding: 8px 10px; font-size: 0.8125rem; color: var(--text-secondary);
+		background: var(--bg-surface-2); border: 1px solid var(--border-default); border-radius: var(--radius-md);
+	}
+	.req-existing strong { color: var(--text-primary); font-weight: 600; }
 	.lib-request-btn:hover { border-color: var(--color-brand-dim); color: var(--text-brand); }
 
 	/* ─── Main ────── */
