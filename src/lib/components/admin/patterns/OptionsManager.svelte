@@ -10,7 +10,7 @@
 	import {
 		EMPTY_OPTIONS, slugify, sanitizePatternOptions, normalizeLabel, normalizeSentence,
 		BODY_STYLES, PATTERN_CATEGORIES, PPF_ZONES_LIST, TINT_ZONES_LIST, RESIDENTIAL_ZONES_LIST, COMMERCIAL_ZONES_LIST,
-		PPF_ZONE_GROUP, TINT_ZONE_GROUP,
+		PPF_ZONE_GROUP,
 		type PatternOptionsDoc, type AdminZone, type NonVehicleProject, type BuiltinOverride,
 	} from "$lib/patternOptions";
 
@@ -86,7 +86,7 @@
 		const builtin = builtinListFor(key).filter((z) => z.value !== "custom").map((z): Row => ({
 			kind: "zones", id: z.value, label: ovOf("zones", z.value)?.label ?? z.label, builtin: true,
 			hidden: !!ovOf("zones", z.value)?.hidden, renamed: !!ovOf("zones", z.value)?.label,
-			group: PPF_ZONE_GROUP[z.value] ?? TINT_ZONE_GROUP[z.value], mirror: mirrorOf(z.value),
+			group: PPF_ZONE_GROUP[z.value], mirror: mirrorOf(z.value),
 		}));
 		const added = doc.zones.filter((z) => zoneKey(z) === key).map((z): Row => ({
 			kind: "zones", id: z.id, label: z.label, builtin: false, hidden: !!z.hidden, renamed: false, group: z.group, mirror: z.mirrorOf,

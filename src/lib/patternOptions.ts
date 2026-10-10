@@ -8,23 +8,8 @@
 
 import type { PatternCategory, PatternZone, ProjectType } from "$lib/types";
 
-// Maps PatternZone values to human-readable group names (used for zone filter).
-export const TINT_ZONE_GROUP: Partial<Record<PatternZone, string>> = {
-	windshield:           "Windshield",
-	"windshield-strip":   "Windshield",
-	"rear-windshield":    "Rear Window",
-	sunroof:              "Sunroof",
-	moonroof:             "Sunroof",
-	"window-front-left":  "Side Windows",
-	"window-front-right": "Side Windows",
-	"window-rear-left":   "Side Windows",
-	"window-rear-right":  "Side Windows",
-	"quarter-window-left":  "Quarter / Vent",
-	"quarter-window-right": "Quarter / Vent",
-	"vent-window-left":   "Quarter / Vent",
-	"vent-window-right":  "Quarter / Vent",
-};
-
+// PPF zones that roll up into one library zone-filter pill (Doors, Fenders…).
+// Window tint has no roll-ups: each zone is its own pill.
 export const PPF_ZONE_GROUP: Partial<Record<PatternZone, string>> = {
 	hood: "Hood", "hood-edge-left": "Hood", "hood-edge-right": "Hood",
 	"bumper-front": "Bumpers", "bumper-rear": "Bumpers",

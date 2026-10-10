@@ -2,8 +2,8 @@
 	import Spinner from "$lib/components/ui/Spinner.svelte";
 	import { toastStore, canvasStore, userStore, confirmStore } from "$lib/stores";
 	import {
-		patternStore, TINT_ZONE_GROUP, PPF_ZONE_GROUP, mirrorOf as storeMirrorOf, adminZoneGroup, knownCategories,
-		zoneLabel, categoryShortLabel, categoryLabel, categoryMeta,
+		patternStore, PPF_ZONE_GROUP, mirrorOf as storeMirrorOf, adminZoneGroup, knownCategories,
+		zoneLabel, zonesFor, categoryShortLabel, categoryLabel, categoryMeta,
 	} from "$lib/stores/patternStore.svelte";
 	import Badge from "$lib/components/ui/Badge.svelte";
 	import PatternPreview from "$lib/components/ui/PatternPreview.svelte";
@@ -209,18 +209,27 @@
 	// Vehicle PPF/tint zones roll up into familiar groups ("Doors", "Side
 	// Windows"); everything else groups by its own zone name. A private upload
 	// can cover several zones with one outline, so a pattern has several groups.
-	const ZONE_GROUP_ORDER: Record<string, string[]> = {
-		ppf: ["Hood", "Fenders", "Bumpers", "Doors", "Mirrors", "Rocker Panels", "Roof", "Trunk"],
-		"window-tint": ["Windshield", "Side Windows", "Rear Window", "Sunroof", "Quarter / Vent"],
-	};
+	// An admin-set group wins; PPF keeps its built-in roll-ups (Doors, Fenders…);
+	// every other zone — window tint included — is its own pill under its current
+	// label, so renamed and admin-added zones show as the admin named them.
 	function groupOfZone(zone: PatternZone, cat: PatternCategory, t: ProjectType, customLabel?: string): string {
 		if (t === "vehicle") {
-			const map: Partial<Record<PatternZone, string>> = cat === "ppf" ? PPF_ZONE_GROUP : cat === "window-tint" ? TINT_ZONE_GROUP : {};
-			const g = map[zone] ?? adminZoneGroup(zone);
+			const g = adminZoneGroup(zone) ?? (cat === "ppf" ? PPF_ZONE_GROUP[zone] : undefined);
 			if (g) return g;
 		}
 		return zoneLabel(zone, cat, t, customLabel);
 	}
+	// Pill order follows the pick-list order (built-ins, then admin zones), so a
+	// new admin zone sorts where the admin put it instead of landing last.
+	const groupOrder = $derived.by(() => {
+		const t = projectType;
+		const out: string[] = [];
+		for (const z of zonesFor(category, t)) {
+			const g = z.value === "custom" ? "Custom" : groupOfZone(z.value, category, t);
+			if (!out.includes(g)) out.push(g);
+		}
+		return out;
+	});
 	function zoneGroups(p: LibPattern, t: ProjectType = p.projectType ?? projectType): string[] {
 		if (p.zones?.length) {
 			return [...new Set(p.zones.map((z, i) => groupOfZone(z, p.category, t, p.customZoneLabels?.[i])))];
@@ -451,7 +460,7 @@
 		}, {} as Record<string, number>),
 	);
 	const ZONES = $derived.by(() => {
-		const order = ZONE_GROUP_ORDER[category] ?? [];
+		const order = groupOrder;
 		const sorted = Object.keys(zoneCounts).sort((a, b) => {
 			const ia = order.indexOf(a), ib = order.indexOf(b);
 			return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib) || a.localeCompare(b);

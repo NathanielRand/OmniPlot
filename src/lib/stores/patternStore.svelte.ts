@@ -40,7 +40,7 @@ import { toastStore, userStore } from "./stores.svelte";
 import { patternOptionsStore } from "./patternOptionsStore.svelte";
 import {
 	BODY_STYLES, CUSTOM_ZONES_LIST, PPF_ZONES_LIST, TINT_ZONES_LIST, RESIDENTIAL_ZONES_LIST, COMMERCIAL_ZONES_LIST,
-	PATTERN_CATEGORIES, TINT_ZONE_GROUP, PPF_ZONE_GROUP, MIRROR_PAIRS,
+	PATTERN_CATEGORIES, PPF_ZONE_GROUP, MIRROR_PAIRS,
 	categoryMetaOf, mirrorPairs, withAdminZones, withCategoryOverride, type PatternCategoryMeta,
 } from "$lib/patternOptions";
 
@@ -48,7 +48,7 @@ import {
 // re-exported so existing imports keep working.
 export {
 	BODY_STYLES, CUSTOM_ZONES_LIST, PPF_ZONES_LIST, TINT_ZONES_LIST, RESIDENTIAL_ZONES_LIST, COMMERCIAL_ZONES_LIST,
-	PATTERN_CATEGORIES, TINT_ZONE_GROUP, PPF_ZONE_GROUP, MIRROR_PAIRS,
+	PATTERN_CATEGORIES, PPF_ZONE_GROUP, MIRROR_PAIRS,
 };
 export type { PatternCategoryMeta };
 
