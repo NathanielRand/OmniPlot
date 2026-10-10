@@ -15,6 +15,7 @@ import { targetId, type MediaTarget } from '$lib/utils/vehicleCatalog';
 //
 //   POST   multipart { file | url, field, target(JSON), force? }
 //   DELETE json      { field, target }
+//   PATCH  json      { target, focus: {x, y} | null }  — where the cover image stays centered when cropped (0–100 %)
 
 const MAX_BYTES = 4 * 1024 * 1024;
 const TYPES: Record<string, string> = {
@@ -80,6 +81,8 @@ export const POST: RequestHandler = async ({ request }) => {
 		const ref = getAdminDb().collection(COLLECTION).doc(id);
 		const prev = (await ref.get()).data();
 		const slot = SLOT[field];
+		// A different picture needs its own focus point.
+		const resetFocus = field === 'imageUrl' ? { imageFocus: FieldValue.delete() } : {};
 		const base: Record<string, unknown> = {
 			kind: target.kind,
 			make: target.make ?? null,
@@ -97,7 +100,7 @@ export const POST: RequestHandler = async ({ request }) => {
 		if (!(file instanceof File)) {
 			if (!/^https:\/\//.test(pastedUrl)) return fail('Send an image file or a full https:// link.', 400);
 			stage = 'save-link';
-			await ref.set({ ...base, [field]: pastedUrl, [`${slot}Path`]: FieldValue.delete(), [`${slot}Hash`]: FieldValue.delete() }, { merge: true });
+			await ref.set({ ...base, [field]: pastedUrl, [`${slot}Path`]: FieldValue.delete(), [`${slot}Hash`]: FieldValue.delete(), ...resetFocus }, { merge: true });
 			await dropFile(prev?.[`${slot}Path`]);
 			return json({ id, url: pastedUrl });
 		}
@@ -135,7 +138,7 @@ export const POST: RequestHandler = async ({ request }) => {
 		const url = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(path)}?alt=media&token=${token}`;
 
 		stage = 'link';
-		await ref.set({ ...base, [field]: url, [`${slot}Path`]: path, [`${slot}Hash`]: hash }, { merge: true });
+		await ref.set({ ...base, [field]: url, [`${slot}Path`]: path, [`${slot}Hash`]: hash, ...resetFocus }, { merge: true });
 		await dropFile(prev?.[`${slot}Path`]);
 		log('saved', id, path);
 		return json({ id, url });
@@ -166,7 +169,7 @@ export const DELETE: RequestHandler = async ({ request }) => {
 		const otherUrl = d[field === 'logoUrl' ? 'imageUrl' : 'logoUrl'];
 		// A model doc may also hold its generations — only a doc with nothing left goes.
 		if (otherUrl || d.generations?.length) {
-			await ref.update({ [field]: FieldValue.delete(), [`${slot}Path`]: FieldValue.delete(), [`${slot}Hash`]: FieldValue.delete(), updatedAt: FieldValue.serverTimestamp(), updatedBy: who });
+			await ref.update({ [field]: FieldValue.delete(), [`${slot}Path`]: FieldValue.delete(), [`${slot}Hash`]: FieldValue.delete(), ...(field === 'imageUrl' ? { imageFocus: FieldValue.delete() } : {}), updatedAt: FieldValue.serverTimestamp(), updatedBy: who });
 		} else {
 			await ref.delete(); // nothing left on it
 		}
@@ -175,5 +178,32 @@ export const DELETE: RequestHandler = async ({ request }) => {
 	} catch (e) {
 		console.error('[vehicle-media] DELETE failed at', stage, e);
 		return fail(`${stage}: ${(e as Error).message ?? String(e)}`, 500, { stage });
+	}
+};
+
+export const PATCH: RequestHandler = async ({ request }) => {
+	try {
+		const who = await assertAdmin(request);
+		if (who instanceof Response) return who;
+		const body = await request.json().catch(() => ({}));
+		const target = parseTarget(body.target);
+		if (!target) return fail('Bad request.', 400);
+		const id = targetId(target);
+		const ref = getAdminDb().collection(COLLECTION).doc(id);
+		const snap = await ref.get();
+		if (!snap.exists || !snap.data()?.imageUrl) return fail('Add an image before setting its focus point.', 400);
+
+		let value: { x: number; y: number } | FirebaseFirestore.FieldValue;
+		if (body.focus == null) value = FieldValue.delete();
+		else {
+			const x = Number(body.focus.x), y = Number(body.focus.y);
+			if (![x, y].every((n) => Number.isFinite(n) && n >= 0 && n <= 100)) return fail('Focus must be 0–100 on both axes.', 400);
+			value = { x: Math.round(x), y: Math.round(y) };
+		}
+		await ref.update({ imageFocus: value, updatedAt: FieldValue.serverTimestamp(), updatedBy: who });
+		return json({ id, focus: body.focus == null ? null : value });
+	} catch (e) {
+		console.error('[vehicle-media] PATCH failed', e);
+		return fail((e as Error).message ?? String(e), 500);
 	}
 };

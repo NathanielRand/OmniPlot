@@ -4,8 +4,8 @@
 	// warns before the same file is reused somewhere else.
 	import { patternStore } from "$lib/stores/patternStore.svelte";
 	import { toastStore, confirmStore } from "$lib/stores";
-	import { uploadMedia, removeMedia, MEDIA_TYPES, type MediaField } from "$lib/admin/vehicleMedia";
-	import { targetId, type MediaTarget } from "$lib/utils/vehicleCatalog";
+	import { uploadMedia, removeMedia, setImageFocus, MEDIA_TYPES, type MediaField } from "$lib/admin/vehicleMedia";
+	import { targetId, focusPosition, type MediaTarget } from "$lib/utils/vehicleCatalog";
 
 	interface Props {
 		target: MediaTarget;
@@ -21,6 +21,30 @@
 	const id = $derived(targetId(target));
 	const url = $derived(patternStore.media[id]?.[field]);
 	const stored = $derived(!!patternStore.media[id]?.[field === "logoUrl" ? "logoPath" : "imagePath"]);
+
+	const savedFocus = $derived(field === "imageUrl" ? patternStore.media[id]?.imageFocus : undefined);
+
+	// Focus point: click or drag on the full image to choose what stays centered when
+	// the library crops it to a tile or banner. The previews show the crops live.
+	let picking = $state(false);
+	let draft = $state({ x: 50, y: 50 });
+	let dragging = false;
+	function startPick() {
+		draft = savedFocus ? { ...savedFocus } : { x: 50, y: 50 };
+		picking = !picking;
+	}
+	function pick(e: PointerEvent) {
+		const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+		const c = (n: number) => Math.min(100, Math.max(0, Math.round(n)));
+		draft = { x: c(((e.clientX - r.left) / r.width) * 100), y: c(((e.clientY - r.top) / r.height) * 100) };
+	}
+	async function saveFocus(next: { x: number; y: number } | null) {
+		busy = true;
+		const r = await setImageFocus(target, next);
+		busy = false;
+		if (r.ok) { picking = false; toastStore.success(next ? "Focus saved" : "Focus reset", label); }
+		else toastStore.error("Couldn't save focus", r.error);
+	}
 
 	let busy = $state(false);
 	let dup = $state<{ file: File; of: string } | null>(null);
@@ -79,7 +103,7 @@
 
 <div class="slot" class:slot--compact={compact}>
 	<div class="slot__thumb" class:slot__thumb--empty={!url}>
-		{#if url}<img src={url} alt="{label}" loading="lazy" />{:else}<span>None</span>{/if}
+		{#if url}<img src={url} alt="{label}" loading="lazy" style:object-position={focusPosition(savedFocus)} />{:else}<span>None</span>{/if}
 	</div>
 	<div class="slot__body">
 		<div class="slot__label">{label}</div>
@@ -91,9 +115,32 @@
 					onchange={(e) => { const f = e.currentTarget.files?.[0]; e.currentTarget.value = ""; if (f) send(f); }} />
 			</label>
 			{#if !compact}<button class="b" disabled={busy} onclick={() => (linking = !linking)}>Link</button>{/if}
+			{#if url && field === "imageUrl"}<button class="b" class:b--on={picking} disabled={busy} onclick={startPick}>Focus</button>{/if}
 			{#if url}<button class="b b--danger" disabled={busy} onclick={clear}>Remove</button>{/if}
 		</div>
 		{#if url && !stored}<div class="slot__hint">External link</div>{/if}
+		{#if picking && url}
+			<div class="focus">
+				<div class="focus__pick" role="presentation"
+					onpointerdown={(e) => { dragging = true; (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); pick(e); }}
+					onpointermove={(e) => dragging && pick(e)}
+					onpointerup={() => (dragging = false)}
+					onpointercancel={() => (dragging = false)}>
+					<img src={url} alt="" draggable="false" />
+					<span class="focus__dot" style:left="{draft.x}%" style:top="{draft.y}%"></span>
+				</div>
+				<div class="focus__prev">
+					<div class="focus__crop" style:aspect-ratio="16 / 9"><img src={url} alt="" style:object-position="{draft.x}% {draft.y}%" /></div>
+					<div class="focus__crop" style:aspect-ratio="16 / 10"><img src={url} alt="" style:object-position="{draft.x}% {draft.y}%" /></div>
+				</div>
+				<div class="slot__hint">Click or drag to choose what stays centered · {draft.x}% / {draft.y}%</div>
+				<div class="slot__btns">
+					<button class="b" disabled={busy} onclick={() => saveFocus(draft)}>Save focus</button>
+					{#if savedFocus}<button class="b" disabled={busy} onclick={() => saveFocus(null)}>Reset</button>{/if}
+					<button class="b" disabled={busy} onclick={() => (picking = false)}>Cancel</button>
+				</div>
+			</div>
+		{/if}
 		{#if linking}
 			<form class="slot__link" onsubmit={(e) => { e.preventDefault(); sendLink(); }}>
 				<input type="url" placeholder="https://…" bind:value={link} aria-label="{label} URL" />
@@ -124,6 +171,14 @@
 	.b:hover:not(:disabled) { color: var(--text-primary); background: var(--bg-surface-3); }
 	.b:disabled, .b--off { opacity: 0.5; cursor: not-allowed; }
 	.b--danger { color: var(--color-danger); border-color: color-mix(in srgb, var(--color-danger) 40%, transparent); }
+	.b--on { color: var(--text-primary); background: var(--bg-surface-3); }
+	.focus { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+	.focus__pick { position: relative; touch-action: none; cursor: crosshair; border: 1px solid var(--border-default); border-radius: var(--radius-md); overflow: hidden; line-height: 0; }
+	.focus__pick img { display: block; width: 100%; height: auto; user-select: none; }
+	.focus__dot { position: absolute; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 50%; border: 2px solid #fff; background: color-mix(in srgb, var(--color-brand) 70%, transparent); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6); pointer-events: none; }
+	.focus__prev { display: flex; gap: 6px; }
+	.focus__crop { flex: 1; min-width: 0; overflow: hidden; border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--bg-surface-2); }
+	.focus__crop img { display: block; width: 100%; height: 100%; object-fit: cover; }
 	.slot__link { display: flex; gap: 6px; margin-top: 4px; }
 	.slot__link input { flex: 1; min-width: 0; padding: 4px 8px; font: inherit; font-size: 0.75rem; background: var(--bg-base); color: var(--text-primary); border: 1px solid var(--border-default); border-radius: var(--radius-md); }
 	.slot__dup { margin-top: 4px; padding: 6px 8px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 0.75rem; color: var(--color-warning); background: color-mix(in srgb, var(--color-warning) 9%, transparent); border: 1px solid color-mix(in srgb, var(--color-warning) 30%, transparent); border-radius: var(--radius-md); }

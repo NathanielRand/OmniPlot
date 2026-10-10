@@ -120,7 +120,20 @@ export function vehicleImage(
 	model: string,
 	ctx: { trim?: string; year?: number; generation?: string } = {},
 ): string | undefined {
-	const img = (t: MediaTarget) => media[targetId(t)]?.imageUrl || undefined;
+	return vehicleImageDoc(media, make, model, ctx)?.imageUrl;
+}
+
+/** CSS `object-position` for an image's focus point (centered when none is set). */
+export const focusPosition = (f?: { x: number; y: number }): string | undefined => (f ? `${f.x}% ${f.y}%` : undefined);
+
+/** The media record that supplies `vehicleImage`'s picture — it also carries that image's focus point. */
+export function vehicleImageDoc(
+	media: Record<string, VehicleMedia>,
+	make: string,
+	model: string,
+	ctx: { trim?: string; year?: number; generation?: string } = {},
+): VehicleMedia | undefined {
+	const img = (t: MediaTarget) => (media[targetId(t)]?.imageUrl ? media[targetId(t)] : undefined);
 	const trim = ctx.trim || undefined;
 	const gens = generationsFor(media, make, model, trim);
 	const genName = ctx.generation ?? generationOf(ctx.year, gens)?.label;

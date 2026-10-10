@@ -42,7 +42,7 @@ export function scopeOf(ref: LayerRef, vehicles: VehicleEntry[]): VehicleEntry[]
 const hasContent = (d: VehicleMedia | undefined) => !!(d && (d.logoUrl || d.imageUrl || d.generations?.length));
 /** The same stored content — so a half-finished rename that is run again isn't mistaken for a clash. */
 const sameContent = (a: VehicleMedia | undefined, b: VehicleMedia) =>
-	!!a && a.logoUrl === b.logoUrl && a.imageUrl === b.imageUrl && JSON.stringify(a.generations ?? []) === JSON.stringify(b.generations ?? []);
+	!!a && a.logoUrl === b.logoUrl && a.imageUrl === b.imageUrl && JSON.stringify(a.imageFocus ?? null) === JSON.stringify(b.imageFocus ?? null) && JSON.stringify(a.generations ?? []) === JSON.stringify(b.generations ?? []);
 const underPrefix = (id: string, prefix: string) => id === prefix || id.startsWith(`${prefix}__`);
 const idsUnder = (prefixes: string[], media: Record<string, VehicleMedia>) =>
 	Object.keys(media).filter((id) => prefixes.some((p) => underPrefix(id, p)));

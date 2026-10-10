@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from "svelte";
-	import { monogram } from "$lib/utils/vehicleCatalog";
+	import { monogram, focusPosition } from "$lib/utils/vehicleCatalog";
 
 	// Banner at the top of a make / model / trim page. Uses the make's cover
 	// image (or the model's) when there is one, and still looks finished when
@@ -10,10 +10,11 @@
 		eyebrow?: string;
 		logoUrl?: string;
 		imageUrl?: string;
+		imageFocus?: { x: number; y: number };
 		stats?: string[];
 		children?: Snippet;
 	}
-	let { title, eyebrow, logoUrl, imageUrl, stats = [], children }: Props = $props();
+	let { title, eyebrow, logoUrl, imageUrl, imageFocus, stats = [], children }: Props = $props();
 
 	let imgFailed = $state(false);
 	let logoFailed = $state(false);
@@ -23,7 +24,7 @@
 
 <header class="hero" class:hero--image={!!imageUrl && !imgFailed}>
 	{#if imageUrl && !imgFailed}
-		<img class="hero__bg" src={imageUrl} alt="" decoding="async" onerror={() => (imgFailed = true)} />
+		<img class="hero__bg" src={imageUrl} style:object-position={focusPosition(imageFocus)} alt="" decoding="async" onerror={() => (imgFailed = true)} />
 		<div class="hero__scrim" aria-hidden="true"></div>
 	{/if}
 	<div class="hero__inner">

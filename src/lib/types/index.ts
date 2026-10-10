@@ -582,6 +582,8 @@ export interface VehicleMedia {
 	label?: string;
 	logoUrl?: string;
 	imageUrl?: string;
+	/** Where the cover image stays centered when cropped, as 0–100 percentages (centered when absent). */
+	imageFocus?: { x: number; y: number };
 	/** Storage object path + content hash per slot — used to clean up on replace and to spot duplicate uploads. */
 	logoPath?: string;
 	imagePath?: string;

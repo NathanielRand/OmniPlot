@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { BODY_STYLE_PATH, monogram } from "$lib/utils/vehicleCatalog";
+	import { BODY_STYLE_PATH, monogram, focusPosition } from "$lib/utils/vehicleCatalog";
 
 	// One card for all three drill-down levels.
 	//  make  — logo mark over an optional cover image, monogram when no logo
@@ -14,6 +14,8 @@
 		meta?: string[];
 		logoUrl?: string;
 		imageUrl?: string;
+		/** Focus point (0–100 %) the cover image stays centered on when cropped. */
+		imageFocus?: { x: number; y: number };
 		bodyStyle?: string;
 		/** Year range chip, e.g. "2018–2024". */
 		years?: string;
@@ -21,7 +23,7 @@
 		label?: string;
 	}
 
-	let { variant, title, eyebrow, meta = [], logoUrl, imageUrl, bodyStyle, years, onclick, label }: Props = $props();
+	let { variant, title, eyebrow, meta = [], logoUrl, imageUrl, imageFocus, bodyStyle, years, onclick, label }: Props = $props();
 
 	// A URL that 404s (or hasn't propagated) quietly falls back instead of
 	// leaving a broken-image icon in the middle of the grid.
@@ -38,7 +40,7 @@
 	{#if variant !== "trim" || showImage}
 		<div class="tile__media">
 			{#if showImage}
-				<img class="tile__img" src={imageUrl} alt="" loading="lazy" decoding="async" onerror={() => (imgFailed = true)} />
+				<img class="tile__img" src={imageUrl} style:object-position={focusPosition(imageFocus)} alt="" loading="lazy" decoding="async" onerror={() => (imgFailed = true)} />
 				<div class="tile__scrim" aria-hidden="true"></div>
 			{:else if variant === "model"}
 				<svg class="tile__sil" viewBox="0 0 24 16" fill="none" stroke="currentColor" stroke-width="0.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

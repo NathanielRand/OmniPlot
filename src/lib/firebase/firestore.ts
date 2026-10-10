@@ -517,6 +517,13 @@ export const previewDemandMerge = async (): Promise<DemandMergePreview> => (awai
 export const runDemandMerge = async (): Promise<{ merged: number; groups: number }> => (await authedFetch("/api/admin/demand", { method: "POST" })).json();
 
 // ─── Vehicle media (logos + imagery for the vehicle browser) ──
+/** A stored focus point, or undefined unless both coordinates are numbers in 0–100. */
+function cleanFocus(raw: unknown): { x: number; y: number } | undefined {
+	const f = raw as { x?: unknown; y?: unknown } | null | undefined;
+	const x = Number(f?.x), y = Number(f?.y);
+	return f && Number.isFinite(x) && Number.isFinite(y) && x >= 0 && x <= 100 && y >= 0 && y <= 100 ? { x, y } : undefined;
+}
+
 export function subscribeVehicleMedia(
 	onNext: (media: VehicleMedia[]) => void,
 	onError?: (err: Error) => void,
@@ -537,6 +544,7 @@ export function subscribeVehicleMedia(
 						year: x.year || undefined,
 						logoUrl: x.logoUrl || undefined,
 						imageUrl: x.imageUrl || undefined,
+						imageFocus: cleanFocus(x.imageFocus),
 						projectType: x.projectType || undefined,
 						label: x.label || undefined,
 						logoPath: x.logoPath || undefined,
@@ -597,6 +605,7 @@ function mediaDocData(d: VehicleMedia): Record<string, unknown> {
 		if (d[k] !== undefined && d[k] !== "") out[k] = d[k];
 	}
 	if (d.generations?.length) out.generations = cleanGenerations(d.generations);
+	if (d.imageFocus) out.imageFocus = d.imageFocus;
 	return out;
 }
 

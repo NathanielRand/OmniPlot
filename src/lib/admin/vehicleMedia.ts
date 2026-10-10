@@ -66,3 +66,19 @@ export async function removeMedia(target: MediaTarget, field: MediaField): Promi
 		return { ok: false, error: (e as Error).message };
 	}
 }
+
+/** Save where a cover image stays centered when cropped (0–100 % on each axis); null resets to centered. */
+export async function setImageFocus(target: MediaTarget, focus: { x: number; y: number } | null): Promise<{ ok: true } | { ok: false; error: string }> {
+	try {
+		const res = await fetch("/api/admin/vehicle-media", {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json", ...(await authHeader()) },
+			body: JSON.stringify({ target, focus }),
+		});
+		if (res.ok) return { ok: true };
+		const body = await res.json().catch(() => ({}));
+		return { ok: false, error: body.error ?? `HTTP ${res.status}` };
+	} catch (e) {
+		return { ok: false, error: (e as Error).message };
+	}
+}

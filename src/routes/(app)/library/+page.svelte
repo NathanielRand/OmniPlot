@@ -26,7 +26,7 @@
 	import VehicleTreeFilter, { type TreePath } from "$lib/components/library/VehicleTreeFilter.svelte";
 	import {
 		buildTree, entriesUnder, mediaFor, yearSpan, trimFilter, matchesQuery,
-		yearOptions, generationOf, groupByGeneration, vehicleImage, generationsFor, trimKey,
+		yearOptions, generationOf, groupByGeneration, vehicleImageDoc, generationsFor, trimKey,
 		BASE_TRIM_LABEL, TRIM_BASE, TRIM_ALL, makeKey, modelKey,
 	} from "$lib/utils/vehicleCatalog";
 	import { canonicalTarget, demandId, hasVoted } from "$lib/utils/demand";
@@ -340,10 +340,11 @@
 	// generation is chosen), else the trim's, else the model's.
 	const imageOf = (make: string, model: string, trim?: string, scoped = false) => {
 		const sel = scoped ? yearSel : undefined;
-		return vehicleImage(patternStore.media, make, model, {
+		const doc = vehicleImageDoc(patternStore.media, make, model, {
 			trim: trim ?? (scoped ? focusTrim : undefined),
 			...(sel ? (sel.isGen ? { generation: sel.label } : sel.from === sel.to ? { year: sel.from } : {}) : {}),
 		});
+		return { imageUrl: doc?.imageUrl, imageFocus: doc?.imageFocus };
 	};
 
 	// Flat matches while searching from the top: every model across makes.
@@ -1212,7 +1213,7 @@
 									eyebrow={m.label}
 									years={yearSpan(o.years)}
 									bodyStyle={o.bodyStyle}
-									imageUrl={imageOf(m.label, o.label)}
+									{...imageOf(m.label, o.label)}
 									meta={[...(o.trims.length > 1 ? [`${o.trims.length} trims`] : o.trims.length === 1 && o.trims[0].key !== "" ? [o.trims[0].label] : []), pieces(o.count)]}
 									onclick={() => go(o.trims.length === 1 && o.trims[0].key !== "" ? { make: m.key, model: o.key, trim: o.trims[0].key } : { make: m.key, model: o.key })}
 								/>
@@ -1232,6 +1233,7 @@
 									title={m.label}
 									logoUrl={md?.logoUrl}
 									imageUrl={md?.imageUrl}
+								imageFocus={md?.imageFocus}
 									meta={[`${m.models.length} ${m.models.length === 1 ? "model" : "models"}`, pieces(m.count)]}
 									onclick={() => go({ make: m.key })}
 								/>
@@ -1249,6 +1251,7 @@
 							eyebrow="Make"
 							logoUrl={md?.logoUrl}
 							imageUrl={md?.imageUrl}
+								imageFocus={md?.imageFocus}
 							stats={[`${makeNode.models.length} ${makeNode.models.length === 1 ? "model" : "models"}`, pieces(makeNode.count)]}
 						/>
 						<div class="vb-grid vb-grid--model">
@@ -1258,7 +1261,7 @@
 									title={o.label}
 									years={yearSpan(o.years)}
 									bodyStyle={o.bodyStyle}
-									imageUrl={imageOf(makeNode.label, o.label)}
+									{...imageOf(makeNode.label, o.label)}
 									meta={[...(o.trims.length > 1 ? [`${o.trims.length} trims`] : o.trims.length === 1 && o.trims[0].key !== "" ? [o.trims[0].label] : []), pieces(o.count)]}
 									onclick={() => go({ make: makeNode.key, model: o.key })}
 								/>
@@ -1275,7 +1278,7 @@
 							title={modelNode.label}
 							eyebrow={makeNode.label}
 							logoUrl={mediaOf(makeNode.label)?.logoUrl}
-							imageUrl={mdImg}
+							{...mdImg}
 							stats={[`${modelNode.trims.length} trims & variants`, pieces(modelNode.count), yearSpan(modelNode.years)].filter(Boolean)}
 						/>
 						<div class="vb-grid vb-grid--trim">
@@ -1291,7 +1294,7 @@
 									variant="trim"
 									title={t.label}
 									years={yearSpan(t.years)}
-									imageUrl={imageOf(makeNode.label, modelNode.label, t.key ? t.label : undefined, true)}
+									{...imageOf(makeNode.label, modelNode.label, t.key ? t.label : undefined, true)}
 									meta={[pieces(t.count)]}
 									onclick={() => go({ make: makeNode.key, model: modelNode.key, trim: t.key === "" ? TRIM_BASE : t.key })}
 								/>
@@ -1344,7 +1347,7 @@
 						title={[modelLabel, trimLabel && trimLabel !== BASE_TRIM_LABEL ? trimLabel : ""].filter(Boolean).join(" ")}
 						eyebrow={makeLabel}
 						logoUrl={mediaOf(makeLabel)?.logoUrl}
-						imageUrl={imageOf(makeLabel, modelLabel, trimLabel && trimLabel !== BASE_TRIM_LABEL ? trimLabel : undefined, true)}
+						{...imageOf(makeLabel, modelLabel, trimLabel && trimLabel !== BASE_TRIM_LABEL ? trimLabel : undefined, true)}
 						stats={[yearSpan(leafEntries.map((x) => x.v.year ?? 0).filter(Boolean)), leafYearsLabel].filter(Boolean)}
 					/>
 				{/if}
