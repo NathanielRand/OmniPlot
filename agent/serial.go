@@ -202,6 +202,22 @@ func handleCut(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 
+	// Printer-class USB cutter: a RAW print job instead of a serial write.
+	if printer, ok := printerSelector(req.Config.SerialPort); ok {
+		n, err := sendRawToPrinter(printer, []byte(req.HPGL))
+		dur := time.Since(start)
+		if err != nil {
+			globalStats.recordError()
+			bus.emit(AgentEvent{Type: EvtError, Method: "POST", Path: "/api/cut", Status: 500, DurationMs: float64(dur.Milliseconds()), Port: req.Config.SerialPort, Message: err.Error()})
+			jsonError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		globalStats.recordCut(req.Config.SerialPort, n)
+		bus.emit(AgentEvent{Type: EvtCut, Method: "POST", Path: "/api/cut", Status: 200, DurationMs: float64(dur.Milliseconds()), Bytes: n, Port: req.Config.SerialPort})
+		jsonOK(w, cutResponse{OK: true, BytesWritten: n, Port: req.Config.SerialPort})
+		return
+	}
+
 	portName, err := resolvePort(req.Config.SerialPort)
 	if err != nil {
 		globalStats.recordError()
@@ -315,6 +331,11 @@ func handleQuery(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.SerialPort == "" {
 		req.SerialPort = "auto"
+	}
+
+	if _, ok := printerSelector(req.SerialPort); ok {
+		jsonError(w, http.StatusUnprocessableEntity, "printer-class cutters are write-only — position queries aren't available")
+		return
 	}
 
 	portName, err := resolvePort(req.SerialPort)

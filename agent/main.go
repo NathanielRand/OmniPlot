@@ -24,7 +24,7 @@ import (
 	"time"
 )
 
-const agentVersion = "1.2.0"
+const agentVersion = "1.3.0"
 
 func main() {
 	port    := flag.Int("port", 7878, "HTTP port to listen on (default 7878)")
@@ -34,6 +34,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/status",        withCORS(handleStatus))
 	mux.HandleFunc("/api/ports",         withCORS(handlePorts))
+	mux.HandleFunc("/api/printers",      withCORS(handlePrinters))
 	mux.HandleFunc("/api/cut",           withCORS(handleCut))
 	mux.HandleFunc("/api/query",         withCORS(handleQuery))
 	mux.HandleFunc("/api/release-port",  withCORS(handleReleasePort))
@@ -152,5 +153,8 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 		"agent":   "omniplot-cut-agent",
 		"version": agentVersion,
 		"ok":      true,
+		// Capabilities newer than 1.2.0, so the web app can feature-detect
+		// instead of forcing an update.
+		"features": []string{"printers"},
 	})
 }

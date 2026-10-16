@@ -8,8 +8,10 @@ import {
 	findLiveFor,
 	findEntryFor,
 	sanitizeHistory,
+	mergeDuplicateEntries,
 	retryDelayMs,
 	HISTORY_LIMIT,
+	historyKey,
 	type LiveDevice,
 } from "./plotter-history";
 
@@ -91,9 +93,15 @@ describe("pickAutoTarget", () => {
 		expect(pickAutoTarget(s, [usb(FTDI)])).toBeNull();
 	});
 
-	it("doesn't switch transports: a USB plotter isn't resumed through the agent", () => {
+	it("resumes a saved USB Direct plotter through the Cut Agent (the required route)", () => {
 		const s = recordConnect(emptyHistory(), { connection: "usb-serial", presetName: "A", ...CH340 }, 1);
-		expect(pickAutoTarget(s, [{ source: "agent", portPath: "COM7", ...CH340 }])).toBeNull();
+		const agent: LiveDevice = { source: "agent", portPath: "COM7", ...CH340 };
+		expect(pickAutoTarget(s, [agent])?.device).toBe(agent);
+	});
+
+	it("never guesses between two identical cutters on the agent", () => {
+		const s = recordConnect(emptyHistory(), { connection: "usb-serial", presetName: "A", ...CH340 }, 1);
+		expect(pickAutoTarget(s, [{ source: "agent", portPath: "COM7", ...CH340 }, { source: "agent", portPath: "COM9", ...CH340 }])).toBeNull();
 	});
 
 	it("resumes network plotters immediately (they can't be probed)", () => {
@@ -143,5 +151,59 @@ describe("forget / sanitize / retry", () => {
 		expect(retryDelayMs(0)).toBe(3_000);
 		expect(retryDelayMs(1)).toBeGreaterThan(retryDelayMs(0));
 		expect(retryDelayMs(99)).toBe(30_000);
+	});
+});
+
+describe("mergeDuplicateEntries", () => {
+	const base = { presetName: "A", firstConnectedAt: 1, connectCount: 1 };
+	function state(entries: any[], autoTargetKey: string | null = null) {
+		return { version: 1 as const, entries: entries.map((e) => ({ ...base, key: historyKey(e), ...e })), autoTargetKey, autoReconnect: true };
+	}
+
+	it("folds an agent record missing its VID into the one that has it (same port)", () => {
+		const s = mergeDuplicateEntries(state([
+			{ connection: "cut-agent", serialPort: "COM7", lastConnectedAt: 5 },
+			{ connection: "cut-agent", serialPort: "COM7", ...CH340, lastConnectedAt: 3 },
+		]));
+		expect(s.entries).toHaveLength(1);
+		expect(s.entries[0].vendorId).toBe(CH340.vendorId);
+		expect(s.entries[0].connectCount).toBe(2);
+		expect(s.entries[0].lastConnectedAt).toBe(5);
+	});
+
+	it("folds a USB Direct record into the single Cut Agent record of the same hardware", () => {
+		const s = mergeDuplicateEntries(state([
+			{ connection: "usb-serial", ...CH340, label: "Bay 1", lastConnectedAt: 9 },
+			{ connection: "cut-agent", serialPort: "COM7", ...CH340, lastConnectedAt: 4 },
+		]));
+		expect(s.entries).toHaveLength(1);
+		expect(s.entries[0].connection).toBe("cut-agent");
+		expect(s.entries[0].label).toBe("Bay 1");
+	});
+
+	it("never merges identical cutters on different ports", () => {
+		const s = mergeDuplicateEntries(state([
+			{ connection: "cut-agent", serialPort: "COM7", ...CH340, lastConnectedAt: 4 },
+			{ connection: "cut-agent", serialPort: "COM9", ...CH340, lastConnectedAt: 5 },
+			{ connection: "usb-serial", ...CH340, lastConnectedAt: 6 },
+		]));
+		expect(s.entries).toHaveLength(3);
+	});
+
+	it("keeps the auto target pointing at the surviving entry", () => {
+		const input = state([
+			{ connection: "cut-agent", serialPort: "COM7", lastConnectedAt: 5 },
+			{ connection: "cut-agent", serialPort: "COM7", ...CH340, lastConnectedAt: 3 },
+		], "agent:????:????@COM7");
+		const s = mergeDuplicateEntries(input);
+		expect(s.autoTargetKey).toBe(s.entries[0].key);
+	});
+
+	it("leaves network plotters alone", () => {
+		const s = mergeDuplicateEntries(state([
+			{ connection: "network", ipAddress: "10.0.0.5", lastConnectedAt: 1 },
+			{ connection: "network", ipAddress: "10.0.0.6", lastConnectedAt: 2 },
+		]));
+		expect(s.entries).toHaveLength(2);
 	});
 });

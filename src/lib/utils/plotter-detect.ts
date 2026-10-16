@@ -331,3 +331,50 @@ export async function listLiveDevices(
 	}
 	return out;
 }
+
+// ─── Duplicate cards ──────────────────────────
+// The same machine can be seen more than once: Web Serial may list one grant
+// with its USB id and another without, and a cutter on the Cut Agent also
+// shows up as a Web Serial port. Folds those into a single card, keeping the
+// richest one (agent > USB Direct, then most identifying fields).
+// Two identical cutters (same VID:PID) are never folded into each other — only
+// provable duplicates are: a no-VID card into the single VID card of the same
+// source, and a USB Direct card into the single agent card with its VID:PID.
+export interface DedupableDevice {
+	source: "agent" | "usb";
+	vendorId?: number;
+	productId?: number;
+	portPath?: string;
+	manufacturer?: string;
+	product?: string;
+	status?: string;
+}
+
+function richness(d: DedupableDevice): number {
+	return (d.source === "agent" ? 8 : 0) + (d.vendorId !== undefined ? 4 : 0) + (d.productId !== undefined ? 2 : 0) + (d.manufacturer || d.product ? 1 : 0);
+}
+
+export function dedupeDiscovered<D extends DedupableDevice>(devices: D[]): D[] {
+	const out = [...devices];
+	const sameId = (a: D, b: D) => a.vendorId !== undefined && a.vendorId === b.vendorId && a.productId === b.productId;
+	const drop = (victim: D, keeper: D) => {
+		// A card the user is connected through must not vanish into a richer sibling.
+		const i = out.indexOf(victim);
+		if (i >= 0) out.splice(i, 1);
+		if (victim.status === "connected" && keeper.status !== "connected") (keeper as DedupableDevice).status = "connected";
+	};
+
+	// 1. USB Direct card with no vendor id → the only USB Direct card that has one.
+	const usbWithId = out.filter((d) => d.source === "usb" && d.vendorId !== undefined);
+	if (usbWithId.length === 1) {
+		for (const d of out.filter((x) => x.source === "usb" && x.vendorId === undefined)) drop(d, usbWithId[0]);
+	}
+
+	// 2. USB Direct card → the single agent card with the same VID:PID.
+	for (const d of out.filter((x) => x.source === "usb" && x.vendorId !== undefined)) {
+		const agents = out.filter((a) => a.source === "agent" && sameId(a, d));
+		const usbTwins = out.filter((u) => u.source === "usb" && sameId(u, d));
+		if (agents.length === 1 && usbTwins.length === 1 && richness(agents[0]) >= richness(d)) drop(d, agents[0]);
+	}
+	return out;
+}

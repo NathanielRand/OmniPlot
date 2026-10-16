@@ -53,6 +53,7 @@
 	)].sort((a, b) => a - b);
 	import {
 		detectUsbPlotters,
+		dedupeDiscovered,
 		detectAgentPorts,
 		scanNetworkViaAgent,
 		matchPortToPreset,
@@ -905,6 +906,13 @@
 	}
 
 	let discoveredDevices  = $state<DiscoveredDevice[]>([]);
+	// Serial ports the Cut Agent sees that aren't USB (RS-232, Bluetooth serial).
+	let otherPorts         = $state<string[]>([]);
+	// Agent v1.3+ can drive printer-class USB cutters (no COM port). Older agents
+	// don't report features, so this stays false and we hint at an update instead.
+	let agentPrinters      = $state(false);
+	const isPrinterPort = (p?: string) => !!p && p.startsWith("printer:");
+	const portLabel = (p?: string) => isPrinterPort(p) ? `USB printer · ${p!.slice(8)}` : p;
 	let discoveryPhase     = $state<"idle" | "scanning" | "done">("idle");
 	let selectedDeviceId   = $state<string | null>(null);
 	let testingConn        = $state(false);
@@ -912,6 +920,12 @@
 
 	const liveDevices    = $derived(discoveredDevices.filter(d => d.status !== "offline"));
 	const selectedDevice = $derived(discoveredDevices.find(d => d.id === selectedDeviceId) ?? null);
+
+	// The Cut Agent is the required route to the cutter (it paces jobs to the
+	// plotter's buffer; direct Web Serial drops commands on multi-piece jobs).
+	// Only when an admin turns the agent off does USB Direct come back, as the
+	// fallback.
+	const agentRequired = $derived(platformStore.flags.cutAgent);
 
 	// ─── Connection UI state ───────────────────────
 	let agentProbeStatus = $state<"probing" | "online" | "offline">("probing");
@@ -934,7 +948,13 @@
 	const plotterMaxIn  = $derived(plotterStore.config.maxMediaWidthMm / 25.4);
 	const rollWidthIn   = $derived(plotterStore.config.mediaWidthMm   / 25.4);
 	const originXIn     = $derived(plotterStore.config.originX);
+	// Custom is an explicit mode, not derived: at offset 0 "Custom" is
+	// indistinguishable from Flush Left by value alone, so deriving it left the
+	// button with nothing to select (the offset field never opened).
+	let customMount = $state(false);
+	$effect(() => { plotterStore.config.name; customMount = false; });
 	const mountPreset   = $derived.by(() => {
+		if (customMount) return 'custom' as const;
 		const diff = plotterMaxIn - rollWidthIn;
 		if (Math.abs(originXIn) < 0.05) return 'flush-left' as const;
 		if (diff > 0.1 && Math.abs(originXIn - diff) < 0.1) return 'flush-right' as const;
@@ -948,6 +968,7 @@
 	const calDiagOff    = $derived(Math.round((Math.min(originXIn, calDiagSafe - rollWidthIn) / calDiagSafe) * CAL_DIAG_BED));
 
 	function setMountMode(mode: 'flush-left' | 'flush-right' | 'custom') {
+		customMount = mode === 'custom';
 		if (mode === 'flush-left')  { plotterStore.update({ originX: 0 }); calPhase = 'idle'; }
 		if (mode === 'flush-right') { plotterStore.update({ originX: Math.max(0, plotterMaxIn - rollWidthIn) }); calPhase = 'idle'; }
 		if (mode === 'custom')      { calCustomX = originXIn; }
@@ -958,10 +979,40 @@
 		plotterStore.update({ originX: v });
 	}
 
+	// Many budget cutters accept HPGL but never answer position queries. Once a
+	// plotter has proved silent we stop offering the probe for it (retry stays
+	// one click away) instead of letting every visit end in the same dead end.
+	const oaKey = () => `omniplot-oa-silent:${plotterStore.config.name}:${plotterStore.config.vendorId ?? ''}`;
+	let oaSilent = $state(false);
+	$effect(() => {
+		const key = oaKey();
+		try { oaSilent = localStorage.getItem(key) === '1'; } catch { oaSilent = false; }
+	});
+	function setOaSilent(v: boolean) {
+		oaSilent = v;
+		try { v ? localStorage.setItem(oaKey(), '1') : localStorage.removeItem(oaKey()); } catch { /* private mode */ }
+	}
+
+	// The saved COM path goes stale when Windows renumbers the adapter (COM7 →
+	// COM8). Re-point it at the agent's current port for the same USB id.
+	async function refreshAgentPort() {
+		const cfg = plotterStore.config;
+		if (!cfg.serialPort || cfg.serialPort === 'auto' || cfg.vendorId === undefined) return;
+		const base = (cfg.agentUrl ?? 'http://localhost:7878').replace(/\/$/, '');
+		try {
+			const r = await fetch(`${base}/api/ports`, { signal: AbortSignal.timeout(2500) });
+			const ports: Array<{ name: string; isUSB: boolean; vendorId?: string; productId?: string }> = r.ok ? await r.json() : [];
+			if (ports.some(p => p.name === cfg.serialPort)) return;
+			const same = ports.filter(p => p.isUSB && p.vendorId && parseInt(p.vendorId, 16) === cfg.vendorId && (cfg.productId === undefined || (p.productId && parseInt(p.productId, 16) === cfg.productId)));
+			if (same.length === 1) plotterStore.update({ serialPort: same[0].name });
+		} catch { /* agent unreachable — the query below reports it */ }
+	}
+
 	async function runProbe() {
 		calPhase     = 'probe-busy';
 		calError     = null;
 		calErrorKind = 'generic';
+		await refreshAgentPort();
 		const res = await queryPlotter('OA;', plotterStore.config, 3000);
 
 		if (!res.ok) {
@@ -991,6 +1042,7 @@
 			calErrorKind = 'oa-unsupported';
 			calError = null;
 			calPhase = 'probe-error';
+			setOaSilent(true);
 			return;
 		}
 
@@ -1004,6 +1056,7 @@
 			return;
 		}
 		const offsetIn = parts[0] / 1016; // HPGL_UNITS_PER_INCH
+		setOaSilent(false);
 		calCapture = { offsetIn, raw: res.response };
 		plotterStore.update({ originX: offsetIn });
 		calPhase = 'probe-done';
@@ -1032,16 +1085,16 @@
 	}
 
 	// ─── Cut orientation calibration ──────────────
-	// ⚠ PRECISION: until this plotter's orientation is verified with the F
+	// ⚠ PRECISION: until this plotter's orientation is verified with the arrow
 	// test, nothing guarantees the cut isn't the mirror image of the canvas.
 	const orientPreview = orientationTestPreview();
 	let orientVerified = $state(false);
 	let orientTestCut  = $state(false); // a test was cut with the current settings
-	let orientReads    = $state<boolean | null>(null);
+	let orientArrowSame    = $state<boolean | null>(null);
 	let orientSameEdge = $state<boolean | null>(null);
 	$effect(() => {
 		orientVerified = isOrientationVerified(plotterStore.config.name);
-		orientTestCut = false; orientReads = null; orientSameEdge = null;
+		orientTestCut = false; orientArrowSame = null; orientSameEdge = null;
 	});
 	async function cutOrientationTest() {
 		const hpgl = orientationTestHpgl(plotterStore.config, canvasStore.sheet);
@@ -1051,17 +1104,17 @@
 		} else {
 			downloadFile(hpgl, "omniplot-orientation-test.plt", "application/octet-stream");
 		}
-		orientTestCut = true; orientReads = null; orientSameEdge = null;
+		orientTestCut = true; orientArrowSame = null; orientSameEdge = null;
 	}
 	function saveOrientationAnswers() {
-		if (orientReads === null || orientSameEdge === null) return;
+		if (orientArrowSame === null || orientSameEdge === null) return;
 		const current = { flipH: plotterStore.config.flipH, flipV: plotterStore.config.flipV };
-		const next = correctedOrientation(current, orientReads, orientSameEdge);
-		const matched = orientReads && orientSameEdge;
+		const next = correctedOrientation(current, orientArrowSame, orientSameEdge);
+		const matched = orientArrowSame && orientSameEdge;
 		plotterStore.update(next);
 		saveOrientation(plotterStore.config.name, next, matched);
 		orientVerified = matched;
-		orientTestCut = false; orientReads = null; orientSameEdge = null;
+		orientTestCut = false; orientArrowSame = null; orientSameEdge = null;
 		if (matched) toastStore.success("Orientation verified", `${plotterStore.config.name} cuts exactly what the canvas shows.`);
 		else toastStore.warning("Orientation corrected", "Cut the test again to confirm it now matches the canvas.");
 	}
@@ -1236,8 +1289,9 @@
 				const r = await fetch(`${base}/api/status`, { signal: AbortSignal.timeout(2500) });
 				if (r.ok) {
 					agentProbeStatus = "online";
-					const body: { version?: string } = await r.json().catch(() => ({}));
+					const body: { version?: string; features?: string[] } = await r.json().catch(() => ({}));
 					agentStore.setOnline(body.version ?? "");
+					agentPrinters = Array.isArray(body.features) && body.features.includes("printers");
 				} else {
 					agentProbeStatus = "offline";
 					agentStore.setOffline();
@@ -1248,6 +1302,7 @@
 			}
 		}
 
+		if (agentProbeStatus !== "online") { otherPorts = []; agentPrinters = false; }
 		if (agentProbeStatus === "online") {
 			type AgentPort = { name: string; isUSB: boolean; vendorId?: string; productId?: string; manufacturer?: string; product?: string; };
 			const ports: AgentPort[] | null = await fetch(`${base}/api/ports`, { signal: AbortSignal.timeout(3000) })
@@ -1256,6 +1311,20 @@
 			// devices as they were rather than reporting them lost.
 			if (!ports) next.push(...discoveredDevices.filter(d => d.source === "agent" && d.status !== "offline"));
 			const usbPorts = (ports ?? []).filter(pp => pp.isUSB);
+			// RS-232 / Bluetooth-serial ports aren't cutters we can recognise, but
+			// older cutters (DB9) and paired serial adapters use them.
+			const nonUsb = (ports ?? []).filter(pp => !pp.isUSB);
+			otherPorts = nonUsb.map(pp => pp.name);
+			// The one in use is a real card (so it can be disconnected); the rest
+			// stay in the "Other serial ports" list.
+			for (const p of nonUsb) {
+				if (plotterStore.config.connection !== "cut-agent" || plotterStore.config.serialPort !== p.name) continue;
+				next.push({
+					id: `agent:${p.name}`, source: "agent", portPath: p.name,
+					...identify({ source: "agent", portPath: p.name }),
+					status: "connected", lastSeenMs: now,
+				});
+			}
 			const agentPath = plotterStore.config.serialPort;
 			for (const p of usbPorts) {
 				const vid = p.vendorId ? parseInt(p.vendorId, 16) : undefined;
@@ -1279,10 +1348,31 @@
 			}
 		}
 
+		// 1b. Printer-class USB cutters (spooler / CUPS queues, no COM port).
+		if (agentProbeStatus === "online" && agentPrinters) {
+			type AgentPrinter = { name: string; port?: string; driver?: string; isUSB: boolean };
+			const printers: AgentPrinter[] | null = await fetch(`${base}/api/printers`, { signal: AbortSignal.timeout(4000) })
+				.then(r => r.ok ? r.json() : null).catch(() => null);
+			if (!printers) next.push(...discoveredDevices.filter(d => d.source === "agent" && isPrinterPort(d.portPath) && d.status !== "offline"));
+			for (const pr of printers ?? []) {
+				if (!pr.isUSB) continue;
+				const sel = `printer:${pr.name}`;
+				const isActive = plotterStore.config.connection === "cut-agent" && plotterStore.config.serialPort === sel;
+				next.push({
+					id: `agent:${sel}`, source: "agent", portPath: sel,
+					...identify({ source: "agent", portPath: sel }),
+					product: pr.driver || pr.name,
+					status: isActive ? "connected" : "detected", lastSeenMs: now,
+				});
+			}
+		}
+
 		// 2. Web Serial previously-granted ports (Chrome/Edge only). Identical
 		// cutters share a VID:PID, so the id carries an occurrence suffix to stay
 		// unique; only the port this tab actually holds is marked connected.
-		if (typeof navigator !== "undefined" && "serial" in navigator) {
+		// Skipped while the Cut Agent is required: a browser tab holding the COM
+		// port is exactly what stops the agent from opening it.
+		if (!agentRequired && typeof navigator !== "undefined" && "serial" in navigator) {
 			const ports: any[] = await (navigator as any).serial.getPorts().catch(() => []);
 			const seen = new Map<string, number>();
 			for (const port of ports) {
@@ -1305,6 +1395,10 @@
 				});
 			}
 		}
+
+		// The same machine can be seen twice (a USB Direct grant with and without
+		// its VID, or a USB Direct card for a cutter the agent already lists).
+		next.splice(0, next.length, ...dedupeDiscovered(next));
 
 		// A newer scan started while this one was awaiting — let it win.
 		if (run !== discoveryRun) return;
@@ -1453,7 +1547,8 @@
 			// Switch first: switchConnection restores the saved agent settings,
 			// which would otherwise overwrite this (possibly renumbered) port path.
 			plotterStore.switchConnection("cut-agent");
-			if (device.portPath) plotterStore.update({ serialPort: device.portPath });
+			// vendorId/productId let the stale-COM-port repair (refreshAgentPort) find this cutter later.
+			if (device.portPath) plotterStore.update({ serialPort: device.portPath, vendorId: device.vendorId, productId: device.productId });
 			plotterStore.persistConnSettings();
 			sendSettings(plotterStore.config).catch(() => {});
 			markConnected(device.id);
@@ -1596,6 +1691,22 @@
 		}
 	}
 
+	// Connect through a non-USB serial port the Cut Agent lists (RS-232, Bluetooth serial).
+	async function handleUseOtherPort(name: string) {
+		if (connecting) return;
+		connecting = true;
+		try {
+			const epoch = await beginManual();
+			await connectDevice({
+				id: `agent:${name}`, source: "agent", portPath: name, preset: PLOTTER_PRESETS[0],
+				confidence: "generic", status: "detected", lastSeenMs: Date.now(),
+			}, { epoch });
+			await runDiscovery(true);
+		} finally {
+			connecting = false;
+		}
+	}
+
 	async function handleGrantUsbPort() {
 		if (!("serial" in navigator)) return;
 		await beginManual();
@@ -1621,7 +1732,10 @@
 	}
 
 	// ─── Recent plotters (quick view) ─────────────
-	const recentPlotters = $derived(plotterHistoryStore.entries.slice(0, 4));
+	// Only the most recent plotter shows by default; the rest sit behind "View more".
+	let showAllRecent = $state(false);
+	const recentPlotters = $derived(showAllRecent ? plotterHistoryStore.entries : plotterHistoryStore.entries.slice(0, 1));
+	const hiddenRecentCount = $derived(Math.max(0, plotterHistoryStore.entries.length - 1));
 	function historyAvailability(entry: PlotterHistoryEntry): "connected" | "available" | "absent" | "network" {
 		const active = plotterStore.config.connection;
 		if (entry.connection === "network") {
@@ -1637,7 +1751,7 @@
 	function entryName(e: PlotterHistoryEntry) { return e.label ?? e.presetName; }
 	function entryVia(e: PlotterHistoryEntry) {
 		if (e.connection === "network") return `Network · ${e.ipAddress}:${e.port ?? 9100}`;
-		if (e.connection === "cut-agent") return `Cut Agent${e.serialPort && e.serialPort !== "auto" ? ` · ${e.serialPort}` : ""}`;
+		if (e.connection === "cut-agent") return `Cut Agent${e.serialPort && e.serialPort !== "auto" ? ` · ${portLabel(e.serialPort)}` : ""}`;
 		return `USB Direct${formatUsbId(e.vendorId, e.productId) ? ` · ${formatUsbId(e.vendorId, e.productId)}` : ""}`;
 	}
 	function retryNow() {
@@ -2258,6 +2372,9 @@
 
 		// Coming back to the Studio within the same tab: the USB port is still
 		// open — adopt it instead of reconnecting.
+		// A saved USB Direct connection has no live link any more; drop to Download
+		// until the agent connects the same cutter (history matches it by VID:PID).
+		if (agentRequired && plotterStore.config.connection === "usb-serial") plotterStore.switchConnection("download");
 		const openPort = plotterStore.config.connection === "usb-serial" ? getOpenSerialPortInfo() : null;
 		if (openPort && openPort.vendorId === plotterStore.config.vendorId && openPort.productId === plotterStore.config.productId) {
 			serialPortInfo = openPort;
@@ -3586,7 +3703,7 @@
 							Cut buffer
 							<span
 								class="info-tip"
-								data-tip="Minimum gap kept between pieces (and from the roll edge) when nesting. Negative values intentionally allow pieces to overlap -- only set this below zero on purpose."
+								use:tooltip={"Minimum gap kept between pieces (and from the roll edge) when nesting. Negative values intentionally allow pieces to overlap -- only set this below zero on purpose."}
 							>?</span>
 						</label>
 						<div class="buffer-control__row">
@@ -3769,7 +3886,7 @@
 										<!-- Spec chips -->
 										<div class="device-specs">
 											{#if device.portPath}
-												<span class="device-spec-chip">{device.portPath}</span>
+												<span class="device-spec-chip">{portLabel(device.portPath)}</span>
 											{/if}
 											{#if device.vendorId !== undefined}
 												<span class="device-spec-chip device-spec-chip--mono">
@@ -3854,7 +3971,18 @@
 										<a href="/studio/agent" class="discovery-check-action">Install ↗</a>
 									{/if}
 								</div>
-								{#if typeof navigator !== "undefined" && "serial" in navigator}
+								{#if agentRequired}
+									<div class="discovery-check-row">
+										<span class="discovery-check-dot discovery-check-dot--none"></span>
+										<span class="discovery-check-label">{agentProbeStatus === "online" ? "No cutter on this computer's ports" : "Cutters connect through the Cut Agent"}</span>
+									</div>
+									{#if agentProbeStatus === "online" && !agentPrinters}
+										<p class="discovery-empty__tip">
+											Cutter shows up as a USB <em>printer</em> instead of a COM port? Update the Cut Agent to v1.3 or newer to use it.
+											<a href="/studio/agent" class="discovery-check-action">Get the agent →</a>
+										</p>
+									{/if}
+								{:else if typeof navigator !== "undefined" && "serial" in navigator}
 									<div class="discovery-check-row">
 										<span class="discovery-check-dot discovery-check-dot--none"></span>
 										<span class="discovery-check-label">No USB ports authorized</span>
@@ -3871,6 +3999,21 @@
 									<button class="discovery-link-btn" onclick={() => runDiscovery()}>scan again</button>.
 								</p>
 							</div>
+						{/if}
+
+						{#if agentRequired && agentProbeStatus === "online" && otherPorts.length > 0 && !isConnected}
+							<details class="discovery-advanced">
+								<summary class="discovery-advanced__summary">Other serial ports ({otherPorts.length})</summary>
+								<div class="discovery-advanced__body">
+									<p class="cal-probe-hint">RS-232 and Bluetooth serial ports on the Cut Agent's computer. Pick the one your cutter is on.</p>
+									{#each otherPorts as name (name)}
+										<div class="recent-row">
+											<div class="recent-row__info"><span class="recent-row__name">{name}</span></div>
+											<button class="recent-btn" onclick={() => handleUseOtherPort(name)} disabled={connecting}>Use</button>
+										</div>
+									{/each}
+								</div>
+							</details>
 						{/if}
 
 						<!-- ── Recent plotters: quick reconnect + auto-reconnect ── -->
@@ -3949,6 +4092,11 @@
 										</li>
 									{/each}
 								</ul>
+								{#if hiddenRecentCount > 0}
+									<button class="recent-more" onclick={() => (showAllRecent = !showAllRecent)} aria-expanded={showAllRecent}>
+										{showAllRecent ? "Show less" : `View more (${hiddenRecentCount})`}
+									</button>
+								{/if}
 							{/if}
 							<a class="recent-plotters__all" href="/plotter#history">Full history & fleet →</a>
 						</div>
@@ -4008,7 +4156,7 @@
 							<div class="prop-label-row">
 								<span class="prop-label">Cut Settings</span>
 								{#if isConnected}
-									<span class="info-tip" data-tip="Blade force and speed sync to your plotter in real-time. The front-panel display may not update — this is a hardware limitation. Commands are applied internally.">
+									<span class="info-tip" use:tooltip={"Blade force and speed sync to your plotter in real-time. The front-panel display may not update — this is a hardware limitation. Commands are applied internally."}>
 										<span class="live-badge">Live</span>
 									</span>
 								{/if}
@@ -4035,7 +4183,7 @@
 										}}
 									/>
 									<span class="prop-slider-val">{key === "overcut" ? plotterStore.config[key].toFixed(1) : plotterStore.config[key]}{unit}</span>
-									<span class="info-tip" data-tip={tip}>
+									<span class="info-tip" use:tooltip={tip}>
 										<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
 									</span>
 								</div>
@@ -4046,7 +4194,7 @@
 						<div class="prop-section">
 							<div class="prop-label-row">
 								<span class="prop-label">Roll Alignment</span>
-								<span class="info-tip" data-tip="Tells OmniPlot where your roll sits on the plotter bed. Critical when roll width is less than plotter max width — without this, cuts will be offset by the difference.">
+								<span class="info-tip" use:tooltip={"Tells OmniPlot where your roll sits on the plotter bed. Critical when roll width is less than plotter max width — without this, cuts will be offset by the difference."}>
 									<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
 								</span>
 							</div>
@@ -4104,14 +4252,17 @@
 							{/if}
 
 							<!-- Mode 2: Auto-probe (cut-agent only) -->
-							{#if plotterStore.config.connection === 'cut-agent'}
+							{#if plotterStore.config.connection === 'cut-agent' && !isPrinterPort(plotterStore.config.serialPort)}
 								<div class="cal-probe-section">
 									<div class="cal-probe-header">
 										<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
 										<span>Auto-probe</span>
 									</div>
 
-									{#if calPhase === 'idle' || calPhase === 'probe-done'}
+									{#if oaSilent && (calPhase === 'idle' || calPhase === 'probe-done')}
+										<p class="cal-probe-hint">This cutter doesn't report its carriage position, so it can't be probed. Set the offset with <strong>Flush Left</strong>, <strong>Flush Right</strong> or <strong>Custom</strong> above.</p>
+										<button class="cal-probe-btn" onclick={() => setOaSilent(false)}>Try the probe anyway</button>
+									{:else if calPhase === 'idle' || calPhase === 'probe-done'}
 										<p class="cal-probe-hint">Jog the plotter carriage to the left edge of your roll, then click Capture — the agent reads the carriage position directly.</p>
 										<button class="cal-probe-btn" onclick={() => calPhase = 'probe-wait'}>
 											Start Probe
@@ -4186,7 +4337,7 @@
 								</button>
 							{/if}
 
-							<!-- Cut orientation: F test → flipH / flipV -->
+							<!-- Cut orientation: arrow test → flipH / flipV -->
 							<div class="cal-orient">
 								<div class="cal-orient__head">
 									<span class="prop-slider-name">Cut orientation</span>
@@ -4196,35 +4347,46 @@
 										<span class="cal-orient__status cal-orient__status--warn">Not verified</span>
 									{/if}
 								</div>
-								<p class="cal-probe-hint">
-									Cut a small letter F on scrap and compare it with this preview (the canvas view: roll width across, printing downward). A mirrored cut is a wasted part — verify each plotter once.
-								</p>
-								<div class="cal-orient__row">
-									<svg class="cal-orient__preview" viewBox={orientPreview.viewBox} aria-label="Preview: the F near the left roll edge at the start of the job">
-										<line x1="0" y1="0" x2="0" y2="4.5" class="cal-orient__edge" />
-										<path d={orientPreview.d} class="cal-orient__f" />
-									</svg>
-									<button class="cal-test-cut-btn" onclick={cutOrientationTest}>
-										{isConnected ? "Cut orientation test" : "Download orientation test (.plt)"}
-									</button>
-								</div>
-								{#if orientTestCut}
-									<div class="cal-orient__q">
-										<span>Does the cut F read correctly (not backwards)?</span>
-										<div class="cal-orient__choices">
-											<button class="cal-probe-btn" class:cal-orient__choice--on={orientReads === true} onclick={() => (orientReads = true)}>Reads correctly</button>
-											<button class="cal-probe-btn" class:cal-orient__choice--on={orientReads === false} onclick={() => (orientReads = false)}>Backwards</button>
+								<ol class="cal-orient__steps">
+									<li>
+										<span class="cal-orient__num">1</span>
+										<div class="cal-orient__body">
+											<span>Cut this arrow on scrap. Verify once per plotter.</span>
+											<div class="cal-orient__row">
+												<svg class="cal-orient__preview" viewBox={orientPreview.viewBox} role="img" aria-label="Preview: an arrow pointing down the roll, near the left roll edge">
+													<line x1="0" y1="0" x2="0" y2="4.5" class="cal-orient__edge" />
+													<path d={orientPreview.d} class="cal-orient__f" />
+												</svg>
+												<button class="cal-test-cut-btn" onclick={cutOrientationTest}>
+													{isConnected ? "Cut orientation test" : "Download test (.plt)"}
+												</button>
+											</div>
 										</div>
-									</div>
-									<div class="cal-orient__q">
-										<span>Held printing-downward like the canvas, is it near the same roll edge as the preview (left)?</span>
-										<div class="cal-orient__choices">
-											<button class="cal-probe-btn" class:cal-orient__choice--on={orientSameEdge === true} onclick={() => (orientSameEdge = true)}>Same edge</button>
-											<button class="cal-probe-btn" class:cal-orient__choice--on={orientSameEdge === false} onclick={() => (orientSameEdge = false)}>Opposite edge</button>
-										</div>
-									</div>
-									<button class="cal-test-cut-btn" disabled={orientReads === null || orientSameEdge === null} onclick={saveOrientationAnswers}>Save orientation</button>
-								{/if}
+									</li>
+									{#if orientTestCut}
+										<li>
+											<span class="cal-orient__num">2</span>
+											<div class="cal-orient__body">
+												<span>Hold the cut with the start of the roll at the top. Which way does the arrow point?</span>
+												<div class="cal-orient__choices">
+													<button class="cal-probe-btn" class:cal-orient__choice--on={orientArrowSame === true} onclick={() => (orientArrowSame = true)}>Down, like the preview</button>
+													<button class="cal-probe-btn" class:cal-orient__choice--on={orientArrowSame === false} onclick={() => (orientArrowSame = false)}>Up</button>
+												</div>
+											</div>
+										</li>
+										<li>
+											<span class="cal-orient__num">3</span>
+											<div class="cal-orient__body">
+												<span>Which roll edge is it closest to?</span>
+												<div class="cal-orient__choices">
+													<button class="cal-probe-btn" class:cal-orient__choice--on={orientSameEdge === true} onclick={() => (orientSameEdge = true)}>Left, like the preview</button>
+													<button class="cal-probe-btn" class:cal-orient__choice--on={orientSameEdge === false} onclick={() => (orientSameEdge = false)}>Right</button>
+												</div>
+												<button class="cal-test-cut-btn" disabled={orientArrowSame === null || orientSameEdge === null} onclick={saveOrientationAnswers}>Save orientation</button>
+											</div>
+										</li>
+									{/if}
+								</ol>
 								<p class="cal-probe-hint">
 									Mirror along roll length: <strong>{plotterStore.config.flipH ? "On" : "Off"}</strong> ·
 									Mirror across roll width: <strong>{plotterStore.config.flipV ? "On" : "Off"}</strong>
@@ -4253,7 +4415,7 @@
 					<div class="prop-section">
 						<div class="prop-label-row">
 							<span class="prop-label">Output Format</span>
-							<span class="info-tip" data-tip="HPGL protocol variant. Standard HPGL and Roland use different speed units internally. Select the format matching your plotter for correctly scaled cut speeds.">
+							<span class="info-tip" use:tooltip={"HPGL protocol variant. Standard HPGL and Roland use different speed units internally. Select the format matching your plotter for correctly scaled cut speeds."}>
 								<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
 							</span>
 						</div>
@@ -7274,10 +7436,13 @@
 	.cal-orient__status--ok { color: var(--color-success); background: color-mix(in srgb, var(--color-success) 12%, transparent); }
 	.cal-orient__status--warn { color: var(--color-warning); background: color-mix(in srgb, var(--color-warning) 14%, transparent); }
 	.cal-orient__row { display: flex; align-items: center; gap: 10px; }
-	.cal-orient__preview { width: 56px; height: 63px; flex-shrink: 0; border: 1px solid var(--border-subtle); border-radius: 4px; background: var(--bg-base); }
+	.cal-orient__preview { width: 64px; height: 72px; flex-shrink: 0; border: 1px solid var(--border-subtle); border-radius: 4px; background: var(--bg-base); }
 	.cal-orient__edge { stroke: var(--text-tertiary); stroke-width: 0.12; }
 	.cal-orient__f { fill: color-mix(in srgb, var(--color-brand) 18%, transparent); stroke: var(--color-brand); stroke-width: 0.06; }
-	.cal-orient__q { display: flex; flex-direction: column; gap: 4px; font-size: 0.75rem; color: var(--text-secondary); }
+	.cal-orient__steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+	.cal-orient__steps li { display: flex; gap: 8px; align-items: flex-start; }
+	.cal-orient__num { flex-shrink: 0; width: 16px; height: 16px; border-radius: 50%; background: var(--bg-surface-3); color: var(--text-secondary); font-size: 0.6875rem; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; margin-top: 1px; }
+	.cal-orient__body { display: flex; flex-direction: column; gap: 6px; min-width: 0; font-size: 0.75rem; color: var(--text-secondary); }
 	.cal-orient__choices { display: flex; gap: 6px; }
 	.cal-orient__choice--on { border-color: var(--color-brand) !important; color: var(--text-brand) !important; }
 	.cal-test-cut-btn {
@@ -7340,33 +7505,8 @@
 		flex-shrink: 0;
 		vertical-align: middle;
 	}
-	.info-tip:hover { color: var(--text-secondary); }
+	.info-tip:hover, .info-tip:focus-visible { color: var(--text-secondary); }
 	.info-tip svg { display: block; }
-	.info-tip::before {
-		content: attr(data-tip);
-		position: absolute;
-		bottom: calc(100% + 6px);
-		right: 0;
-		width: 210px;
-		padding: 7px 10px;
-		background: var(--bg-surface);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
-		box-shadow: 0 4px 16px rgba(0,0,0,0.28);
-		font-size: 0.8532rem;
-		font-family: var(--font-body);
-		font-weight: 400;
-		color: var(--text-secondary);
-		line-height: 1.45;
-		white-space: normal;
-		text-transform: none;
-		letter-spacing: 0;
-		pointer-events: none;
-		z-index: 300;
-		opacity: 0;
-		transition: opacity 0.1s;
-	}
-	.info-tip:hover::before { opacity: 1; }
 
 	/* ── Plotter Discovery Panel ──────────────── */
 
@@ -7881,6 +8021,18 @@
 		text-decoration: none;
 	}
 	.recent-plotters__all:hover { text-decoration: underline; }
+	.recent-more {
+		display: block;
+		margin: 4px 0 2px;
+		padding: 2px 0;
+		background: none;
+		border: none;
+		color: var(--text-brand);
+		font: inherit;
+		font-size: 0.844rem;
+		cursor: pointer;
+	}
+	.recent-more:hover { text-decoration: underline; }
 
 	.recent-toggle {
 		display: inline-flex;

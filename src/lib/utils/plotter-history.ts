@@ -90,8 +90,12 @@ export function historyKey(e: Pick<PlotterHistoryEntry, "connection" | "vendorId
 // 2 = exact, 1 = same hardware on a different port path (COM renumbered), 0 = no.
 export function matchScore(entry: PlotterHistoryEntry, dev: LiveDevice): 0 | 1 | 2 {
 	if (entry.connection === "usb-serial") {
-		if (dev.source !== "usb" || entry.vendorId === undefined) return 0;
-		return dev.vendorId === entry.vendorId && dev.productId === entry.productId ? 2 : 0;
+		if (entry.vendorId === undefined) return 0;
+		const sameHw = dev.vendorId === entry.vendorId && dev.productId === entry.productId;
+		if (dev.source === "usb") return sameHw ? 2 : 0;
+		// Saved from USB Direct, now seen through the Cut Agent (the agent is the
+		// required route) — same hardware, weak match so twins are never guessed.
+		return sameHw ? 1 : 0;
 	}
 	if (entry.connection === "cut-agent") {
 		if (dev.source !== "agent") return 0;
@@ -123,6 +127,77 @@ export function findEntryFor(state: PlotterHistoryState, dev: LiveDevice): Plott
 		if (s > bestScore) { best = e; bestScore = s; }
 	}
 	return best;
+}
+
+// How much we know about an entry — the survivor of a merge is the richest one.
+// The Cut Agent is the supported route, so it outranks a bare USB Direct record.
+function detailScore(e: PlotterHistoryEntry): number {
+	return (e.connection === "cut-agent" ? 8 : 0) + (e.vendorId !== undefined ? 4 : 0) + (e.productId !== undefined ? 2 : 0) + (e.label ? 1 : 0);
+}
+
+function sameUsbId(a: PlotterHistoryEntry, b: PlotterHistoryEntry): boolean {
+	return a.vendorId !== undefined && a.vendorId === b.vendorId && a.productId === b.productId;
+}
+
+const realPort = (e: PlotterHistoryEntry) => !!e.serialPort && e.serialPort !== "auto";
+
+/** True when `a` and `b` are provably the same physical plotter. Two cutters with
+ *  the same VID:PID on different ports are NOT merged — they may be twins. */
+function isSameMachine(a: PlotterHistoryEntry, b: PlotterHistoryEntry, entries: PlotterHistoryEntry[]): boolean {
+	if (a.connection === "network" || b.connection === "network") return false;
+	// Same agent port, one record just lacks the USB id (the "VID shown / VID missing" pair).
+	if (a.connection === "cut-agent" && b.connection === "cut-agent") {
+		if (!realPort(a) || a.serialPort !== b.serialPort) return false;
+		return a.vendorId === undefined || b.vendorId === undefined || sameUsbId(a, b);
+	}
+	// USB Direct record vs Cut Agent record of the same hardware — only when it's
+	// unambiguous: exactly one agent record carries that VID:PID.
+	const [usbE, agentE] = a.connection === "usb-serial" ? [a, b] : [b, a];
+	if (usbE.connection !== "usb-serial" || agentE.connection !== "cut-agent" || !sameUsbId(usbE, agentE)) return false;
+	return entries.filter((e) => e.connection === "cut-agent" && sameUsbId(e, usbE)).length === 1;
+}
+
+/**
+ * Collapses records of the same physical plotter into one, keeping the entry
+ * with the most detail and folding the others' label / fleet link / counts into
+ * it. The auto target follows the survivor.
+ */
+export function mergeDuplicateEntries(state: PlotterHistoryState): PlotterHistoryState {
+	let entries = [...state.entries];
+	let autoTargetKey = state.autoTargetKey;
+	let changed = true;
+	while (changed) {
+		changed = false;
+		outer: for (let i = 0; i < entries.length; i++) {
+			for (let j = i + 1; j < entries.length; j++) {
+				if (!isSameMachine(entries[i], entries[j], entries)) continue;
+				const [a, b] = [entries[i], entries[j]];
+				const [keep, drop] = detailScore(a) >= detailScore(b) ? [a, b] : [b, a];
+				const recent = a.lastConnectedAt >= b.lastConnectedAt ? a : b;
+				const merged: PlotterHistoryEntry = {
+					...keep,
+					label: keep.label ?? drop.label,
+					fleetId: keep.fleetId ?? drop.fleetId,
+					vendorId: keep.vendorId ?? drop.vendorId,
+					productId: keep.productId ?? drop.productId,
+					serialPort: keep.connection === "cut-agent" ? (realPort(recent) && recent.connection === "cut-agent" ? recent.serialPort : keep.serialPort) : keep.serialPort,
+					presetName: recent.presetName,
+					firstConnectedAt: Math.min(a.firstConnectedAt, b.firstConnectedAt),
+					lastConnectedAt: Math.max(a.lastConnectedAt, b.lastConnectedAt),
+					lastEndedAt: recent.lastEndedAt,
+					lastEndReason: recent.lastEndReason,
+					connectCount: a.connectCount + b.connectCount,
+				};
+				merged.key = historyKey(merged);
+				if (autoTargetKey === drop.key || autoTargetKey === keep.key) autoTargetKey = merged.key;
+				entries = entries.filter((_, k) => k !== i && k !== j);
+				entries.push(merged);
+				changed = true;
+				break outer;
+			}
+		}
+	}
+	return { ...state, entries: sortAndCap(entries), autoTargetKey };
 }
 
 function sortAndCap(entries: PlotterHistoryEntry[]): PlotterHistoryEntry[] {
@@ -169,7 +244,7 @@ export function recordConnect(state: PlotterHistoryState, input: ConnectInput, n
 		entry = { ...clean, key, firstConnectedAt: now, lastConnectedAt: now, connectCount: 1 };
 	}
 	key = entry.key;
-	return { ...state, entries: sortAndCap([entry, ...entries]), autoTargetKey: key };
+	return mergeDuplicateEntries({ ...state, entries: sortAndCap([entry, ...entries]), autoTargetKey: key });
 }
 
 /**
@@ -262,5 +337,5 @@ export function sanitizeHistory(raw: unknown): PlotterHistoryState {
 	}
 	const sorted = sortAndCap(entries);
 	const target = typeof r.autoTargetKey === "string" && sorted.some((e) => e.key === r.autoTargetKey) ? r.autoTargetKey : null;
-	return { version: 1, entries: sorted, autoTargetKey: target, autoReconnect: r.autoReconnect !== false };
+	return mergeDuplicateEntries({ version: 1, entries: sorted, autoTargetKey: target, autoReconnect: r.autoReconnect !== false });
 }

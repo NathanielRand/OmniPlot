@@ -1,13 +1,28 @@
 ////////////////////////////////
 // URGENT
 //////////////////////////////
- Outline-only art still fails. A 3 px hairline outline on white gets thinned and broken by the blur-and-rethreshold step, so potrace traces a sliver and the error is hundreds of pixels. This isn't the type of file in your samples, and I left it alone. The bench reports it as L1600-stroke, and it's fixable if you expect that kind of upload.
+ - Outline-only art still fails. A 3 px hairline outline on white gets thinned and broken by the blur-and-rethreshold step, so potrace traces a sliver and the error is hundreds of pixels. This isn't the type of file in your samples, and I left it alone. The bench reports it as L1600-stroke, and it's fixable if you expect that kind of upload.
 
+//////////////////////////////////
+// Plotter/Agent:
+/////////////////////////////////
+- Cut Agent v1.3: network (Wi-Fi) send. Network jobs go through the SvelteKit server (/api/plotter/send), which can't reach a 192.168.x.x plotter from the hosted site. Needs an agent endpoint that opens the TCP socket on the user's LAN, then a USB | Network choice under the agent in Studio. Needs new binaries for all 4 platforms (mac builds need a mac host) and a CURRENT_AGENT_VERSION bump, which forces an update prompt, so ship binaries first.
+- Pace USB Direct like the agent (patternDelayMs instead of a fixed 60 ms) only if direct USB is ever brought back. Today it's only the fallback when the Cut Agent is switched off in Admin.
+- Printer-class USB cutters: agent v1.3.0 source now sends RAW jobs via the Windows spooler / CUPS / /dev/usb/lpN (agent/printer*.go, /api/printers, serialPort "printer:<name>"). Still to do: build + publish v1.3.0 binaries (make dist; mac on a mac host). Stop can't recall a pattern already handed to the spooler. WinUSB/libusb for cutters with no print queue at all is not done.
+
+// On Hold
+- phone hotspot, bluetooth, Type-C convertor to USB, USB stick with downloaded instructions plotter.
 ///////////////////////////////
 // USER VERIFICATION
 ///////////////////////////////
-- VERIFY: duplicate plotter on usb connect shows up on new session but could also exists otherwise.
-- VERIFY: Cut agent fails start probe (see ref images in /test folder)
+- VERIFY (hardware): Cut Agent auto-probe. It now re-points a stale COM port (COM7 -> COM8) before querying, and remembers a cutter that never answers OA so it stops offering the probe. If your cutter does answer OA, the probe should capture an offset.
+- VERIFY (hardware): cut the new orientation arrow on a real plotter, answer the 3 steps, cut again and confirm it matches the preview.
+- VERIFY: Roll alignment "Custom" opens the X offset field when offset is 0; Flush Left/Right still work.
+- VERIFY: info tips in the Studio panel appear above everything (they're now the shared tooltip, not a clipped pseudo-element).
+- VERIFY: Recent plotters shows only the latest plotter, "View more (N)" expands; no duplicates after reload (old saved history is merged on load).
+- VERIFY: with the Cut Agent running, the Plotter tab no longer lists "USB Direct" cards or an Authorize row, and a plotter previously saved as USB Direct reconnects through the agent.
+- VERIFY (hardware, needs agent v1.3.0 built): plug in a printer-class USB cutter (Windows: install its driver so a USB00x queue exists). It should appear as a "USB printer" card; Connect, then cut a small test. Windows write path is untested against a real queue; only listing + validation were exercised.
+- VERIFY: "Other serial ports" appears (collapsed) when the agent sees non-USB COM ports.
 - VERIFY: the plotter connection types (usb direct, cut agent, etc) need large specialized ui medallions/badges with icons on the connected plotter cards so it is clear to the user which connection is which quickly.
 
 ///////////////////////////////

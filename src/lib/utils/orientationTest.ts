@@ -2,42 +2,44 @@
 // ⚠ PRECISION MANUFACTURING — plotter orientation calibration.
 //
 // Plotters differ in which way their axes run, so the same job can come out
-// mirrored on one machine and correct on another. This test cuts a small
-// letter "F" — it reads backwards when mirrored no matter how it's turned —
-// through the exact same pipeline as a real job (generateHpgl), near the
-// roll edge the canvas shows on the left, at the start of the job.
-//
-// The operator answers two questions and we derive flipH/flipV:
-//   F reads correctly? | Near the same roll edge as the preview? | setting
-//   yes                | yes                                     | none
-//   no (backwards)     | no (opposite edge)                      | flipV
-//   no (backwards)     | yes                                     | flipH
-//   yes                | no (opposite edge)                      | flipH + flipV
-// (mirror across the width moves pieces to the other edge; mirror along the
-// length keeps the edge; both together are a 180° turn, which doesn't mirror.)
+// mirrored on one machine and correct on another. This test cuts a one-sided
+// arrow (a harpoon: shaft, tip, a single barb) through the exact same pipeline
+// as a real job (generateHpgl), near the roll edge the canvas shows on the
+// left, at the start of the job. The arrow points down the roll, the way the
+// job runs. It has no "up" and no "backwards" to judge — the operator only
+// checks two physical things, one per axis:
+//   Arrow points the same way as the preview? | Near the same roll edge? | setting
+//   yes                                       | yes                       | none
+//   no (reversed)                             | yes                       | flipH
+//   yes                                       | no (opposite edge)        | flipV
+//   no (reversed)                             | no (opposite edge)        | flipH + flipV
+// (flipH mirrors along the roll length — reverses the arrow, keeps the edge;
+// flipV mirrors across the roll width — swaps the edge, keeps the arrow.)
 // ─────────────────────────────────────────────
 import type { CanvasItem, CanvasState, MaterialSheet, PlotterConfig } from "$lib/types";
 import { generateHpgl } from "./hpgl";
 import { itemFootprintPolygons } from "./nesting";
 
-/** Letter F, drawn upright (SVG y-down): stem on the left, two arms to the right. */
-export const ORIENTATION_TEST_PATH = "M0 0 H60 V16 H20 V40 H50 V56 H20 V100 H0 Z";
-const F_WIDTH_IN = 1.8;
-const F_HEIGHT_IN = 3;
-const F_OFFSET_IN = 0.5; // from the job start and from the y = 0 roll edge
-
+/**
+ * Harpoon pointing along the roll (+x, the job direction), 100 × 60 art units:
+ * shaft, tip at the right, and one barb on the side nearest the y = 0 roll edge.
+ */
+export const ORIENTATION_TEST_PATH = "M0 24 H66 L52 4 L100 30 L66 36 H0 Z";
+const ART_WIDTH_IN = 3;
+const ART_HEIGHT_IN = 1.8;
+const ART_OFFSET_IN = 0.5; // from the job start and from the y = 0 roll edge
 export function orientationTestItem(): CanvasItem {
 	return {
 		id: "orientation-test",
 		patternId: "orientation-test",
 		pattern: {
 			id: "orientation-test", vehicleId: "orientation-test", category: "ppf", zone: "custom",
-			name: "Orientation test (F)", coverage: "full", svgPath: ORIENTATION_TEST_PATH,
-			widthInches: F_WIDTH_IN, heightInches: F_HEIGHT_IN, revision: "", isPublished: false,
+			name: "Orientation test (arrow)", coverage: "full", svgPath: ORIENTATION_TEST_PATH,
+			widthInches: ART_WIDTH_IN, heightInches: ART_HEIGHT_IN, revision: "", isPublished: false,
 			createdAt: new Date(0), updatedAt: new Date(0),
 		},
-		x: F_OFFSET_IN, y: F_OFFSET_IN,
-		width: F_WIDTH_IN, height: F_HEIGHT_IN,
+		x: ART_OFFSET_IN, y: ART_OFFSET_IN,
+		width: ART_WIDTH_IN, height: ART_HEIGHT_IN,
 		rotation: 0, flippedH: false, flippedV: false,
 		scale: 1, layer: 0, locked: false, color: "#000", outOfBounds: false,
 		label: "Orientation test",
@@ -67,20 +69,17 @@ export function orientationTestPreview(area = { across: 4, along: 4.5 }): { d: s
 	return { d, viewBox: `0 0 ${area.across} ${area.along}` };
 }
 
-export function flipsFromAnswers(readsCorrectly: boolean, sameEdge: boolean): { flipH: boolean; flipV: boolean } {
-	if (readsCorrectly && sameEdge) return { flipH: false, flipV: false };
-	if (!readsCorrectly && !sameEdge) return { flipH: false, flipV: true };
-	if (!readsCorrectly && sameEdge) return { flipH: true, flipV: false };
-	return { flipH: true, flipV: true };
+export function flipsFromAnswers(arrowSameWay: boolean, sameEdge: boolean): { flipH: boolean; flipV: boolean } {
+	return { flipH: !arrowSameWay, flipV: !sameEdge };
 }
 
 /** The test was cut WITH the current settings, so the answers describe a
  *  correction on top of them. Mirrors compose by toggling. */
 export function correctedOrientation(
 	current: { flipH: boolean; flipV: boolean },
-	readsCorrectly: boolean,
+	arrowSameWay: boolean,
 	sameEdge: boolean,
 ): { flipH: boolean; flipV: boolean } {
-	const c = flipsFromAnswers(readsCorrectly, sameEdge);
+	const c = flipsFromAnswers(arrowSameWay, sameEdge);
 	return { flipH: current.flipH !== c.flipH, flipV: current.flipV !== c.flipV };
 }

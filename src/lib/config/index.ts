@@ -982,9 +982,40 @@ export const FAQ_ITEMS = [
 // ─── Changelog ────────────────────────────────
 // Newest first. `LATEST_VERSION` drives the sidebar "what's new" badge —
 // bump it whenever a release entry is added below.
-export const LATEST_VERSION = "1.17.0";
+export const LATEST_VERSION = "1.18.0";
 
 export const CHANGELOG = [
+	{
+		version: "1.18.0",
+		date: "2026-10-16",
+		label: "Smoother plotter connections & a clearer orientation test",
+		changes: [
+			{
+				type: "feature",
+				text: "Printer-style USB cutters now connect through the Cut Agent (v1.3) even though they never show up as a COM port. They appear as \"USB printer\" cards and in Recent plotters.",
+			},
+			{
+				type: "improvement",
+				text: "Connecting is now Cut Agent first, which keeps multi-piece jobs from dropping corners. Older USB Direct connections reconnect through the agent automatically, and RS-232 / Bluetooth serial ports are listed under Other serial ports.",
+			},
+			{
+				type: "improvement",
+				text: "The orientation test now cuts a one-sided arrow instead of a letter, with three short numbered steps.",
+			},
+			{
+				type: "improvement",
+				text: "Recent plotters shows your latest connection with a View more option, and the same plotter is no longer listed twice (including duplicate USB cards).",
+			},
+			{
+				type: "improvement",
+				text: "Auto-probe re-finds your cutter if Windows renumbered its COM port, and stops offering itself for cutters that can't report their position.",
+			},
+			{
+				type: "fix",
+				text: "Roll alignment's Custom button now works, and the info tooltips in Studio always appear on top.",
+			},
+		],
+	},
 	{
 		version: "1.17.0",
 		date: "2026-10-02",
