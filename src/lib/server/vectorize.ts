@@ -1,6 +1,7 @@
 import Jimp from 'jimp';
 import sharp from 'sharp';
 import { trace } from 'potrace';
+import { RING_HOLE_RATIO } from '../utils/pathGeometry';
 
 export const TARGET_LONG_EDGE = 6000;
 
@@ -347,9 +348,6 @@ function keepOuterSubpaths(d: string): string {
 	const ring = subpaths.find(s => approxSignedArea(s) < 0 && Math.abs(approxSignedArea(s)) > outerArea * RING_HOLE_RATIO);
 	return ring && largest !== ring ? `${largest} ${ring}` : largest;
 }
-
-// A hole this close to the outer contour's area means the "shape" is only a thin line.
-export const RING_HOLE_RATIO = 0.9;
 
 function filterSvgOuterPaths(svg: string): string {
 	return svg.replace(/\bd="([^"]+)"/g, (_, d: string) => `d="${keepOuterSubpaths(d)}"`);

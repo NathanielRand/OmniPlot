@@ -2,7 +2,7 @@
 //   server: preprocessForTrace → runTrace          (src/lib/server/vectorize.ts)
 //   client: importSvgExact (DOM-free here) → normalizeOutline → smoothBezierJunctions
 import { preprocessForTrace, runTrace } from '../../src/lib/server/vectorize';
-import { parsePath, transformSegs, normalizeOutline, splitSubpathSegs, flattenSegs, serializePath, type Mat } from '../../src/lib/utils/pathGeometry';
+import { parsePath, transformSegs, normalizeOutline, splitSubpathSegs, innerLineSelection, serializePath, type Mat } from '../../src/lib/utils/pathGeometry';
 import { smoothBezierJunctions } from '../../src/lib/utils/bezier-smooth';
 
 function matFromTransform(t: string | null): Mat {
@@ -31,17 +31,12 @@ export function svgToNormalized(svg: string): string {
 	return normalizeOutline(segs);
 }
 
-// Mirrors SvgPathInput.processDetectedLayers with its default contour option ("Keep inner only"):
-// with several contours the second-largest (by area) is kept; a single contour is untouched.
+// Mirrors SvgPathInput.processDetectedLayers with its default contour option ("Keep inner only").
 export function keepInner(d: string): string {
 	const subs = splitSubpathSegs(parsePath(d));
 	if (subs.length <= 1) return d;
-	const ranked = subs.map(seg => {
-		const pts = flattenSegs(seg, 0.01)[0]?.points ?? [];
-		let a = 0; for (let i = 0; i < pts.length; i++) { const j = (i + 1) % pts.length; a += pts[i].x * pts[j].y - pts[j].x * pts[i].y; }
-		return { seg, abs: Math.abs(a / 2) };
-	}).sort((x, y) => y.abs - x.abs);
-	return serializePath((ranked[1] ?? ranked[0]).seg);
+	const keep = innerLineSelection(subs);
+	return subs.filter((_, i) => keep[i]).map(serializePath).join(' ');
 }
 
 export async function vectorizeRaster(png: Buffer): Promise<{ d: string; rawSvg: string }> {

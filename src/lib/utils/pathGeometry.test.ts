@@ -4,7 +4,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	parsePath, serializePath, transformSegs, pathBBox, flattenSegs, splitIntoPieces,
 	pathToInchSegs, sizeMatchesOutline, heightForWidth, normalizeOutline, rectSegs, ellipseSegs, mirrorOutline,
-	type Seg, type Pt,
+	innerLineSelection, splitSubpathSegs, type Seg, type Pt,
 } from './pathGeometry';
 
 const close = (a: number, b: number, eps = 1e-9) => expect(Math.abs(a - b)).toBeLessThanOrEqual(eps);
@@ -142,6 +142,28 @@ describe('pattern sizing', () => {
 		const src = rectSegs(-1000, 5, 37, 6, 0.5, 0.5);
 		const out = pathBBox(parsePath(normalizeOutline(src)));
 		close(out.width / out.height, 37 / 6, 1e-10);
+	});
+});
+
+describe('innerLineSelection: default contour choice', () => {
+	const box = (x: number, y: number, w: number, h: number) => `M${x} ${y}H${x + w}V${y + h}H${x}Z`;
+	const pick = (...d: string[]) => innerLineSelection(splitSubpathSegs(parsePath(d.join(''))));
+
+	it('keeps only the inner edge of a double-line outline', () => {
+		expect(pick(box(0, 0, 100, 50), box(0.5, 0.5, 99, 49))).toEqual([false, true]);
+		expect(pick(box(0.5, 0.5, 99, 49), box(0, 0, 100, 50))).toEqual([true, false]);
+	});
+	it('keeps an outline together with its small cut-outs', () => {
+		expect(pick(box(0, 0, 100, 50), box(5, 5, 3, 4), box(90, 5, 3, 4))).toEqual([true, true, true]);
+	});
+	it('keeps cut-outs when the outline itself is a double line', () => {
+		expect(pick(box(0, 0, 100, 50), box(0.5, 0.5, 99, 49), box(5, 5, 3, 4))).toEqual([false, true, true]);
+	});
+	it('keeps separate pieces of similar size', () => {
+		expect(pick(box(0, 0, 40, 20), box(50, 0, 39, 20))).toEqual([true, true]);
+	});
+	it('reduces identical duplicate contours to one', () => {
+		expect(pick(box(0, 0, 40, 20), box(0, 0, 40, 20)).filter(Boolean)).toHaveLength(1);
 	});
 });
 

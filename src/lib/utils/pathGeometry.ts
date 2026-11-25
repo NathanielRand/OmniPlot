@@ -589,6 +589,48 @@ export function polySegs(points: Pt[], closed: boolean): Seg[] {
 	return segs;
 }
 
+// ─── Which contours to keep ──────────────────
+// "Keep inner only" exists for outline-only art: a line drawn as the pattern
+// edge arrives as two nested contours of almost the same size, and only one of
+// them is the cut. Every other contour (a cut-out, a second piece) is real
+// geometry and must never be dropped by default.
+
+/** A contour this close in area to the one around it is the other edge of the same drawn line. */
+export const RING_HOLE_RATIO = 0.9;
+
+/**
+ * Default contour selection: each double line is reduced to its inner edge and
+ * everything else is kept. Returns one flag per subpath.
+ */
+export function innerLineSelection(subs: Seg[][]): boolean[] {
+	const info = subs.map((s, i) => {
+		const b = pathBBox(s);
+		const tol = Math.max(b.width, b.height) * 0.001;
+		const pts = flattenSegs(s, tol)[0]?.points ?? [];
+		let area = 0;
+		for (let k = 0; k < pts.length; k++) {
+			const p = pts[k], q = pts[(k + 1) % pts.length];
+			area += p.x * q.y - q.x * p.y;
+		}
+		return { i, b, tol, area: Math.abs(area / 2) };
+	}).sort((a, b) => b.area - a.area);
+
+	// Largest first: a contour joins a line when it sits within that line's outer edge.
+	const lines: (typeof info)[] = [];
+	for (const c of info) {
+		const line = lines.find(([o]) =>
+			c.area > o.area * RING_HOLE_RATIO &&
+			c.b.x >= o.b.x - o.tol && c.b.y >= o.b.y - o.tol &&
+			c.b.x + c.b.width <= o.b.x + o.b.width + o.tol &&
+			c.b.y + c.b.height <= o.b.y + o.b.height + o.tol);
+		if (line) line.push(c);
+		else lines.push([c]);
+	}
+	const keep = subs.map(() => false);
+	for (const line of lines) keep[(line[1] ?? line[0]).i] = true;
+	return keep;
+}
+
 // ─── Grouping contours into physical pieces ──
 // A compound outline (a shape with a hole, a letter "O") is ONE piece: the
 // hole belongs to it. When a combined file is split into separate patterns,

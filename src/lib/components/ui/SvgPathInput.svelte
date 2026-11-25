@@ -9,7 +9,7 @@
 	import { tooltip } from '$lib/actions/tooltip';
 	import {
 		parsePath, pathBBox, transformSegs, normalizeOutline, splitSubpathSegs, serializePath,
-		flattenSegs, splitIntoPieces, rectSegs, ellipseSegs, polySegs, type Seg, type Mat,
+		flattenSegs, splitIntoPieces, innerLineSelection, rectSegs, ellipseSegs, polySegs, type Seg, type Mat,
 	} from '$lib/utils/pathGeometry';
 
 	// ─── Props ────────────────────────────────────
@@ -371,8 +371,9 @@
 	// Lossless SVG extraction (Vectorize's SVG branch, Path Data upload) can pull
 	// in nested contours from the source file — e.g. a "ribbon" shape whose outer
 	// boundary and inner hole are both traced, producing a visible double line.
-	// DEFAULT: "Keep inner only" — when a file holds several nested contours
-	// (e.g. an outline drawn as a ring of two lines), the inner one is the cut.
+	// DEFAULT: "Keep inner only" — when an outline is drawn as a ring of two
+	// lines, the inner one is the cut. Contours that aren't the second edge of a
+	// line (cut-outs, other pieces) are kept — see innerLineSelection.
 	// The picker below offers Keep outer / Keep all / manual selection instead,
 	// and the contour count is always shown so nothing is dropped unnoticed.
 	// A file with a single contour is never affected.
@@ -400,6 +401,15 @@
 		});
 	}
 
+	// The contours the current auto-keep preference selects.
+	function autoSelection(layers: { d: string; area: number }[]): boolean[] {
+		if (layerPreference === "inner") {
+			try { return innerLineSelection(layers.map((l) => parsePath(l.d))); } catch { return layers.map(() => true); }
+		}
+		const largest = layers.reduce((best, l, i) => (Math.abs(l.area) > Math.abs(layers[best].area) ? i : best), 0);
+		return layers.map((_, i) => i === largest);
+	}
+
 	// Recomputes `value` from the currently-selected layers.
 	function rebuildFromSelection() {
 		const selected = detectedLayers.filter((_, i) => layerSelection[i]);
@@ -424,10 +434,9 @@
 			return fullD;
 		}
 		layerManualMode = false;
-		const ranked = layers.map((l, i) => ({ i, abs: Math.abs(l.area) })).sort((a, b) => b.abs - a.abs);
-		const chosen = layerPreference === "outer" ? ranked[0].i : (ranked[1]?.i ?? ranked[0].i);
-		layerSelection = layers.map((_, i) => i === chosen);
-		return layers[chosen].d;
+		layerSelection  = autoSelection(layers);
+		if (layerSelection.every(Boolean)) return fullD;
+		return layers.filter((_, i) => layerSelection[i]).map(l => l.d).join(' ');
 	}
 
 	function toggleLayer(i: number) {
@@ -443,9 +452,7 @@
 			rebuildFromSelection();
 			return;
 		}
-		const ranked = detectedLayers.map((l, i) => ({ i, abs: Math.abs(l.area) })).sort((a, b) => b.abs - a.abs);
-		const chosen = layerPreference === "outer" ? ranked[0].i : (ranked[1]?.i ?? ranked[0].i);
-		layerSelection = detectedLayers.map((_, i) => i === chosen);
+		layerSelection = autoSelection(detectedLayers);
 		rebuildFromSelection();
 	}
 

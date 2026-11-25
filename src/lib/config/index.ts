@@ -982,9 +982,20 @@ export const FAQ_ITEMS = [
 // ─── Changelog ────────────────────────────────
 // Newest first. `LATEST_VERSION` drives the sidebar "what's new" badge —
 // bump it whenever a release entry is added below.
-export const LATEST_VERSION = "1.18.0";
+export const LATEST_VERSION = "1.18.1";
 
 export const CHANGELOG = [
+	{
+		version: "1.18.1",
+		date: "2026-11-24",
+		label: "Patterns with cut-outs import correctly",
+		changes: [
+			{
+				type: "fix",
+				text: "Uploading an SVG or vector PDF with cut-outs inside the outline now keeps the whole pattern. Before, only one small cut-out could be imported in place of the outline. If a saved pattern looks wrong, upload it again.",
+			},
+		],
+	},
 	{
 		version: "1.18.0",
 		date: "2026-10-16",

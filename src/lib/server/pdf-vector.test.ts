@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { extractPdfVector } from './pdf-vector';
 import { loadGT } from '../../../scripts/vectorize-bench/gt';
 import { compare } from '../../../scripts/vectorize-bench/metrics';
-import { parsePath, flattenSegs, pathBBox, transformSegs } from '../utils/pathGeometry';
+import { parsePath, pathBBox, transformSegs, splitSubpathSegs, splitIntoPieces, innerLineSelection } from '../utils/pathGeometry';
 
 const ROOT = 'docs/pattern_testing/inputs';
 const isDir = (p: string) => { try { return statSync(p).isDirectory(); } catch { return false; } };
@@ -30,9 +30,13 @@ describe('extractPdfVector: exact geometry from vector PDFs', () => {
 				expect(Math.abs(b.width - Number(m[1]))).toBeLessThan(0.05);
 				expect(Math.abs(b.height - Number(m[2]))).toBeLessThan(0.05);
 			}
-			expect(flattenSegs(inch, 0.0005).length).toBe(1);
 			// Independent decode of the PDF content stream: geometry is identical (<0.0005", the cut tolerance).
 			const gt = loadGT(f);
+			// Every contour survives (outline and any cut-outs), and the default import keeps them all.
+			const subs = splitSubpathSegs(inch);
+			expect(subs.length).toBe(gt.d.match(/M/g)!.length);
+			expect(innerLineSelection(subs)).toEqual(subs.map(() => true));
+			expect(splitIntoPieces(d).length).toBe(1);
 			const mm = compare(gt.d, gt.widthIn, gt.heightIn, d);
 			expect(mm.maxDevIn).toBeLessThan(0.0005);
 			expect(mm.iou).toBeGreaterThan(0.99999);
